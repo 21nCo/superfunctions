@@ -1,0 +1,47 @@
+{
+  "name": "userfn",
+  "version": "0.0.1",
+  "description": "User engagement platform SDK (Feature flags, Messaging, Surveys, Feedback)",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.{ts,tsx}\""
+  },
+  "keywords": [
+    "userfn",
+    "feature-flags",
+    "surveys",
+    "feedback",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^1.0.0",
+    "eslint": "^9.0.0"
+  },
+  "dependencies": {
+    "uuid": "^10.0.0"
+  }
+}
