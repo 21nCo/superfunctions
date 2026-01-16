@@ -1,21 +1,23 @@
 import { IdentityManager } from './core/identity';
 import { FlagEvaluator } from './core/flags';
+import { SegmentEvaluator } from './core/segments';
 import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission } from './types';
 
 export class UserFnClient {
   private identity: IdentityManager;
   private flags: FlagEvaluator;
+  private segments: SegmentEvaluator;
   private options: UserFnOptions;
 
   constructor(options: UserFnOptions) {
     this.options = options;
     this.identity = new IdentityManager();
-    this.flags = new FlagEvaluator();
+    this.segments = new SegmentEvaluator(); // TODO: Load segments from options
+    this.flags = new FlagEvaluator([], this.segments);
     
     // In the future, fetch bootstrap flags here or hydrate from options
     if (options.bootstrapFlags) {
-      // transform simple record to FlagConfig if needed, or just store for simple lookup
-      // For now, we assume simple lookup is not fully implemented in evaluator
+      // transform simple record to FlagConfig if needed
     }
   }
 

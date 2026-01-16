@@ -20,17 +20,48 @@ export interface FlagVariation {
   name?: string;
 }
 
+export type Operator =
+  | 'equals'
+  | 'does_not_equal'
+  | 'contains'
+  | 'does_not_contain'
+  | 'in'
+  | 'not_in'
+  | 'exists'
+  | 'does_not_exist'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'regex';
+
+export interface SegmentRule {
+  id: string;
+  field: string; // trait key, e.g., 'email', 'plan'
+  operator: Operator;
+  value?: any; // Value to compare against
+}
+
+export interface Segment {
+  id: string;
+  name: string;
+  rules: SegmentRule[]; // Implicitly ANDed for now, or could be nested
+  matchType?: 'all' | 'any'; // all rules must match vs any rule matches
+}
+
 export interface FlagRule {
   id: string;
-  segments: string[]; // Segment IDs
-  rolloutPercentage?: number;
-  variationId?: string; // If specific variation is forced
+  segmentId?: string; // Reference to a defined segment
+  constraints?: SegmentRule[]; // Inline rules specific to this flag
+  rolloutPercentage?: number; // 0-100
+  variationId?: string; // If matched, force this variation
 }
 
 export interface FlagConfig {
   key: string;
   variations: FlagVariation[];
-  defaultValue: FlagValue;
+  defaultValue: FlagValue; // Fallback value if no rules match or flag disabled
+  defaultVariationId?: string; // Fallback variation ID
   rules: FlagRule[];
   enabled: boolean;
 }

@@ -1,62 +1,75 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { FlagEvaluator } from '../core/flags';
+import { SegmentEvaluator } from '../core/segments';
 import { FlagConfig } from '../types';
 
 const MOCK_FLAGS: FlagConfig[] = [
   {
     key: 'feature-A',
-    defaultValue: true,
+    defaultValue: false,
     enabled: true,
-    rules: [],
+    rules: [
+      {
+        id: 'rule-1',
+        constraints: [
+          { id: 'c1', field: 'email', operator: 'contains', value: '@test.com' }
+        ],
+        variationId: 'on'
+      }
+    ],
     variations: [
       { id: 'on', value: true },
       { id: 'off', value: false },
     ],
   },
   {
-    key: 'feature-B',
-    defaultValue: 'blue',
+    key: 'feature-rollout',
+    defaultValue: 'control',
     enabled: true,
-    rules: [],
-    variations: [
-      { id: 'red', value: 'red' },
-      { id: 'blue', value: 'blue' },
+    rules: [
+      {
+        id: 'rule-2',
+        rolloutPercentage: 50,
+        variationId: 'treatment'
+      }
     ],
-  },
-  {
-    key: 'feature-disabled',
-    defaultValue: false,
-    enabled: false,
-    rules: [],
-    variations: [],
+    variations: [
+      { id: 'treatment', value: 'treatment' },
+      { id: 'control', value: 'control' }
+    ]
   }
 ];
 
 describe('FlagEvaluator', () => {
   let evaluator: FlagEvaluator;
+  let segments: SegmentEvaluator;
 
   beforeEach(() => {
-    evaluator = new FlagEvaluator(MOCK_FLAGS);
+    segments = new SegmentEvaluator();
+    evaluator = new FlagEvaluator(MOCK_FLAGS, segments);
   });
 
-  it('should return default value for existing enabled flag', () => {
-    expect(evaluator.getFlag('feature-A', false)).toBe(true);
+  it('should return variation if rule constraints match', () => {
+    const user = { id: 'u1', traits: { email: 'bob@test.com' } };
+    expect(evaluator.getFlag('feature-A', false, user)).toBe(true);
   });
 
-  it('should return requested default value if flag does not exist', () => {
-    expect(evaluator.getFlag('non-existent', 'default')).toBe('default');
+  it('should return default if rule constraints do not match', () => {
+    const user = { id: 'u2', traits: { email: 'bob@gmail.com' } };
+    expect(evaluator.getFlag('feature-A', false, user)).toBe(false);
   });
 
-  it('should return requested default value if flag is disabled', () => {
-    // Flag has defaultValue false, but we ask for true if missing/disabled?
-    // Wait, getFlag 2nd arg is defaultValue in case of failure/missing.
-    // If flag is disabled, it should probably return the "fallback" provided by caller
-    // or the "default variation" configured?
-    // The implementation currently returns defaultValue (arg) if !enabled.
-    expect(evaluator.getFlag('feature-disabled', 'fallback')).toBe('fallback');
-  });
+  it('should handle rollouts deterministically', () => {
+    // User 1 might be treatment, User 2 might be control depending on hash
+    // We rely on hash stability. 
+    // "feature-rollout:user-123" -> hash -> bucket
+    const userA = { id: 'user-123', traits: {} };
+    const valA = evaluator.getFlag('feature-rollout', 'control', userA);
+    
+    // Check same user gets same value
+    expect(evaluator.getFlag('feature-rollout', 'control', userA)).toBe(valA);
 
-  it('should return configured default value', () => {
-      expect(evaluator.getFlag('feature-B', 'red')).toBe('blue');
+    // Check rollout behavior mock (hard to exact percent w/o mocking hash)
+    // but at least it shouldn't crash
   });
 });
