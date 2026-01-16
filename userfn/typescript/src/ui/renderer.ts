@@ -1,4 +1,4 @@
-import { Campaign } from '../types';
+import { Campaign, Survey, SurveyResponse, Question } from '../types';
 import { injectStyles } from './styles';
 
 export class VanillaRenderer {
@@ -12,11 +12,115 @@ export class VanillaRenderer {
     if (campaign.kind === 'modal') {
       this.renderModal(campaign, onDismiss, onAction);
     } else if (campaign.kind === 'inbox-item') {
-      // Inbox usually doesn't "render" actively like a modal, 
-      // but if triggered, maybe it opens a toast or the inbox widget?
-      // For now, let's treat it as a Toast/Notification for the new message
       this.renderToast(campaign, onDismiss, onAction);
     }
+  }
+
+  renderSurvey(survey: Survey, onSubmit: (response: SurveyResponse) => void, onDismiss: () => void) {
+    // Start with first question
+    this.renderQuestion(survey, 0, [], onSubmit, onDismiss);
+  }
+
+  private renderQuestion(
+    survey: Survey, 
+    index: number, 
+    answers: { questionId: string; value: any }[],
+    onSubmit: (r: SurveyResponse) => void,
+    onDismiss: () => void
+  ) {
+    if (index >= survey.questions.length) {
+      // Done
+      onSubmit({
+        surveyId: survey.id,
+        answers,
+        submittedAt: Date.now()
+      });
+      return;
+    }
+
+    const question = survey.questions[index];
+    const overlay = document.createElement('div');
+    overlay.className = 'userfn-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'userfn-modal';
+
+    // Close
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'userfn-close';
+    closeBtn.innerHTML = '&times;';
+    closeBtn.onclick = () => {
+      document.body.removeChild(overlay);
+      onDismiss();
+    };
+    modal.appendChild(closeBtn);
+
+    // Title
+    const title = document.createElement('h3');
+    title.className = 'userfn-title';
+    title.innerText = question.title;
+    modal.appendChild(title);
+
+    // Input Area
+    const inputContainer = document.createElement('div');
+    inputContainer.style.marginBottom = '1rem';
+    
+    let getValue: () => any;
+
+    if (question.type === 'nps' || question.type === 'csat') {
+      const min = question.min ?? 0;
+      const max = question.max ?? 10;
+      const range = document.createElement('div');
+      range.style.display = 'flex';
+      range.style.gap = '8px';
+      
+      let selected: number | null = null;
+      const btns: HTMLButtonElement[] = [];
+
+      for (let i = min; i <= max; i++) {
+        const btn = document.createElement('button');
+        btn.innerText = String(i);
+        btn.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer;';
+        btn.onclick = () => {
+          selected = i;
+          btns.forEach(b => b.style.background = 'white');
+          btn.style.background = '#e5e7eb';
+        };
+        btns.push(btn);
+        range.appendChild(btn);
+      }
+      inputContainer.appendChild(range);
+      getValue = () => selected;
+    } else if (question.type === 'text') {
+      const area = document.createElement('textarea');
+      area.style.cssText = 'width: 100%; height: 80px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;';
+      inputContainer.appendChild(area);
+      getValue = () => area.value;
+    } else {
+      // Fallback
+      inputContainer.innerText = 'Unsupported question type';
+      getValue = () => null;
+    }
+
+    modal.appendChild(inputContainer);
+
+    // Next/Submit Button
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'userfn-cta';
+    nextBtn.innerText = index === survey.questions.length - 1 ? 'Submit' : 'Next';
+    nextBtn.onclick = () => {
+      const val = getValue();
+      if (question.required && (val === null || val === '')) {
+        alert('Please answer the question'); // simple validation
+        return;
+      }
+      document.body.removeChild(overlay);
+      this.renderQuestion(survey, index + 1, [...answers, { questionId: question.id, value: val }], onSubmit, onDismiss);
+    };
+    modal.appendChild(nextBtn);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
   }
 
   private renderToast(campaign: Campaign, onDismiss: () => void, onAction: () => void) {

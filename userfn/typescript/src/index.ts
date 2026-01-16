@@ -2,14 +2,16 @@ import { IdentityManager } from './core/identity';
 import { FlagEvaluator } from './core/flags';
 import { SegmentEvaluator } from './core/segments';
 import { MessagingEngine } from './core/messaging';
+import { SurveyEngine } from './core/surveys';
 import { VanillaRenderer } from './ui/renderer';
-import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, Campaign } from './types';
+import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, Campaign, Survey } from './types';
 
 export class UserFnClient {
   private identity: IdentityManager;
   private flags: FlagEvaluator;
   private segments: SegmentEvaluator;
   private messaging: MessagingEngine;
+  private surveys: SurveyEngine;
   private renderer: VanillaRenderer | null = null;
   private options: UserFnOptions;
 
@@ -19,6 +21,7 @@ export class UserFnClient {
     this.segments = new SegmentEvaluator(); 
     this.flags = new FlagEvaluator([], this.segments);
     this.messaging = new MessagingEngine(this.segments);
+    this.surveys = new SurveyEngine(this.segments);
     
     if (typeof window !== 'undefined') {
       this.renderer = new VanillaRenderer();
@@ -30,14 +33,14 @@ export class UserFnClient {
     }
   }
 
-  // Trigger check for messaging
+  // Trigger check for messaging and surveys
   trigger(type: 'url_match' | 'event', context: string) {
     const user = this.identity.getUser();
+    
+    // 1. Messaging
     const campaigns = this.messaging.getEligibleMessages(type, context, user);
-
     if (campaigns.length > 0) {
       const topCampaign = campaigns[0];
-      // Auto-render top priority message
       this.renderer?.render(
         topCampaign,
         () => this.messaging.trackDelivery(topCampaign.id, 'dismissed'),
@@ -49,12 +52,33 @@ export class UserFnClient {
         }
       );
       this.messaging.trackDelivery(topCampaign.id, 'shown');
+      return; // Prioritize messaging over surveys? Or show both? prioritizing for now.
+    }
+
+    // 2. Surveys
+    const surveys = this.surveys.getEligibleSurveys(type, context, user);
+    if (surveys.length > 0) {
+      const survey = surveys[0];
+      this.renderer?.renderSurvey(
+        survey,
+        (response) => {
+          this.surveys.trackResponse(response);
+          // TODO: emit to watchfn
+        },
+        () => {
+           // dismissed survey
+        }
+      );
     }
   }
 
   // Test method to inject campaigns for verification
   setCampaigns(campaigns: Campaign[]) {
     this.messaging.setCampaigns(campaigns);
+  }
+
+  setSurveys(surveys: Survey[]) {
+    this.surveys.setSurveys(surveys);
   }
 
 

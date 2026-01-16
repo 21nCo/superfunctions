@@ -115,8 +115,33 @@ export interface Campaign {
   enabled: boolean;
 }
 
-export interface MessageDelivery {
-  campaignId: string;
-  status: 'eligible' | 'shown' | 'clicked' | 'dismissed';
-  timestamp: number;
+export type QuestionType = 'nps' | 'csat' | 'text' | 'choice';
+
+export interface Question {
+  id: string;
+  type: QuestionType;
+  title: string;
+  description?: string;
+  choices?: { label: string; value: any }[]; // For choice/radio
+  min?: number; // For NPS/CSAT (e.g. 0 or 1)
+  max?: number; // For NPS/CSAT (e.g. 10 or 5)
+  required?: boolean;
+}
+
+export interface Survey {
+  id: string;
+  title?: string;
+  questions: Question[];
+  segmentId?: string;
+  triggers: CampaignTrigger[];
+  enabled: boolean;
+  caps?: {
+    global?: number;
+  };
+}
+
+export interface SurveyResponse {
+  surveyId: string;
+  answers: { questionId: string; value: any }[];
+  submittedAt: number;
 }
