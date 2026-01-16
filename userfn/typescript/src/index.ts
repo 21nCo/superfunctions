@@ -3,6 +3,7 @@ import { FlagEvaluator } from './core/flags';
 import { SegmentEvaluator } from './core/segments';
 import { MessagingEngine } from './core/messaging';
 import { SurveyEngine } from './core/surveys';
+import { FeedbackEngine } from './core/feedback';
 import { VanillaRenderer } from './ui/renderer';
 import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, Campaign, Survey } from './types';
 
@@ -12,6 +13,7 @@ export class UserFnClient {
   private segments: SegmentEvaluator;
   private messaging: MessagingEngine;
   private surveys: SurveyEngine;
+  private feedback: FeedbackEngine;
   private renderer: VanillaRenderer | null = null;
   private options: UserFnOptions;
 
@@ -22,6 +24,7 @@ export class UserFnClient {
     this.flags = new FlagEvaluator([], this.segments);
     this.messaging = new MessagingEngine(this.segments);
     this.surveys = new SurveyEngine(this.segments);
+    this.feedback = new FeedbackEngine();
     
     if (typeof window !== 'undefined') {
       this.renderer = new VanillaRenderer();
@@ -32,6 +35,22 @@ export class UserFnClient {
       // transform simple record to FlagConfig if needed
     }
   }
+
+  // ... trigger ...
+
+  openFeedbackWidget() {
+    this.renderer?.renderFeedbackWidget(async (submission) => {
+      await this.feedback.submit(submission);
+    });
+  }
+
+  // Direct submit
+  async submitFeedback(feedback: FeedbackSubmission): Promise<void> {
+    return this.feedback.submit(feedback);
+  }
+
+  // ... rest of class
+
 
   // Trigger check for messaging and surveys
   trigger(type: 'url_match' | 'event', context: string) {
@@ -104,11 +123,6 @@ export class UserFnClient {
   render(slotId: string): void {
     console.log(`[UserFn] Render slot: ${slotId}`);
     // TODO: Return/render content for slot
-  }
-
-  async submitFeedback(feedback: FeedbackSubmission): Promise<void> {
-    console.log(`[UserFn] Submit feedback`, feedback);
-    // TODO: Send to API
   }
 }
 

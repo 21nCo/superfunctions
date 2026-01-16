@@ -1,7 +1,101 @@
-import { Campaign, Survey, SurveyResponse, Question } from '../types';
+import { Campaign, Survey, SurveyResponse, Question, FeedbackSubmission, FeedbackCategory } from '../types';
 import { injectStyles } from './styles';
 
 export class VanillaRenderer {
+  // ... existing code ...
+
+  renderFeedbackWidget(onSubmit: (f: FeedbackSubmission) => Promise<void>) {
+    const overlay = document.createElement('div');
+    overlay.className = 'userfn-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'userfn-modal';
+    modal.style.width = '450px';
+
+    // Close
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'userfn-close';
+    closeBtn.innerHTML = '&times;';
+    closeBtn.onclick = () => document.body.removeChild(overlay);
+    modal.appendChild(closeBtn);
+
+    // Title
+    const title = document.createElement('h3');
+    title.className = 'userfn-title';
+    title.innerText = 'Send Feedback';
+    modal.appendChild(title);
+
+    // Form Container
+    const form = document.createElement('div');
+    form.style.display = 'flex';
+    form.style.flexDirection = 'column';
+    form.style.gap = '12px';
+
+    // Category
+    const categoryLabel = document.createElement('label');
+    categoryLabel.innerText = 'Category';
+    categoryLabel.style.fontSize = '0.9em';
+    form.appendChild(categoryLabel);
+
+    const categorySelect = document.createElement('select');
+    categorySelect.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px;';
+    ['feature', 'bug', 'general'].forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat;
+      opt.innerText = cat.charAt(0).toUpperCase() + cat.slice(1);
+      categorySelect.appendChild(opt);
+    });
+    form.appendChild(categorySelect);
+
+    // Title Input
+    const titleInput = document.createElement('input');
+    titleInput.placeholder = 'Short summary';
+    titleInput.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px;';
+    form.appendChild(titleInput);
+
+    // Body Input
+    const bodyInput = document.createElement('textarea');
+    bodyInput.placeholder = 'Describe your feedback...';
+    bodyInput.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px; height: 100px; resize: vertical;';
+    form.appendChild(bodyInput);
+
+    // Submit Button
+    const submitBtn = document.createElement('button');
+    submitBtn.className = 'userfn-cta';
+    submitBtn.innerText = 'Send Feedback';
+    submitBtn.onclick = async () => {
+      if (!titleInput.value || !bodyInput.value) {
+        alert('Please fill in all fields');
+        return;
+      }
+      
+      submitBtn.disabled = true;
+      submitBtn.innerText = 'Sending...';
+
+      try {
+        await onSubmit({
+          title: titleInput.value,
+          body: bodyInput.value,
+          category: categorySelect.value as FeedbackCategory,
+        });
+        document.body.removeChild(overlay);
+        // Maybe show success toast?
+        alert('Feedback sent!');
+      } catch (e) {
+        submitBtn.disabled = false;
+        submitBtn.innerText = 'Send Feedback';
+        alert('Failed to send feedback');
+      }
+    };
+    form.appendChild(submitBtn);
+
+    modal.appendChild(form);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
+
+  // ... rest of class ...
+}
   constructor() {
     if (typeof document !== 'undefined') {
       injectStyles();

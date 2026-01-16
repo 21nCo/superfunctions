@@ -77,12 +77,27 @@ export interface EventProperties {
   [key: string]: any;
 }
 
+export type FeedbackCategory = 'bug' | 'feature' | 'general';
+export type FeedbackStatus = 'open' | 'planned' | 'in_progress' | 'done' | 'closed';
+
 export interface FeedbackSubmission {
   title: string;
   body: string;
+  category: FeedbackCategory;
+  priority?: 'low' | 'medium' | 'high';
   tags?: string[];
   attachments?: string[]; // URLs or base64
   score?: number; // For surveys
+}
+
+export interface FeedbackItem {
+  id: string;
+  title: string;
+  body: string;
+  category: FeedbackCategory;
+  status: FeedbackStatus;
+  votes: number;
+  createdAt: string;
 }
 
 export type MessageKind = 'banner' | 'modal' | 'tooltip' | 'inbox-item';
