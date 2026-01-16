@@ -85,7 +85,38 @@ export interface FeedbackSubmission {
   score?: number; // For surveys
 }
 
-export interface ContentSlot {
+export type MessageKind = 'banner' | 'modal' | 'tooltip' | 'inbox-item';
+
+export interface MessageContent {
+  title?: string;
+  body: string;
+  ctaText?: string;
+  ctaUrl?: string;
+  ctaAction?: 'link' | 'dismiss' | 'custom';
+  imageUrl?: string;
+}
+
+export interface CampaignTrigger {
+  type: 'url_match' | 'event' | 'manual';
+  pattern?: string; // glob or regex for url, event name for event
+}
+
+export interface Campaign {
   id: string;
-  // ... properties for the renderer
+  kind: MessageKind;
+  content: MessageContent;
+  segmentId?: string; // Audience
+  triggers: CampaignTrigger[];
+  priority?: number;
+  caps?: {
+    global?: number; // Max times to show globally per user
+    session?: number; // Max times per session
+  };
+  enabled: boolean;
+}
+
+export interface MessageDelivery {
+  campaignId: string;
+  status: 'eligible' | 'shown' | 'clicked' | 'dismissed';
+  timestamp: number;
 }
