@@ -1,0 +1,24 @@
+{
+  "name": "@docsfn/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "docsfn": "./bin/docsfn.js"
+  },
+  "dependencies": {
+    "@docsfn/core": "workspace:*",
+    "@docsfn/provider-fs": "workspace:*",
+    "cac": "^6.7.0",
+    "chokidar": "^3.5.0",
+    "picocolors": "^1.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  }
+}

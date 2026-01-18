@@ -4,44 +4,26 @@ Documentation toolkit for Superfunctions.
 
 ## Packages
 
-- **@docsfn/core**: Framework-agnostic core logic (manifest generation, types, search).
-- **@docsfn/provider-fs**: Filesystem content provider (docs, blog, api).
-- **@docsfn/react**: React UI adapters (Layout, Sidebar, TOC).
+- **@docsfn/core**: Framework-agnostic core logic.
+- **@docsfn/provider-fs**: Filesystem content provider.
+- **@docsfn/react**: React UI components (Search, Layout, Sidebar).
+- **@docsfn/svelte**: Svelte UI components.
+- **@docsfn/cli**: Build and Dev CLI.
 
-## Usage
+## Quick Start (CLI)
 
-```typescript
-import { FsContentProvider } from '@docsfn/provider-fs';
-import { buildManifest, buildSearchIndex } from '@docsfn/core';
+1. Create a `docsfn.config.js` (optional).
+2. Run `npx docsfn dev`.
 
-const provider = new FsContentProvider({
-  root: process.cwd(),
-  docsDir: 'docs',
-  blogDir: 'blog',
-  apiDir: 'api'
-});
-
-const manifest = await buildManifest(provider, {
-  site: { title: 'My Docs' }
-});
-
-// Generate search index
-const searchSnapshot = await buildSearchIndex(manifest);
+```bash
+npx docsfn build
 ```
 
-## UI Usage (React)
+## Programmatic Usage
 
-```tsx
-import { DocsLayout } from '@docsfn/react';
+```typescript
+import { buildManifest } from '@docsfn/core';
+import { FsContentProvider } from '@docsfn/provider-fs';
 
-export default function Page({ page, sidebar }) {
-  return (
-    <DocsLayout 
-      sidebar={sidebar} 
-      headings={page.headings}
-    >
-      <div dangerouslySetInnerHTML={{ __html: page.body }} />
-    </DocsLayout>
-  );
-}
+// ... see packages for details
 ```
