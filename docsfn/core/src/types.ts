@@ -46,6 +46,16 @@ export interface Sidebar {
   items: SidebarItem[];
 }
 
+export interface ApiReference {
+  kind: 'api';
+  id: string;
+  slug: string;
+  path: string;
+  title: string;
+  spec: any; // Raw OpenAPI spec object
+  frontmatter: Record<string, any>;
+}
+
 export interface DocsManifest {
   site: {
     title: string;
@@ -53,6 +63,7 @@ export interface DocsManifest {
   };
   pages: Record<string, DocPage>; // keyed by ID
   posts: Record<string, BlogPost>;
+  apis: Record<string, ApiReference>;
   sidebars: Record<string, Sidebar>;
   routes: Record<string, string>; // path -> ID map for routing
 }

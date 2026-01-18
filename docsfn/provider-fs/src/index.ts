@@ -8,6 +8,7 @@ export interface FsProviderOptions {
   root: string;
   docsDir?: string;
   blogDir?: string;
+  apiDir?: string;
 }
 
 export class FsContentProvider implements DocsContentProvider {
@@ -17,6 +18,7 @@ export class FsContentProvider implements DocsContentProvider {
     this.options = {
       docsDir: 'docs',
       blogDir: 'blog',
+      apiDir: 'api',
       ...options
     };
   }
@@ -60,6 +62,29 @@ export class FsContentProvider implements DocsContentProvider {
            filepath: file
          });
        }
+    }
+
+    // Load API
+    if (this.options.apiDir) {
+      const apiPattern = path.join(this.options.root, this.options.apiDir, '**/*.{json,yaml,yml}');
+      const apiFiles = await fg(apiPattern);
+
+      for (const file of apiFiles) {
+        const content = await fs.readFile(file, 'utf-8');
+        // APIs usually don't have frontmatter in the spec file itself in the same way,
+        // but we can try parsing if it's there (unlikely for JSON).
+        // For now, assume no frontmatter for API specs, or valid JSON/YAML.
+        // We'll create a synthetic frontmatter based on filename.
+        const id = path.relative(path.join(this.options.root, this.options.apiDir!), file);
+        
+        entries.push({
+          id,
+          kind: 'api',
+          body: content,
+          frontmatter: { title: path.basename(id) }, // Default title
+          filepath: file
+        });
+      }
     }
 
     return entries;

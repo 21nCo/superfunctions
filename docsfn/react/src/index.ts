@@ -1,2 +1,3 @@
-// Export React components
-export const DocsfnReact = 'DocsfnReact';
+export * from './DocsLayout';
+export * from './DocsSidebar';
+export * from './DocsToc';
