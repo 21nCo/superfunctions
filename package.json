@@ -9,6 +9,8 @@
     "hostfn/*",
     "authfn/*",
     "browsefn/*",
+    "cachefn/*",
+    "datafn/*",
     "flowfn/*",
     "logfn/*",
     "sendfn/*",
@@ -39,10 +41,10 @@
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
-    "fast-glob": "^3.3.3",
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@types/node": "^20.0.0",
     "@vitest/ui": "^3.2.4",
+    "fast-glob": "^3.3.3",
     "msw": "^2.11.6",
     "prettier": "^3.0.0",
     "turbo": "^2.0.0",
@@ -60,5 +62,10 @@
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
   },
-  "packageManager": "npm@10.2.0"
+  "packageManager": "npm@10.2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "drizzle-orm": "^0.45.1",
+    "postgres": "^3.4.8"
+  }
 }

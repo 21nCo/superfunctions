@@ -17,7 +17,9 @@
     "hono": "^4.0.0",
     "zod": "^3.22.0",
     "@trpc/server": "^10.45.0",
-    "@trpc/client": "^10.45.0"
+    "@trpc/client": "^10.45.0",
+    "@superfunctions/db": "*",
+    "drizzle-orm": "^0.30.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
