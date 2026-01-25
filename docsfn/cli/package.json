@@ -1,13 +1,13 @@
 {
   "name": "@docsfn/cli",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
   "bin": {
     "docsfn": "./bin/docsfn.js"
   },
   "dependencies": {
-    "@docsfn/core": "workspace:*",
-    "@docsfn/provider-fs": "workspace:*",
+    "@docsfn/core": "*",
+    "@docsfn/provider-fs": "*",
     "cac": "^6.7.0",
     "chokidar": "^3.5.0",
     "picocolors": "^1.0.0"
@@ -20,5 +20,18 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "docsfn/cli"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

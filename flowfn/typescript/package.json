@@ -1,0 +1,75 @@
+{
+  "name": "@flowfn/core",
+  "version": "0.0.1",
+  "description": "Self-hosted flow control platform for developers - Queues, Streams, and Workflows",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "queue",
+    "stream",
+    "workflow",
+    "redis",
+    "kafka",
+    "sqs",
+    "postgres",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "flowfn/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "flowFn",
+    "schemaVersion": 1,
+    "namespace": "flowfn"
+  },
+  "dependencies": {
+    "uuid": "^9.0.0",
+    "zod": "^3.22.0",
+    "eventemitter3": "^5.0.1",
+    "@superfunctions/http": "*",
+    "ioredis": "^5.3.2",
+    "drizzle-orm": "^0.29.0",
+    "cron-parser": "^4.9.0"
+  },
+  "devDependencies": {
+    "ioredis-mock": "^8.9.0",
+    "@types/node": "^20.11.0",
+    "@types/uuid": "^9.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "ioredis": "^5.0.0",
+    "kafkajs": "^2.0.0",
+    "@aws-sdk/client-sqs": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    },
+    "kafkajs": {
+      "optional": true
+    },
+    "@aws-sdk/client-sqs": {
+      "optional": true
+    }
+  }
+}

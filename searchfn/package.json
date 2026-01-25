@@ -2,7 +2,7 @@
   "name": "@searchfn/client",
   "version": "0.2.0",
   "description": "IndexedDB-backed full-text search engine with hybrid in-memory caching and FlexSearch-compatible adapters.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -39,10 +39,11 @@
     "browser",
     "flexsearch"
   ],
-  "author": "21nOrg",
+  "author": "21n",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/21nCo/super-functions.git"
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "searchfn"
   },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
@@ -51,6 +52,11 @@
     "access": "public"
   },
   "sideEffects": false,
+  "superfunctions": {
+    "initFunction": "searchFn",
+    "schemaVersion": 1,
+    "namespace": "searchfn"
+  },
   "devDependencies": {
     "@types/node": "^24.9.1",
     "@typescript-eslint/eslint-plugin": "^8.46.2",

@@ -1,0 +1,61 @@
+{
+  "name": "@uifn/vue",
+  "version": "0.0.1",
+  "description": "Vue composables built on @uifn/core primitives",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@uifn/core": "0.0.1"
+  },
+  "peerDependencies": {
+    "vue": ">=3.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.3",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^27.0.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "vue": "^3.5.26"
+  },
+  "keywords": [
+    "vue",
+    "ui",
+    "composables",
+    "primitives",
+    "headless",
+    "accessible"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "uifn/vue"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

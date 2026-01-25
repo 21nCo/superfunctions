@@ -1,6 +1,6 @@
 {
   "name": "@botfn/persistence-service",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Persistence service for bot data using tRPC, Hono, and Cloudflare D1",
   "main": "src/index.cloudflare.ts",
   "type": "module",
@@ -25,5 +25,18 @@
     "typescript": "^5.0.0",
     "wrangler": "^3.0.0",
     "@cloudflare/workers-types": "^4.0.0"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "botfn/persistence"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

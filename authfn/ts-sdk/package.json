@@ -1,6 +1,6 @@
 {
-  "name": "authfn",
-  "version": "0.1.2",
+  "name": "@authfn/core",
+  "version": "0.0.1",
   "description": "Authentication self deployed",
   "type": "module",
   "main": "./dist/index.js",

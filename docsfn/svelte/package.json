@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/svelte",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,17 +8,31 @@
     "svelte": "^4.0.0 || ^5.0.0"
   },
   "dependencies": {
-    "@docsfn/core": "workspace:*",
-    "@uifn/svelte": "workspace:*",
-    "searchfn": "workspace:*",
+    "@docsfn/core": "*",
+    "@uifn/svelte": "*",
+    "searchfn": "*",
     "marked": "^12.0.0"
   },
   "devDependencies": {
+    "esbuild-svelte": "^0.9.4",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "svelte": "^4.0.0"
   },
   "scripts": {
     "build": "tsup"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "docsfn/svelte"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

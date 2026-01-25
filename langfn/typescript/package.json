@@ -1,0 +1,63 @@
+{
+  "name": "@langfn/core",
+  "version": "0.0.1",
+  "description": "Comprehensive AI Development SDK for LLM-based workflows",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "llm",
+    "agents",
+    "orchestration",
+    "ai",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "langfn/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "langFn",
+    "schemaVersion": 1,
+    "namespace": "langfn"
+  },
+  "dependencies": {
+    "@superfunctions/db": "*",
+    "@superfunctions/http": "*",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.2.4",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}

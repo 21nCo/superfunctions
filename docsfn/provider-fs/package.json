@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/provider-fs",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -18,7 +18,7 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@docsfn/core": "workspace:*",
+    "@docsfn/core": "*",
     "fast-glob": "^3.0.0",
     "gray-matter": "^4.0.0"
   },
@@ -27,5 +27,18 @@
     "typescript": "^5.0.0",
     "vitest": "^1.0.0",
     "@types/node": "^20.0.0"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "docsfn/provider-fs"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

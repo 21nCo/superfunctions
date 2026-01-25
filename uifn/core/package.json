@@ -1,0 +1,65 @@
+{
+  "name": "uifn",
+  "version": "0.0.1",
+  "description": "Framework-agnostic UI primitives - core library",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./primitives/*": {
+      "types": "./dist/primitives/*.d.ts",
+      "import": "./dist/primitives/*.mjs",
+      "require": "./dist/primitives/*.js"
+    },
+    "./utils/*": {
+      "types": "./dist/utils/*.d.ts",
+      "import": "./dist/utils/*.mjs",
+      "require": "./dist/utils/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "lint": "eslint src/"
+  },
+  "keywords": [
+    "ui",
+    "primitives",
+    "headless",
+    "accessible",
+    "framework-agnostic"
+  ],
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "uifn/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "uiFn",
+    "schemaVersion": 1,
+    "namespace": "uifn"
+  }
+}

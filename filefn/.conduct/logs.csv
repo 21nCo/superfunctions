@@ -1,0 +1,3 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-01-24T13:46:33Z,gpt-5.2 (xhigh reasoning),Warp,spec,unknown-agent,,filefn/.conduct/2026-01-24-new-h3m9k2s-spec
+2026-01-24T14:10:15Z,gpt-5.2 (xhigh reasoning),Warp,spec,unknown-agent,,filefn/.conduct/2026-01-24-new-h3m9k2s-spec

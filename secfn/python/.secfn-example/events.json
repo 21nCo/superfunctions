@@ -1,0 +1,38 @@
+{
+  "event_19bb1579af7f8753f3": {
+    "id": "event_19bb1579af7f8753f3",
+    "timestamp": 1768206867191,
+    "type": "secret_accessed",
+    "severity": "info",
+    "userId": "admin",
+    "ip": "192.168.1.1",
+    "userAgent": null,
+    "resource": "database_url",
+    "action": "read",
+    "metadata": {
+      "method": "vault.get"
+    },
+    "resolved": false,
+    "resolvedAt": null,
+    "resolvedBy": null,
+    "notes": null
+  },
+  "event_19bb1579af7cd6cf22": {
+    "id": "event_19bb1579af7cd6cf22",
+    "timestamp": 1768206867191,
+    "type": "permission_denied",
+    "severity": "medium",
+    "userId": "user_charlie",
+    "ip": "192.168.1.100",
+    "userAgent": null,
+    "resource": "project_1",
+    "action": "write",
+    "metadata": {
+      "reason": "insufficient_permissions"
+    },
+    "resolved": false,
+    "resolvedAt": null,
+    "resolvedBy": null,
+    "notes": null
+  }
+}

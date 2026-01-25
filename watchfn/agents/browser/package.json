@@ -1,0 +1,30 @@
+{
+  "name": "@watchfn/browser",
+  "version": "0.0.1",
+  "description": "Browser RUM agent for WatchFn",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "watchfn/agents/browser"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

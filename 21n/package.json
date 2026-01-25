@@ -1,0 +1,26 @@
+{
+  "name": "21n",
+  "version": "0.1.1",
+  "description": "21st century software development toolkit",
+  "type": "module",
+  "scripts": {
+    "build": "tsup"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [],
+  "author": "21nOrg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/21n.git"
+  },
+  "bugs": {
+    "url": "https://github.com/21nCo/21n/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "devDependencies": {}
+}

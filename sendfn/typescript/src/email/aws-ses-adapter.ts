@@ -1,0 +1,207 @@
+import {
+  EmailProvider,
+  EmailProviderCapabilities,
+  SendEmailRequest,
+  SendEmailResponse
+} from './provider';
+import { AwsSesConfig } from '../types';
+import { EmailProviderError } from '../errors';
+import {
+  SESClient,
+  SendEmailCommand,
+  SendRawEmailCommand,
+  MessageRejected,
+  LimitExceededException
+} from '@aws-sdk/client-ses';
+
+export class AwsSesAdapter implements EmailProvider {
+  readonly name = 'aws-ses';
+  readonly capabilities: EmailProviderCapabilities = {
+    supportsTemplates: true,
+    supportsAttachments: true,
+    supportsBulkSend: true,
+    supportsScheduling: false,
+    maxRecipientsPerEmail: 50,
+    maxAttachmentSize: 10 * 1024 * 1024,
+  };
+
+  private sesClient: SESClient;
+
+  constructor(private config: AwsSesConfig) {
+    this.sesClient = new SESClient({
+      region: config.region,
+      credentials: {
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+      },
+    });
+  }
+
+  async initialize(): Promise<void> {
+    // No-op
+  }
+
+  async sendEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
+    try {
+      if (params.attachments && params.attachments.length > 0) {
+        return await this.sendRawEmail(params);
+      } else {
+        return await this.sendSimpleEmail(params);
+      }
+    } catch (error: any) {
+      return this.handleError(error);
+    }
+  }
+
+  private async sendSimpleEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
+    const command = new SendEmailCommand({
+      Source: params.from,
+      Destination: {
+        ToAddresses: params.to,
+        CcAddresses: params.cc,
+        BccAddresses: params.bcc,
+      },
+      Message: {
+        Subject: { Data: params.subject },
+        Body: {
+          Html: { Data: params.html },
+          Text: params.text ? { Data: params.text } : undefined,
+        },
+      },
+      ConfigurationSetName: this.config.configurationSetName,
+      ReplyToAddresses: params.replyTo ? [params.replyTo] : undefined,
+    });
+
+    const result = await this.sesClient.send(command);
+
+    return {
+      success: true,
+      messageId: result.MessageId,
+      providerMessageId: result.MessageId,
+      timestamp: new Date(),
+    };
+  }
+
+  private async sendRawEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
+    const boundary = `----=_Part_${Date.now()}`;
+    let rawMessage = '';
+    
+    // Headers
+    rawMessage += `From: ${params.from}\n`;
+    rawMessage += `To: ${params.to.join(', ')}\n`;
+    if (params.cc?.length) rawMessage += `Cc: ${params.cc.join(', ')}\n`;
+    rawMessage += `Subject: ${params.subject}\n`;
+    if (params.replyTo) rawMessage += `Reply-To: ${params.replyTo}\n`;
+    rawMessage += `MIME-Version: 1.0\n`;
+    rawMessage += `Content-Type: multipart/mixed; boundary="${boundary}"\n\n`;
+    
+    // Body (Multipart Alternative for Text/HTML)
+    const altBoundary = `----=_Part_${Date.now()}_Alt`;
+    rawMessage += `--${boundary}\n`;
+    rawMessage += `Content-Type: multipart/alternative; boundary="${altBoundary}"\n\n`;
+    
+    // Text Part
+    if (params.text) {
+      rawMessage += `--${altBoundary}\n`;
+      rawMessage += `Content-Type: text/plain; charset=UTF-8\n\n`;
+      rawMessage += `${params.text}\n\n`;
+    }
+    
+    // HTML Part
+    rawMessage += `--${altBoundary}\n`;
+    rawMessage += `Content-Type: text/html; charset=UTF-8\n\n`;
+    rawMessage += `${params.html}\n\n`;
+    
+    rawMessage += `--${altBoundary}--
+
+`;
+    
+    // Attachments
+    if (params.attachments) {
+      for (const att of params.attachments) {
+        rawMessage += `--${boundary}\n`;
+        rawMessage += `Content-Type: ${att.contentType || 'application/octet-stream'}; name="${att.filename}"\n`;
+        rawMessage += `Content-Transfer-Encoding: base64\n`;
+        rawMessage += `Content-Disposition: attachment; filename="${att.filename}"\n\n`;
+        
+        const content = typeof att.content === 'string' 
+          ? Buffer.from(att.content).toString('base64') 
+          : att.content.toString('base64');
+          
+        const chunked = content.match(/.{1,76}/g)?.join('\n') || content;
+        rawMessage += `${chunked}\n\n`;
+      }
+    }
+    
+    rawMessage += `--${boundary}--
+`;
+
+    const command = new SendRawEmailCommand({
+      RawMessage: { Data: Buffer.from(rawMessage) },
+      ConfigurationSetName: this.config.configurationSetName,
+    });
+
+    const result = await this.sesClient.send(command);
+
+    return {
+      success: true,
+      messageId: result.MessageId,
+      providerMessageId: result.MessageId,
+      timestamp: new Date(),
+    };
+  }
+
+  async sendBulkEmail(params: SendEmailRequest[]): Promise<SendEmailResponse[]> {
+    const results: SendEmailResponse[] = [];
+    for (const req of params) {
+        results.push(await this.sendEmail(req));
+    }
+    return results;
+  }
+
+  validateEmail(email: string): boolean {
+    const emailRegex = /^[^S@]+@[^S@]+\.[^S@]+$/;
+    return emailRegex.test(email);
+  }
+
+  async isHealthy(): Promise<boolean> {
+    try {
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async close(): Promise<void> {
+    this.sesClient.destroy();
+  }
+
+  private handleError(error: any): SendEmailResponse {
+    let code = 'UNKNOWN_ERROR';
+    let retryable = false;
+
+    if (error instanceof MessageRejected) {
+      code = 'MESSAGE_REJECTED';
+    } else if (error instanceof LimitExceededException) {
+      code = 'LIMIT_EXCEEDED';
+      retryable = true;
+    } else if (error.name === 'ThrottlingException') {
+        code = 'THROTTLING';
+        retryable = true;
+    }
+
+    return {
+      success: false,
+      timestamp: new Date(),
+      error: {
+        code,
+        message: error.message || 'Unknown error occurred',
+        retryable,
+      },
+    };
+  }
+}
+
+export function awsSesAdapter(config: AwsSesConfig): AwsSesAdapter {
+  return new AwsSesAdapter(config);
+}

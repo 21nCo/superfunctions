@@ -1,0 +1,9 @@
+import { describe, it, expect } from 'vitest';
+
+describe('@filefn/client', () => {
+  it('should export createFileFnClient', async () => {
+    const mod = await import('./index.js');
+    expect(mod.createFileFnClient).toBeDefined();
+    expect(typeof mod.createFileFnClient).toBe('function');
+  });
+});

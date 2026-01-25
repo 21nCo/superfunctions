@@ -1,7 +1,13 @@
-export type ContentKind = 'page' | 'post' | 'api' | 'asset';
+export type ContentKind = "page" | "post" | "api" | "asset";
+
+export interface Version {
+  slug: string; // e.g., 'v2', 'latest'
+  label: string; // e.g., 'Version 2.0', 'Latest'
+  isDefault?: boolean;
+}
 
 export interface DocPage {
-  kind: 'page';
+  kind: "page";
   id: string; // unique stable ID
   slug: string; // url path segment
   path: string; // full path for routing
@@ -11,10 +17,11 @@ export interface DocPage {
   headings: DocHeading[];
   frontmatter: Record<string, any>;
   lastUpdated?: number;
+  version?: string; // Optional version slug
 }
 
 export interface BlogPost {
-  kind: 'post';
+  kind: "post";
   id: string;
   slug: string;
   path: string;
@@ -25,6 +32,7 @@ export interface BlogPost {
   tags: string[];
   body: string;
   frontmatter: Record<string, any>;
+  version?: string; // Optional version slug
 }
 
 export interface DocHeading {
@@ -34,7 +42,7 @@ export interface DocHeading {
 }
 
 export interface SidebarItem {
-  type: 'link' | 'group' | 'separator';
+  type: "link" | "group" | "separator";
   text: string;
   link?: string; // for links
   items?: SidebarItem[]; // for groups
@@ -47,13 +55,14 @@ export interface Sidebar {
 }
 
 export interface ApiReference {
-  kind: 'api';
+  kind: "api";
   id: string;
   slug: string;
   path: string;
   title: string;
   spec: any; // Raw OpenAPI spec object
   frontmatter: Record<string, any>;
+  version?: string; // Optional version slug
 }
 
 export interface DocsManifest {
@@ -61,10 +70,11 @@ export interface DocsManifest {
     title: string;
     description?: string;
   };
+  versions?: Version[]; // Optional list of versions
   pages: Record<string, DocPage>; // keyed by ID
   posts: Record<string, BlogPost>;
   apis: Record<string, ApiReference>;
-  sidebars: Record<string, Sidebar>;
+  sidebars: Record<string, Sidebar>; // Can be keyed by version, e.g., 'v2:default'
   routes: Record<string, string>; // path -> ID map for routing
 }
 

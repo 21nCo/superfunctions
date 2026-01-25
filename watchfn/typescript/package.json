@@ -1,0 +1,57 @@
+{
+  "name": "@watchfn/core",
+  "version": "0.0.1",
+  "description": "Comprehensive self-hosted monitoring and observability platform",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "lint": "tsc"
+  },
+  "dependencies": {
+    "zod": "^3.22.4",
+    "@superfunctions/db": "*",
+    "@superfunctions/http": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "observability",
+    "monitoring",
+    "apm",
+    "rum",
+    "logging"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "watchfn/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "watchFn",
+    "schemaVersion": 1,
+    "namespace": "watchfn"
+  }
+}

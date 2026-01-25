@@ -1,0 +1,33 @@
+{
+  "name": "iconfn",
+  "version": "0.0.1",
+  "description": "Icon library",
+  "type": "module",
+  "scripts": {
+    "build": "tsup"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "iconfn"
+  },
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "superfunctions": {
+    "initFunction": "iconFn",
+    "schemaVersion": 1,
+    "namespace": "iconfn"
+  },
+  "devDependencies": {}
+}

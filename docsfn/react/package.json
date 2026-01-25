@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/react",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -10,9 +10,9 @@
     "react-dom": "^18.0.0"
   },
   "dependencies": {
-    "@docsfn/core": "workspace:*",
-    "@uifn/react": "workspace:*",
-    "searchfn": "workspace:*",
+    "@docsfn/core": "*",
+    "@uifn/react": "*",
+    "searchfn": "*",
     "markdown-to-jsx": "^7.3.2"
   },
   "devDependencies": {
@@ -21,5 +21,18 @@
   },
   "scripts": {
     "build": "tsup"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "docsfn/react"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

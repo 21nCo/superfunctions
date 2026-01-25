@@ -1,6 +1,6 @@
 {
-  "name": "@docsfn/core",
-  "version": "0.1.0",
+  "name": "docsfn",
+  "version": "0.0.1",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -19,11 +19,29 @@
   },
   "dependencies": {
     "zod": "^3.0.0",
-    "searchfn": "workspace:*"
+    "searchfn": "*"
   },
   "devDependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^1.0.0"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "docsfn/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "docsFn",
+    "schemaVersion": 1,
+    "namespace": "docsfn"
   }
 }

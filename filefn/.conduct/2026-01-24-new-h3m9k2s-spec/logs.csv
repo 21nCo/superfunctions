@@ -1,0 +1,14 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-01-24T13:46:33Z,gpt-5.2 (xhigh reasoning),Warp,spec,unknown-agent,,filefn/.conduct/2026-01-24-new-h3m9k2s-spec
+2026-01-24T14:10:15Z,gpt-5.2 (xhigh reasoning),Warp,spec,unknown-agent,,filefn/.conduct/2026-01-24-new-h3m9k2s-spec
+2026-01-24T21:40:00+05:30,gemini-2.0-flash-exp,CLI,analyze,Antigravity,,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/audits/2026-01-24-9x8y7z-spec-gen-audit.md
+2026-01-24T16:12:20Z,gpt-5.2 (xhigh reasoning),Warp,analyze,unknown-agent,,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/audits/2026-01-24-r4c7n2p8-spec-gen-audit.md
+2026-01-24T17:55:00Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_00,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_00.md
+2026-01-24T17:58:30Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_01,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_01.md
+2026-01-24T18:04:30Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_02,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_02.md
+2026-01-24T18:16:30Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_03,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_03.md
+2026-01-24T18:26:00Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_04,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_04.md
+2026-01-24T18:41:00Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_05,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_05.md
+2026-01-24T18:45:00Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_06,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_06.md
+2026-01-25T09:48:00Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_07,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_07.md
+2026-01-25T09:55:00Z,claude-sonnet-4-20250514,Amp,execute,unknown-agent,PHASE_08,filefn/.conduct/2026-01-24-new-h3m9k2s-spec/phases/PHASE_08.md

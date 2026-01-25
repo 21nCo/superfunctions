@@ -1,0 +1,35 @@
+{
+  "name": "@watchfn/cli",
+  "version": "0.0.1",
+  "description": "CLI for WatchFn",
+  "bin": {
+    "watchfn": "./dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "@types/node": "^20.10.0"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "watchfn/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

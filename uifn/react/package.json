@@ -1,0 +1,67 @@
+{
+  "name": "@uifn/react",
+  "version": "0.0.1",
+  "description": "React components built on @uifn/core primitives",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@uifn/core": "0.0.1"
+  },
+  "peerDependencies": {
+    "react": ">=16.8.0",
+    "react-dom": ">=16.8.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "15.0.7",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "jsdom": "^27.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0",
+    "vitest-axe": "^0.1.0"
+  },
+  "keywords": [
+    "react",
+    "ui",
+    "components",
+    "primitives",
+    "headless",
+    "accessible"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "uifn/react"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

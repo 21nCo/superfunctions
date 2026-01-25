@@ -1,0 +1,33 @@
+{
+  "name": "chartfn",
+  "version": "0.0.1",
+  "description": "Charting library",
+  "type": "module",
+  "scripts": {
+    "build": "tsup"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "chartfn"
+  },
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "superfunctions": {
+    "initFunction": "chartFn",
+    "schemaVersion": 1,
+    "namespace": "chartfn"
+  },
+  "devDependencies": {}
+}

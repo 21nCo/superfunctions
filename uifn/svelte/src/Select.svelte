@@ -1,0 +1,89 @@
+<script lang="ts">
+  import { createSelect } from '@uifn/core/primitives/select';
+  import { setContext } from 'svelte';
+
+  interface Props {
+    value?: string;
+    defaultValue?: string;
+    onValueChange?: (value: string) => void;
+    open?: boolean;
+    defaultOpen?: boolean;
+    onOpenChange?: (open: boolean) => void;
+    disabled?: boolean;
+    required?: boolean;
+    name?: string;
+    children?: import('svelte').Snippet;
+  }
+
+  let { 
+    value: valueProp, 
+    defaultValue, 
+    onValueChange, 
+    open: openProp, 
+    defaultOpen, 
+    onOpenChange, 
+    disabled = false,
+    required = false,
+    name,
+    children 
+  }: Props = $props();
+
+  const machine = createSelect({
+    value: valueProp,
+    defaultValue,
+    onValueChange,
+    open: openProp,
+    defaultOpen,
+    onOpenChange,
+    disabled,
+    required
+  });
+
+  let state = $state(machine.state);
+  let triggerElement = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    return machine.subscribe((newState) => {
+      state = newState;
+    });
+  });
+
+  // Derived state handling
+  let value = $derived(valueProp !== undefined ? valueProp : state.value);
+  let isOpen = $derived(openProp !== undefined ? openProp : state.open);
+
+  function setValue(val: string) {
+    if (valueProp !== undefined) {
+      onValueChange?.(val);
+    } else {
+      machine.actions.setValue(val);
+    }
+    // Close on selection usually
+    setOpen(false);
+  }
+
+  function setOpen(val: boolean) {
+    if (openProp !== undefined) {
+      onOpenChange?.(val);
+    } else {
+      machine.actions.setOpen(val);
+    }
+  }
+
+  function registerTrigger(el: HTMLElement) {
+    triggerElement = el;
+  }
+
+  setContext('select', {
+    get value() { return value; },
+    get open() { return isOpen; },
+    get disabled() { return disabled; },
+    get trigger() { return triggerElement; },
+    setValue,
+    setOpen,
+    registerTrigger
+  });
+</script>
+
+{@render children?.()}
+<input type="hidden" {name} {value} {required} {disabled} />

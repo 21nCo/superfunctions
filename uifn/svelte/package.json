@@ -1,0 +1,64 @@
+{
+  "name": "@uifn/svelte",
+  "version": "0.0.1",
+  "description": "Svelte components built on @uifn/core primitives",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "svelte": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts",
+      "svelte": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@uifn/core": "0.0.1"
+  },
+  "peerDependencies": {
+    "svelte": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "@testing-library/svelte": "^5.3.1",
+    "esbuild-svelte": "^0.9.4",
+    "jsdom": "^27.0.1",
+    "svelte": "^5.46.1",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "svelte",
+    "ui",
+    "components",
+    "primitives",
+    "headless",
+    "accessible"
+  ],
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "uifn/svelte"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

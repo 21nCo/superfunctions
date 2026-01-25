@@ -11,6 +11,7 @@
     "browsefn/*",
     "cachefn/*",
     "datafn/*",
+    "datafn/examples/todo-app/*",
     "flowfn/*",
     "logfn/*",
     "sendfn/*",
