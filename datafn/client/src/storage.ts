@@ -2,7 +2,24 @@
  * Storage adapter types for local persistence
  */
 
+import type { AuthContext } from "@superfunctions/auth";
+
 export type DatafnHydrationState = "notStarted" | "hydrating" | "ready";
+
+/**
+ * Factory function for creating storage adapters with auth context.
+ * Used for multi-user/multi-tenant data isolation.
+ * 
+ * @example
+ * ```typescript
+ * const storageFactory: DatafnStorageFactory = (context) => {
+ *   return IndexedDbStorageAdapter.createForUser("my-app", context.userId, context.tenantId);
+ * };
+ * ```
+ */
+export type DatafnStorageFactory = (
+  context: AuthContext,
+) => DatafnStorageAdapter;
 
 export type DatafnChangelogEntry = {
   /** Monotonic local sequence (assigned by storage adapter). */
@@ -11,6 +28,10 @@ export type DatafnChangelogEntry = {
   mutationId: string;
   mutation: Record<string, unknown>;
   timestampMs: number;
+  /** User ID from auth context (when available) - AUD-001 */
+  userId?: string;
+  /** ISO 8601 timestamp - AUD-001 */
+  timestamp?: string;
 };
 
 export interface DatafnStorageAdapter {
@@ -25,12 +46,27 @@ export interface DatafnStorageAdapter {
     record: Record<string, unknown>,
   ): Promise<void>;
   deleteRecord(resource: string, id: string): Promise<void>;
+  
+  /** 
+   * Atomic read-modify-write merge. MUST execute in a single transaction.
+   * If record doesn't exist, upserts with partial as the full record.
+   * Uses one-level-deep merge for object-type fields.
+   */
+  mergeRecord(
+    resource: string, 
+    id: string, 
+    partial: Record<string, unknown>
+  ): Promise<Record<string, unknown>>;
 
   // Join rows (many-many)
   listJoinRows(relationKey: string): Promise<Array<Record<string, unknown>>>;
   getJoinRows(
     relationKey: string,
     fromId: string,
+  ): Promise<Array<Record<string, unknown>>>;
+  getJoinRowsInverse(
+    relationKey: string,
+    toId: string,
   ): Promise<Array<Record<string, unknown>>>;
   upsertJoinRow(
     relationKey: string,
@@ -64,4 +100,22 @@ export interface DatafnStorageAdapter {
   ): Promise<DatafnChangelogEntry>;
   changelogList(options?: { limit?: number }): Promise<DatafnChangelogEntry[]>;
   changelogAck(options: { throughSeq: number }): Promise<void>;
+
+  // Counts for reconcile (SYNC-007)
+  countRecords(resource: string): Promise<number>;
+  countJoinRows(relationKey: string): Promise<number>;
+
+  // Lifecycle (CLN-001, CLN-002)
+  /** Close all connections and release resources. */
+  close(): Promise<void>;
+  /** Delete all data across all stores. */
+  clearAll(): Promise<void>;
+
+  // Health check (HEAL-001)
+  /** 
+   * Health check: verify core stores exist and are accessible.
+   * Returns { ok: true, issues: [] } when healthy.
+   * Returns { ok: false, issues: [...] } when corrupted or inaccessible.
+   */
+  healthCheck(): Promise<{ ok: boolean; issues: string[] }>;
 }

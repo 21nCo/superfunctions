@@ -35,7 +35,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
 
   async function checkRateLimit(key: string): Promise<void> {
     if (rateLimiter) {
-      const result = await rateLimiter.check(key);
+      const result = await rateLimiter.check({ key });
       if (!result.allowed) {
         throw rateLimited(result.resetAt);
       }
@@ -95,13 +95,20 @@ export function createFileRoutes(ctx: FileRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
-        await checkRateLimit(`download:${principal.principalId}`);
+        await checkRateLimit(`download:${principal.tenantId || 'global'}:${principal.principalId}`);
 
-        const result = await service.getDownloadUrl(fileId, versionId, {
-          principalId: principal.principalId,
-          tenantId: principal.tenantId,
-          requestId,
-        });
+        // Use binding-checked download when versionId is specified
+        const result = versionId
+          ? await service.getDownloadUrlWithBinding(fileId, versionId, {
+              principalId: principal.principalId,
+              tenantId: principal.tenantId,
+              requestId,
+            })
+          : await service.getDownloadUrl(fileId, undefined, {
+              principalId: principal.principalId,
+              tenantId: principal.tenantId,
+              requestId,
+            });
 
         return successResponse({ url: result.url, headers: result.headers }, requestId);
       } catch (err) {
@@ -150,6 +157,55 @@ export function createFileRoutes(ctx: FileRouteContext) {
         throw err;
       }
     },
+
+    async getVersion(request: Request, fileId: string, versionId: string): Promise<Response> {
+      const requestId = getRequestId(request);
+      try {
+        const principal = await requireAuth(request);
+        const version = await service.getVersion(fileId, versionId, {
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+          requestId,
+        });
+
+        return successResponse({
+          versionId: version.versionId,
+          fileId: version.fileId,
+          size: version.size,
+          mimeType: version.mimeType,
+          createdAt: version.createdAt,
+        }, requestId);
+      } catch (err) {
+        if (err instanceof FileFnError) return errorResponse(err, requestId);
+        throw err;
+      }
+    },
+
+    async proxyDownloadFile(request: Request, fileId: string, versionId?: string): Promise<Response> {
+        const requestId = getRequestId(request);
+        try {
+            const principal = await requireAuth(request);
+            await checkRateLimit(`download:${principal.tenantId || 'global'}:${principal.principalId}`);
+
+            const result = await service.getDownloadStream(fileId, versionId, {
+                principalId: principal.principalId,
+                tenantId: principal.tenantId,
+                requestId
+            });
+
+            return new Response(result.stream, {
+                status: 200,
+                headers: {
+                    'Content-Type': result.contentType,
+                    'Content-Length': result.size.toString(),
+                    // 'Content-Disposition': `attachment; filename="file"` // Optional
+                }
+            });
+        } catch (err) {
+            if (err instanceof FileFnError) return errorResponse(err, requestId);
+            throw err;
+        }
+    }
   };
 }
 

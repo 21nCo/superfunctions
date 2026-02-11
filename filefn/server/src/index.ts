@@ -1,7 +1,7 @@
 import type { Adapter } from '@superfunctions/db';
 import type { StorageAdapter } from '@superfunctions/storage';
 import type { FileProvider } from '@superfunctions/files';
-import type { RateLimiter } from '@superfunctions/middleware';
+import { type RateLimiter, createRateLimiter } from '@superfunctions/middleware';
 import { getSchema } from './schema.js';
 import { createPolicyRegistry, type Policy } from './policies.js';
 import { createEventEmitter, type FileFnEventEmitter } from './events.js';
@@ -15,8 +15,11 @@ import { createSharesService } from './shares/service.js';
 import { createSharesRoutes } from './shares/routes.js';
 import { createProcessingService, type Processor, type FlowFnProvider } from './processing/service.js';
 import { createProcessingRoutes } from './processing/routes.js';
+import { createPolicyRoutes } from './policies.routes.js';
+import { createQuotaRoutes } from './quota.routes.js';
 import { createRouter, type FileFnRouter } from './router.js';
 import type { AuthConfig } from './auth.js';
+import type { Logger } from './observability/logger.js';
 
 export interface FileFnConfig {
   db: Adapter;
@@ -25,6 +28,15 @@ export interface FileFnConfig {
   auth?: AuthConfig;
   quota?: QuotaProvider;
   rateLimiter?: RateLimiter;
+  rateLimit?: {
+    persistence?: any;
+    algorithm?: 'fixed-window' | 'sliding-window';
+    limits?: {
+      windowSeconds?: number;
+      maxRequests?: number;
+    };
+  };
+  logger?: Logger;
   authorizer?: Authorizer;
   namespace?: string;
   defaultChunkSizeBytes?: number;
@@ -52,6 +64,8 @@ export function createFileFn(config: FileFnConfig): FileFn {
     auth = {},
     quota,
     rateLimiter,
+    rateLimit,
+    logger,
     authorizer,
     namespace = 'filefn',
     defaultChunkSizeBytes,
@@ -63,12 +77,36 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const policyRegistry = createPolicyRegistry(initialPolicies);
   const events = createEventEmitter();
 
+  let finalRateLimiter = rateLimiter;
+  if (!finalRateLimiter && rateLimit) {
+     finalRateLimiter = createRateLimiter({
+        windowMs: (rateLimit.limits?.windowSeconds || 60) * 1000,
+        maxRequests: rateLimit.limits?.maxRequests || 100,
+        persistence: rateLimit.persistence,
+        algorithm: rateLimit.algorithm
+     });
+  }
+
+  // Create file service first so we can use it for authorization checks
+  const fileService = createFileService({
+    db,
+    storage,
+    events,
+    logger,
+    quota,
+    authorizer,
+    namespace,
+    signedUrlTtlSeconds,
+  });
+
   const uploadService = createUploadSessionService({
     db,
     storage,
     policies: policyRegistry,
     events,
+    logger,
     quota,
+    fileWriteChecker: fileService,
     namespace,
     defaultChunkSizeBytes,
     uploadSessionTtlSeconds,
@@ -78,23 +116,13 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const uploadRoutes = createUploadSessionRoutes({
     service: uploadService,
     auth,
-    rateLimiter,
-  });
-
-  const fileService = createFileService({
-    db,
-    storage,
-    events,
-    quota,
-    authorizer,
-    namespace,
-    signedUrlTtlSeconds,
+    rateLimiter: finalRateLimiter,
   });
 
   const fileRoutes = createFileRoutes({
     service: fileService,
     auth,
-    rateLimiter,
+    rateLimiter: finalRateLimiter,
   });
 
   const grantsService = createGrantsService({
@@ -134,7 +162,17 @@ export function createFileFn(config: FileFnConfig): FileFn {
     auth,
   });
 
-  const router = createRouter({ uploadRoutes, fileRoutes, grantsRoutes, sharesRoutes, processingRoutes });
+  const policyRoutes = createPolicyRoutes({
+    policyRegistry,
+    auth,
+  });
+
+  const quotaRoutes = createQuotaRoutes({
+    quota,
+    auth,
+  });
+
+  const router = createRouter({ uploadRoutes, fileRoutes, grantsRoutes, sharesRoutes, processingRoutes, policyRoutes, quotaRoutes });
 
   return {
     router,

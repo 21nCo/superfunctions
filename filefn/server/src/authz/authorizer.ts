@@ -6,11 +6,24 @@ export type AuthorizerStrategy = 'first-allow' | 'all-must-allow';
 
 export interface ComposeAuthorizersOptions {
   strategy: AuthorizerStrategy;
-  authorizers: Authorizer[];
 }
 
-export function composeAuthorizers(options: ComposeAuthorizersOptions): Authorizer {
-  const { strategy, authorizers } = options;
+/**
+ * Compose multiple authorizers into a single authorizer.
+ * 
+ * @param authorizers - Array of authorizers to compose
+ * @param options - Composition options including strategy
+ * @returns A composed authorizer
+ * 
+ * Strategies:
+ * - 'first-allow': Allow if ANY authorizer allows (OR logic)
+ * - 'all-must-allow': Allow only if ALL authorizers allow (AND logic)
+ */
+export function composeAuthorizers(
+  authorizers: Authorizer[],
+  options?: ComposeAuthorizersOptions
+): Authorizer {
+  const strategy = options?.strategy ?? 'first-allow';
 
   if (authorizers.length === 0) {
     return {

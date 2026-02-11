@@ -5,7 +5,46 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createDatafnClient } from "../src/client.js";
+import { DefaultHttpTransport } from "../src/transport/http.js";
 import type { DatafnEvent } from "@datafn/core";
+
+// Helper to mock all transport methods with success by default
+const mockTransport = () => {
+  vi.spyOn(DefaultHttpTransport.prototype, "query").mockResolvedValue({
+    ok: true,
+    result: { data: [], nextCursor: null },
+  });
+  vi.spyOn(DefaultHttpTransport.prototype, "mutation").mockResolvedValue({
+    ok: true,
+    result: {
+      ok: true,
+      mutationId: "m-1",
+      affectedIds: [],
+      errors: [],
+      deduped: false,
+    },
+  });
+  vi.spyOn(DefaultHttpTransport.prototype, "transact").mockResolvedValue({
+    ok: true,
+    result: { ok: true, results: [] },
+  });
+  vi.spyOn(DefaultHttpTransport.prototype, "seed").mockResolvedValue({
+    ok: true,
+    result: { ok: true },
+  });
+  vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+    ok: true,
+    result: { ok: true },
+  });
+  vi.spyOn(DefaultHttpTransport.prototype, "pull").mockResolvedValue({
+    ok: true,
+    result: { ok: true },
+  });
+  vi.spyOn(DefaultHttpTransport.prototype, "push").mockResolvedValue({
+    ok: true,
+    result: { ok: true },
+  });
+};
 
 describe("@datafn/client events", () => {
   let fakeTime: number;
@@ -14,6 +53,8 @@ describe("@datafn/client events", () => {
   beforeEach(() => {
     fakeTime = 1000000000000; // Fixed timestamp for testing
     events = [];
+    vi.restoreAllMocks();
+    mockTransport();
   });
 
   afterEach(() => {
@@ -21,19 +62,22 @@ describe("@datafn/client events", () => {
   });
 
   it("TV-EVENTS-001: Event emission and filtering", async () => {
-    const remote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+    // Override mutation mock for this test
+    vi.spyOn(DefaultHttpTransport.prototype, "mutation").mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        mutationId: "m-1",
+        affectedIds: ["goal:g1"],
+        errors: [],
+        deduped: false,
+      },
+    });
 
     const client = createDatafnClient({
       schema: { version: 1, resources: [] },
-      remote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => fakeTime,
     });
 
@@ -43,7 +87,7 @@ describe("@datafn/client events", () => {
       (event) => {
         goalEvents.push(event);
       },
-      { resource: "goal" }
+      { resource: "goal" },
     );
 
     // Subscribe to all events
@@ -74,30 +118,24 @@ describe("@datafn/client events", () => {
   });
 
   it("TV-EVENTS-002: Mutation events with timestamps", async () => {
-    const remote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async (m: any) => {
-        if (m.id === "fail") {
-          return {
-            ok: true,
-            result: {
-              ok: false,
-              errors: [{ code: "CONFLICT", message: "Conflict" }],
-            },
-          };
-        }
-        return { ok: true, result: { ok: true } };
+    const mutationSpy = vi.spyOn(DefaultHttpTransport.prototype, "mutation");
+
+    // Success response
+    mutationSpy.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ok: true,
+        mutationId: "m-success",
+        affectedIds: ["task:t1"],
+        errors: [],
+        deduped: false,
       },
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+    });
 
     const client = createDatafnClient({
       schema: { resources: [] },
-      remote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => fakeTime,
     });
 
@@ -126,6 +164,18 @@ describe("@datafn/client events", () => {
       timestampMs: fakeTime,
     });
 
+    // Failed mutation response
+    mutationSpy.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ok: false,
+        mutationId: "m-fail",
+        affectedIds: [],
+        errors: [{ code: "CONFLICT", message: "Conflict", path: "$" }],
+        deduped: false,
+      },
+    });
+
     // Failed mutation
     await client.mutate({
       resource: "task",
@@ -149,19 +199,22 @@ describe("@datafn/client events", () => {
   });
 
   it("Event filtering by type", async () => {
-    const remote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+    // Override mutation mock
+    vi.spyOn(DefaultHttpTransport.prototype, "mutation").mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        mutationId: "m-1",
+        affectedIds: ["goal:g1"],
+        errors: [],
+        deduped: false,
+      },
+    });
 
     const client = createDatafnClient({
       schema: { version: 1, resources: [] },
-      remote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => fakeTime,
     });
 
@@ -170,7 +223,7 @@ describe("@datafn/client events", () => {
       (event) => {
         appliedEvents.push(event);
       },
-      { type: "mutation_applied" }
+      { type: "mutation_applied" },
     );
 
     // This should match
@@ -188,19 +241,23 @@ describe("@datafn/client events", () => {
   });
 
   it("Unsubscribe stops receiving events", async () => {
-    const remote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+    const mutationSpy = vi.spyOn(DefaultHttpTransport.prototype, "mutation");
+
+    mutationSpy.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        mutationId: "m-1",
+        affectedIds: [],
+        errors: [],
+        deduped: false,
+      },
+    });
 
     const client = createDatafnClient({
       schema: { version: 1, resources: [] },
-      remote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => fakeTime,
     });
 

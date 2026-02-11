@@ -9,6 +9,7 @@ export type DatafnErrorCode =
   | "DFQL_UNKNOWN_FIELD"
   | "DFQL_UNKNOWN_RELATION"
   | "DFQL_UNSUPPORTED"
+  | "DFQL_ABORTED"
   | "LIMIT_EXCEEDED"
   | "FORBIDDEN"
   | "NOT_FOUND"

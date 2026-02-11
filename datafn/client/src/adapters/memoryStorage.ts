@@ -63,6 +63,8 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     if (resources) {
       this.validResources = new Set(resources);
     }
+    // Always create KV store (KV-001)
+    this.records.set("kv", new Map());
   }
 
   private validateTableName(table: string) {
@@ -116,6 +118,53 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     }
   }
 
+  /**
+   * Atomic read-modify-write merge using one-level-deep merge.
+   */
+  async mergeRecord(
+    resource: string,
+    id: string,
+    partial: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    this.validateTableName(resource);
+    const existing = await this.getRecord(resource, id);
+    
+    // One-level deep merge
+    const merged = existing
+      ? this.deepMergeOneLevel(existing, partial)
+      : { ...partial, id };
+    
+    merged.id = id;
+    await this.upsertRecord(resource, merged);
+    return merged;
+  }
+
+  private deepMergeOneLevel(
+    target: Record<string, unknown>,
+    source: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const result = { ...target };
+    for (const key of Object.keys(source)) {
+      const sv = source[key];
+      const tv = target[key];
+      if (
+        sv !== null &&
+        typeof sv === "object" &&
+        !Array.isArray(sv) &&
+        tv !== null &&
+        typeof tv === "object" &&
+        !Array.isArray(tv)
+      ) {
+        // One-level deep merge for objects
+        result[key] = { ...tv, ...sv };
+      } else {
+        // Overwrite for everything else
+        result[key] = sv;
+      }
+    }
+    return result;
+  }
+
   // --- Join Rows ---
 
   async listJoinRows(
@@ -149,6 +198,23 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
       .sort((a, b) => {
         const idA = (a.to as string) || "";
         const idB = (b.to as string) || "";
+        return idA < idB ? -1 : idA > idB ? 1 : 0;
+      });
+  }
+
+  async getJoinRowsInverse(
+    relationKey: string,
+    toId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const table = this.joinRows.get(relationKey);
+    if (!table) return [];
+
+    // Filter by toId and sort by from
+    return Array.from(table.values())
+      .filter((row) => row.to === toId)
+      .sort((a, b) => {
+        const idA = (a.from as string) || "";
+        const idB = (b.from as string) || "";
         return idA < idB ? -1 : idA > idB ? 1 : 0;
       });
   }
@@ -278,13 +344,41 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     this.changelog = this.changelog.filter((e) => e.seq > options.throughSeq);
   }
 
-  // Test helper to clear state
-  clear() {
+  // --- Counts for reconcile (SYNC-007) ---
+
+  async countRecords(resource: string): Promise<number> {
+    this.validateTableName(resource);
+    const table = this.records.get(resource);
+    return table ? table.size : 0;
+  }
+
+  async countJoinRows(relationKey: string): Promise<number> {
+    const table = this.joinRows.get(relationKey);
+    return table ? table.size : 0;
+  }
+
+  // --- Lifecycle (CLN-001, CLN-002) ---
+
+  async close(): Promise<void> {
+    // Memory adapter has no connections to close
+    return Promise.resolve();
+  }
+
+  async clearAll(): Promise<void> {
     this.records.clear();
     this.joinRows.clear();
     this.cursors.clear();
     this.hydration.clear();
     this.changelog = [];
     this.changelogSeq = 1;
+    // Always recreate KV store (KV-001)
+    this.records.set("kv", new Map());
+  }
+
+  // --- Health Check (HEAL-001) ---
+
+  async healthCheck(): Promise<{ ok: boolean; issues: string[] }> {
+    // Memory adapter is always healthy (no external dependencies)
+    return { ok: true, issues: [] };
   }
 }

@@ -4,17 +4,49 @@
 
 import type { DatafnSchema } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
+import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
 
-export interface PullRequest {
+// Legacy global-cursor pull (TV-SYNC-004)
+export interface PullRequestLegacy {
   clientId: string;
-  cursors: Record<string, string>; // Table name -> cursor (serverSeq as string)
+  cursor: string;
+  limit?: number;
 }
 
-export interface PullResult {
+export interface PullResultLegacy {
+  ok: boolean;
+  changes: Array<{
+    serverSeq: number;
+    resource: string;
+    id: string;
+    op: "upsert" | "delete";
+    record: Record<string, unknown> | null;
+  }>;
+  nextCursor: string | null;
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
+}
+
+// Canonical per-table cursor pull (TV-SYNC-003)
+export interface PullRequestCanonical {
+  clientId: string;
+  cursors: Record<string, string>;
+  limit?: number;
+  includeJoins?: boolean;
+}
+
+export interface PullResultCanonical {
   ok: boolean;
   records: Record<string, Array<Record<string, unknown>>>;
   deleted: Record<string, string[]>;
+  joins?: Record<string, {
+    upsert: Array<Record<string, unknown>>;
+    delete: Array<{ from: string; to: string }>;
+  }>;
   cursors: Record<string, string>;
   error?: {
     code: string;
@@ -22,6 +54,10 @@ export interface PullResult {
     details?: Record<string, unknown>;
   };
 }
+
+// Union type for request detection
+export type PullRequest = PullRequestLegacy | PullRequestCanonical;
+export type PullResult = PullResultLegacy | PullResultCanonical;
 
 /**
  * Validate cursor is a base-10 integer string
@@ -31,15 +67,126 @@ function validateCursor(cursor: string): boolean {
 }
 
 /**
+ * Detect request type: legacy (has `cursor` string) or canonical (has `cursors` object)
+ */
+function isLegacyPull(request: PullRequest): request is PullRequestLegacy {
+  return "cursor" in request && typeof (request as any).cursor === "string";
+}
+
+/**
  * Execute pull operation - return changes since cursor
+ * Supports both legacy global-cursor and canonical per-table cursor protocols
  */
 export async function executePull(
   request: PullRequest,
   schema: DatafnSchema,
-  db: Adapter
+  db: Adapter,
+  namespace: string,
+  sequenceStore?: SequenceStore,
 ): Promise<PullResult> {
-  // Validate clientId
+  // Validate clientId (common to both protocols)
   if (!request.clientId || typeof request.clientId !== "string") {
+    return {
+      ok: false,
+      changes: [],
+      nextCursor: null,
+      error: {
+        code: "DFQL_INVALID",
+        message: "Invalid DFQL: clientId must be string",
+        details: { path: "clientId" },
+      },
+    } as PullResultLegacy;
+  }
+
+  // Route to appropriate implementation
+  if (isLegacyPull(request)) {
+    return executePullLegacy(request, schema, db, namespace, sequenceStore);
+  } else {
+    return executePullCanonical(request as PullRequestCanonical, schema, db, namespace, sequenceStore);
+  }
+}
+
+/**
+ * Execute legacy global-cursor pull (TV-SYNC-004)
+ */
+async function executePullLegacy(
+  request: PullRequestLegacy,
+  schema: DatafnSchema,
+  db: Adapter,
+  namespace: string,
+  sequenceStore?: SequenceStore,
+): Promise<PullResultLegacy> {
+  // Validate cursor
+  if (typeof request.cursor !== "string" || !validateCursor(request.cursor)) {
+    return {
+      ok: false,
+      changes: [],
+      nextCursor: null,
+      error: {
+        code: "DFQL_INVALID",
+        message: "Invalid DFQL: cursor must be an integer string",
+        details: { path: "cursor" },
+      },
+    };
+  }
+
+  const limit = request.limit ?? 100;
+  if (!Number.isInteger(limit) || limit <= 0) {
+    return {
+      ok: false,
+      changes: [],
+      nextCursor: null,
+      error: {
+        code: "DFQL_INVALID",
+        message: "Invalid DFQL: limit must be a positive integer",
+        details: { path: "limit" },
+      },
+    };
+  }
+
+  // Create change tracking service
+  const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+  const sinceSeq = parseInt(request.cursor, 10);
+
+  // Get global changes
+  const changes = await changeTracking.getGlobalChanges({
+    sinceSeq,
+    limit,
+  });
+
+  const mappedChanges = changes.map((c) => ({
+    serverSeq: c.serverSeq,
+    resource: c.resource,
+    id: c.id,
+    op: c.op,
+    record: c.record,
+  }));
+
+  // Determine next cursor
+  let nextCursor: string | null = null;
+  if (mappedChanges.length === limit) {
+    nextCursor = String(mappedChanges[mappedChanges.length - 1].serverSeq);
+  }
+
+  return {
+    ok: true,
+    changes: mappedChanges,
+    nextCursor,
+  };
+}
+
+/**
+ * Execute canonical per-table cursor pull (TV-SYNC-003)
+ */
+async function executePullCanonical(
+  request: PullRequestCanonical,
+  schema: DatafnSchema,
+  db: Adapter,
+  namespace: string,
+  sequenceStore?: SequenceStore,
+): Promise<PullResultCanonical> {
+  // Validate cursors object
+  if (!request.cursors || typeof request.cursors !== "object") {
     return {
       ok: false,
       records: {},
@@ -47,15 +194,15 @@ export async function executePull(
       cursors: {},
       error: {
         code: "DFQL_INVALID",
-        message: "Invalid DFQL: clientId must be string",
-        details: { path: "clientId" },
+        message: "Invalid DFQL: cursors must be an object",
+        details: { path: "cursors" },
       },
     };
   }
 
-  // Validate cursors
-  for (const [tableName, cursor] of Object.entries(request.cursors)) {
-    if (!validateCursor(cursor)) {
+  // Validate each cursor is a valid integer string
+  for (const [resource, cursor] of Object.entries(request.cursors)) {
+    if (typeof cursor !== "string" || !validateCursor(cursor)) {
       return {
         ok: false,
         records: {},
@@ -64,71 +211,115 @@ export async function executePull(
         error: {
           code: "DFQL_INVALID",
           message: "Invalid DFQL: cursor must be an integer string",
-          details: { path: `cursors.${tableName}` },
+          details: { path: `cursors.${resource}` },
         },
       };
     }
   }
 
+  const limit = request.limit ?? 200;
+  if (!Number.isInteger(limit) || limit <= 0) {
+    return {
+      ok: false,
+      records: {},
+      deleted: {},
+      cursors: {},
+      error: {
+        code: "DFQL_INVALID",
+        message: "Invalid DFQL: limit must be a positive integer",
+        details: { path: "limit" },
+      },
+    };
+  }
+
+  const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
+  
+  // Initialize result structures
   const records: Record<string, Array<Record<string, unknown>>> = {};
   const deleted: Record<string, string[]> = {};
-  const newCursors: Record<string, string> = {};
+  const joins: Record<string, { upsert: Array<Record<string, unknown>>; delete: Array<{ from: string; to: string }> }> = {};
+  const cursors: Record<string, string> = {};
 
-  // Create change tracking service
-  const changeTracking = new ChangeTrackingService(db);
-
-  // For each table in request
-  for (const [tableName, cursorStr] of Object.entries(request.cursors)) {
-    const resource = schema.resources.find((r) => r.name === tableName);
-
-    if (!resource) {
-      return {
-        ok: false,
-        records: {},
-        deleted: {},
-        cursors: {},
-        error: {
-          code: "DFQL_UNKNOWN_RESOURCE",
-          message: `Unknown resource: ${tableName}`,
-          details: { path: "cursors" },
-        },
-      };
-    }
-
-    const cursorSeq = parseInt(cursorStr, 10);
-
-    // Get changes since cursor
-    const changes = await changeTracking.getChangesSince({
-      resource: tableName,
-      sinceSeq: cursorSeq,
-    });
-
-    // Separate into records (upserts) and deleted
-    const upserts: Array<Record<string, unknown>> = [];
-    const deletedIds: string[] = [];
-
-    for (const change of changes) {
-      if (change.op === "upsert" && change.record) {
-        upserts.push(change.record);
-      } else if (change.op === "delete") {
-        deletedIds.push(change.id);
-      }
-    }
-
-    records[tableName] = upserts;
-    deleted[tableName] = deletedIds;
-
-    // Get latest serverSeq for new cursor
-    const latestSeq = await changeTracking.getLatestServerSeq({
-      resource: tableName,
-    });
-    newCursors[tableName] = String(latestSeq);
+  // Initialize empty arrays for all requested resources
+  for (const resource of Object.keys(request.cursors)) {
+    records[resource] = [];
+    deleted[resource] = [];
+    cursors[resource] = request.cursors[resource]; // Start with original cursor
   }
 
-  return {
+  // Fetch changes per resource
+  const allChanges: Array<{ resource: string; change: any }> = [];
+  
+  for (const [resource, cursor] of Object.entries(request.cursors)) {
+    const sinceSeq = parseInt(cursor, 10);
+    const resourceChanges = await changeTracking.getChangesSince({
+      resource,
+      sinceSeq,
+    });
+
+    for (const change of resourceChanges) {
+      allChanges.push({ resource, change });
+    }
+  }
+
+  // Sort all changes by serverSeq (deterministic ordering)
+  allChanges.sort((a, b) => a.change.serverSeq - b.change.serverSeq);
+
+  // Apply limit across all resources
+  const limitedChanges = allChanges.slice(0, limit);
+
+  // Track latest cursor per resource
+  const latestCursorPerResource: Record<string, number> = {};
+
+  // Process changes into result structure
+  for (const { resource, change } of limitedChanges) {
+    // Update latest cursor for this resource
+    latestCursorPerResource[resource] = Math.max(
+      latestCursorPerResource[resource] || 0,
+      change.serverSeq
+    );
+
+    // Check if this is a join store change (starts with "join_")
+    if (resource.startsWith("join_")) {
+      // This is a join row change (TV-SYNC-006, TV-REL-002)
+      if (!joins[resource]) {
+        joins[resource] = { upsert: [], delete: [] };
+      }
+
+      if (change.op === "upsert" && change.record) {
+        joins[resource].upsert.push(change.record);
+      } else if (change.op === "delete") {
+        // For join deletes, extract from/to from id or record
+        const from = change.record?.from || change.id.split(":")[0];
+        const to = change.record?.to || change.id.split(":")[1];
+        joins[resource].delete.push({ from, to });
+      }
+    } else {
+      // Regular resource change
+      if (change.op === "upsert" && change.record) {
+        records[resource].push(change.record);
+      } else if (change.op === "delete") {
+        deleted[resource].push(change.id);
+      }
+    }
+  }
+
+  // Update cursors with latest values
+  for (const [resource, latestSeq] of Object.entries(latestCursorPerResource)) {
+    cursors[resource] = String(latestSeq);
+  }
+
+  const result: PullResultCanonical = {
     ok: true,
     records,
     deleted,
-    cursors: newCursors,
+    cursors,
   };
+
+  // Include joins if requested
+  if (request.includeJoins && Object.keys(joins).length > 0) {
+    result.joins = joins;
+  }
+
+  return result;
 }

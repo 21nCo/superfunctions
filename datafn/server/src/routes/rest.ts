@@ -6,7 +6,7 @@
 
 import type { DatafnSchema } from "@datafn/core";
 import { errorResponse } from "../http/errors.js";
-import { jsonResponse, parseJsonBody } from "../http/json.js";
+import { jsonResponse, getBodyFromContext } from "../http/json.js";
 import type { Route } from "@superfunctions/http";
 
 // Use Record<string, any> or generic for execute callbacks
@@ -95,14 +95,18 @@ export function createRestRoutes<TContext>(
     {
       method: "POST",
       path: "/datafn/resources/:resource",
-      handler: async (req) => {
+      handler: async (req, ctx?: { parsedBody?: unknown }) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
         const resource = pathParts[3];
 
         try {
           validateResource(resource);
-          const body = (await parseJsonBody(req)) as any;
+          const parseResult = await getBodyFromContext(req, ctx);
+          if (!parseResult.ok) {
+            return errorResponse(parseResult.error, 400);
+          }
+          const body = parseResult.data as any;
 
           // REST-002: Require deterministic clientId and mutationId
           // Check query params first, then body
@@ -158,7 +162,7 @@ export function createRestRoutes<TContext>(
     {
       method: "PATCH",
       path: "/datafn/resources/:resource/:id",
-      handler: async (req) => {
+      handler: async (req, ctx?: { parsedBody?: unknown }) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
         const resource = pathParts[3];
@@ -166,7 +170,11 @@ export function createRestRoutes<TContext>(
 
         try {
           validateResource(resource);
-          const body = (await parseJsonBody(req)) as any;
+          const parseResult = await getBodyFromContext(req, ctx);
+          if (!parseResult.ok) {
+            return errorResponse(parseResult.error, 400);
+          }
+          const body = parseResult.data as any;
 
           // REST-002: Require deterministic clientId and mutationId
           const clientId = url.searchParams.get("clientId") || body.clientId;

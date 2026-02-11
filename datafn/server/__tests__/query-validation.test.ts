@@ -332,7 +332,7 @@ describe("authorization", () => {
     const body = await res.json();
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("FORBIDDEN");
-    expect(body.error.message).toBe("Forbidden");
+    expect(body.error.message).toBe("Authorization denied");
   });
 
   it("allows query when authorization approves", async () => {

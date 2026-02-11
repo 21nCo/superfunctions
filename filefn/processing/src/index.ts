@@ -9,6 +9,17 @@ export type {
   ThumbnailConfig,
   ThumbnailSize,
   CompressionConfig,
+  OCRConfig,
+  ImageTransformOperation,
+  ImageTransformConfig,
+  ResizeOptions,
+  CropOptions,
+  RotateOptions,
+  VideoConfig,
+  VideoTranscodeOptions,
+  VideoPosterOptions,
+  AudioConfig,
+  AudioTranscodeOptions,
 } from './types.js';
 
 export {
@@ -20,6 +31,26 @@ export {
   createCompressionProcessor,
   COMPRESSION_SUPPORTED_MIME_TYPES,
 } from './processors/compression.js';
+
+export {
+  createOCRProcessor,
+  OCR_SUPPORTED_MIME_TYPES,
+} from './processors/ocr.js';
+
+export {
+  createImageTransformProcessor,
+  IMAGE_TRANSFORM_SUPPORTED_MIME_TYPES,
+} from './processors/image-transform.js';
+
+export {
+  createVideoProcessor,
+  VIDEO_SUPPORTED_MIME_TYPES,
+} from './processors/video.js';
+
+export {
+  createAudioProcessor,
+  AUDIO_SUPPORTED_MIME_TYPES,
+} from './processors/audio.js';
 
 export interface ProcessingPipeline {
   name: string;

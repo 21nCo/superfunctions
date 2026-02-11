@@ -375,13 +375,43 @@ export interface AdapterFactoryOptions {
 
 export interface KVStoreAdapter {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string, ttlMs?: number): Promise<void>;
+  set(input: { key: string; value: string; ttlSeconds?: number }): Promise<void>;
   delete(key: string): Promise<void>;
-  has?(key: string): Promise<boolean>;
-  expire?(key: string, ttlMs: number): Promise<void>;
-  ttl?(key: string): Promise<number | null>;
+  incr?(input: { key: string; by?: number; ttlSeconds?: number }): Promise<{ value: number }>;
 }
 
 export interface KVStoreAdapterFactory<TConfig = unknown> {
   (config: TConfig): KVStoreAdapter;
+}
+
+// ============================================================================
+// Redis Adapter (for atomic operations, caching, rate limiting)
+// ============================================================================
+
+/**
+ * Redis adapter interface supporting atomic operations.
+ * Compatible with Redis, Valkey, and other Redis-compatible implementations.
+ */
+export interface RedisAdapter {
+  /** Atomic increment operation - returns new value */
+  incr(key: string, by?: number): Promise<number>;
+
+  /** Get current value */
+  get(key: string): Promise<string | null>;
+
+  /** Set value with optional TTL */
+  set(key: string, value: string, ttlSeconds?: number): Promise<void>;
+
+  /** Delete key */
+  del(key: string): Promise<void>;
+
+  /** Check if adapter is healthy */
+  isHealthy(): Promise<boolean>;
+
+  /** Close connection */
+  close(): Promise<void>;
+}
+
+export interface RedisAdapterFactory<TConfig = unknown> {
+  (config: TConfig): RedisAdapter;
 }

@@ -49,7 +49,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
 
   async function checkRateLimit(key: string, _requestId?: string): Promise<void> {
     if (rateLimiter) {
-      const result = await rateLimiter.check(key);
+      const result = await rateLimiter.check({ key });
       if (!result.allowed) {
         throw rateLimited(result.resetAt);
       }
@@ -61,7 +61,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
-        await checkRateLimit(`upload-init:${principal.principalId}`, requestId);
+        await checkRateLimit(`upload-init:${principal.tenantId || 'global'}:${principal.principalId}`, requestId);
 
         const body = await parseJsonBody<{
           policy: string;
@@ -108,7 +108,7 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
-        await checkRateLimit(`upload-sign:${principal.principalId}`, requestId);
+        await checkRateLimit(`upload-sign:${principal.tenantId || 'global'}:${principal.principalId}`, requestId);
 
         const body = await parseJsonBody<{ contentLength: number; checksumSha256Base64?: string }>(request);
         const result = await service.signPart(uploadSessionId, partNumber, body.contentLength, {
@@ -117,6 +117,33 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
           requestId,
         });
         return successResponse(result, requestId);
+      } catch (err) {
+        if (err instanceof FileFnError) {
+          return errorResponse(err, requestId);
+        }
+        throw err;
+      }
+    },
+
+    async uploadPartBytes(request: Request, uploadSessionId: string, partNumber: number): Promise<Response> {
+      const requestId = getRequestId(request);
+      try {
+        const principal = await requireAuth(request);
+        // Rate limit check for data plane might differ, but using sign limit for now or skipping
+        // await checkRateLimit(`upload-part:${principal.principalId}`, requestId);
+
+        const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
+        if (!request.body) {
+            throw new Error('Missing request body');
+        }
+
+        const result = await service.uploadPartBytes(uploadSessionId, partNumber, request.body, contentLength, {
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+          requestId,
+        });
+        
+        return successResponse({ ...result, recorded: true }, requestId);
       } catch (err) {
         if (err instanceof FileFnError) {
           return errorResponse(err, requestId);

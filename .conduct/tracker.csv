@@ -1,0 +1,2 @@
+id, desc, status, completedAt, completionDoc
+2026-01-29-audit-fix-k4j2q7b9-spec,Add Datafn clone up local-to-cloud upload to prevent data loss on signup,0,,

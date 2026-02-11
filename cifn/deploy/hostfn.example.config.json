@@ -1,0 +1,106 @@
+{
+  "$schema": "https://hostfn.dev/schema/deploy-config.json",
+  "name": "cifn",
+  "description": "CiFn CI/CD control plane and runner deployment",
+  "environments": {
+    "production": {
+      "targets": [
+        {
+          "name": "cifn-control-plane",
+          "type": "node",
+          "entry": "cifn/typescript/control-plane/dist/server.js",
+          "port": 3100,
+          "env": {
+            "PORT": "3100",
+            "CIFN_API_KEYS": { "$secfn": "cifn.api_keys" },
+            "CIFN_RUNNER_REGISTRATION_TOKEN": { "$secfn": "cifn.runner.registration_token" },
+            "CIFN_WEBHOOK_SECRET": { "$secfn": "cifn.webhook.github" },
+            "CIFN_QUEUE_ADAPTER": "real",
+            "CIFN_ARTIFACTS_ADAPTER": "real",
+            "CIFN_SECRETS_ADAPTER": "real",
+            "CIFN_LOGS_ADAPTER": "real",
+            "FLOWFN_BASE_URL": { "$secfn": "cifn.flowfn_base_url" },
+            "FLOWFN_API_KEY": { "$secfn": "cifn.flowfn_api_key" },
+            "FILEFN_BASE_URL": { "$secfn": "cifn.filefn_base_url" },
+            "FILEFN_API_KEY": { "$secfn": "cifn.filefn_api_key" },
+            "SECFN_BASE_URL": { "$secfn": "cifn.secfn_base_url" },
+            "SECFN_API_KEY": { "$secfn": "cifn.secfn_api_key" },
+            "LOGFN_BASE_URL": { "$secfn": "cifn.logfn_base_url" },
+            "LOGFN_API_KEY": { "$secfn": "cifn.logfn_api_key" }
+          },
+          "healthCheck": {
+            "path": "/health",
+            "interval": 30
+          }
+        },
+        {
+          "name": "cifn-runner",
+          "type": "node",
+          "entry": "cifn/typescript/runner/dist/server.js",
+          "env": {
+            "CIFN_CONTROL_PLANE_URL": "http://cifn-control-plane:3100",
+            "CIFN_RUNNER_ID": { "$secfn": "cifn.runner.id" },
+            "CIFN_RUNNER_SECRET": { "$secfn": "cifn.runner.secret" },
+            "CIFN_RUNNER_LABELS": "default",
+            "CIFN_POLL_INTERVAL_MS": "5000"
+          }
+        }
+      ]
+    },
+    "staging": {
+      "targets": [
+        {
+          "name": "cifn-control-plane",
+          "type": "node",
+          "entry": "cifn/typescript/control-plane/dist/server.js",
+          "port": 3100,
+          "env": {
+            "PORT": "3100",
+            "CIFN_API_KEYS": { "$secfn": "cifn.staging.api_keys" },
+            "CIFN_RUNNER_REGISTRATION_TOKEN": { "$secfn": "cifn.staging.runner.registration_token" },
+            "CIFN_QUEUE_ADAPTER": "memory",
+            "CIFN_ARTIFACTS_ADAPTER": "memory",
+            "CIFN_SECRETS_ADAPTER": "memory",
+            "CIFN_LOGS_ADAPTER": "memory"
+          },
+          "healthCheck": {
+            "path": "/health",
+            "interval": 30
+          }
+        },
+        {
+          "name": "cifn-runner",
+          "type": "node",
+          "entry": "cifn/typescript/runner/dist/server.js",
+          "env": {
+            "CIFN_CONTROL_PLANE_URL": "http://cifn-control-plane:3100",
+            "CIFN_RUNNER_ID": { "$secfn": "cifn.staging.runner.id" },
+            "CIFN_RUNNER_SECRET": { "$secfn": "cifn.staging.runner.secret" },
+            "CIFN_RUNNER_LABELS": "default"
+          }
+        }
+      ]
+    }
+  },
+  "secrets": {
+    "provider": "secfn",
+    "required": [
+      "cifn.api_keys",
+      "cifn.runner.registration_token",
+      "cifn.runner.id",
+      "cifn.runner.secret",
+      "cifn.flowfn_base_url",
+      "cifn.flowfn_api_key",
+      "cifn.filefn_base_url",
+      "cifn.secfn_base_url",
+      "cifn.secfn_api_key",
+      "cifn.logfn_base_url",
+      "cifn.logfn_api_key"
+    ],
+    "optional": [
+      "cifn.webhook.github",
+      "cifn.filefn_api_key",
+      "cifn.logfn_sink"
+    ]
+  }
+}

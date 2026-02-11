@@ -13,12 +13,29 @@ interface Subscription {
   filter?: EventFilter;
 }
 
+export interface EventBusOptions {
+  /**
+   * Error handler called when a subscriber throws an error.
+   * Default: logs to console.error
+   */
+  onError?: (error: unknown, event: DatafnEvent) => void;
+}
+
 /**
- * Simple in-process event bus
+ * Simple in-process event bus with fault-tolerant delivery
  */
 export class EventBus {
   private subscriptions: Subscription[] = [];
   private nextId = 1;
+  private onError: (error: unknown, event: DatafnEvent) => void;
+
+  constructor(options?: EventBusOptions) {
+    this.onError =
+      options?.onError ||
+      ((error: unknown, event: DatafnEvent) => {
+        console.error("[datafn] Event handler error:", error, "event:", event);
+      });
+  }
 
   /**
    * Subscribe to events with optional filtering
@@ -41,13 +58,25 @@ export class EventBus {
   }
 
   /**
-   * Emit an event to all matching subscribers
+   * Emit an event to all matching subscribers.
+   * Errors in handlers are isolated - a throwing handler will not prevent delivery to other handlers.
    */
   emit(event: DatafnEvent): void {
     for (const subscription of this.subscriptions) {
       if (matchesFilter(event, subscription.filter)) {
-        subscription.handler(event);
+        try {
+          subscription.handler(event);
+        } catch (error) {
+          this.onError(error, event);
+        }
       }
     }
+  }
+
+  /**
+   * Remove all subscriptions
+   */
+  clear(): void {
+    this.subscriptions = [];
   }
 }

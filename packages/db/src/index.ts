@@ -40,6 +40,8 @@ export type {
   AdapterImplementation,
   KVStoreAdapter,
   KVStoreAdapterFactory,
+  RedisAdapter,
+  RedisAdapterFactory,
 } from './adapter/types.js';
 
 // Capabilities

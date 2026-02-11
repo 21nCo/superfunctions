@@ -1,6 +1,7 @@
 import type { DatafnSchema } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore } from "../execution/idempotency.js";
+import type { SequenceStore } from "../execution/sync/sequence-store.js";
 import { getBodyFromContext } from "../http/json.js";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { executeTransaction } from "../execution/transact.js";
@@ -15,6 +16,8 @@ export function createTransactHandler(
   db?: Adapter, // Use Adapter instead of MemoryStore
   idempotencyStore?: IdempotencyStore,
   limits?: { maxTransactSteps?: number },
+  extractNamespace: (ctx: any) => Promise<string>,
+  sequenceStore?: SequenceStore,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -63,31 +66,33 @@ export function createTransactHandler(
         }
 
         // Determine step type (query or mutation)
+        // Support both wrapped format ({ mutation: {...} }) and bare format ({ resource, operation, ... })
+        let validationResult;
         if (step.mutation) {
-            // It's a mutation
-            const mutationResult = validateMutation(step.mutation, schemaIndex, `steps[${i}].mutation`);
-            if (!mutationResult.ok) {
-            return errorResponse({
-                code: mutationResult.error.code,
-                message: mutationResult.error.message,
-                details: { path: mutationResult.error.path },
-            });
-            }
+            // Wrapped mutation
+            validationResult = validateMutation(step.mutation, schemaIndex, `steps[${i}].mutation`);
         } else if (step.query) {
-            // It's a query
-            const queryResult = validateQuery(step.query, schemaIndex, `steps[${i}].query`);
-            if (!queryResult.ok) {
-            return errorResponse({
-                code: queryResult.error.code,
-                message: queryResult.error.message,
-                details: { path: queryResult.error.path },
-            });
-            }
+            // Wrapped query
+            validationResult = validateQuery(step.query, schemaIndex, `steps[${i}].query`);
+        } else if (step.operation) {
+            // Bare mutation (has operation field)
+            validationResult = validateMutation(step, schemaIndex, `steps[${i}]`);
+        } else if (step.resource) {
+            // Bare query (has resource but no operation)
+            validationResult = validateQuery(step, schemaIndex, `steps[${i}]`);
         } else {
             return errorResponse({
             code: "DFQL_INVALID",
-            message: "Invalid DFQL: step must have 'query' or 'mutation' key",
+            message: "Invalid DFQL: step must be a query or mutation",
             details: { path: `steps[${i}]` },
+            });
+        }
+
+        if (!validationResult.ok) {
+            return errorResponse({
+            code: validationResult.error.code,
+            message: validationResult.error.message,
+            details: { path: validationResult.error.path },
             });
         }
         }
@@ -101,12 +106,17 @@ export function createTransactHandler(
         });
         }
 
+        // Extract namespace from context
+        const namespace = await extractNamespace(ctx);
+
         const result = await executeTransaction(
         body,
         validatedSchema,
         db,
         idempotencyStore,
         limits,
+        namespace,
+        sequenceStore,
         );
 
         if (!result.ok && result.error) {

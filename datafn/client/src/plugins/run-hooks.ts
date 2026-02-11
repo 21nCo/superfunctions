@@ -148,7 +148,7 @@ export async function runAfterMutation(
 export async function runBeforeSync(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
-  phase: "seed" | "clone" | "pull" | "push",
+  phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
   payload: unknown,
 ): Promise<unknown> {
   let transformed = payload;
@@ -183,7 +183,7 @@ export async function runBeforeSync(
 export async function runAfterSync(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
-  phase: "seed" | "clone" | "pull" | "push",
+  phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
   payload: unknown,
   result: unknown,
 ): Promise<unknown> {

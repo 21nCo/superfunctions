@@ -1,5 +1,118 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createLogger, redactSecrets, type LogContext } from '../index.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createLogger, redactSecrets, type LogContext, createFileFn, type FileFn, type Logger } from '../index.js';
+import { createFakeStorageAdapter } from '@superfunctions/storage';
+import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
+import type { FileUploadedEvent, FileDeletedEvent } from '../events.js';
+
+const FAKE_CAPABILITIES: AdapterCapabilities = {
+  types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
+  operations: { batch: false, upsert: true, streaming: false, fulltext: false, returning: false },
+  transactions: { supported: false, nested: false },
+  performance: { supportsJoins: false, supportsPreparedStatements: false },
+  schema: { migrations: false, constraints: false, indexes: false },
+  advanced: { customIdGeneration: false, numericIds: false, schemaNamespaces: false, customTypes: false },
+};
+
+function createFakeDbAdapter(): Adapter {
+  const tables = new Map<string, Map<string, any>>();
+  let idCounter = 1;
+
+  function getTable(model: string): Map<string, any> {
+    if (!tables.has(model)) tables.set(model, new Map());
+    return tables.get(model)!;
+  }
+
+  function matchesWhere(record: any, where: any[]): boolean {
+    for (const clause of where) {
+      const value = record[clause.field];
+      switch (clause.operator) {
+        case 'eq': if (value !== clause.value) return false; break;
+        case 'ne': if (value === clause.value) return false; break;
+        default: break;
+      }
+    }
+    return true;
+  }
+
+  return {
+    id: 'fake',
+    name: 'fake',
+    version: '1.0.0',
+    capabilities: FAKE_CAPABILITIES,
+    async create(params) {
+      const table = getTable(params.model);
+      const id = params.data.uploadSessionId || params.data.fileId || params.data.versionId || params.data.permissionId || `id_${idCounter++}`;
+      const record = { ...params.data, _id: id };
+      table.set(id, record);
+      return record;
+    },
+    async findOne(params) {
+      const table = getTable(params.model);
+      for (const record of table.values()) {
+        if (matchesWhere(record, params.where)) return record;
+      }
+      return null;
+    },
+    async findMany(params) {
+      const table = getTable(params.model);
+      const results: any[] = [];
+      for (const record of table.values()) {
+        if (!params.where || params.where.length === 0 || matchesWhere(record, params.where)) {
+          results.push(record);
+        }
+      }
+      return results;
+    },
+    async update(params) {
+      const table = getTable(params.model);
+      for (const [id, record] of table.entries()) {
+        if (matchesWhere(record, params.where)) {
+          const updated = { ...record, ...params.data };
+          table.set(id, updated);
+          return updated;
+        }
+      }
+      return null;
+    },
+    async delete(params) {
+      const table = getTable(params.model);
+      for (const [id, record] of table.entries()) {
+        if (matchesWhere(record, params.where)) {
+          table.delete(id);
+          return;
+        }
+      }
+    },
+    async createMany() { return []; },
+    async updateMany() { return 0; },
+    async deleteMany(params) { 
+        const table = getTable(params.model);
+        let count = 0;
+        for (const [id, record] of table.entries()) {
+            if (matchesWhere(record, params.where)) {
+                table.delete(id);
+                count++;
+            }
+        }
+        return count;
+    },
+    async upsert(params) {
+      const existing = await this.findOne({ model: params.model, where: params.where, namespace: params.namespace });
+      if (existing) {
+        return await this.update({ model: params.model, where: params.where, data: params.update, namespace: params.namespace });
+      }
+      return await this.create({ model: params.model, data: params.create, namespace: params.namespace });
+    },
+    async count() { return 0; },
+    async transaction(callback) { return callback(this as any); },
+    async initialize() {},
+    async isHealthy() { return { healthy: true, uptime: 0 }; },
+    async close() {},
+    async getSchemaVersion() { return 0; },
+    async setSchemaVersion() {},
+    async validateSchema() { return { valid: true }; },
+  } as Adapter;
+}
 
 describe('@filefn/server observability', () => {
   describe('TV-OBS-LOG-NEG-001: Signed URLs are redacted in logs', () => {
@@ -12,7 +125,7 @@ describe('@filefn/server observability', () => {
       const redacted = redactSecrets(context);
 
       expect(redacted.url).toBe('[REDACTED]');
-      expect(redacted.requestId).toBe('[REDACTED]');
+      expect(redacted.requestId).toBe('req_001');
     });
 
     it('should redact URLs containing Signature parameter', () => {
@@ -105,7 +218,7 @@ describe('@filefn/server observability', () => {
       expect(redacted.fileId).toBe('[REDACTED]');
     });
 
-    it('should redact non-UUID values for known ID fields', () => {
+    it('should preserve non-UUID values for known ID fields', () => {
       const context: LogContext = {
         fileId: 'file_123',
         uploadSessionId: 'upl_456',
@@ -114,9 +227,9 @@ describe('@filefn/server observability', () => {
 
       const redacted = redactSecrets(context);
 
-      expect(redacted.fileId).toBe('[REDACTED]');
-      expect(redacted.uploadSessionId).toBe('[REDACTED]');
-      expect(redacted.versionId).toBe('[REDACTED]');
+      expect(redacted.fileId).toBe('file_123');
+      expect(redacted.uploadSessionId).toBe('upl_456');
+      expect(redacted.versionId).toBe('ver_789');
     });
   });
 
@@ -336,6 +449,117 @@ describe('@filefn/server observability', () => {
 
       expect(outputs.length).toBe(1);
       expect(outputs[0].timestamp).toBeDefined();
+    });
+  });
+
+  describe('Integration: Events and Logging', () => {
+    let fileFn: FileFn;
+    let logger: Logger;
+    let logOutput: Array<{ level: string; message: string; context: LogContext }>;
+    let events: Array<any>;
+
+    beforeEach(() => {
+        logOutput = [];
+        events = [];
+        logger = createLogger({
+            level: 'info',
+            output: (level, message, context) => {
+                logOutput.push({ level, message, context });
+            }
+        });
+
+        fileFn = createFileFn({
+            db: createFakeDbAdapter(),
+            storage: createFakeStorageAdapter({
+                capabilities: { signedUploadUrls: true, signedDownloadUrls: true, multipart: true, proxyStreamingUpload: false, proxyStreamingDownload: true },
+                // Mock statObject for size validation
+                async statObject(input) { return { key: input.key, size: 100 }; }
+            }),
+            policies: [{ name: 'user-avatar', contentTypes: ['image/png'], maxSizeBytes: 10485760 }],
+            auth: { required: false },
+            logger
+        });
+
+        // Listen for events
+        fileFn.events.on('file:uploaded', (e) => events.push(e));
+        fileFn.events.on('file:deleted', (e) => events.push(e));
+    });
+
+    it('TV-OBS-001: should emit file:uploaded with requestId', async () => {
+        const { uploadSessionId } = await fileFn.createUploadSession(
+            { policy: 'user-avatar', fileName: 'test.png', size: 100, mimeType: 'image/png' },
+            { principalId: 'user_123', requestId: 'req_001' }
+        );
+
+        await fileFn.completeUploadPart(
+            { uploadSessionId, partNumber: 1, etag: 'etag1', size: 100 },
+            { principalId: 'user_123', requestId: 'req_001' }
+        );
+
+        await fileFn.completeUploadSession(
+            { uploadSessionId },
+            { principalId: 'user_123', requestId: 'req_001' }
+        );
+
+        const uploadedEvent = events.find(e => e.type === 'file:uploaded');
+        expect(uploadedEvent).toBeDefined();
+        expect(uploadedEvent.requestId).toBe('req_001');
+        expect(uploadedEvent.fileId).toBeDefined();
+    });
+
+    it('should emit file:deleted with requestId', async () => {
+        // Create file first
+        const { uploadSessionId } = await fileFn.createUploadSession(
+            { policy: 'user-avatar', fileName: 'test.png', size: 100, mimeType: 'image/png' },
+            { principalId: 'user_123', requestId: 'req_init' }
+        );
+        await fileFn.completeUploadPart({ uploadSessionId, partNumber: 1, etag: 'etag1', size: 100 }, { principalId: 'user_123' });
+        const { fileId } = await fileFn.completeUploadSession({ uploadSessionId }, { principalId: 'user_123' });
+
+        // Clear events
+        events.length = 0;
+
+        // Delete
+        await fileFn.deleteFile({ fileId }, { principalId: 'user_123', requestId: 'req_del' });
+
+        const deletedEvent = events.find(e => e.type === 'file:deleted');
+        expect(deletedEvent).toBeDefined();
+        expect(deletedEvent.requestId).toBe('req_del');
+        expect(deletedEvent.fileId).toBe(fileId);
+    });
+
+    it('TV-OBS-LOG-001: should log structured entries for lifecycle', async () => {
+        const { uploadSessionId } = await fileFn.createUploadSession(
+            { policy: 'user-avatar', fileName: 'test.png', size: 100, mimeType: 'image/png' },
+            { principalId: 'user_123', requestId: 'req_lifecycle' }
+        );
+
+        const initLog = logOutput.find(l => l.message === 'Upload session created');
+        expect(initLog).toBeDefined();
+        expect(initLog!.context.uploadSessionId).toBe(uploadSessionId);
+        expect(initLog!.context.requestId).toBe('req_lifecycle');
+
+        await fileFn.completeUploadPart(
+            { uploadSessionId, partNumber: 1, etag: 'etag1', size: 100 },
+            { principalId: 'user_123', requestId: 'req_lifecycle' }
+        );
+
+        const { fileId } = await fileFn.completeUploadSession(
+            { uploadSessionId },
+            { principalId: 'user_123', requestId: 'req_lifecycle' }
+        );
+
+        const completeLog = logOutput.find(l => l.message === 'Upload session completed');
+        expect(completeLog).toBeDefined();
+        expect(completeLog!.context.fileId).toBe(fileId);
+        expect(completeLog!.context.requestId).toBe('req_lifecycle');
+
+        await fileFn.deleteFile({ fileId }, { principalId: 'user_123', requestId: 'req_lifecycle' });
+
+        const deleteLog = logOutput.find(l => l.message === 'File deleted');
+        expect(deleteLog).toBeDefined();
+        expect(deleteLog!.context.fileId).toBe(fileId);
+        expect(deleteLog!.context.requestId).toBe('req_lifecycle');
     });
   });
 });

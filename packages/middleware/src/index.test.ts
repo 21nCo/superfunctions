@@ -4,7 +4,7 @@ import { createRateLimiter } from './rate-limit.js';
 describe('middleware', () => {
   it('should create rate limiter', async () => {
     const limiter = createRateLimiter({ windowMs: 60000, maxRequests: 100 });
-    const result = await limiter.check('test');
+    const result = await limiter.check({ key: 'test' });
     expect(result.allowed).toBe(true);
   });
 

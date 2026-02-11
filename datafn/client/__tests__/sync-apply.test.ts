@@ -3,8 +3,9 @@
  * Tests TV-CLIENT-SYNC-APPLY-001, TV-CLIENT-SYNC-APPLY-002, TV-HYDRATION-001, TV-HYDRATION-002 from TEST_VECTORS.md
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDatafnClient } from "../src/index.js";
+import { DefaultHttpTransport } from "../src/transport/http.js";
 import type {
   DatafnStorageAdapter,
   DatafnHydrationState,
@@ -115,6 +116,27 @@ class MockStorageAdapter implements DatafnStorageAdapter {
   async changelogAck(options: { throughSeq: number }): Promise<void> {
     this.changelog = this.changelog.filter((e) => e.seq > options.throughSeq);
   }
+
+  async getJoinRows(
+    relationKey: string,
+    fromId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    return [];
+  }
+
+  async setJoinRows(
+    relationKey: string,
+    rows: Array<Record<string, unknown>>,
+  ): Promise<void> {}
+
+  async findRecords(
+    resource: string,
+    field: string,
+    value: unknown,
+  ): Promise<Record<string, unknown>[]> {
+    const records = await this.listRecords(resource);
+    return records.filter((r) => r[field] === value);
+  }
 }
 
 // Test schema
@@ -124,8 +146,8 @@ const testSchema = {
       name: "task",
       version: 1,
       fields: [
-        { name: "id", type: "string", required: true },
-        { name: "title", type: "string", required: true },
+        { name: "id", type: "string" as const, required: true },
+        { name: "title", type: "string" as const, required: true },
       ],
     },
   ],
@@ -133,36 +155,26 @@ const testSchema = {
 };
 
 describe("Sync Apply Tests", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("TV-CLIENT-SYNC-APPLY-001: Clone results are applied to local storage and cursors are updated", async () => {
     const storage = new MockStorageAdapter();
-
-    let cloneCallCount = 0;
-    const remote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => {
-        cloneCallCount++;
-        return {
-          ok: true,
-          result: {
-            ok: true,
-            data: { task: [{ id: "task:1", title: "A" }] },
-            cursors: { task: "5" },
-          },
-        };
-      },
-      pull: async () => ({
+    const cloneSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "clone")
+      .mockResolvedValue({
         ok: true,
-        result: { ok: true, records: {}, deleted: {}, cursors: {} },
-      }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+        result: {
+          ok: true,
+          data: { task: [{ id: "task:1", title: "A" }] },
+          cursors: { task: "5" },
+        },
+      });
 
     const client = createDatafnClient({
       schema: testSchema,
-      remote,
+      sync: { remote: "http://example.com" },
       clientId: "client:1",
       storage,
     });
@@ -171,15 +183,19 @@ describe("Sync Apply Tests", () => {
     await client.sync.clone({ clientId: "client:1", tables: ["task"] });
 
     // Verify remote was called
-    expect(cloneCallCount).toBe(1);
+    expect(cloneSpy).toHaveBeenCalledTimes(1);
 
     // Verify record was stored
     const record = await storage.getRecord("task", "task:1");
     expect(record).toEqual({ id: "task:1", title: "A" });
 
-    // Verify cursor was set
+    // Verify per-resource cursor was set
     const cursor = await storage.getCursor("task");
     expect(cursor).toBe("5");
+
+    // Verify global cursor was set
+    const globalCursor = await storage.getCursor("__global_cursor__");
+    expect(globalCursor).toBe("5");
 
     // Verify hydration state is ready
     const hydrationState = await storage.getHydrationState("task");
@@ -189,50 +205,36 @@ describe("Sync Apply Tests", () => {
   it("TV-CLIENT-SYNC-APPLY-002: Cursor updates are monotonic (do not move backwards)", async () => {
     const storage = new MockStorageAdapter();
 
-    // Set initial cursor to 10
-    await storage.setCursor("task", "10");
+    // Set initial global cursor to 10
+    await storage.setCursor("__global_cursor__", "10");
     await storage.setHydrationState("task", "ready");
 
-    let pullCallCount = 0;
-    const remote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({
         ok: true,
-        result: { ok: true, data: {}, cursors: {} },
-      }),
-      pull: async () => {
-        pullCallCount++;
-        return {
+        result: {
           ok: true,
-          result: {
-            ok: true,
-            records: { task: [] },
-            deleted: { task: [] },
-            cursors: { task: "5" }, // Lower than existing cursor (10)
-          },
-        };
-      },
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+          changes: [],
+          nextCursor: "5", // Lower than existing cursor (10)
+        },
+      });
 
     const client = createDatafnClient({
       schema: testSchema,
-      remote,
+      sync: { remote: "http://example.com" },
       clientId: "client:1",
       storage,
     });
 
-    // Call pull with lower cursor
-    await client.sync.pull({ clientId: "client:1", cursors: { task: "10" } });
+    // Call pull with lower cursor (simulated re-pull or out of order response)
+    await client.sync.pull({ clientId: "client:1", cursor: "10" });
 
     // Verify remote was called
-    expect(pullCallCount).toBe(1);
+    expect(pullSpy).toHaveBeenCalledTimes(1);
 
-    // Verify cursor was NOT updated (stayed at 10)
-    const cursor = await storage.getCursor("task");
+    // Verify global cursor was NOT updated (stayed at 10)
+    const cursor = await storage.getCursor("__global_cursor__");
     expect(cursor).toBe("10");
   });
 
@@ -240,29 +242,20 @@ describe("Sync Apply Tests", () => {
     const storage = new MockStorageAdapter();
     storage.recordCalls = true; // Enable call tracking
 
-    const remote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({
+    const cloneSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "clone")
+      .mockResolvedValue({
         ok: true,
         result: {
           ok: true,
           data: { task: [] },
           cursors: { task: "0" },
         },
-      }),
-      pull: async () => ({
-        ok: true,
-        result: { ok: true, records: {}, deleted: {}, cursors: {} },
-      }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+      });
 
     const client = createDatafnClient({
       schema: testSchema,
-      remote,
+      sync: { remote: "http://example.com" },
       clientId: "client:1",
       storage,
     });
@@ -291,5 +284,108 @@ describe("Sync Apply Tests", () => {
       message: "Storage error: invalid hydration state",
       details: { path: "storage.setHydrationState.state" },
     });
+  });
+
+  // PHASE_05 Tests
+
+  it("TV-REL-002: Pull/clone hydrates join rows into client join stores", async () => {
+    const storage = new MockStorageAdapter();
+    const joinStoreData = new Map<string, Array<Record<string, unknown>>>();
+    
+    // Override join store methods to track calls
+    storage.upsertJoinRow = vi.fn(async (relationKey: string, row: Record<string, unknown>) => {
+      if (!joinStoreData.has(relationKey)) {
+        joinStoreData.set(relationKey, []);
+      }
+      joinStoreData.get(relationKey)!.push(row);
+    });
+
+    const cloneSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "clone")
+      .mockResolvedValue({
+        ok: true,
+        result: {
+          ok: true,
+          data: {
+            node: [{ id: "node:1" }],
+            property: [{ id: "property:1" }],
+          },
+          joins: {
+            join_node_properties_property: [
+              { from: "node:1", to: "property:1", value: "v" },
+            ],
+          },
+          cursors: { node: "1", property: "1" },
+        },
+      });
+
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          { name: "node", version: 1, fields: [] },
+          { name: "property", version: 1, fields: [] },
+        ],
+        relations: [
+          { from: "node", to: "property", type: "many-many", relation: "properties" },
+        ],
+      },
+      sync: { remote: "http://example.com" },
+      clientId: "client:1",
+      storage,
+    });
+
+    // Call clone
+    await client.sync.clone({
+      clientId: "client:1",
+      tables: ["node", "property"],
+    });
+
+    // Verify join rows were applied
+    expect(storage.upsertJoinRow).toHaveBeenCalledWith(
+      "join_node_properties_property",
+      { from: "node:1", to: "property:1", value: "v" },
+    );
+    expect(joinStoreData.get("join_node_properties_property")).toHaveLength(1);
+  });
+
+  it("TV-REL-002N: Join store delta with missing store is rejected deterministically", async () => {
+    const storage = new MockStorageAdapter();
+    
+    // Override to throw error for unknown join store
+    storage.upsertJoinRow = vi.fn(async (relationKey: string) => {
+      if (relationKey === "join_missing_store") {
+        throw new Error("Store not found");
+      }
+    });
+
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({
+        ok: true,
+        result: {
+          ok: true,
+          records: {},
+          deleted: {},
+          joins: {
+            join_missing_store: {
+              upsert: [{ from: "a", to: "b" }],
+              delete: [],
+            },
+          },
+          cursors: {},
+        },
+      });
+
+    const client = createDatafnClient({
+      schema: { resources: [{ name: "task", version: 1, fields: [] }] },
+      sync: { remote: "http://example.com" },
+      clientId: "client:1",
+      storage,
+    });
+
+    // Attempt pull with missing join store
+    await expect(
+      client.sync.pull({ clientId: "client:1", cursors: { task: "0" } }),
+    ).rejects.toThrow("Store not found: join_missing_store");
   });
 });

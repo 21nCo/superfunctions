@@ -65,6 +65,7 @@ export async function executeRelate(
   adapter: Adapter,
   schema: DatafnSchema,
   mutation: DFQLMutation,
+  namespace: string,
 ): Promise<{ ok: true; affectedIds: string[] } | { ok: false; code: string; message: string; path: string }> {
   if (!mutation.relations) {
     return { ok: true, affectedIds: [mutation.id] };
@@ -88,7 +89,7 @@ export async function executeRelate(
       const targetExists = await adapter.findOne({
         model: relation.to,
         where: [{ field: "id", operator: "eq", value: item.toId }],
-        namespace: "datafn",
+        namespace,
       });
       if (!targetExists) {
         return {
@@ -117,7 +118,7 @@ export async function executeRelate(
         model: mutation.resource,
         where: [{ field: "id", operator: "eq", value: mutation.id }],
         data: { [fkField]: items[0].toId },
-        namespace: "datafn",
+        namespace,
       });
     } else if (relation.type === "one-many") {
       // Update FK on target records (to point to mutation.id)
@@ -134,7 +135,7 @@ export async function executeRelate(
           model: relation.to,
           where: [{ field: "id", operator: "eq", value: item.toId }],
           data: { [fkField]: mutation.id },
-          namespace: "datafn",
+          namespace,
         });
       }
     } else if (relation.type === "many-many") {
@@ -153,7 +154,7 @@ export async function executeRelate(
             { field: "from", operator: "eq", value: mutation.id },
             { field: "to", operator: "eq", value: item.toId },
           ],
-          namespace: "datafn",
+          namespace,
         });
 
         if (existing) {
@@ -166,7 +167,7 @@ export async function executeRelate(
                         { field: "to", operator: "eq", value: item.toId },
                     ],
                     data: item.metadata,
-                    namespace: "datafn",
+                    namespace,
                  });
             }
         } else {
@@ -177,7 +178,7 @@ export async function executeRelate(
                 to: item.toId,
                 ...item.metadata,
             },
-            namespace: "datafn",
+            namespace,
             });
         }
       }
@@ -194,6 +195,7 @@ export async function executeModifyRelation(
   adapter: Adapter,
   schema: DatafnSchema,
   mutation: DFQLMutation,
+  namespace: string,
 ): Promise<{ ok: true; affectedIds: string[] } | { ok: false; code: string; message: string; path: string }> {
   if (!mutation.relations) {
     return { ok: true, affectedIds: [mutation.id] };
@@ -230,7 +232,7 @@ export async function executeModifyRelation(
                 { field: "from", operator: "eq", value: mutation.id },
                 { field: "to", operator: "eq", value: item.toId },
             ],
-            namespace: "datafn",
+            namespace,
         });
 
         if (!existing) {
@@ -250,7 +252,7 @@ export async function executeModifyRelation(
                 { field: "to", operator: "eq", value: item.toId },
             ],
             data: item.metadata,
-            namespace: "datafn",
+            namespace,
         });
     }
   }
@@ -264,6 +266,7 @@ export async function executeUnrelate(
     adapter: Adapter,
     schema: DatafnSchema,
     mutation: DFQLMutation,
+    namespace: string,
   ): Promise<{ ok: true; affectedIds: string[] } | { ok: false; code: string; message: string; path: string }> {
     if (!mutation.relations) {
       return { ok: true, affectedIds: [mutation.id] };
@@ -289,7 +292,7 @@ export async function executeUnrelate(
           model: mutation.resource,
           where: [{ field: "id", operator: "eq", value: mutation.id }],
           data: { [fkField]: null },
-          namespace: "datafn",
+          namespace,
         });
       } else if (relation.type === "one-many") {
         // Clear FK on target
@@ -299,7 +302,7 @@ export async function executeUnrelate(
             model: relation.to,
             where: [{ field: "id", operator: "eq", value: item.toId }],
             data: { [fkField]: null },
-            namespace: "datafn",
+            namespace,
           });
         }
       } else if (relation.type === "many-many") {
@@ -311,7 +314,7 @@ export async function executeUnrelate(
                 { field: "from", operator: "eq", value: mutation.id },
                 { field: "to", operator: "eq", value: item.toId },
             ],
-            namespace: "datafn",
+            namespace,
           });
         }
       }

@@ -117,11 +117,17 @@ function createFakeDbAdapter(): Adapter {
   } as Adapter;
 }
 
-async function createFileViaUpload(fileFn: FileFn, principalId: string, tenantId?: string): Promise<{ fileId: string; versionId: string }> {
+async function createFileViaUpload(fileFn: FileFn, db: Adapter, storageSizes: Map<string, number>, principalId: string, tenantId?: string): Promise<{ fileId: string; versionId: string }> {
   const { uploadSessionId } = await fileFn.createUploadSession(
     { policy: 'user-avatar', fileName: 'avatar.png', size: 2097152, mimeType: 'image/png' },
     { principalId, tenantId }
   );
+
+  // Helper to get storageKey
+  const session = await db.findOne<any>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }] });
+  if (session) {
+    storageSizes.set(session.storageKey, 2097152);
+  }
   
   await fileFn.completeUploadPart(
     { uploadSessionId, partNumber: 1, etag: 'etag1', size: 2097152 },
@@ -134,9 +140,11 @@ async function createFileViaUpload(fileFn: FileFn, principalId: string, tenantId
 describe('@filefn/server files', () => {
   let fileFn: FileFn;
   let db: Adapter;
+  let storageSizes: Map<string, number>;
 
   beforeEach(() => {
     db = createFakeDbAdapter();
+    storageSizes = new Map();
     const storage = createFakeStorageAdapter({
       capabilities: {
         signedUploadUrls: true,
@@ -145,6 +153,9 @@ describe('@filefn/server files', () => {
         proxyStreamingUpload: false,
         proxyStreamingDownload: true,
       },
+      async statObject(input) {
+        return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
+      }
     });
 
     fileFn = createFileFn({
@@ -157,7 +168,7 @@ describe('@filefn/server files', () => {
 
   describe('TV-FILE-GET-001: Get file metadata', () => {
     it('should return file metadata for owner', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123', 'org_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123', 'org_123');
 
       const file = await fileFn.getFile({ fileId }, { principalId: 'user_123', tenantId: 'org_123' }) as any;
 
@@ -169,7 +180,7 @@ describe('@filefn/server files', () => {
 
   describe('TV-FILE-GET-NEG-001: Get file forbidden', () => {
     it('should deny access for non-owner on private file', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123', 'org_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123', 'org_123');
 
       await expect(
         fileFn.getFile({ fileId }, { principalId: 'other_user', tenantId: 'org_123' })
@@ -179,7 +190,7 @@ describe('@filefn/server files', () => {
 
   describe('TV-FILE-DOWNLOAD-001: Download file', () => {
     it('should return download URL for owner', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
 
       // Create a new instance with resolveSession that returns the file owner
       const fileFnWithAuth = createFileFn({
@@ -212,7 +223,7 @@ describe('@filefn/server files', () => {
 
   describe('TV-FILE-DOWNLOAD-NEG-001: Download forbidden', () => {
     it('should deny download for non-owner on private file', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
 
       // Create new instance with auth that resolves to different user
       const fileFnOther = createFileFn({
@@ -242,13 +253,17 @@ describe('@filefn/server files', () => {
 
   describe('TV-VERSION-LIST-001: List versions', () => {
     it('should list versions newest-first', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
 
       // Create another version (with a small delay to ensure different timestamps)
       const { uploadSessionId } = await fileFn.createUploadSession(
         { policy: 'user-avatar', fileName: 'avatar.png', size: 1000, mimeType: 'image/png', fileId },
         { principalId: 'user_123' }
       );
+      // Mock size for this session too
+      const session = await db.findOne<any>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }] });
+      if (session) storageSizes.set(session.storageKey, 1000);
+
       await fileFn.completeUploadPart(
         { uploadSessionId, partNumber: 1, etag: 'etag2', size: 1000 },
         { principalId: 'user_123' }
@@ -285,7 +300,7 @@ describe('@filefn/server files', () => {
 
   describe('TV-FILE-DELETE-001: Delete file', () => {
     it('should delete file for owner', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
 
       await fileFn.deleteFile({ fileId }, { principalId: 'user_123' });
 
@@ -297,7 +312,7 @@ describe('@filefn/server files', () => {
 
   describe('TV-FILE-DELETE-NEG-001: Delete forbidden', () => {
     it('should deny delete for non-owner', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
 
       await expect(
         fileFn.deleteFile({ fileId }, { principalId: 'other_user' })
@@ -307,12 +322,15 @@ describe('@filefn/server files', () => {
 
   describe('TV-VERSION-REPLACE-001: Replace file', () => {
     it('should allow owner to replace file with new version', async () => {
-      const { fileId, versionId: v1 } = await createFileViaUpload(fileFn, 'user_123');
+      const { fileId, versionId: v1 } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
 
       const { uploadSessionId } = await fileFn.createUploadSession(
         { policy: 'user-avatar', fileName: 'avatar.png', size: 500, mimeType: 'image/png', fileId },
         { principalId: 'user_123' }
       );
+      
+      const session = await db.findOne<any>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }] });
+      if (session) storageSizes.set(session.storageKey, 500);
 
       await fileFn.completeUploadPart(
         { uploadSessionId, partNumber: 1, etag: 'etag_new', size: 500 },
@@ -330,9 +348,9 @@ describe('@filefn/server files', () => {
 
   describe('List files', () => {
     it('should list files owned by principal', async () => {
-      await createFileViaUpload(fileFn, 'user_123');
-      await createFileViaUpload(fileFn, 'user_123');
-      await createFileViaUpload(fileFn, 'other_user');
+      await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
+      await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
+      await createFileViaUpload(fileFn, db, storageSizes, 'other_user');
 
       const result = await fileFn.listFiles({}, { principalId: 'user_123' }) as any;
       expect(result.files.length).toBe(2);
@@ -341,11 +359,11 @@ describe('@filefn/server files', () => {
 
   describe('Download rate limiting', () => {
     it('should enforce rate limits on download (TV-RATE-NEG-001 download variant)', async () => {
-      const { fileId } = await createFileViaUpload(fileFn, 'user_123');
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
 
       const rateLimiter = {
-        async check(_key: string) {
-          return { allowed: false, remaining: 0, resetAt: Date.now() + 60000, total: 10 };
+        async check(_input: any) {
+          return { allowed: false, remaining: 0, resetAt: new Date(Date.now() + 60000).toISOString(), total: 10 };
         },
         async reset(_key: string) {},
       };

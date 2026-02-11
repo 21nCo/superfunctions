@@ -147,10 +147,8 @@ describe('@filefn/server permissions', () => {
       const denyAuth = createMockAuthorizer(false);
       const allowAuth = createMockAuthorizer(true);
 
-      const composed = composeAuthorizers({
-        strategy: 'first-allow',
-        authorizers: [denyAuth, allowAuth],
-      });
+      // Uses audited spec signature: composeAuthorizers([a, b], { strategy: 'first-allow' })
+      const composed = composeAuthorizers([denyAuth, allowAuth], { strategy: 'first-allow' });
 
       const file = createMockFile();
       const ctx: FileProviderContext = { principalId: 'other_user' };
@@ -164,10 +162,7 @@ describe('@filefn/server permissions', () => {
       const denyAuth1 = createMockAuthorizer(false);
       const denyAuth2 = createMockAuthorizer(false);
 
-      const composed = composeAuthorizers({
-        strategy: 'first-allow',
-        authorizers: [denyAuth1, denyAuth2],
-      });
+      const composed = composeAuthorizers([denyAuth1, denyAuth2], { strategy: 'first-allow' });
 
       const file = createMockFile();
       const ctx: FileProviderContext = { principalId: 'other_user' };
@@ -181,10 +176,8 @@ describe('@filefn/server permissions', () => {
       const allowAuth = createMockAuthorizer(true);
       const denyAuth = createMockAuthorizer(false);
 
-      const composed = composeAuthorizers({
-        strategy: 'all-must-allow',
-        authorizers: [allowAuth, denyAuth],
-      });
+      // Uses audited spec signature: composeAuthorizers([a, b], { strategy: 'all-must-allow' })
+      const composed = composeAuthorizers([allowAuth, denyAuth], { strategy: 'all-must-allow' });
 
       const file = createMockFile();
       const ctx: FileProviderContext = { principalId: 'other_user' };
@@ -198,10 +191,7 @@ describe('@filefn/server permissions', () => {
       const allowAuth1 = createMockAuthorizer(true);
       const allowAuth2 = createMockAuthorizer(true);
 
-      const composed = composeAuthorizers({
-        strategy: 'all-must-allow',
-        authorizers: [allowAuth1, allowAuth2],
-      });
+      const composed = composeAuthorizers([allowAuth1, allowAuth2], { strategy: 'all-must-allow' });
 
       const file = createMockFile();
       const ctx: FileProviderContext = { principalId: 'other_user' };
@@ -502,10 +492,7 @@ describe('@filefn/server permissions', () => {
 
   describe('composeAuthorizers edge cases', () => {
     it('should return deny-all for empty authorizers list', async () => {
-      const composed = composeAuthorizers({
-        strategy: 'first-allow',
-        authorizers: [],
-      });
+      const composed = composeAuthorizers([], { strategy: 'first-allow' });
 
       const file = createMockFile();
       const ctx: FileProviderContext = { principalId: 'any_user' };
@@ -518,10 +505,7 @@ describe('@filefn/server permissions', () => {
     it('should work with single authorizer', async () => {
       const allowAuth = createMockAuthorizer(true);
 
-      const composed = composeAuthorizers({
-        strategy: 'first-allow',
-        authorizers: [allowAuth],
-      });
+      const composed = composeAuthorizers([allowAuth], { strategy: 'first-allow' });
 
       const file = createMockFile();
       const ctx: FileProviderContext = { principalId: 'any_user' };

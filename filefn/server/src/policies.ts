@@ -10,7 +10,7 @@ export interface Policy {
   name: string;
   contentTypes?: string[];
   maxSizeBytes?: number;
-  visibility?: 'public' | 'private';
+  visibility?: 'public' | 'private' | 'shared';
   storagePath?: (ctx: PolicyStoragePathContext) => string;
 }
 
@@ -20,7 +20,7 @@ export interface PolicyRegistry {
   list(): Policy[];
 }
 
-export type Visibility = 'public' | 'private';
+export type Visibility = 'public' | 'private' | 'shared';
 
 export interface PolicyRegistryWithDefine extends PolicyRegistry {
   define(name: string, policy: Omit<Policy, 'name'>): void;

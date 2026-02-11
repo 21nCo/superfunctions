@@ -284,7 +284,8 @@ describe("Phase 09: Server Sync Semantics", () => {
           method: "POST",
           body: JSON.stringify({
             clientId: "client:1",
-            cursors: { task: "0" },
+            cursor: "0",
+            limit: 1,
           }),
         })
       );
@@ -292,11 +293,11 @@ describe("Phase 09: Server Sync Semantics", () => {
       const body1 = await res1.json();
       expect(body1.ok).toBe(true);
       expect(body1.result.ok).toBe(true);
-      expect(body1.result.records.task).toHaveLength(1);
-      expect(body1.result.records.task[0].id).toBe("task:1");
-      expect(body1.result.records.task[0].title).toBe("A");
-      expect(body1.result.deleted.task).toHaveLength(0);
-      expect(body1.result.cursors.task).toBe("1");
+      expect(body1.result.changes).toHaveLength(1);
+      expect(body1.result.changes[0].op).toBe("upsert");
+      expect(body1.result.changes[0].id).toBe("task:1");
+      expect(body1.result.changes[0].record.title).toBe("A");
+      expect(body1.result.nextCursor).toBe("1");
 
       // Delete the record
       await server.router.handle(
@@ -319,7 +320,8 @@ describe("Phase 09: Server Sync Semantics", () => {
           method: "POST",
           body: JSON.stringify({
             clientId: "client:1",
-            cursors: { task: "1" },
+            cursor: "1",
+            limit: 1,
           }),
         })
       );
@@ -327,10 +329,10 @@ describe("Phase 09: Server Sync Semantics", () => {
       const body2 = await res2.json();
       expect(body2.ok).toBe(true);
       expect(body2.result.ok).toBe(true);
-      expect(body2.result.records.task).toHaveLength(0);
-      expect(body2.result.deleted.task).toHaveLength(1);
-      expect(body2.result.deleted.task[0]).toBe("task:1");
-      expect(body2.result.cursors.task).toBe("2");
+      expect(body2.result.changes).toHaveLength(1);
+      expect(body2.result.changes[0].op).toBe("delete");
+      expect(body2.result.changes[0].id).toBe("task:1");
+      expect(body2.result.nextCursor).toBe("2");
     });
 
     it("TV-SERVER-PULL-002: Invalid cursor values are rejected", async () => {
@@ -345,15 +347,16 @@ describe("Phase 09: Server Sync Semantics", () => {
           method: "POST",
           body: JSON.stringify({
             clientId: "client:1",
-            cursors: { task: "nope" },
+            cursor: "nope",
           }),
         })
       );
 
       const body = await res.json();
-      expect(body.ok).toBe(false);
-      expect(body.error.code).toBe("DFQL_INVALID");
-      expect(body.error.message).toContain("cursor must be an integer string");
+      expect(body.ok).toBe(true);
+      expect(body.result.ok).toBe(false);
+      expect(body.result.error.code).toBe("DFQL_INVALID");
+      expect(body.result.error.message).toContain("cursor must be an integer string");
     });
   });
 
@@ -398,7 +401,8 @@ describe("Phase 09: Server Sync Semantics", () => {
           method: "POST",
           body: JSON.stringify({
             clientId: "client:1",
-            cursors: { task: "0" },
+            cursor: "0",
+            limit: 1,
           }),
         })
       );
@@ -406,10 +410,11 @@ describe("Phase 09: Server Sync Semantics", () => {
       const body2 = await res2.json();
       expect(body2.ok).toBe(true);
       expect(body2.result.ok).toBe(true);
-      expect(body2.result.records.task).toHaveLength(1);
-      expect(body2.result.records.task[0].id).toBe("task:1");
-      expect(body2.result.records.task[0].title).toBe("P");
-      expect(body2.result.cursors.task).toBe("1");
+      expect(body2.result.changes).toHaveLength(1);
+      expect(body2.result.changes[0].op).toBe("upsert");
+      expect(body2.result.changes[0].id).toBe("task:1");
+      expect(body2.result.changes[0].record.title).toBe("P");
+      expect(body2.result.nextCursor).toBe("1");
     });
 
     it("TV-SERVER-PUSH-002: Missing clientId is rejected", async () => {

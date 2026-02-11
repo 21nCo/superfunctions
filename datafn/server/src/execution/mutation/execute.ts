@@ -21,6 +21,7 @@ export async function executeMutation(
   idempotencyStore: IdempotencyStore,
   changeTracking: ChangeTrackingService,
   plugins: DatafnPlugin[] = [],
+  namespace: string,
 ): Promise<MutationResult> {
   // Validate required fields
   if (!mutation.clientId || !mutation.mutationId) {
@@ -86,6 +87,7 @@ export async function executeMutation(
       mutation.id,
       mutation.if,
       schema,
+      namespace,
     );
 
     if (!guardResult.match) {
@@ -124,7 +126,7 @@ export async function executeMutation(
         const exists = await db.findOne({
           model: mutation.resource,
           where: [{ field: "id", operator: "eq", value: mutation.id }],
-          namespace: "datafn",
+          namespace,
         });
         if (exists) {
           opResult = {
@@ -137,15 +139,34 @@ export async function executeMutation(
         }
 
         // Use adapter.create for insert
-        await db.create({
-          model: mutation.resource,
-          data: {
+        try {
+          await db.create({
+            model: mutation.resource,
+            data: {
+              id: mutation.id,
+              ...(mutation.record || {}),
+            },
+            namespace,
+          });
+          opResult = { ok: true };
+        } catch (error: any) {
+          // Log the actual error for debugging
+          console.error("=== INSERT OPERATION FAILED ===");
+          console.error("Error:", error);
+          console.error("Error message:", error?.message);
+          console.error("Error stack:", error?.stack);
+          console.error("Mutation data:", {
             id: mutation.id,
-            ...(mutation.record || {}),
-          },
-          namespace: "datafn",
-        });
-        opResult = { ok: true };
+            record: mutation.record,
+          });
+          console.error("================================");
+          opResult = {
+            ok: false,
+            code: "INTERNAL",
+            message: error?.message || "Internal error",
+            path: "$",
+          };
+        }
         break;
 
       case "merge":
@@ -154,7 +175,7 @@ export async function executeMutation(
           const existing = await db.findOne({
             model: mutation.resource,
             where: [{ field: "id", operator: "eq", value: mutation.id }],
-            namespace: "datafn",
+            namespace,
           });
 
           if (existing) {
@@ -163,7 +184,7 @@ export async function executeMutation(
               model: mutation.resource,
               where: [{ field: "id", operator: "eq", value: mutation.id }],
               data: mutation.record || {},
-              namespace: "datafn",
+              namespace,
             });
           } else {
             // Record doesn't exist, create it
@@ -173,7 +194,7 @@ export async function executeMutation(
                 id: mutation.id,
                 ...(mutation.record || {}),
               },
-              namespace: "datafn",
+              namespace,
             });
           }
           opResult = { ok: true };
@@ -193,7 +214,7 @@ export async function executeMutation(
           const existing = await db.findOne({
             model: mutation.resource,
             where: [{ field: "id", operator: "eq", value: mutation.id }],
-            namespace: "datafn",
+            namespace,
           });
 
           if (!existing) {
@@ -228,7 +249,7 @@ export async function executeMutation(
             model: mutation.resource,
             where: [{ field: "id", operator: "eq", value: mutation.id }],
             data: buildResult.record,
-            namespace: "datafn",
+            namespace,
           });
           opResult = { ok: true };
         } catch (error) {
@@ -246,14 +267,14 @@ export async function executeMutation(
         await db.delete({
           model: mutation.resource,
           where: [{ field: "id", operator: "eq", value: mutation.id }],
-          namespace: "datafn",
+          namespace,
         });
         opResult = { ok: true };
         break;
 
       case "relate":
         try {
-          opResult = await executeRelate(db, schema, mutation);
+          opResult = await executeRelate(db, schema, mutation, namespace);
         } catch (error) {
           opResult = {
             ok: false,
@@ -266,7 +287,7 @@ export async function executeMutation(
 
       case "modifyRelation":
         try {
-          opResult = await executeModifyRelation(db, schema, mutation);
+          opResult = await executeModifyRelation(db, schema, mutation, namespace);
         } catch (error) {
           opResult = {
             ok: false,
@@ -279,7 +300,7 @@ export async function executeMutation(
 
       case "unrelate":
         try {
-          opResult = await executeUnrelate(db, schema, mutation);
+          opResult = await executeUnrelate(db, schema, mutation, namespace);
         } catch (error) {
           opResult = {
             ok: false,
@@ -298,12 +319,22 @@ export async function executeMutation(
           path: "operation",
         };
     }
-  } catch (error) {
-    // Adapter errors
+  } catch (error: any) {
+    // Adapter errors - log for debugging
+    console.error("=== OUTER CATCH - MUTATION EXECUTION FAILED ===");
+    console.error("Error:", error);
+    console.error("Error message:", error?.message);
+    console.error("Error stack:", error?.stack);
+    console.error("Mutation:", {
+      resource: mutation.resource,
+      operation: mutation.operation,
+      id: mutation.id,
+    });
+    console.error("==============================================");
     opResult = {
       ok: false,
       code: "INTERNAL",
-      message: "Internal error",
+      message: error?.message || "Internal error",
       path: "$",
     };
   }

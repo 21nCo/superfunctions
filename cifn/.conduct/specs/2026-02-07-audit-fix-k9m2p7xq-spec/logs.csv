@@ -1,0 +1,13 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-07T17:17:04Z,GPT-5.2,Cursor,spec,unknown-agent,,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec
+2026-02-08T09:19:00Z,unknown,Cursor,execute,unknown-agent,PHASE_00,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_00-2026-02-08-ph0a1b2c-report.md
+2026-02-09T13:05:00Z,unknown,Cursor,execute,unknown-agent,PHASE_01,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_01-2026-02-09-ph1x7k2m-report.md
+2026-02-09T07:47:24Z,unknown,Cursor,execute,unknown-agent,PHASE_02,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_02-2026-02-09-ph2k9x7m-report.md
+2026-02-09T20:14:30Z,unknown,Cursor,execute,unknown-agent,PHASE_03,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_03-2026-02-09-ph3a8k2m-report.md
+2026-02-10T05:42:00Z,claude 4.5 sonnet (thinking),Warp,execute,unknown-agent,PHASE_04,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_04-2026-02-10-ph4j9m3x-report.md
+2026-02-10T05:46:32Z,claude 4.5 sonnet (thinking),Cursor,execute,unknown-agent,PHASE_05,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_05-2026-02-10-x7k9m2p5-report.md
+2026-02-10T06:07:58Z,claude 4.5 sonnet (thinking),Warp,execute,Warp AI,PHASE_06,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_06-2026-02-10-n8x5p2w9-report.md
+2026-02-10T06:47:33Z,claude 4.5 sonnet (thinking),Warp,execute,unknown-agent,PHASE_07,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_07-2026-02-10-tx9m4k7p-report.md
+2026-02-10T06:27:33Z,claude 4.5 sonnet (thinking),Warp,execute,Warp Agent,PHASE_08,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_08-2026-02-10-99abfa3d-report.md
+2026-02-10T12:08:00Z,claude 4.5 sonnet (thinking),Warp,execute,Warp Agent,PHASE_09,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_09-2026-02-10-m7x4k9p2-report.md
+2026-02-11T05:17:00Z,claude sonnet 4 (20250514),Amp,execute,unknown-agent,PHASE_10,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec/phase-reports/PHASE_10-2026-02-11-q4x8m2v7-report.md

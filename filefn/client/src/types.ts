@@ -8,6 +8,10 @@ export interface FileFnClientConfig {
   baseUrl: string;
   getAuthHeaders?: () => Promise<Record<string, string>> | Record<string, string>;
   retryOptions?: RetryOptions;
+  offline?: {
+    enabled: boolean;
+    opfsDir?: string;
+  };
 }
 
 export interface UploadInput {

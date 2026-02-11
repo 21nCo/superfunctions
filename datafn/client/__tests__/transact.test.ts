@@ -3,8 +3,9 @@
  * Tests TV-TX-001, TV-TX-002 from TEST_VECTORS.md
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDatafnClient } from "../src/client.js";
+import { DefaultHttpTransport } from "../src/transport/http.js";
 
 // Default schema for testing
 const defaultSchema = {
@@ -18,11 +19,14 @@ const defaultSchema = {
 };
 
 describe("@datafn/client transact", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("TV-TX-001: client.transact and table.transact delegate and unwrap", async () => {
-    const mockRemote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: vi.fn(async () => ({
+    const transactSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "transact")
+      .mockResolvedValue({
         ok: true,
         result: {
           ok: true,
@@ -34,16 +38,12 @@ describe("@datafn/client transact", () => {
             },
           ],
         },
-      })),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+      });
 
     const client = createDatafnClient({
       schema: defaultSchema,
-      remote: mockRemote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => 0,
     });
 
@@ -67,7 +67,7 @@ describe("@datafn/client transact", () => {
     });
 
     // Test table.transact
-    const table = (client as any).task;
+    const table = client.task;
     const result2 = await table.transact({
       transactionId: "tx-2",
       atomic: true,
@@ -87,25 +87,19 @@ describe("@datafn/client transact", () => {
     });
 
     // Verify remote.transact was called twice
-    expect(mockRemote.transact).toHaveBeenCalledTimes(2);
+    expect(transactSpy).toHaveBeenCalledTimes(2);
   });
 
   it("TV-TX-002: Unexpected response shape throws TRANSPORT_ERROR", async () => {
-    const mockRemote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: vi.fn(async () => ({
-        hello: "world",
-      })),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+    vi.spyOn(DefaultHttpTransport.prototype, "transact").mockResolvedValue({
+      // @ts-expect-error - testing invalid shape
+      hello: "world",
+    });
 
     const client = createDatafnClient({
       schema: defaultSchema,
-      remote: mockRemote as any,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => 0,
     });
 

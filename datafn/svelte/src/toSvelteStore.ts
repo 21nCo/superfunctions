@@ -4,23 +4,42 @@
 
 import type { DatafnSignal } from "@datafn/core";
 import type { Readable } from "svelte/store";
+import { readable } from "svelte/store";
 
 /**
- * Convert a DataFn signal to a Svelte readable store
+ * Store type that wraps signal value with state properties
  */
-export function toSvelteStore<T>(signal: DatafnSignal<T>): Readable<T> {
-  return {
-    subscribe(run: (value: T) => void) {
-      // Immediately call with initial value
-      run(signal.get());
+export type DatafnSvelteStore<T> = Readable<{
+  data: T;
+  loading: boolean;
+  error: import("@datafn/core").DatafnError | null;
+  refreshing: boolean;
+}>;
 
-      // Subscribe to signal updates
+/**
+ * Convert a DataFn signal to a Svelte readable store with state properties
+ */
+export function toSvelteStore<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T> {
+  return readable(
+    {
+      data: signal.get(),
+      loading: signal.loading,
+      error: signal.error,
+      refreshing: signal.refreshing,
+    },
+    (set) => {
+      // Subscribe to signal changes and update the store with current state
       const unsubscribe = signal.subscribe((value: T) => {
-        run(value);
+        set({
+          data: value,
+          loading: signal.loading,
+          error: signal.error,
+          refreshing: signal.refreshing,
+        });
       });
 
       // Return unsubscribe function
       return unsubscribe;
-    },
-  };
+    }
+  );
 }

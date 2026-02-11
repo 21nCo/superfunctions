@@ -5,8 +5,15 @@
 import type { DatafnSchema } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
+import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
 import { buildSchemaIndex, validatePushMutations } from "../../validation/index.js";
+import {
+  executeRelate,
+  executeModifyRelation,
+  executeUnrelate,
+  normalizeRelationPayload,
+} from "../mutation/relations.js";
 
 export interface PushRequest {
   clientId: string;
@@ -22,6 +29,90 @@ export interface PushResult {
     message: string;
     path: string;
   }>;
+  cursor: string;
+}
+
+/**
+ * Helper to find relation definition in schema
+ */
+function findRelation(
+  schema: DatafnSchema,
+  resource: string,
+  relationName: string,
+) {
+  return schema.relations?.find(
+    (r) => r.from === resource && r.relation === relationName,
+  );
+}
+
+/**
+ * Extract join deltas for a relation mutation
+ * Returns array of { resource, id, op, record } where:
+ * - resource = join store key (e.g., "join_node_properties_property")
+ * - id = composite key "${from}::${to}"
+ * - op = "upsert" | "delete"
+ * - record = { from, to, ...metadata } or null
+ */
+function extractJoinDeltas(
+  mutation: any,
+  schema: DatafnSchema,
+): Array<{
+  resource: string;
+  id: string;
+  op: "upsert" | "delete";
+  record: Record<string, unknown> | null;
+}> {
+  const deltas: Array<{
+    resource: string;
+    id: string;
+    op: "upsert" | "delete";
+    record: Record<string, unknown> | null;
+  }> = [];
+
+  if (!mutation.relations) {
+    return deltas;
+  }
+
+  for (const [relName, payload] of Object.entries(mutation.relations)) {
+    const relation = findRelation(schema, mutation.resource, relName);
+    if (!relation) {
+      continue;
+    }
+
+    // Only many-many relations produce join deltas
+    if (relation.type !== "many-many") {
+      continue;
+    }
+
+    const items = normalizeRelationPayload(payload);
+    const joinStoreKey = `join_${mutation.resource}_${relName}_${relation.to}`;
+
+    for (const item of items) {
+      const compositeId = `${mutation.id}::${item.toId}`;
+
+      if (mutation.operation === "relate" || mutation.operation === "modifyRelation") {
+        deltas.push({
+          resource: joinStoreKey,
+          id: compositeId,
+          op: "upsert",
+          record: {
+            from: mutation.id,
+            to: item.toId,
+            ...item.metadata,
+          },
+        });
+      } else if (mutation.operation === "unrelate") {
+        deltas.push({
+          resource: joinStoreKey,
+          id: compositeId,
+          op: "delete",
+          record: null,
+        });
+      }
+    }
+  }
+
+  return deltas;
 }
 
 /**
@@ -32,6 +123,9 @@ export async function executePush(
   schema: DatafnSchema,
   db: Adapter,
   idempotencyStore: IdempotencyStore,
+  namespace: string,
+  sequenceStore?: SequenceStore,
+  onChange?: (seq: number) => void,
 ): Promise<PushResult> {
   // Validate clientId at request level - this is a critical error
   if (!request.clientId || typeof request.clientId !== "string") {
@@ -47,6 +141,7 @@ export async function executePush(
           path: "clientId",
         },
       ],
+      cursor: "0",
     };
   }
 
@@ -65,6 +160,7 @@ export async function executePush(
             path: `mutations[${i}].clientId`,
           },
         ],
+        cursor: "0",
       };
     }
   }
@@ -82,6 +178,7 @@ export async function executePush(
         message: err.message,
         path: err.path,
       })),
+      cursor: "0",
     };
   }
 
@@ -93,8 +190,9 @@ export async function executePush(
     path: string;
   }> = [];
 
-  // Create change tracking service
-  const changeTracking = new ChangeTrackingService(db);
+  // Create change tracking service with user/tenant namespace and optional sequence store
+  const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore, onChange);
+  let latestSeq = 0;
 
   // Process each mutation
   for (const mutation of request.mutations) {
@@ -145,7 +243,7 @@ export async function executePush(
               id: mut.id,
               ...(mut.record || {}),
             },
-            namespace: "datafn",
+            namespace,
           });
           opResult = { ok: true };
           break;
@@ -157,7 +255,7 @@ export async function executePush(
             const existing = await db.findOne({
               model: mut.resource,
               where: [{ field: "id", operator: "eq", value: mut.id }],
-              namespace: "datafn",
+              namespace,
             });
 
             if (existing) {
@@ -166,7 +264,7 @@ export async function executePush(
                 model: mut.resource,
                 where: [{ field: "id", operator: "eq", value: mut.id }],
                 data: mut.record || {},
-                namespace: "datafn",
+                namespace,
               });
             } else {
               // Record doesn't exist, create it
@@ -176,7 +274,7 @@ export async function executePush(
                   id: mut.id,
                   ...(mut.record || {}),
                 },
-                namespace: "datafn",
+                namespace,
               });
             }
             opResult = { ok: true };
@@ -194,9 +292,57 @@ export async function executePush(
           await db.delete({
             model: mut.resource,
             where: [{ field: "id", operator: "eq", value: mut.id }],
-            namespace: "datafn",
+            namespace,
           });
           opResult = { ok: true };
+          break;
+
+        case "relate":
+          {
+            const result = await executeRelate(db, schema, mut, namespace);
+            if (result.ok) {
+              opResult = { ok: true };
+            } else {
+              opResult = {
+                ok: false,
+                code: result.code,
+                message: result.message,
+                path: result.path,
+              };
+            }
+          }
+          break;
+
+        case "modifyRelation":
+          {
+            const result = await executeModifyRelation(db, schema, mut, namespace);
+            if (result.ok) {
+              opResult = { ok: true };
+            } else {
+              opResult = {
+                ok: false,
+                code: result.code,
+                message: result.message,
+                path: result.path,
+              };
+            }
+          }
+          break;
+
+        case "unrelate":
+          {
+            const result = await executeUnrelate(db, schema, mut, namespace);
+            if (result.ok) {
+              opResult = { ok: true };
+            } else {
+              opResult = {
+                ok: false,
+                code: result.code,
+                message: result.message,
+                path: result.path,
+              };
+            }
+          }
           break;
 
         default:
@@ -220,9 +366,11 @@ export async function executePush(
     if (opResult.ok) {
       applied.push(mut.mutationId);
 
-      // Record change tracking
+      // Record change tracking for the primary resource
       try {
         const serverSeq = await changeTracking.getNextServerSeq();
+        latestSeq = Math.max(latestSeq, serverSeq);
+        
         await changeTracking.recordChange({
           serverSeq,
           resource: mut.resource,
@@ -233,6 +381,28 @@ export async function executePush(
               ? null
               : { id: mut.id, ...(mut.record || {}) },
         });
+
+        // Record join deltas for relation operations
+        if (
+          mut.operation === "relate" ||
+          mut.operation === "modifyRelation" ||
+          mut.operation === "unrelate"
+        ) {
+          const joinDeltas = extractJoinDeltas(mut, schema);
+          for (const delta of joinDeltas) {
+            // Each join delta gets its own serverSeq for deterministic ordering
+            const joinSeq = await changeTracking.getNextServerSeq();
+            latestSeq = Math.max(latestSeq, joinSeq);
+
+            await changeTracking.recordChange({
+              serverSeq: joinSeq,
+              resource: delta.resource,
+              id: delta.id,
+              op: delta.op,
+              record: delta.record,
+            });
+          }
+        }
       } catch (error) {
         console.error("Change tracking failed in push:", error);
       }
@@ -263,9 +433,15 @@ export async function executePush(
     }
   }
 
+  // Retrieve latest cursor if not updated during loop (e.g. deduped or empty)
+  if (latestSeq === 0) {
+    latestSeq = await changeTracking.getCurrentServerSeq();
+  }
+
   return {
     ok: true,
     applied,
     errors,
+    cursor: String(latestSeq),
   };
 }

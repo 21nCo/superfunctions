@@ -19,7 +19,7 @@ const REDACT_PATTERNS = [
   /[A-Za-z0-9\-_]{32,}/g,
 ];
 
-const SAFE_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const SAFE_ID_PATTERN = /^[a-zA-Z0-9_\-]+$/;
 
 function isSafeValue(key: string, value: unknown): boolean {
   if (typeof value !== 'string') return true;

@@ -1,0 +1,3 @@
+id, desc, status, completedAt, completionDoc
+2026-02-07-new-k58m92je-spec,Provide a self-hosted, Sanity-like headless content engine (schema + documents + assets + drafts/publish + query + events) that integrates with Superfunctions primitives while keeping all data in the deployer’s infrastructure.,0,,
+

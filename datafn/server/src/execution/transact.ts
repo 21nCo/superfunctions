@@ -6,6 +6,7 @@ import type { DatafnSchema } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "./idempotency.js";
 import type { DFQLMutation } from "./mutation/dfql.js";
+import type { SequenceStore } from "./sync/sequence-store.js";
 import { executeMutation } from "./mutation/execute.js";
 import { executeQuery } from "./query/execute.js";
 import { DbDataStore } from "./db-store.js";
@@ -38,6 +39,8 @@ export async function executeTransaction(
   db: Adapter,
   idempotencyStore: IdempotencyStore,
   limits?: { maxTransactSteps?: number },
+  namespace: string,
+  sequenceStore?: SequenceStore,
 ): Promise<TransactResult> {
   const steps = request.steps;
   const isAtomic = request.atomic !== false; // Default true
@@ -56,7 +59,7 @@ export async function executeTransaction(
   }
 
   const results: Array<any> = [];
-  const changeTracking = new ChangeTrackingService(db);
+  const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
 
   // Helper to execute a single step
   const executeStep = async (step: TransactStep, stepDb: Adapter) => {

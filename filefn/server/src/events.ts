@@ -25,7 +25,7 @@ export interface PartRecordedEvent extends FileFnEvent {
 }
 
 export interface FileUploadedEvent extends FileFnEvent {
-  type: 'file.uploaded';
+  type: 'file:uploaded';
   fileId: string;
   versionId: string;
   fileName: string;
@@ -36,7 +36,7 @@ export interface FileUploadedEvent extends FileFnEvent {
 }
 
 export interface FileDeletedEvent extends FileFnEvent {
-  type: 'file.deleted';
+  type: 'file:deleted';
   fileId: string;
   ownerId: string;
   tenantId?: string;
@@ -65,8 +65,8 @@ export interface ProcessingFailedEvent extends FileFnEvent {
 export type FileFnEventTypes = {
   'upload.started': UploadStartedEvent;
   'part.recorded': PartRecordedEvent;
-  'file.uploaded': FileUploadedEvent;
-  'file.deleted': FileDeletedEvent;
+  'file:uploaded': FileUploadedEvent;
+  'file:deleted': FileDeletedEvent;
   'processing.started': ProcessingStartedEvent;
   'processing.completed': ProcessingCompletedEvent;
   'processing.failed': ProcessingFailedEvent;
@@ -111,7 +111,7 @@ export function createFileUploadedEvent(
   requestId?: string
 ): FileUploadedEvent {
   return {
-    type: 'file.uploaded',
+    type: 'file:uploaded',
     timestamp: new Date().toISOString(),
     requestId,
     ...data,
@@ -123,7 +123,7 @@ export function createFileDeletedEvent(
   requestId?: string
 ): FileDeletedEvent {
   return {
-    type: 'file.deleted',
+    type: 'file:deleted',
     timestamp: new Date().toISOString(),
     requestId,
     ...data,

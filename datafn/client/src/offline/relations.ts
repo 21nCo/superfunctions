@@ -1,4 +1,87 @@
 /**
+ * Offline Relation Operations
+ * 
+ * Handles relation expansion and mutation operations in offline mode.
+ */
+import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
+import type { DatafnStorageAdapter } from "../storage.js";
+
+/**
+ * Normalized relation payload item
+ */
+export interface NormalizedRelation {
+  toId: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * Normalize relation payload to consistent format
+ * - String -> [{ toId, metadata: {} }]
+ * - String[] -> [{ toId, metadata: {} }, ...]
+ * - Object with $ref -> [{ toId: $ref, metadata: {...rest} }]
+ * - Array of above -> flatten
+ */
+export function normalizeRelationPayload(
+  payload: unknown,
+): NormalizedRelation[] {
+  if (typeof payload === "string") {
+    return [{ toId: payload, metadata: {} }];
+  }
+  if (Array.isArray(payload)) {
+    return payload.map((item) => {
+      if (typeof item === "string") {
+        return { toId: item, metadata: {} };
+      }
+      if (typeof item === "object" && item !== null) {
+        const { $ref, ...meta } = item as Record<string, unknown>;
+        if (!$ref || typeof $ref !== "string") {
+          throw new Error("Invalid relation payload item: missing or invalid $ref");
+        }
+        return { toId: $ref as string, metadata: meta };
+      }
+      throw new Error("Invalid relation payload item type");
+    });
+  }
+  if (typeof payload === "object" && payload !== null) {
+    const { $ref, ...meta } = payload as Record<string, unknown>;
+    if (!$ref || typeof $ref !== "string") {
+      throw new Error("Invalid relation payload: missing or invalid $ref");
+    }
+    return [{ toId: $ref as string, metadata: meta }];
+  }
+  throw new Error("Invalid relation payload: must be string, object with $ref, or array");
+}
+
+/**
+ * Compute deterministic join-store name for a relation
+ * Format: join_{fromResource}_{relationName}_{toResource}
+ */
+export function getJoinStoreName(
+  fromResource: string,
+  relationName: string,
+  toResource: string,
+): string {
+  return `join_${fromResource}_${relationName}_${toResource}`;
+}
+
+/**
+ * Find relation definition in schema
+ */
+export function findRelation(
+  schema: DatafnSchema,
+  resource: string,
+  relationName: string,
+): DatafnRelationSchema | null {
+  return (
+    schema.relations?.find(
+      (r) =>
+        (r.from === resource && r.relation === relationName) ||
+        (r.to === resource && r.inverse === relationName),
+    ) || null
+  );
+}
+
+/**
  * Expand a relation for a record with sub-selection
  */
 export async function expandRelation(
@@ -20,11 +103,16 @@ export async function expandRelation(
   }
 
   // Determine direction
-  const isForward = relation.from === resource && relation.relation === relationName;
-  const targetResource = isForward ? (relation.to as string) : (relation.from as string);
+  const isForward =
+    relation.from === resource && relation.relation === relationName;
+  const targetResource = isForward
+    ? (relation.to as string)
+    : (relation.from as string);
 
   // Check for metadata request (# or *#)
-  const wantsMetadata = subSelect.some(s => s === "#" || s === "*#" || s === "#*");
+  const wantsMetadata = subSelect.some(
+    (s) => s === "#" || s === "*#" || s === "#*",
+  );
   const wantsExpansion = subSelect.length > 0;
 
   // 1. Fetch related IDs or Join Rows
@@ -33,80 +121,116 @@ export async function expandRelation(
 
   if (relation.type === "many-one") {
     if (isForward) {
-        const fk = relation.fkField || `${relationName}Id`;
-        const val = record[fk] as string;
-        if (val) targetIds.push(val);
+      const fk = relation.fkField || `${relationName}Id`;
+      const val = record[fk] as string;
+      if (val) targetIds.push(val);
     } else {
-        // Inverse many-one is one-many behavior
-        // fk is on target table.
-        const fk = relation.fkField || relation.inverse || `${resource}Id`; 
-        const records = await storage.findRecords(targetResource, fk, record.id);
-        targetIds = records.map(r => r.id as string);
-    }
-  } else if (relation.type === "one-many") {
+      // Inverse many-one is one-many behavior
+      // fk is on target table.
       const fk = relation.fkField || relation.inverse || `${resource}Id`;
       const records = await storage.findRecords(targetResource, fk, record.id);
-      targetIds = records.map(r => r.id as string);
+      targetIds = records.map((r) => r.id as string);
+    }
+  } else if (relation.type === "one-many") {
+    const fk = relation.fkField || relation.inverse || `${resource}Id`;
+    const records = await storage.findRecords(targetResource, fk, record.id);
+    targetIds = records.map((r) => r.id as string);
   } else if (relation.type === "many-many") {
-      const relationKey = `${relation.from}.${relation.relation}`;
-      const rows = await storage.getJoinRows(relationKey, record.id as string);
-      
-      let relevantRows = rows;
-      if (!isForward) {
-          // Inverse: scan all rows?
-          // Note: getJoinRows(key, id) returns rows where from=id.
-          // If we are in inverse, we are "to". We need rows where to=id.
-          // Adapter only optimized for from.
-          // Fallback scan.
-          const all = await storage.listJoinRows(relationKey);
-          relevantRows = all.filter(r => r.to === record.id);
+    const relationName = relation.relation || "rel";
+    const fromResources = Array.isArray(relation.from)
+      ? relation.from
+      : [relation.from];
+    const toResources = Array.isArray(relation.to)
+      ? relation.to
+      : [relation.to];
+
+    // Determine stores to query based on direction
+    const storesToQuery: string[] = [];
+
+    if (isForward) {
+      // Forward: We are 'from' (resource). Query all 'to' targets.
+      for (const t of toResources) {
+        storesToQuery.push(`join_${resource}_${relationName}_${t}`);
       }
-      
-      joinRows = relevantRows;
-      targetIds = relevantRows.map(r => isForward ? r.to as string : r.from as string);
+    } else {
+      // Inverse: We are 'to' (resource). Query all 'from' sources.
+      for (const f of fromResources) {
+        storesToQuery.push(`join_${f}_${relationName}_${resource}`);
+      }
+    }
+
+    const allRows: Record<string, unknown>[] = [];
+    for (const storeName of storesToQuery) {
+      try {
+        const rows = isForward
+          ? await storage.getJoinRows(storeName, record.id as string)
+          : await storage.getJoinRowsInverse(storeName, record.id as string);
+        allRows.push(...rows);
+      } catch (err) {
+        // Store might not exist if lazy created or invalid schema combo
+        // Ignore or log? Safe to ignore if we assume consistent schema.
+      }
+    }
+
+    joinRows = allRows;
+    targetIds = allRows.map((r) =>
+      isForward ? (r.to as string) : (r.from as string),
+    );
   }
 
   // 2. Return based on request type
   if (!wantsExpansion && relation.type !== "many-many") {
-      // Just IDs for many-one?
-      // "rel" -> ID or IDs.
-      if (relation.type === "many-one" && isForward) return targetIds[0] || null;
-      return targetIds;
+    // Just IDs for many-one?
+    // "rel" -> ID or IDs.
+    if (relation.type === "many-one" && isForward) return targetIds[0] || null;
+    return targetIds;
   }
-  
+
   if (relation.type === "many-many") {
-      if (wantsMetadata && !subSelect.some(s => s !== "#")) {
-          // Only metadata (#)
-          return joinRows;
-      }
-      // If we want expansion, we need to fetch records
+    if (wantsMetadata && !subSelect.some((s) => s !== "#")) {
+      // Only metadata (#)
+      return joinRows;
+    }
+    // If we want expansion, we need to fetch records
   }
 
   // 3. Fetch records
   const targets = [];
   for (const id of targetIds) {
-      const r = await storage.getRecord(targetResource, id);
-      if (r) targets.push(r);
+    const r = await storage.getRecord(targetResource, id);
+    if (r) targets.push(r);
   }
 
   // 4. Attach metadata if needed (many-many *#)
   if (relation.type === "many-many" && wantsMetadata) {
-      // Merge metadata
-      const merged = targets.map(target => {
-          // Find matching join row
-          const match = joinRows.find(row => 
-              isForward ? row.to === target.id : row.from === target.id
-          );
-          return { ...target, ...(match || {}) };
-      });
-      return materializeSelect(storage, schema, targetResource, merged, subSelect);
+    // Merge metadata
+    const merged = targets.map((target) => {
+      // Find matching join row
+      const match = joinRows.find((row) =>
+        isForward ? row.to === target.id : row.from === target.id,
+      );
+      return { ...target, ...(match || {}) };
+    });
+    return materializeSelect(
+      storage,
+      schema,
+      targetResource,
+      merged,
+      subSelect,
+    );
   }
 
   // 5. Materialize
-  const result = await materializeSelect(storage, schema, targetResource, targets, subSelect);
-  
+  const result = await materializeSelect(
+    storage,
+    schema,
+    targetResource,
+    targets,
+    subSelect,
+  );
+
   if (relation.type === "many-one" && isForward) {
-      return result[0] || null;
+    return result[0] || null;
   }
   return result;
 }
@@ -128,12 +252,12 @@ export async function materializeSelect(
 
   for (const token of select) {
     if (token === "*" || token === "#" || token === "*#" || token === "#*") {
-        baseFields.add("*"); // Keep all fields
-        // # implies metadata, which is already merged if we are here?
-        // Yes, expandRelation merges it.
-        continue;
+      baseFields.add("*"); // Keep all fields
+      // # implies metadata, which is already merged if we are here?
+      // Yes, expandRelation merges it.
+      continue;
     }
-    
+
     if (token.includes(".")) {
       const [base, ...rest] = token.split(".");
       if (!expansions.has(base)) expansions.set(base, []);
@@ -150,34 +274,49 @@ export async function materializeSelect(
   const results = [];
   for (const record of records) {
     const result: Record<string, unknown> = {};
-    
+
     // Copy fields
     if (baseFields.has("*")) {
-        Object.assign(result, record);
+      Object.assign(result, record);
     } else {
-        result.id = record.id;
-        for (const key of baseFields) {
-             // Check if relation
-             const relation = schema.relations?.find(r => 
-                (r.from === resource && r.relation === key) || 
-                (r.to === resource && r.inverse === key)
-            );
-            if (relation) {
-                // Expand as IDs
-                result[key] = await expandRelation(storage, schema, resource, record, key, []);
-            } else if (key in record) {
-                result[key] = record[key];
-            }
+      result.id = record.id;
+      for (const key of baseFields) {
+        // Check if relation
+        const relation = schema.relations?.find(
+          (r) =>
+            (r.from === resource && r.relation === key) ||
+            (r.to === resource && r.inverse === key),
+        );
+        if (relation) {
+          // Expand as IDs
+          result[key] = await expandRelation(
+            storage,
+            schema,
+            resource,
+            record,
+            key,
+            [],
+          );
+        } else if (key in record) {
+          result[key] = record[key];
         }
+      }
     }
 
     // Process expansions
     for (const [key, subSelect] of expansions.entries()) {
-        result[key] = await expandRelation(storage, schema, resource, record, key, subSelect);
+      result[key] = await expandRelation(
+        storage,
+        schema,
+        resource,
+        record,
+        key,
+        subSelect,
+      );
     }
-    
+
     results.push(result);
   }
-  
+
   return results;
 }

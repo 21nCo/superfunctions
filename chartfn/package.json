@@ -3,8 +3,27 @@
   "version": "0.0.1",
   "description": "Charting library",
   "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "rm -rf dist",
+    "lint": "echo 'lint not configured'",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18.18.0"
@@ -29,5 +48,17 @@
     "schemaVersion": 1,
     "namespace": "chartfn"
   },
-  "devDependencies": {}
+  "dependencies": {
+    "@carbon/charts-react": "^1.27.2",
+    "chart.js": "^4.4.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "echarts": "^5.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
 }

@@ -3,8 +3,9 @@
  * Tests TV-OFFLINE-QUERY-001, TV-OFFLINE-QUERY-002 from TEST_VECTORS.md
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createDatafnClient } from "../src/index.js";
+import { DefaultHttpTransport } from "../src/transport/http.js";
 import type {
   DatafnStorageAdapter,
   DatafnHydrationState,
@@ -104,9 +105,21 @@ class MockStorageAdapter implements DatafnStorageAdapter {
     return [];
   }
 
+  async getJoinRows(
+    relationKey: string,
+    fromId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    return [];
+  }
+
   async upsertJoinRow(
     relationKey: string,
     row: Record<string, unknown>,
+  ): Promise<void> {}
+
+  async setJoinRows(
+    relationKey: string,
+    rows: Array<Record<string, unknown>>,
   ): Promise<void> {}
 
   async deleteJoinRow(
@@ -114,6 +127,22 @@ class MockStorageAdapter implements DatafnStorageAdapter {
     from: string,
     to: string,
   ): Promise<void> {}
+
+  async getJoinRowsInverse(
+    relationKey: string,
+    toId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    return [];
+  }
+
+  async findRecords(
+    resource: string,
+    field: string,
+    value: unknown,
+  ): Promise<Record<string, unknown>[]> {
+    const records = await this.listRecords(resource);
+    return records.filter((r) => r[field] === value);
+  }
 
   async changelogAppend(entry: any): Promise<any> {
     const seq = this.changelog.length + 1;
@@ -128,6 +157,16 @@ class MockStorageAdapter implements DatafnStorageAdapter {
 
   async changelogAck(options: { throughSeq: number }): Promise<void> {
     this.changelog = this.changelog.filter((e) => e.seq > options.throughSeq);
+  }
+
+  async countRecords(resource: string): Promise<number> {
+    const records = await this.listRecords(resource);
+    return records.length;
+  }
+
+  async countJoinRows(relationKey: string): Promise<number> {
+    const rows = await this.listJoinRows(relationKey);
+    return rows.length;
   }
 }
 
@@ -147,6 +186,10 @@ const testSchema = {
 };
 
 describe("Offline Query Tests", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("TV-OFFLINE-QUERY-001: When hydration is ready, queries are local-first (no remote call)", async () => {
     // Create storage with preloaded data and ready state
     const storage = new MockStorageAdapter({
@@ -158,36 +201,16 @@ describe("Offline Query Tests", () => {
       },
     });
 
-    // Track remote calls
-    let queryCallCount = 0;
-    const remote = {
-      query: async () => {
-        queryCallCount++;
-        return {
-          ok: true,
-          result: {
-            data: [{ id: "task:1", title: "Remote" }],
-            nextCursor: null,
-          },
-        };
-      },
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({
+    const querySpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "query")
+      .mockResolvedValue({
         ok: true,
-        result: { ok: true, data: {}, cursors: {} },
-      }),
-      pull: async () => ({
-        ok: true,
-        result: { ok: true, records: {}, deleted: {}, cursors: {} },
-      }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+        result: { data: [{ id: "task:1", title: "Remote" }], nextCursor: null },
+      });
 
     const client = createDatafnClient({
       schema: testSchema,
-      remote,
+      sync: { remote: "http://example.com" },
       clientId: "client:1",
       storage,
     });
@@ -203,7 +226,7 @@ describe("Offline Query Tests", () => {
     expect(result.nextCursor).toBe(null);
 
     // Verify remote was NOT called (local-first)
-    expect(queryCallCount).toBe(0);
+    expect(querySpy).not.toHaveBeenCalled();
   });
 
   it("TV-OFFLINE-QUERY-002: When hydration is hydrating, queries use remote fallback", async () => {
@@ -215,11 +238,10 @@ describe("Offline Query Tests", () => {
     });
 
     // Track remote calls
-    let queryCallCount = 0;
     const queryCalls: any[] = [];
-    const remote = {
-      query: async (q: any) => {
-        queryCallCount++;
+    const querySpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "query")
+      .mockImplementation(async (q: any) => {
         queryCalls.push(q);
         return {
           ok: true,
@@ -228,24 +250,11 @@ describe("Offline Query Tests", () => {
             nextCursor: null,
           },
         };
-      },
-      mutation: async () => ({ ok: true, result: { ok: true } }),
-      transact: async () => ({ ok: true, result: { ok: true } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({
-        ok: true,
-        result: { ok: true, data: {}, cursors: {} },
-      }),
-      pull: async () => ({
-        ok: true,
-        result: { ok: true, records: {}, deleted: {}, cursors: {} },
-      }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+      });
 
     const client = createDatafnClient({
       schema: testSchema,
-      remote,
+      sync: { remote: "http://example.com" },
       clientId: "client:1",
       storage,
     });
@@ -261,7 +270,7 @@ describe("Offline Query Tests", () => {
     expect(result.nextCursor).toBe(null);
 
     // Verify remote WAS called (remote fallback)
-    expect(queryCallCount).toBe(1);
+    expect(querySpy).toHaveBeenCalledTimes(1);
     expect(queryCalls[0]).toEqual({
       resource: "task",
       version: 1,
@@ -289,11 +298,13 @@ describe("Offline Query Tests", () => {
       for (const record of dataset) {
         await storage.upsertRecord("task", record);
       }
+      await storage.setHydrationState("task", "hydrating");
       await storage.setHydrationState("task", "ready");
 
       client = createDatafnClient({
         schema: testSchema,
-        remote: {} as any, // Should not be called
+        sync: { remote: "http://example.com" }, // Should not be called
+        clientId: "test-client",
         storage,
       });
     });
@@ -323,10 +334,7 @@ describe("Offline Query Tests", () => {
       // 1 (A), 1 (C), 2 (B), 3 (D) -> title desc -> C, A, B, D
       // IDs: 3, 1, 2, 4
       const res = await client.table("task").query({
-        sort: [
-          { field: "prio", dir: "asc" },
-          { field: "title", dir: "desc" },
-        ],
+        sort: ["prio:asc", "title:desc"],
       });
 
       const ids = res.data.map((r: any) => r.id);
@@ -337,7 +345,7 @@ describe("Offline Query Tests", () => {
       // Sort by id: 1, 2, 3, 4
       // Offset 1, Limit 2 -> 2, 3
       const res = await client.table("task").query({
-        sort: [{ field: "id", dir: "asc" }],
+        sort: ["id:asc"],
         offset: 1,
         limit: 2,
       });
@@ -353,6 +361,290 @@ describe("Offline Query Tests", () => {
       const rec = res.data[0];
       expect(Object.keys(rec).sort()).toEqual(["id", "title"]);
       expect(rec.prio).toBeUndefined();
+    });
+  });
+
+  // Phase 08: TV-OFFQ-001 and TV-OFFQ-002
+  describe("TV-OFFQ-001: Index-aware local query routing", () => {
+    let storage: MockStorageAdapter;
+    let client: any;
+
+    beforeEach(async () => {
+      storage = new MockStorageAdapter({
+        records: {
+          node: [
+            { id: "node:1", label: "X" },
+            { id: "node:2", label: "Y" },
+            { id: "node:3", label: "X" },
+          ],
+        },
+        hydration: {
+          node: "ready",
+        },
+      });
+
+      const schema = {
+        resources: [
+          {
+            name: "node",
+            version: 1,
+            fields: [
+              { name: "id", type: "string" as const, required: true },
+              { name: "label", type: "string" as const, required: false },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      client = createDatafnClient({
+        schema,
+        sync: { mode: "local-only" as const, offlinability: true },
+        clientId: "client:1",
+        storage,
+      });
+    });
+
+    it("TV-OFFQ-001: Local query routes `id eq` to getRecord", async () => {
+      // Spy on getRecord
+      const getRecordSpy = vi.spyOn(storage, "getRecord");
+
+      const result = await client.table("node").query({
+        resource: "node",
+        version: 1,
+        filters: { id: { eq: "node:1" } },
+      });
+
+      expect(getRecordSpy).toHaveBeenCalledWith("node", "node:1");
+      expect(result.data).toEqual([{ id: "node:1", label: "X" }]);
+    });
+
+    it("TV-OFFQ-001: Indexed field eq uses findRecords", async () => {
+      const findRecordsSpy = vi.spyOn(storage, "findRecords");
+
+      const result = await client.table("node").query({
+        resource: "node",
+        version: 1,
+        filters: { label: { eq: "X" } },
+      });
+
+      expect(findRecordsSpy).toHaveBeenCalledWith("node", "label", "X");
+      expect(result.data.map((r: any) => r.id).sort()).toEqual([
+        "node:1",
+        "node:3",
+      ]);
+    });
+
+    it("TV-OFFQ-001: Fallback to scan with deterministic ordering", async () => {
+      const listRecordsSpy = vi.spyOn(storage, "listRecords");
+
+      // Complex filter that cannot use index
+      const result = await client.table("node").query({
+        resource: "node",
+        version: 1,
+        filters: { label: { $ne: "Z" } },
+      });
+
+      expect(listRecordsSpy).toHaveBeenCalledWith("node");
+      // Should be ordered by id:asc deterministically
+      expect(result.data.map((r: any) => r.id)).toEqual([
+        "node:1",
+        "node:2",
+        "node:3",
+      ]);
+    });
+  });
+
+  describe("TV-OFFQ-001N: Unsupported operator rejection", () => {
+    let storage: MockStorageAdapter;
+    let client: any;
+
+    beforeEach(() => {
+      storage = new MockStorageAdapter({
+        records: { node: [{ id: "node:1", label: "X" }] },
+        hydration: { node: "ready" },
+      });
+
+      const schema = {
+        resources: [
+          {
+            name: "node",
+            version: 1,
+            fields: [{ name: "label", type: "string" as const, required: false }],
+          },
+        ],
+        relations: [],
+      };
+
+      client = createDatafnClient({
+        schema,
+        sync: { mode: "local-only" as const, offlinability: true },
+        clientId: "client:1",
+        storage,
+      });
+    });
+
+    it("TV-OFFQ-001N: Unsupported operator is rejected", async () => {
+      await expect(
+        client.table("node").query({
+          resource: "node",
+          version: 1,
+          filters: { label: { $regex: "x" } },
+        }),
+      ).rejects.toMatchObject({
+        code: "DFQL_UNSUPPORTED",
+        message: expect.stringContaining("filters.label"),
+      });
+    });
+  });
+
+  describe("TV-OFFQ-002: Local filter operator coverage", () => {
+    let storage: MockStorageAdapter;
+    let client: any;
+
+    beforeEach(() => {
+      storage = new MockStorageAdapter({
+        records: {
+          node: [
+            { id: "node:1", label: "A" },
+            { id: "node:2", label: "B" },
+            { id: "node:3", label: "C" },
+          ],
+        },
+        hydration: { node: "ready" },
+      });
+
+      const schema = {
+        resources: [
+          {
+            name: "node",
+            version: 1,
+            fields: [{ name: "label", type: "string" as const, required: false }],
+          },
+        ],
+        relations: [],
+      };
+
+      client = createDatafnClient({
+        schema,
+        sync: { mode: "local-only" as const, offlinability: true },
+        clientId: "client:1",
+        storage,
+      });
+    });
+
+    it("TV-OFFQ-002: $or works deterministically", async () => {
+      const result = await client.table("node").query({
+        resource: "node",
+        version: 1,
+        filters: { $or: [{ label: { eq: "A" } }, { label: { eq: "B" } }] },
+      });
+
+      expect(result.data.map((r: any) => r.id).sort()).toEqual([
+        "node:1",
+        "node:2",
+      ]);
+    });
+
+    it("TV-OFFQ-002: Supports $and, $ne, $gt, $gte, $lt, $lte, $in, $nin", async () => {
+      // $ne
+      const res1 = await client.table("node").query({
+        filters: { label: { $ne: "A" } },
+      });
+      expect(res1.data.map((r: any) => r.id).sort()).toEqual([
+        "node:2",
+        "node:3",
+      ]);
+
+      // $gte
+      const res2 = await client.table("node").query({
+        filters: { label: { $gte: "B" } },
+      });
+      expect(res2.data.map((r: any) => r.id).sort()).toEqual([
+        "node:2",
+        "node:3",
+      ]);
+
+      // $lt
+      const res3 = await client.table("node").query({
+        filters: { label: { $lt: "C" } },
+      });
+      expect(res3.data.map((r: any) => r.id).sort()).toEqual([
+        "node:1",
+        "node:2",
+      ]);
+
+      // $in
+      const res4 = await client.table("node").query({
+        filters: { id: { $in: ["node:1", "node:3"] } },
+      });
+      expect(res4.data.map((r: any) => r.id).sort()).toEqual([
+        "node:1",
+        "node:3",
+      ]);
+
+      // $nin
+      const res5 = await client.table("node").query({
+        filters: { id: { $nin: ["node:2"] } },
+      });
+      expect(res5.data.map((r: any) => r.id).sort()).toEqual([
+        "node:1",
+        "node:3",
+      ]);
+
+      // $and
+      const res6 = await client.table("node").query({
+        filters: {
+          $and: [{ label: { $gte: "A" } }, { label: { $lte: "B" } }],
+        },
+      });
+      expect(res6.data.map((r: any) => r.id).sort()).toEqual([
+        "node:1",
+        "node:2",
+      ]);
+    });
+  });
+
+  describe("TV-OFFQ-002N: $or must be array", () => {
+    let storage: MockStorageAdapter;
+    let client: any;
+
+    beforeEach(() => {
+      storage = new MockStorageAdapter({
+        records: { node: [{ id: "node:1", label: "A" }] },
+        hydration: { node: "ready" },
+      });
+
+      const schema = {
+        resources: [
+          {
+            name: "node",
+            version: 1,
+            fields: [{ name: "label", type: "string" as const, required: false }],
+          },
+        ],
+        relations: [],
+      };
+
+      client = createDatafnClient({
+        schema,
+        sync: { mode: "local-only" as const, offlinability: true },
+        clientId: "client:1",
+        storage,
+      });
+    });
+
+    it("TV-OFFQ-002N: $or must be array; otherwise invalid", async () => {
+      await expect(
+        client.table("node").query({
+          resource: "node",
+          version: 1,
+          filters: { $or: { label: { eq: "A" } } },
+        }),
+      ).rejects.toMatchObject({
+        code: "DFQL_INVALID",
+        message: expect.stringContaining("$or must be array"),
+      });
     });
   });
 });

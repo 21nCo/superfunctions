@@ -1,0 +1,54 @@
+{
+  "name": "@superfunctions/compfn",
+  "version": "0.1.0",
+  "description": "Self-hosted compliance function: controls, frameworks, evidence, checks, audit-ready export",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "compfn": "./cli/dist/index.js"
+  },
+  "files": [
+    "dist",
+    "cli/dist"
+  ],
+  "scripts": {
+    "build": "npm run build:core && npm run build:cli",
+    "build:core": "tsc",
+    "build:cli": "tsc -p cli/tsconfig.json",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p cli/tsconfig.json",
+    "clean": "rm -rf dist cli/dist"
+  },
+  "keywords": [
+    "compliance",
+    "controls",
+    "frameworks",
+    "evidence",
+    "audit",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "superfunctions/compfn"
+  },
+  "dependencies": {
+    "@superfunctions/db": "*",
+    "commander": "^4.1.1",
+    "hono": "^4.11.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}

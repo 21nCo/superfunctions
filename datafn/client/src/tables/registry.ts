@@ -13,24 +13,31 @@ import type { SignalRegistry } from "../signals/querySignal.js";
 interface ClientWithQuery {
   query(q: unknown | unknown[]): Promise<unknown>;
   mutate(m: unknown | unknown[]): Promise<unknown>;
+  transact(payload: unknown): Promise<unknown>;
   subscribe(handler: any, filter?: any): () => void;
 }
 
-export class TableRegistry {
-  private schema: DatafnSchema;
-  private tables: Map<string, DatafnTable>;
+export class TableRegistry<S extends DatafnSchema = DatafnSchema> {
+  private schema: S;
+  private tables: Map<string, DatafnTable<S, string>>;
   private client: ClientWithQuery;
   private signalRegistry: SignalRegistry;
+  private generateId: (params: {
+    resource: string;
+    idPrefix?: string;
+  }) => string;
 
   constructor(
-    schema: DatafnSchema,
+    schema: S,
     client: ClientWithQuery,
-    signalRegistry: SignalRegistry
+    signalRegistry: SignalRegistry,
+    generateId: (params: { resource: string; idPrefix?: string }) => string,
   ) {
     this.schema = schema;
     this.tables = new Map();
     this.client = client;
     this.signalRegistry = signalRegistry;
+    this.generateId = generateId;
   }
 
   /**
@@ -38,7 +45,7 @@ export class TableRegistry {
    * Caches table instances for object identity.
    * Throws DFQL_UNKNOWN_RESOURCE for unknown tables.
    */
-  getTable(name: string): DatafnTable {
+  getTable(name: string): DatafnTable<S, string> {
     // Check cache first
     const cached = this.tables.get(name);
     if (cached) {
@@ -55,11 +62,13 @@ export class TableRegistry {
     }
 
     // Create and cache table
-    const table = createTable(
+    const table = createTable<S>(
       resource.name,
       resource.version,
       this.client,
-      this.signalRegistry
+      this.signalRegistry,
+      this.generateId,
+      this.schema,
     );
     this.tables.set(name, table);
     return table;

@@ -10,6 +10,7 @@ import type {
   MutationResult,
 } from "../execution/idempotency.js";
 import type { DFQLMutation } from "../execution/mutation/dfql.js";
+import type { SequenceStore } from "../execution/sync/sequence-store.js";
 import { getBodyFromContext } from "../http/json.js";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { ChangeTrackingService } from "../execution/sync/change-tracking.js";
@@ -26,6 +27,8 @@ export function createMutationHandler(
   db?: Adapter, // Use Adapter instead of MemoryStore
   idempotencyStore?: IdempotencyStore,
   plugins: DatafnPlugin[] = [],
+  extractNamespace: (ctx: any) => Promise<string>,
+  sequenceStore?: SequenceStore,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -68,6 +71,20 @@ export function createMutationHandler(
 
         const { isBatch, mutations: transformedMutations } = validationResult.value;
 
+        // PHASE_11: Enforce write permissions for each mutation
+        const { validateMutationAuthz } = await import("../validation/authz.js");
+        for (let i = 0; i < transformedMutations.length; i++) {
+          const mut = transformedMutations[i] as Record<string, unknown>;
+          const authzResult = validateMutationAuthz(mut, validatedSchema);
+          if (!authzResult.ok) {
+            return errorResponse({
+              code: authzResult.code,
+              message: authzResult.message,
+              details: { path: isBatch ? `[${i}].${authzResult.path}` : authzResult.path },
+            }, 403);
+          }
+        }
+
         // After validation, check execution requirements
         if (!db || !idempotencyStore) {
         // Phase 07: mutations require DB adapter and idempotency
@@ -78,8 +95,11 @@ export function createMutationHandler(
         });
         }
 
-        // Create change tracking service
-        const changeTracking = new ChangeTrackingService(db);
+        // Extract namespace from context
+        const namespace = await extractNamespace(ctx);
+
+        // Create change tracking service with user/tenant namespace and optional sequence store
+        const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
 
         // Process each mutation
         const results: MutationResult[] = [];
@@ -92,6 +112,7 @@ export function createMutationHandler(
             idempotencyStore,
             changeTracking,
             plugins,
+            namespace,
         );
         results.push(result);
         }

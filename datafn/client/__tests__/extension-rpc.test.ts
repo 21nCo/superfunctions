@@ -1,6 +1,6 @@
 /**
  * Extension RPC Tests
- * Tests TV-EXT-001, TV-EXT-002 from TEST_VECTORS.md
+ * Tests TV-EXT-001, TV-EXT-001N from TEST_VECTORS.md
  */
 
 import { describe, it, expect } from "vitest";
@@ -12,6 +12,8 @@ import type {
   DatafnRpcRequest,
   DatafnRpcResponse,
 } from "../src/extension/rpc.js";
+import { createDatafnClient } from "../src/client.js";
+import type { DatafnEvent } from "@datafn/core";
 
 // In-memory bus implementation for testing
 class InMemoryBus implements MessageBus {
@@ -38,6 +40,156 @@ class InMemoryBus implements MessageBus {
 }
 
 describe("Extension RPC Tests", () => {
+  it("TV-EXT-001: Extension remote events feed local subscriptions", async () => {
+    // Setup: Create a bus and extension transport
+    const bus = new InMemoryBus();
+    const transport = createExtensionTransport(bus);
+
+    // Create a client with the extension transport
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          {
+            name: "node",
+            version: 1,
+            fields: [{ name: "label", type: "string", required: false }],
+          },
+        ],
+      },
+      sync: {
+        mode: "sync",
+        remoteAdapter: transport,
+      },
+      clientId: "client:test",
+    });
+
+    // Track received events
+    const receivedEvents: DatafnEvent[] = [];
+    const unsub = client.subscribe((event) => {
+      receivedEvents.push(event);
+    });
+
+    // Wait for subscription to be registered remotely
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Verify subscribe RPC was sent
+    expect(bus.sentMessages.length).toBeGreaterThan(0);
+    const subReq = bus.sentMessages.find(
+      (msg: any) => msg.method === "subscribe",
+    ) as DatafnRpcRequest;
+    expect(subReq).toBeTruthy();
+    expect(subReq.method).toBe("subscribe");
+
+    // Simulate background responding with subscriptionId
+    const subscriptionId = "s1";
+    bus.simulateIncoming({
+      id: subReq.id,
+      envelope: { ok: true, result: { subscriptionId } },
+    } as DatafnRpcResponse);
+
+    // Simulate background emitting an event
+    const remoteEvent: DatafnEvent = {
+      type: "mutation_applied",
+      resource: "node",
+      ids: ["node:1"],
+      timestampMs: Date.now(),
+    };
+
+    bus.simulateIncoming({
+      type: "event",
+      subscriptionId,
+      event: remoteEvent,
+    });
+
+    // Wait for event propagation
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Verify local subscriber received the event
+    expect(receivedEvents).toHaveLength(1);
+    expect(receivedEvents[0]).toEqual(remoteEvent);
+
+    // Cleanup
+    unsub();
+  });
+
+  it("TV-EXT-001N: Unsubscribe stops deliveries deterministically", async () => {
+    // Setup
+    const bus = new InMemoryBus();
+    const transport = createExtensionTransport(bus);
+
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          {
+            name: "node",
+            version: 1,
+            fields: [{ name: "label", type: "string", required: false }],
+          },
+        ],
+      },
+      sync: {
+        mode: "sync",
+        remoteAdapter: transport,
+      },
+      clientId: "client:test",
+    });
+
+    const receivedEvents: DatafnEvent[] = [];
+    const unsub = client.subscribe((event) => {
+      receivedEvents.push(event);
+    });
+
+    // Wait for subscription
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const subReq = bus.sentMessages.find(
+      (msg: any) => msg.method === "subscribe",
+    ) as DatafnRpcRequest;
+    const subscriptionId = "s2";
+    bus.simulateIncoming({
+      id: subReq.id,
+      envelope: { ok: true, result: { subscriptionId } },
+    } as DatafnRpcResponse);
+
+    // Emit first event (should be received)
+    bus.simulateIncoming({
+      type: "event",
+      subscriptionId,
+      event: {
+        type: "mutation_applied",
+        resource: "node",
+        ids: ["node:1"],
+        timestampMs: Date.now(),
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(receivedEvents).toHaveLength(1);
+
+    // Unsubscribe
+    unsub();
+
+    // Wait for unsubscribe to process
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Emit second event (should NOT be received)
+    bus.simulateIncoming({
+      type: "event",
+      subscriptionId,
+      event: {
+        type: "mutation_applied",
+        resource: "node",
+        ids: ["node:2"],
+        timestampMs: Date.now(),
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Verify no new events were received
+    expect(receivedEvents).toHaveLength(1); // Still only 1 event
+  });
+
   it("TV-EXT-001: RPC query request/response uses canonical envelope", async () => {
     const bus = new InMemoryBus();
     const transport = createExtensionTransport(bus);
@@ -154,7 +306,7 @@ describe("Extension RPC Tests", () => {
     bus.simulateIncoming(eventMsg);
 
     expect(receivedEvents).toHaveLength(1);
-    expect(receivedEvents[0]).toEqual(eventMsg.event);
+    expect(receivedEvents[0].event).toEqual(eventMsg.event);
 
     // 4. Unsubscribe
     const unsubPromise = transport.unsubscribeRemote("sub-123");

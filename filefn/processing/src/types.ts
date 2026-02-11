@@ -68,3 +68,76 @@ export interface CompressionConfig {
   algorithm?: 'gzip' | 'deflate';
   level?: number;
 }
+
+export interface OCRConfig {
+  language?: string;
+  outputFormat?: 'text' | 'hocr' | 'json' | 'all';
+}
+
+export type ImageTransformOperation = 'resize' | 'crop' | 'rotate';
+
+export interface ResizeOptions {
+  width?: number;
+  height?: number;
+  fit?: 'cover' | 'contain' | 'fill' | 'inside' | 'outside';
+  withoutEnlargement?: boolean;
+}
+
+export interface CropOptions {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface RotateOptions {
+  angle: number;
+  background?: { r: number; g: number; b: number; alpha?: number };
+}
+
+export interface ImageTransformConfig {
+  operations: Array<{
+    operation: ImageTransformOperation;
+    options: ResizeOptions | CropOptions | RotateOptions;
+    suffix?: string;
+  }>;
+  outputFormat?: 'jpeg' | 'png' | 'webp';
+  outputQuality?: number;
+}
+
+export interface VideoTranscodeOptions {
+  codec?: 'h264' | 'h265' | 'vp9' | 'av1';
+  resolution?: '1080p' | '720p' | '480p' | '360p';
+  bitrate?: string;
+  fps?: number;
+}
+
+export interface VideoPosterOptions {
+  timestamp?: number;
+  width?: number;
+  height?: number;
+  format?: 'jpeg' | 'png' | 'webp';
+  quality?: number;
+}
+
+export interface VideoConfig {
+  generatePoster?: boolean;
+  posterOptions?: VideoPosterOptions;
+  transcode?: boolean;
+  transcodeOptions?: VideoTranscodeOptions;
+  extractMetadata?: boolean;
+}
+
+export interface AudioTranscodeOptions {
+  codec?: 'mp3' | 'aac' | 'opus' | 'vorbis' | 'flac';
+  bitrate?: string;
+  sampleRate?: number;
+  channels?: number;
+}
+
+export interface AudioConfig {
+  transcode?: boolean;
+  transcodeOptions?: AudioTranscodeOptions;
+  extractMetadata?: boolean;
+  generateWaveform?: boolean;
+}

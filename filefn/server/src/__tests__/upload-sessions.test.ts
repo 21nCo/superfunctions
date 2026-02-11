@@ -105,9 +105,11 @@ function createFakeDbAdapter(): Adapter {
 describe('@filefn/server upload sessions', () => {
   let fileFn: FileFn;
   let db: Adapter;
+  let storageSizes: Map<string, number>;
 
   beforeEach(() => {
     db = createFakeDbAdapter();
+    storageSizes = new Map();
     const storage = createFakeStorageAdapter({
       capabilities: {
         signedUploadUrls: true,
@@ -116,6 +118,9 @@ describe('@filefn/server upload sessions', () => {
         proxyStreamingUpload: false,
         proxyStreamingDownload: true,
       },
+      async statObject(input) {
+        return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
+      }
     });
 
     fileFn = createFileFn({
@@ -314,6 +319,9 @@ describe('@filefn/server upload sessions', () => {
         { principalId: 'user_123' }
       );
 
+      const session = await db.findOne<any>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }] });
+      if (session) storageSizes.set(session.storageKey, 2097152);
+
       await fileFn.completeUploadPart(
         { uploadSessionId, partNumber: 1, etag: 'etag_part_1', size: 2097152 },
         { principalId: 'user_123' }
@@ -384,8 +392,8 @@ describe('@filefn/server upload sessions', () => {
   describe('Rate limiting (TV-RATE-NEG-001)', () => {
     it('should enforce rate limits on upload init', async () => {
       const rateLimiter = {
-        async check(_key: string) {
-          return { allowed: false, remaining: 0, resetAt: Date.now() + 60000, total: 10 };
+        async check(_input: any) {
+          return { allowed: false, remaining: 0, resetAt: new Date(Date.now() + 60000).toISOString(), total: 10 };
         },
         async reset(_key: string) {},
       };

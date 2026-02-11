@@ -225,22 +225,46 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               throw new Error('Storage adapter does not support streaming uploads');
             }
 
-            const artifactId = generateId();
-            await db.create({
+            const existingArtifact = await db.findOne<FileArtifactRecord>({
               model: 'fileArtifacts',
-              data: {
-                artifactId,
-                fileId: input.fileId,
-                versionId: input.versionId,
-                kind: artifact.kind,
-                storageKey: artifact.storageKey,
-                mimeType: artifact.mimeType,
-                size: artifact.data.length,
-                metadata: artifact.metadata || {},
-                createdAt: new Date().toISOString(),
-              },
+              where: [
+                { field: 'fileId', operator: 'eq', value: input.fileId },
+                { field: 'versionId', operator: 'eq', value: input.versionId },
+                { field: 'kind', operator: 'eq', value: artifact.kind },
+              ],
               namespace,
             });
+
+            if (existingArtifact) {
+              await db.update({
+                model: 'fileArtifacts',
+                where: [{ field: 'artifactId', operator: 'eq', value: existingArtifact.artifactId }],
+                data: {
+                  storageKey: artifact.storageKey,
+                  mimeType: artifact.mimeType,
+                  size: artifact.data.length,
+                  metadata: artifact.metadata || {},
+                },
+                namespace,
+              });
+            } else {
+              const artifactId = generateId();
+              await db.create({
+                model: 'fileArtifacts',
+                data: {
+                  artifactId,
+                  fileId: input.fileId,
+                  versionId: input.versionId,
+                  kind: artifact.kind,
+                  storageKey: artifact.storageKey,
+                  mimeType: artifact.mimeType,
+                  size: artifact.data.length,
+                  metadata: artifact.metadata || {},
+                  createdAt: new Date().toISOString(),
+                },
+                namespace,
+              });
+            }
 
             artifactsCreated++;
           }

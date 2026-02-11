@@ -1,0 +1,29 @@
+{
+  "name": "cifn-runner",
+  "version": "0.0.1",
+  "description": "CiFn runner - executes CI/CD pipeline jobs",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "dependencies": {
+    "@testfn/core": "file:../../../../testfn/typescript",
+    "cifn": "file:../control-plane",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/uuid": "^9.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
+  }
+}

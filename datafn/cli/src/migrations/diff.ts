@@ -4,10 +4,11 @@
 
 import {
   type DatafnSchema,
+  type DatafnRelationSchema,
   validateSchema,
   unwrapEnvelope,
 } from "@datafn/core";
-import type { MigrationPlan, MigrationChange } from "./types.js";
+import type { MigrationPlan, MigrationChange, RelationType } from "./types.js";
 
 /**
  * Compute the migration plan to transition 'from' schema to 'to' schema.
@@ -98,8 +99,122 @@ export function diffSchemas(
           }
         }
       }
+
+      // Index diffing for shared resources
+      const fromIndices = normalizeIndices(fromRes.indices);
+      const toIndices = normalizeIndices(toRes.indices);
+
+      for (const indexType of ["base", "search", "vector"] as const) {
+        const fromFields = fromIndices[indexType];
+        const toFields = toIndices[indexType];
+
+        const addedFields = toFields.filter((f) => !fromFields.includes(f));
+        const removedFields = fromFields.filter((f) => !toFields.includes(f));
+
+        for (const field of addedFields.sort()) {
+          changes.push({
+            kind: "addIndex",
+            resource: name,
+            indexType,
+            fields: [field],
+          });
+        }
+
+        for (const field of removedFields.sort()) {
+          changes.push({
+            kind: "removeIndex",
+            resource: name,
+            indexType,
+            fields: [field],
+          });
+        }
+      }
+    }
+  }
+
+  // Relation diffing
+  const fromRelations = from.relations ?? [];
+  const toRelations = to.relations ?? [];
+
+  const relationKey = (r: DatafnRelationSchema): string => {
+    const fromStr = Array.isArray(r.from) ? r.from.sort().join(",") : r.from;
+    const toStr = Array.isArray(r.to) ? r.to.sort().join(",") : r.to;
+    return `${fromStr}:${toStr}:${r.relation || ""}`;
+  };
+
+  const fromRelationMap = new Map(fromRelations.map((r) => [relationKey(r), r]));
+  const toRelationMap = new Map(toRelations.map((r) => [relationKey(r), r]));
+
+  const allRelationKeys = new Set([
+    ...fromRelationMap.keys(),
+    ...toRelationMap.keys(),
+  ]);
+  const sortedRelationKeys = Array.from(allRelationKeys).sort();
+
+  for (const key of sortedRelationKeys) {
+    const fromRel = fromRelationMap.get(key);
+    const toRel = toRelationMap.get(key);
+
+    if (!fromRel && toRel) {
+      const fromStr = Array.isArray(toRel.from) ? toRel.from[0] : toRel.from;
+      const toStr = Array.isArray(toRel.to) ? toRel.to[0] : toRel.to;
+      changes.push({
+        kind: "addRelation",
+        from: fromStr,
+        to: toStr,
+        type: mapRelationType(toRel.type),
+        relation: toRel.relation,
+        inverse: toRel.inverse,
+        metadata: toRel.metadata
+          ? Object.fromEntries(toRel.metadata.map((m) => [m.name, m.type]))
+          : undefined,
+      });
+    } else if (fromRel && !toRel) {
+      const fromStr = Array.isArray(fromRel.from)
+        ? fromRel.from[0]
+        : fromRel.from;
+      const toStr = Array.isArray(fromRel.to) ? fromRel.to[0] : fromRel.to;
+      changes.push({
+        kind: "removeRelation",
+        from: fromStr,
+        to: toStr,
+        relation: fromRel.relation || "",
+      });
     }
   }
 
   return { changes };
+}
+
+function normalizeIndices(
+  indices?: { base?: string[]; search?: string[]; vector?: string[] } | string[],
+): { base: string[]; search: string[]; vector: string[] } {
+  if (!indices) {
+    return { base: [], search: [], vector: [] };
+  }
+  if (Array.isArray(indices)) {
+    return { base: indices, search: [], vector: [] };
+  }
+  return {
+    base: indices.base ?? [],
+    search: indices.search ?? [],
+    vector: indices.vector ?? [],
+  };
+}
+
+function mapRelationType(
+  type: DatafnRelationSchema["type"],
+): RelationType {
+  switch (type) {
+    case "one-many":
+      return "one-to-many";
+    case "many-one":
+      return "one-to-many";
+    case "many-many":
+      return "many-to-many";
+    case "htree":
+      return "one-to-many";
+    default:
+      return "one-to-many";
+  }
 }

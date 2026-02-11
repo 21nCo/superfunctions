@@ -9,16 +9,16 @@ describe('rate-limit', () => {
         maxRequests: 3,
       });
 
-      const r1 = await limiter.check('user1');
+      const r1 = await limiter.check({ key: 'user1' });
       expect(r1.allowed).toBe(true);
       expect(r1.remaining).toBe(2);
       expect(r1.total).toBe(3);
 
-      const r2 = await limiter.check('user1');
+      const r2 = await limiter.check({ key: 'user1' });
       expect(r2.allowed).toBe(true);
       expect(r2.remaining).toBe(1);
 
-      const r3 = await limiter.check('user1');
+      const r3 = await limiter.check({ key: 'user1' });
       expect(r3.allowed).toBe(true);
       expect(r3.remaining).toBe(0);
     });
@@ -29,10 +29,10 @@ describe('rate-limit', () => {
         maxRequests: 2,
       });
 
-      await limiter.check('user1');
-      await limiter.check('user1');
+      await limiter.check({ key: 'user1' });
+      await limiter.check({ key: 'user1' });
 
-      const r3 = await limiter.check('user1');
+      const r3 = await limiter.check({ key: 'user1' });
       expect(r3.allowed).toBe(false);
       expect(r3.remaining).toBe(0);
     });
@@ -43,13 +43,13 @@ describe('rate-limit', () => {
         maxRequests: 1,
       });
 
-      const r1 = await limiter.check('user1');
+      const r1 = await limiter.check({ key: 'user1' });
       expect(r1.allowed).toBe(true);
 
-      const r2 = await limiter.check('user2');
+      const r2 = await limiter.check({ key: 'user2' });
       expect(r2.allowed).toBe(true);
 
-      const r3 = await limiter.check('user1');
+      const r3 = await limiter.check({ key: 'user1' });
       expect(r3.allowed).toBe(false);
     });
 
@@ -59,13 +59,13 @@ describe('rate-limit', () => {
         maxRequests: 1,
       });
 
-      await limiter.check('user1');
-      const r1 = await limiter.check('user1');
+      await limiter.check({ key: 'user1' });
+      const r1 = await limiter.check({ key: 'user1' });
       expect(r1.allowed).toBe(false);
 
       await limiter.reset('user1');
 
-      const r2 = await limiter.check('user1');
+      const r2 = await limiter.check({ key: 'user1' });
       expect(r2.allowed).toBe(true);
     });
 
@@ -78,9 +78,25 @@ describe('rate-limit', () => {
         maxRequests: 10,
       });
 
-      const result = await limiter.check('user1');
-      expect(result.resetAt).toBeGreaterThanOrEqual(now);
-      expect(result.resetAt).toBeLessThanOrEqual(now + windowMs + 100);
+      const result = await limiter.check({ key: 'user1' });
+      const resetAtTs = new Date(result.resetAt).getTime();
+      expect(resetAtTs).toBeGreaterThanOrEqual(now);
+      expect(resetAtTs).toBeLessThanOrEqual(now + windowMs + 100);
+    });
+
+    it('should respect overrides in check (TV-RATE-001 variant)', async () => {
+      const limiter = createRateLimiter({
+        windowMs: 60000,
+        maxRequests: 10,
+      });
+
+      // Override limit to 1
+      const result = await limiter.check({ key: 'user_override', limit: 1 });
+      expect(result.allowed).toBe(true);
+      expect(result.total).toBe(1);
+      
+      const result2 = await limiter.check({ key: 'user_override', limit: 1 });
+      expect(result2.allowed).toBe(false);
     });
 
     it('should use custom key prefix', async () => {
@@ -92,7 +108,7 @@ describe('rate-limit', () => {
         persistence: store,
       });
 
-      await limiter.check('test');
+      await limiter.check({ key: 'test' });
       const value = await store.get('custom:test');
       expect(value).not.toBeNull();
     });
@@ -103,8 +119,8 @@ describe('rate-limit', () => {
         async get(key: string) {
           return internalStore.get(key) ?? null;
         },
-        async set(key: string, value: string) {
-          internalStore.set(key, value);
+        async set(input) {
+          internalStore.set(input.key, input.value);
         },
         async delete(key: string) {
           internalStore.delete(key);
@@ -117,7 +133,7 @@ describe('rate-limit', () => {
         persistence: customStore,
       });
 
-      await limiter.check('user1');
+      await limiter.check({ key: 'user1' });
       expect(internalStore.size).toBe(1);
     });
   });
@@ -130,7 +146,7 @@ describe('rate-limit', () => {
     });
 
     it('should get and set values', async () => {
-      await store.set('key1', 'value1');
+      await store.set({ key: 'key1', value: 'value1' });
       const result = await store.get('key1');
       expect(result).toBe('value1');
     });
@@ -141,14 +157,14 @@ describe('rate-limit', () => {
     });
 
     it('should delete keys', async () => {
-      await store.set('key1', 'value1');
+      await store.set({ key: 'key1', value: 'value1' });
       await store.delete('key1');
       const result = await store.get('key1');
       expect(result).toBeNull();
     });
 
     it('should expire keys after TTL', async () => {
-      await store.set('key1', 'value1', 10); // 10ms TTL
+      await store.set({ key: 'key1', value: 'value1', ttlSeconds: 0.01 }); // 10ms TTL
       
       const immediate = await store.get('key1');
       expect(immediate).toBe('value1');

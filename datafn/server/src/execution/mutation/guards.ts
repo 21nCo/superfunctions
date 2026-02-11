@@ -14,6 +14,7 @@ export async function evaluateGuard(
   id: string,
   guard: Record<string, unknown>,
   schema: DatafnSchema,
+  namespace: string,
 ): Promise<{ match: boolean }> {
   // Fetch current record
   let record: Record<string, unknown> | null = null;
@@ -21,7 +22,7 @@ export async function evaluateGuard(
     record = await adapter.findOne({
       model: resource,
       where: [{ field: "id", operator: "eq", value: id }],
-      namespace: "datafn",
+      namespace,
     });
   } catch (error) {
     // If error (e.g. not found if adapter throws, or DB error), treat as not found/no match

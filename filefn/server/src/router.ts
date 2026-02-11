@@ -3,6 +3,8 @@ import type { FileRoutes } from './files/routes.js';
 import type { GrantsRoutes } from './authz/grants.routes.js';
 import type { SharesRoutes } from './shares/routes.js';
 import type { ProcessingRoutes } from './processing/routes.js';
+import type { PolicyRoutes } from './policies.routes.js';
+import type { QuotaRoutes } from './quota.routes.js';
 
 export interface FileFnRouterConfig {
   uploadRoutes: UploadSessionRoutes;
@@ -10,10 +12,12 @@ export interface FileFnRouterConfig {
   grantsRoutes?: GrantsRoutes;
   sharesRoutes?: SharesRoutes;
   processingRoutes?: ProcessingRoutes;
+  policyRoutes?: PolicyRoutes;
+  quotaRoutes?: QuotaRoutes;
 }
 
 export function createRouter(config: FileFnRouterConfig) {
-  const { uploadRoutes, fileRoutes, grantsRoutes, sharesRoutes, processingRoutes } = config;
+  const { uploadRoutes, fileRoutes, grantsRoutes, sharesRoutes, processingRoutes, policyRoutes, quotaRoutes } = config;
 
   return {
     async handle(request: Request): Promise<Response | null> {
@@ -41,6 +45,11 @@ export function createRouter(config: FileFnRouterConfig) {
         return uploadRoutes.completePart(request, completePartMatch[1], parseInt(completePartMatch[2], 10));
       }
 
+      const uploadPartMatch = path.match(/^\/upload\/([^/]+)\/parts\/(\d+)$/);
+      if (uploadPartMatch && method === 'PUT') {
+        return uploadRoutes.uploadPartBytes(request, uploadPartMatch[1], parseInt(uploadPartMatch[2], 10));
+      }
+
       const completeMatch = path.match(/^\/upload\/([^/]+)\/complete$/);
       if (completeMatch && method === 'POST') {
         return uploadRoutes.completeSession(request, completeMatch[1]);
@@ -49,6 +58,16 @@ export function createRouter(config: FileFnRouterConfig) {
       const abortMatch = path.match(/^\/upload\/([^/]+)\/abort$/);
       if (abortMatch && method === 'POST') {
         return uploadRoutes.abortSession(request, abortMatch[1]);
+      }
+
+      // Policy routes
+      if (policyRoutes && path === '/policies' && method === 'GET') {
+        return policyRoutes.listPolicies(request);
+      }
+
+      // Quota routes
+      if (quotaRoutes && path === '/quota/storage' && method === 'GET') {
+        return quotaRoutes.getStorageQuota(request);
       }
 
       // File routes
@@ -78,6 +97,22 @@ export function createRouter(config: FileFnRouterConfig) {
       const versionDownloadMatch = path.match(/^\/([^/]+)\/versions\/([^/]+)\/download$/);
       if (versionDownloadMatch && method === 'GET') {
         return fileRoutes.downloadFile(request, versionDownloadMatch[1], versionDownloadMatch[2]);
+      }
+
+      const versionMetadataMatch = path.match(/^\/([^/]+)\/versions\/([^/]+)$/);
+      if (versionMetadataMatch && method === 'GET') {
+        return fileRoutes.getVersion(request, versionMetadataMatch[1], versionMetadataMatch[2]);
+      }
+
+      // Proxy download routes
+      const proxyDownloadMatch = path.match(/^\/proxy\/files\/([^/]+)\/download$/);
+      if (proxyDownloadMatch && method === 'GET') {
+        return fileRoutes.proxyDownloadFile(request, proxyDownloadMatch[1]);
+      }
+
+      const proxyVersionDownloadMatch = path.match(/^\/proxy\/files\/([^/]+)\/versions\/([^/]+)\/download$/);
+      if (proxyVersionDownloadMatch && method === 'GET') {
+        return fileRoutes.proxyDownloadFile(request, proxyVersionDownloadMatch[1], proxyVersionDownloadMatch[2]);
       }
 
       // Grant routes

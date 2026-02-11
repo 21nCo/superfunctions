@@ -15,10 +15,39 @@ export { unwrapRemoteSuccess } from "./remote/unwrap.js";
 export { type DatafnTable } from "./tables/table.js";
 export {
   type DatafnStorageAdapter,
+  type DatafnStorageFactory,
   type DatafnHydrationState,
   type DatafnChangelogEntry,
 } from "./storage.js";
 
+// Re-export auth context types for convenience
+export type { AuthContext, AuthContextProvider } from "@superfunctions/auth";
+
+// CloneUp types
+export type { CloneUpOptions, CloneUpResult } from "./sync/cloneUp.js";
+
 // Storage Adapters
 export { MemoryStorageAdapter } from "./adapters/memoryStorage.js";
 export { IndexedDbStorageAdapter } from "./adapters/indexedDbStorage.js";
+
+// KV API
+export type { DatafnKvApi } from "./kv.js";
+export { kvId, KV_RESOURCE_NAME } from "./kv.js";
+
+// Date Codec (CODEC-001)
+export {
+  serializeDateFields,
+  parseDateFields,
+  parseQueryResultDates,
+} from "./codecs/date.js";
+
+// Plugins
+export {
+  createSoftDeletePlugin,
+  restore,
+  type SoftDeleteConfig,
+} from "./plugins/softDelete.js";
+export {
+  createClientSearchPlugin,
+  type ClientSearchConfig,
+} from "./plugins/clientSearch.js";

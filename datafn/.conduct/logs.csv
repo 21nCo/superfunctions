@@ -1,2 +1,26 @@
 timestamp,model,IDE/Editor,command,agent_name,phase(s),path
 2026-01-24T19:25:00Z,Claude Sonnet 4.5,Factory Droid,spec,factory-droid,.conduct/2026-01-24-audit-fix-comprehensive-spec
+2026-01-26T06:44:25.140805Z,gpt-5.2 (xhigh reasoning),Warp,spec,unknown-agent,,datafn/.conduct/specs/2026-01-26-fix-bs0rjtzf-spec
+2026-01-26T15:12:49Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-26-e9a8cd06-issue.md
+2026-01-26T16:30:18Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-26-568559a8-issue.md
+2026-01-26T17:57:47Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-26-6075da64-issue.md
+2026-01-26T18:29:57Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-26-775e524c-issue.md
+2026-01-26T19:09:17Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-26-8a873162-issue.md
+2026-01-28T05:11:40Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-28-07705178-issue.md
+2026-01-28T05:47:38Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-28-7b07258d-issue.md
+2026-01-28T06:00:29Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-28-b902a6d9-issue.md
+2026-01-28T12:00:00Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-28-06d39f13-issue.md
+2026-01-28T06:50:43Z,claude-sonnet-4-20250514,Amp,execute-issue,unknown-agent,,.conduct/issue-completions/2026-01-28-a7f3c9b2-completion.md
+2026-01-28T07:06:03Z,claude-sonnet-4-20250514,Amp,execute-issue,unknown-agent,,.conduct/issue-completions/2026-01-28-c4d8e2f1-completion.md
+2026-01-28T06:55:55Z,Auto,Cursor,document-issue,Auto,,.conduct/issues/2026-01-28-48bf586b-issue.md
+2026-01-28T12:30:00Z,Gemini,CLI,execute-issue,unknown-agent,,.conduct/issue-completions/2026-01-28-a1b2c3d4-completion.md
+2026-01-28T19:50:45Z,claude-sonnet-4-20250514,Amp,execute-issue,unknown-agent,,.conduct/issue-completions/2026-01-28-x7k9m2p4-completion.md
+2026-01-28T20:21:00Z,claude-sonnet-4-20250514,Amp,execute-issue,unknown-agent,,.conduct/issue-completions/2026-01-28-a7k9m2p1-completion.md
+2026-01-29T07:10:27Z,claude-sonnet-4-20250514,Amp,execute-issue,unknown-agent,,.conduct/issue-completions/2026-01-29-a8f3c7d2-completion.md
+2026-02-05T08:27:53.329Z,GPT-5.2,Cursor,spec,unknown-agent,,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-05-fix-9x2k7m4p-spec
+2026-02-06T04:41:59Z,GPT-5.2,Cursor,audit,unknown-agent,,.conduct/audits/2026-02-06-c7m2p9v4-full-audit.md
+2026-02-06T08:02:33Z,GPT-5.2,Cursor,spec,unknown-agent,,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec
+2026-02-09T14:35:00Z,claude 4.6 opus (max),Warp,audit,warp-agent,,.conduct/audits/2026-02-09-x7m3k9p2-full-audit.md
+2026-02-11T19:10:00Z,Claude Sonnet 4.5,Cursor,execute-issue,unknown-agent,,.conduct/issue-completions/2026-02-11-78feda09-completion.md
+2026-02-11T20:00:00Z,Claude 4.6 Opus (high thinking),Cursor,audit,unknown-agent,,.conduct/audits/2026-02-11-nucleus-migration-gap-status-audit.md
+2026-02-11T20:30:00Z,Claude 4.6 Opus (high thinking),Cursor,spec,unknown-agent,,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-11-audit-fix-r9k4m7x2-spec

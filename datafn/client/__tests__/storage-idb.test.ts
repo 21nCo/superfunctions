@@ -11,8 +11,16 @@ describe("IndexedDbStorageAdapter", () => {
   let storage: IndexedDbStorageAdapter;
   const dbName = "test_db_" + Math.random(); // Unique DB per test run
 
+  // Define a minimal schema for testing
+  const testSchema = {
+    resources: [
+      { name: "task", version: 1, fields: [{ name: "id", type: "string" }, { name: "title", type: "string" }, { name: "val", type: "number" }] },
+    ],
+    relations: [],
+  };
+
   beforeEach(() => {
-    storage = new IndexedDbStorageAdapter(dbName);
+    storage = new IndexedDbStorageAdapter(dbName, ["task"], testSchema);
   });
 
   // Since we use in-memory fake-indexeddb, state might persist if not cleared?
@@ -36,11 +44,12 @@ describe("IndexedDbStorageAdapter", () => {
     it("Persists across instances (simulated reload)", async () => {
       await storage.upsertRecord("task", { id: "p1", val: 1 });
 
-      // New adapter instance connecting to same DB
-      const storage2 = new IndexedDbStorageAdapter(dbName);
+      // New adapter instance connecting to same DB (must provide same schema)
+      const storage2 = new IndexedDbStorageAdapter(dbName, ["task"], testSchema);
       const record = await storage2.getRecord("task", "p1");
-      expect(record).toEqual({ id: "p1", val: 1, resource: "task" });
-      // Note: implementation ads 'resource' to record
+      expect(record).toEqual({ id: "p1", val: 1 });
+      // Note: v2 stores records in separate object stores per resource, 
+      // so the 'resource' field is not included in the returned record
     });
   });
 

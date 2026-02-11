@@ -16,10 +16,12 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@datafn/core": "*"
+    "@datafn/core": "*",
+    "minisearch": "^7.1.0"
   },
   "devDependencies": {
     "fake-indexeddb": "^5.0.0",

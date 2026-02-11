@@ -1,0 +1,171 @@
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Union, Literal
+
+UserTraits = Dict[str, Any]
+
+@dataclass
+class UserIdentity:
+    id: str
+    traits: UserTraits
+
+FlagValue = Union[bool, str, int, float, dict, list]
+
+@dataclass
+class FlagVariation:
+    id: str
+    value: FlagValue
+    name: Optional[str] = None
+
+Operator = Literal[
+    'equals',
+    'does_not_equal',
+    'contains',
+    'does_not_contain',
+    'in',
+    'not_in',
+    'exists',
+    'does_not_exist',
+    'gt',
+    'gte',
+    'lt',
+    'lte',
+    'regex'
+]
+
+@dataclass
+class SegmentRule:
+    id: str
+    field: str
+    operator: Operator
+    value: Any = None
+
+@dataclass
+class Segment:
+    id: str
+    name: str
+    rules: List[SegmentRule]
+    match_type: Literal['all', 'any'] = 'all'
+
+@dataclass
+class FlagRule:
+    id: str
+    segment_id: Optional[str] = None
+    constraints: Optional[List[SegmentRule]] = None
+    rollout_percentage: Optional[float] = None # 0-100
+    variation_id: Optional[str] = None
+
+@dataclass
+class FlagConfig:
+    key: str
+    variations: List[FlagVariation]
+    default_value: FlagValue
+    rules: List[FlagRule]
+    enabled: bool
+    default_variation_id: Optional[str] = None
+
+@dataclass
+class UserFnOptions:
+    api_key: str
+    endpoint: Optional[str] = None
+    bootstrap_flags: Optional[Dict[str, FlagValue]] = None
+    refresh_interval: Optional[int] = None
+
+EventProperties = Dict[str, Any]
+
+FeedbackCategory = Literal['bug', 'feature', 'general']
+FeedbackStatus = Literal['open', 'planned', 'in_progress', 'done', 'closed']
+
+@dataclass
+class FeedbackSubmission:
+    title: str
+    body: str
+    category: FeedbackCategory
+    priority: Optional[Literal['low', 'medium', 'high']] = None
+    tags: Optional[List[str]] = None
+    attachments: Optional[List[str]] = None
+    score: Optional[int] = None
+
+@dataclass
+class FeedbackItem:
+    id: str
+    title: str
+    body: str
+    category: FeedbackCategory
+    status: FeedbackStatus
+    votes: int
+    created_at: str
+
+MessageKind = Literal['banner', 'modal', 'tooltip', 'inbox-item']
+
+@dataclass
+class MessageContent:
+    body: str
+    title: Optional[str] = None
+    cta_text: Optional[str] = None
+    cta_url: Optional[str] = None
+    cta_action: Optional[Literal['link', 'dismiss', 'custom']] = None
+    image_url: Optional[str] = None
+
+@dataclass
+class CampaignTrigger:
+    type: Literal['url_match', 'event', 'manual']
+    pattern: Optional[str] = None
+
+@dataclass
+class CampaignCaps:
+    global_cap: Optional[int] = None
+    session_cap: Optional[int] = None
+
+@dataclass
+class Campaign:
+    id: str
+    kind: MessageKind
+    content: MessageContent
+    triggers: List[CampaignTrigger]
+    enabled: bool
+    segment_id: Optional[str] = None
+    priority: Optional[int] = None
+    caps: Optional[CampaignCaps] = None
+
+QuestionType = Literal['nps', 'csat', 'text', 'choice']
+
+@dataclass
+class QuestionChoice:
+    label: str
+    value: Any
+
+@dataclass
+class Question:
+    id: str
+    type: QuestionType
+    title: str
+    description: Optional[str] = None
+    choices: Optional[List[QuestionChoice]] = None
+    min: Optional[int] = None
+    max: Optional[int] = None
+    required: Optional[bool] = None
+
+@dataclass
+class SurveyCaps:
+    global_cap: Optional[int] = None
+
+@dataclass
+class Survey:
+    id: str
+    questions: List[Question]
+    triggers: List[CampaignTrigger]
+    enabled: bool
+    title: Optional[str] = None
+    segment_id: Optional[str] = None
+    caps: Optional[SurveyCaps] = None
+
+@dataclass
+class SurveyResponseAnswer:
+    question_id: str
+    value: Any
+
+@dataclass
+class SurveyResponse:
+    survey_id: str
+    answers: List[SurveyResponseAnswer]
+    submitted_at: int

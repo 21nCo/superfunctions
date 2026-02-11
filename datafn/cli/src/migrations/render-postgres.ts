@@ -2,33 +2,49 @@
  * Render Postgres migration script from plan.
  */
 
-import type { MigrationPlan } from "./types.js";
+import type { MigrationContext, MigrationPlan } from "./types.js";
 
-export function renderPostgres(plan: MigrationPlan): string {
+export function renderPostgres(plan: MigrationPlan, ctx: MigrationContext): string {
   const lines: string[] = [];
 
   for (const change of plan.changes) {
     switch (change.kind) {
-      case "addResource":
-        // NOTE: In a real implementation, we'd need the full Schema to know columns to create.
-        // Or the diff needs to include the initial columns.
-        // For Phase 25 scope (TV-MIG-001 is about addField), we implement basic scaffolds.
+      case "addResource": {
+        const resource = ctx.toSchema.resources.find(
+          (r) => r.name === change.resource,
+        );
+        if (!resource) {
+          lines.push(`-- ERROR: Resource ${change.resource} not found in schema`);
+          break;
+        }
+
         lines.push(`-- Create table ${change.resource}`);
-        lines.push(`CREATE TABLE "${change.resource}" (id TEXT PRIMARY KEY);`);
-        // Real implementation would iterate columns from schema lookup
+        const columns: string[] = [`"id" TEXT PRIMARY KEY`];
+
+        for (const field of resource.fields) {
+          const pgType = mapToPgType(field.type);
+          const nullClause = field.required ? "NOT NULL" : "NULL";
+          columns.push(`"${field.name}" ${pgType} ${nullClause}`);
+        }
+
+        lines.push(
+          `CREATE TABLE "${change.resource}" (\n  ${columns.join(",\n  ")}\n);`,
+        );
         break;
+      }
 
       case "removeResource":
         lines.push(`DROP TABLE IF EXISTS "${change.resource}";`);
         break;
 
-      case "addField":
+      case "addField": {
         const nullClause = change.required ? "NOT NULL" : "NULL";
         const pgType = mapToPgType(change.type);
         lines.push(
           `ALTER TABLE "${change.resource}" ADD COLUMN "${change.field}" ${pgType} ${nullClause};`,
         );
         break;
+      }
 
       case "removeField":
         lines.push(
@@ -52,6 +68,96 @@ export function renderPostgres(plan: MigrationPlan): string {
           );
         }
         break;
+
+      case "addRelation": {
+        if (change.type === "many-to-many") {
+          const prefix = ctx.joinTablePrefix ?? "__datafn_join_";
+          const tableName = `${prefix}${change.from}_${change.relation ?? change.to}`;
+          const columns: string[] = [
+            `"from" TEXT NOT NULL`,
+            `"to" TEXT NOT NULL`,
+          ];
+
+          if (change.metadata) {
+            for (const [key, value] of Object.entries(change.metadata)) {
+              const metaType =
+                typeof value === "string" ? mapToPgType(value) : "TEXT";
+              columns.push(`"${key}" ${metaType}`);
+            }
+          }
+
+          columns.push(`PRIMARY KEY ("from", "to")`);
+
+          lines.push(`-- Create join table for ${change.from} -> ${change.to}`);
+          lines.push(
+            `CREATE TABLE "${tableName}" (\n  ${columns.join(",\n  ")}\n);`,
+          );
+        } else if (change.type === "one-to-many") {
+          lines.push(
+            `-- one-to-many relation: ${change.from} -> ${change.to} (FK on ${change.to} side)`,
+          );
+        }
+        break;
+      }
+
+      case "removeRelation": {
+        const relation = ctx.fromSchema?.relations?.find(
+          (r) =>
+            r.from === change.from &&
+            r.to === change.to &&
+            r.relation === change.relation,
+        );
+
+        if (relation?.type === "many-many") {
+          const prefix = ctx.joinTablePrefix ?? "__datafn_join_";
+          const tableName = `${prefix}${change.from}_${change.relation ?? change.to}`;
+          lines.push(`-- Drop join table for ${change.from} -> ${change.to}`);
+          lines.push(`DROP TABLE IF EXISTS "${tableName}";`);
+        } else {
+          lines.push(
+            `-- Remove relation: ${change.from} -> ${change.to} (${change.relation})`,
+          );
+        }
+        break;
+      }
+
+      case "addIndex": {
+        const fieldList = change.fields.join("_");
+        const indexName = `idx_${change.resource}_${fieldList}`;
+        const columnList = change.fields.map((f) => `"${f}"`).join(", ");
+
+        switch (change.indexType) {
+          case "base":
+            lines.push(
+              `CREATE INDEX IF NOT EXISTS "${indexName}" ON "${change.resource}" (${columnList});`,
+            );
+            break;
+          case "search":
+            lines.push(
+              `-- Full-text search index on ${change.resource}(${columnList})`,
+            );
+            lines.push(
+              `-- Consider: CREATE INDEX "${indexName}_fts" ON "${change.resource}" USING GIN (to_tsvector('english', ${columnList}));`,
+            );
+            break;
+          case "vector":
+            lines.push(
+              `-- Vector index on ${change.resource}(${columnList})`,
+            );
+            lines.push(
+              `-- Requires pgvector extension: CREATE INDEX "${indexName}_vec" ON "${change.resource}" USING ivfflat (${columnList} vector_cosine_ops);`,
+            );
+            break;
+        }
+        break;
+      }
+
+      case "removeIndex": {
+        const fieldList = change.fields.join("_");
+        const indexName = `idx_${change.resource}_${fieldList}`;
+        lines.push(`DROP INDEX IF EXISTS "${indexName}";`);
+        break;
+      }
     }
   }
 
@@ -65,9 +171,9 @@ function mapToPgType(type: string): string {
     case "boolean":
       return "BOOLEAN";
     case "number":
-      return "NUMERIC"; // or INTEGER/DOUBLE depending on nuance
+      return "NUMERIC";
     case "date":
-      return "BIGINT"; // storing timestamp
+      return "BIGINT";
     case "object":
       return "JSONB";
     case "array":

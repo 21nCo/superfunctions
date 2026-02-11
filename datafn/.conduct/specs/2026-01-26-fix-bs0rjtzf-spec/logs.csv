@@ -1,0 +1,10 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-01-26T06:44:25.140805Z,gpt-5.2 (xhigh reasoning),Warp,spec,unknown-agent,,datafn/.conduct/specs/2026-01-26-fix-bs0rjtzf-spec
+2026-01-26T07:20:00Z,gpt-4o,CLI,execute,unknown-agent,PHASE_00,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/phase-reports/PHASE_00-2026-01-26-p0done-report.md
+2026-01-26T07:47:26Z,gemini-2.0-flash-thinking-exp-01-21,CLI,execute,antigravity,PHASE_01,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/phase-reports/PHASE_01-2026-01-26-7a8b9c-report.md
+2026-01-26T13:56:59+05:30,unknown,CLI,execute,Antigravity,PHASE_02,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/phase-reports/PHASE_02-2026-01-26-r7k9x2m4-report.md
+2026-01-26T14:15:00Z,gemini-2.0-flash-thinking-exp-01-21,CLI,execute,Gemini,PHASE_03,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/phase-reports/PHASE_03-report.md
+2026-01-26T14:40:00Z,gemini-2.0-flash-thinking-exp-01-21,CLI,execute,Gemini,PHASE_04,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/phase-reports/PHASE_04-report.md
+2026-01-26T14:55:00Z,gemini-2.0-flash-thinking-exp-01-21,CLI,execute,Gemini,PHASE_05,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/phase-reports/PHASE_05-report.md
+2026-01-26T15:20:00Z,gemini-2.0-flash-thinking-exp-01-21,CLI,execute,Gemini,PHASE_06,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/phase-reports/PHASE_06-report.md
+2026-01-26T15:25:00Z,gemini-2.0-flash-thinking-exp-01-21,CLI,execute,Gemini,ALL_PHASES_COMPLETE,.conduct/specs/2026-01-26-fix-bs0rjtzf-spec/PLAN.md

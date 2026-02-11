@@ -1,0 +1,13 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-01-29T12:00:00Z,unknown,Cursor,spec,unknown-agent,,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec
+2026-02-05T07:08:06Z,unknown,Codex,execute,codex,PHASE_00,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_00-2026-02-05-p9c4b2-report.md
+2026-02-05T07:11:40Z,unknown,Codex,execute,codex,PHASE_00,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_00-2026-02-05-h7k2q9-report.md
+2026-02-05T07:20:51Z,unknown,Codex,execute,codex,PHASE_01,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_01-2026-02-05-k4n8d3-report.md
+2026-02-05T07:26:43Z,unknown,Codex,execute,codex,PHASE_02,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_02-2026-02-05-r3m9v7-report.md
+2026-02-05T07:31:05Z,unknown,Codex,execute,codex,PHASE_03,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_03-2026-02-05-t6y4p1-report.md
+2026-02-05T07:36:58Z,unknown,Codex,execute,codex,PHASE_04,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_04-2026-02-05-z8p1q6-report.md
+2026-02-05T07:38:57Z,unknown,Codex,execute,codex,PHASE_05,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_05-2026-02-05-k2v7n4-report.md
+2026-02-05T07:40:21Z,unknown,Codex,execute,codex,PHASE_06,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_06-2026-02-05-b1c5m8-report.md
+2026-02-05T07:47:02Z,unknown,Codex,execute,codex,PHASE_07,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_07-2026-02-05-x4m7c2-report.md
+2026-02-05T08:15:02Z,unknown,Codex,execute,codex,PHASE_08,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_08-2026-02-05-f3k9w2-report.md
+2026-02-05T08:17:30Z,unknown,Codex,execute,codex,PHASE_09,chartfn/.conduct/specs/2026-01-29-new-cf7k2m9x-spec/phase-reports/PHASE_09-2026-02-05-r8n2k5-report.md

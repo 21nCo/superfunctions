@@ -65,3 +65,15 @@ _conduct/.meta
 
 __pycache__
 venv
+
+
+# AI tool configs
+.claude/
+.entire/
+
+# Python build artifacts
+*.egg-info/
+
+# Sub-package lock files (keep root only)
+**/package-lock.json
+!package-lock.json

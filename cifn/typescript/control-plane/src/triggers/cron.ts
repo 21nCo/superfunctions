@@ -1,0 +1,76 @@
+import type { PipelineSpec } from '../pipeline/types.js';
+import type { MemoryStore, CreateRunInput } from '../store/memory-store.js';
+import type { QueueClient } from '../queue/flowfn-client.js';
+import { DEFAULT_QUEUE_NAME } from '../queue/flowfn-client.js';
+import { resolveDAG } from '../pipeline/dag.js';
+
+export interface CronPipeline {
+  id: string;
+  spec: PipelineSpec;
+  pipelineRef: { repo: string; ref: string; configPath?: string };
+  cronExpression: string;
+}
+
+export interface CronSchedulerOptions {
+  store: MemoryStore;
+  queue: QueueClient;
+}
+
+export class CronScheduler {
+  private store: MemoryStore;
+  private queue: QueueClient;
+  private pipelines: CronPipeline[] = [];
+  private timers: Map<string, ReturnType<typeof setInterval>> = new Map();
+
+  constructor(options: CronSchedulerOptions) {
+    this.store = options.store;
+    this.queue = options.queue;
+  }
+
+  register(pipeline: CronPipeline): void {
+    this.pipelines.push(pipeline);
+  }
+
+  async triggerPipeline(pipeline: CronPipeline): Promise<string> {
+    const input: CreateRunInput = {
+      pipelineSpec: pipeline.spec,
+      pipelineRef: pipeline.pipelineRef,
+      trigger: { type: 'schedule', payload: { cron: pipeline.cronExpression } },
+    };
+
+    const run = this.store.createRun(input);
+
+    const dag = resolveDAG(pipeline.spec);
+    for (const rootJobKey of dag.rootJobs) {
+      const jobSpec = pipeline.spec.jobs[rootJobKey];
+      await this.queue.enqueue(DEFAULT_QUEUE_NAME, {
+        runId: run.id,
+        jobKey: rootJobKey,
+        jobSpec,
+        pipelineRef: run.pipelineRef,
+      });
+    }
+
+    return run.id;
+  }
+
+  start(intervalMs: number = 60_000): void {
+    for (const pipeline of this.pipelines) {
+      const timer = setInterval(() => {
+        this.triggerPipeline(pipeline).catch(() => {});
+      }, intervalMs);
+      this.timers.set(pipeline.id, timer);
+    }
+  }
+
+  stop(): void {
+    for (const timer of this.timers.values()) {
+      clearInterval(timer);
+    }
+    this.timers.clear();
+  }
+
+  getRegisteredPipelines(): CronPipeline[] {
+    return [...this.pipelines];
+  }
+}

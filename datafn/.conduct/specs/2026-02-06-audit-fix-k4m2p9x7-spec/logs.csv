@@ -1,0 +1,15 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-06T08:02:33Z,GPT-5.2,Cursor,spec,unknown-agent,,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec
+2026-02-07T04:53:00Z,Gemini 2.0 Flash Thinking Experimental (02-05),Cursor,execute,Antigravity,PHASE_01,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_01-2026-02-07-k9x4m2p7-report.md
+2026-02-07T05:00:00Z,gemini-2.0-flash-thinking-exp,Cursor,execute,Antigravity,PHASE_00,.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_00-2026-02-07-r8k3m5p2-report.md
+2026-02-07T05:23:00Z,Claude Sonnet 4.5,Factory,execute,Claude Sonnet 4.5,PHASE_02,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_02-2026-02-07-m7n5x2p9-report.md
+2026-02-07T05:31:08Z,Claude Sonnet 4.5,Cursor,execute,Droid,PHASE_03,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_03-2026-02-07-m8x4p2q9-report.md
+2026-02-07T05:38:34Z,Claude Sonnet 4.5,Cursor,execute,Claude Sonnet 4.5 (Cursor),PHASE_04,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_04-2026-02-07-a9k4n7m2-report.md
+2026-02-07T16:56:00Z,claude-sonnet-4.5,Cursor,execute,unknown-agent,PHASE_05,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_05-2026-02-07-x7k9m2p4-report.md
+2026-02-07T16:40:17Z,Claude Sonnet 4.5,Cursor,execute,unknown-agent,PHASE_06,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_06-2026-02-07-7lgnb92h-report.md
+2026-02-07T22:23:00Z,Claude Sonnet 4.5,Cursor,execute,Cursor AI Agent,PHASE_07,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_07-2026-02-07-h3k9m2x1-report.md
+2026-02-07T17:03:32.000Z,Claude Sonnet 4.5,Cursor,execute,Claude Sonnet 4.5,PHASE_08,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_08-2026-02-08-j4m7n3x9-report.md
+2026-02-07T17:17:13Z,Claude Sonnet 4.5,Cursor,execute,Claude (Cursor AI),PHASE_09,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_09-2026-02-07-j9x4m2k8-report.md
+2026-02-08T06:51:04Z,Claude Sonnet 4.5,Cursor,execute,Claude Sonnet 4.5,PHASE_10,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_10-2026-02-08-h9x4m2p7-report.md
+2026-02-08T09:20:00Z,claude-sonnet-4.5,Cursor,execute,claude-sonnet-4.5,PHASE_11,.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_11-2026-02-08-x9k2m1p4-report.md
+2026-02-08T09:54:14Z,claude-sonnet-4-20250514,Cursor,execute,Claude (Sonnet 4.5),PHASE_12,.conduct/specs/2026-02-06-audit-fix-k4m2p9x7-spec/phase-reports/PHASE_12-2026-02-08-r7m9k4x2-report.md

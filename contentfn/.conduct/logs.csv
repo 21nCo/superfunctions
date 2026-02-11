@@ -1,0 +1,4 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-07T17:27:22Z,GPT-5.2,Cursor,spec,unknown-agent,,/Users/ar/dev/superfunctions/contentfn/.conduct/specs/2026-02-07-new-k58m92je-spec
+2026-02-11T20:16:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_13,.conduct/specs/2026-02-07-new-k58m92je-spec/phase-reports/PHASE_13-2026-02-11-cli8x3m7k-report.md
+

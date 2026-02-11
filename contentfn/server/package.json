@@ -1,0 +1,47 @@
+{
+  "name": "@contentfn/server",
+  "version": "0.0.1",
+  "description": "ContentFn server - HTTP endpoints and storage",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [
+    "contentfn",
+    "server",
+    "storage"
+  ],
+  "sideEffects": false,
+  "dependencies": {
+    "@contentfn/core": "*",
+    "@superfunctions/db": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

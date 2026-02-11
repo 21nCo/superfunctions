@@ -1,5 +1,5 @@
 {
-  "name": "@filefn/client",
+  "name": "filefn",
   "version": "0.1.0",
   "description": "FileFn client SDK for browser file uploads",
   "type": "module",
@@ -11,23 +11,35 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "keywords": ["file", "upload", "client", "browser", "filefn"],
+  "keywords": [
+    "file",
+    "upload",
+    "client",
+    "browser",
+    "filefn"
+  ],
   "author": "21n",
   "license": "MIT",
-  "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/21nCo/super-functions.git",
     "directory": "filefn/client"
   },
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",

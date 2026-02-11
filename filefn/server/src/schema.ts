@@ -38,10 +38,12 @@ export function getSchema(options: FileFnSchemaOptions = {}): { version: number;
       mimeType: { type: 'string', required: true },
       size: { type: 'number', required: true },
       checksumSha256Base64: { type: 'string', required: false },
+      tenantId: { type: 'string', required: false },
       createdAt: { type: 'string', required: true },
     },
     indexes: [
       { name: `${ns}_versions_file_idx`, fields: ['fileId'] },
+      { name: `${ns}_versions_checksum_idx`, fields: ['checksumSha256Base64', 'tenantId'] },
     ],
   };
 

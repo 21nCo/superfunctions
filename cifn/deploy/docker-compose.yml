@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  control-plane:
+    build:
+      context: ../typescript
+      dockerfile: ../deploy/Dockerfile.control-plane
+    ports:
+      - "${CIFN_PORT:-3100}:3100"
+    environment:
+      PORT: "3100"
+      CIFN_API_KEYS: "${CIFN_API_KEYS}"
+      CIFN_RUNNER_REGISTRATION_TOKEN: "${CIFN_RUNNER_REGISTRATION_TOKEN}"
+      CIFN_WEBHOOK_SECRET: "${CIFN_WEBHOOK_SECRET:-}"
+      # Adapter selection (memory | real)
+      CIFN_QUEUE_ADAPTER: "${CIFN_QUEUE_ADAPTER:-memory}"
+      CIFN_ARTIFACTS_ADAPTER: "${CIFN_ARTIFACTS_ADAPTER:-memory}"
+      CIFN_SECRETS_ADAPTER: "${CIFN_SECRETS_ADAPTER:-memory}"
+      CIFN_LOGS_ADAPTER: "${CIFN_LOGS_ADAPTER:-memory}"
+      # Production adapter URLs (required when adapter=real)
+      FLOWFN_BASE_URL: "${FLOWFN_BASE_URL:-}"
+      FLOWFN_API_KEY: "${FLOWFN_API_KEY:-}"
+      FILEFN_BASE_URL: "${FILEFN_BASE_URL:-}"
+      FILEFN_API_KEY: "${FILEFN_API_KEY:-}"
+      SECFN_BASE_URL: "${SECFN_BASE_URL:-}"
+      SECFN_API_KEY: "${SECFN_API_KEY:-}"
+      SECFN_VAULT_PATH: "${SECFN_VAULT_PATH:-}"
+      LOGFN_BASE_URL: "${LOGFN_BASE_URL:-}"
+      LOGFN_API_KEY: "${LOGFN_API_KEY:-}"
+      LOGFN_SINK: "${LOGFN_SINK:-}"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3100/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  runner:
+    build:
+      context: ../typescript
+      dockerfile: ../deploy/Dockerfile.runner
+    environment:
+      CIFN_CONTROL_PLANE_URL: "http://control-plane:3100"
+      CIFN_RUNNER_ID: "${CIFN_RUNNER_ID}"
+      CIFN_RUNNER_SECRET: "${CIFN_RUNNER_SECRET}"
+      CIFN_RUNNER_LABELS: "${CIFN_RUNNER_LABELS:-default}"
+      CIFN_POLL_INTERVAL_MS: "${CIFN_POLL_INTERVAL_MS:-5000}"
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    restart: unless-stopped

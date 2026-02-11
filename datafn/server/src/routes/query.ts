@@ -767,6 +767,7 @@ export function createQueryHandler(
   maxLimit: number,
   db?: Adapter, // Use Adapter instead of store
   plugins: DatafnPlugin[] = [],
+  extractNamespace: (ctx: any) => Promise<string>,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -819,6 +820,20 @@ export function createQueryHandler(
   
         const { isBatch, queries: transformedQueries } = validationResult.value;
   
+        // PHASE_11: Enforce read permissions for each query
+        const { validateQueryAuthz } = await import("../validation/authz.js");
+        for (let i = 0; i < transformedQueries.length; i++) {
+          const query = transformedQueries[i] as Record<string, unknown>;
+          const authzResult = validateQueryAuthz(query, validatedSchema);
+          if (!authzResult.ok) {
+            return errorResponse({
+              code: authzResult.code,
+              message: authzResult.message,
+              details: { path: isBatch ? `[${i}].${authzResult.path}` : authzResult.path },
+            }, 403);
+          }
+        }
+
         // Execute queries
         if (db) {
           // Phase 07+: Execute queries using proper query execution engine
@@ -826,6 +841,9 @@ export function createQueryHandler(
           const { DbDataStore } = await import("../execution/db-store.js");
           const { classifyExecutionError } = await import("../execution/errors.js");
   
+          // Extract namespace from context
+          const namespace = await extractNamespace(ctx);
+
           const results = await Promise.all(
             transformedQueries.map(async (q) => {
               const query = q as Record<string, unknown>;
@@ -834,7 +852,7 @@ export function createQueryHandler(
                 db,
                 query as { resource: string; select?: string[] },
                 validatedSchema,
-                "datafn",
+                namespace,
               );
   
               // Execute query using proper execution engine

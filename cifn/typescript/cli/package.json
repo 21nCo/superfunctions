@@ -1,0 +1,24 @@
+{
+  "name": "cifn-cli",
+  "version": "0.0.1",
+  "description": "CLI for CiFn",
+  "type": "module",
+  "bin": {
+    "cifn": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^11.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}

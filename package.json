@@ -4,6 +4,7 @@
   "license": "Apache-2.0",
   "description": "Building blocks for software development",
   "workspaces": [
+    "contentfn/*",
     "searchfn",
     "botfn/*",
     "hostfn/*",
@@ -29,8 +30,12 @@
     "docsfn/*",
     "drawfn/*",
     "filefn/*",
+    "filefn/examples/full-demo/*",
     "iconfn/*",
-    "userfn/*"
+    "userfn/*",
+    "cifn/typescript/*",
+    "compfn",
+    "cmsfn/*"
   ],
   "scripts": {
     "build": "turbo run build",

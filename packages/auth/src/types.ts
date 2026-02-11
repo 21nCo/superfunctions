@@ -74,6 +74,47 @@ export interface AuthProviderConfig {
 }
 
 // ============================================================================
+// Auth Context Provider (Client-Side)
+// ============================================================================
+
+/**
+ * Authentication context containing user/tenant identifiers.
+ * Used by client libraries to isolate data per user/tenant.
+ */
+export interface AuthContext {
+  /** Unique identifier for the authenticated user */
+  userId: string;
+  /** Optional tenant identifier for multi-tenant applications */
+  tenantId?: string;
+  /** Optional additional metadata */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Provider for extracting authentication context on the client side.
+ * Used by client libraries like datafn to isolate data per user/tenant.
+ * 
+ * @example
+ * ```typescript
+ * const authProvider: AuthContextProvider = {
+ *   getContext: () => ({
+ *     userId: getCurrentUserId(),
+ *     tenantId: getCurrentTenantId(),
+ *   }),
+ * };
+ * ```
+ */
+export interface AuthContextProvider<TContext extends AuthContext = AuthContext> {
+  /**
+   * Get current authentication context (user ID, tenant ID, etc.)
+   * This context is used to construct isolated storage identifiers.
+   * 
+   * @returns The authentication context synchronously or as a promise
+   */
+  getContext(): TContext | Promise<TContext>;
+}
+
+// ============================================================================
 // Auth Errors
 // ============================================================================
 

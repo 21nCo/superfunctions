@@ -2,7 +2,24 @@ import { Campaign, Survey, SurveyResponse, Question, FeedbackSubmission, Feedbac
 import { injectStyles } from './styles';
 
 export class VanillaRenderer {
-  // ... existing code ...
+  constructor() {
+    if (typeof document !== 'undefined') {
+      injectStyles();
+    }
+  }
+
+  render(campaign: Campaign, onDismiss: () => void, onAction: () => void) {
+    if (campaign.kind === 'modal') {
+      this.renderModal(campaign, onDismiss, onAction);
+    } else if (campaign.kind === 'inbox-item') {
+      this.renderToast(campaign, onDismiss, onAction);
+    }
+  }
+
+  renderSurvey(survey: Survey, onSubmit: (response: SurveyResponse) => void, onDismiss: () => void) {
+    // Start with first question
+    this.renderQuestion(survey, 0, [], onSubmit, onDismiss);
+  }
 
   renderFeedbackWidget(onSubmit: (f: FeedbackSubmission) => Promise<void>) {
     const overlay = document.createElement('div');
@@ -92,27 +109,6 @@ export class VanillaRenderer {
     modal.appendChild(form);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
-  }
-
-  // ... rest of class ...
-}
-  constructor() {
-    if (typeof document !== 'undefined') {
-      injectStyles();
-    }
-  }
-
-  render(campaign: Campaign, onDismiss: () => void, onAction: () => void) {
-    if (campaign.kind === 'modal') {
-      this.renderModal(campaign, onDismiss, onAction);
-    } else if (campaign.kind === 'inbox-item') {
-      this.renderToast(campaign, onDismiss, onAction);
-    }
-  }
-
-  renderSurvey(survey: Survey, onSubmit: (response: SurveyResponse) => void, onDismiss: () => void) {
-    // Start with first question
-    this.renderQuestion(survey, 0, [], onSubmit, onDismiss);
   }
 
   private renderQuestion(

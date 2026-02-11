@@ -73,10 +73,11 @@ describe("DB Adapter Integration", () => {
     });
   });
 
-  it("TV-DB-MISSING-001: Query without DB returns INTERNAL error", async () => {
-    // Create server WITHOUT db
+  it("TV-DB-MISSING-001: Query without DB returns empty result (Phase 01 compatibility)", async () => {
+    // Server without DB
     const server = await createDatafnServer({
       schema: testSchema,
+      // no db
     });
 
     const res = await server.router.handle(
@@ -85,16 +86,14 @@ describe("DB Adapter Integration", () => {
         body: JSON.stringify({
           resource: "task",
           version: 1,
-          select: ["id"],
+          select: ["id", "title"],
         }),
-      }),
+      })
     );
 
     const body = await res.json();
-    expect(body.ok).toBe(false);
-    expect(body.error.code).toBe("INTERNAL");
-    expect(body.error.message).toBe("Internal error");
-    expect(body.error.details.path).toBe("$");
+    expect(body.ok).toBe(true);
+    expect(body.result.data).toEqual([]);
   });
 
   it("TV-DB-002: Mutation without DB returns INTERNAL error", async () => {

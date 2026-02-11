@@ -1,0 +1,6 @@
+id, desc, status, completedAt, completionDoc
+2026-01-28-06d39f13-issue, Support Secondary Databases (Redis/KV Store) for serverSeq and Future Features, 1, 2026-01-29T07:10:27Z, 2026-01-29-a8f3c7d2-completion
+2026-02-05-fix-9x2k7m4p-spec, Add sync.cloneUp() to upload existing local dataset to cloud on signup, 1, 2026-02-06T01:03:00Z, 
+2026-02-06-audit-fix-k4m2p9x7-spec, Close Flux-to-datafn gaps and refactor Nucleus to datafn, 0, , 
+2026-02-11-audit-fixes,Fix remaining audit issues (AUTH-002 namespace security and sync test regressions),1,2026-02-11T19:10:00Z,2026-02-11-78feda09-completion
+2026-02-11-audit-fix-r9k4m7x2-spec,Resolve all remaining Nucleus migration gaps: debounce + lifecycle + resilience + offline + UX improvements,1,2026-02-11T19:11:01Z,

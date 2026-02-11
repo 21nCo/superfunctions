@@ -1,0 +1,14 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-05T12:00:00Z,unknown,Cursor,spec,unknown-agent,,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec
+2026-02-06T19:17:38Z,Claude (Anthropic),Amp,execute,unknown-agent,PHASE_00,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_00-2026-02-06-scqr9q8g-report.md
+2026-02-06T19:30:01Z,Claude (Anthropic),Amp,execute,unknown-agent,PHASE_01,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_01-2026-02-06-s9s9vsgd-report.md
+2026-02-06T19:35:44Z,Claude (Anthropic),Amp,execute,unknown-agent,PHASE_02,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_02-2026-02-06-76qu9aum-report.md
+2026-02-07T19:54:14Z,Claude (Anthropic),Amp,execute,unknown-agent,PHASE_03,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_03-2026-02-07-dbb2vv4x-report.md
+2026-02-07T20:03:27Z,Claude (Anthropic),Amp,execute,unknown-agent,PHASE_04,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_04-2026-02-07-9y7sj66m-report.md
+2026-02-07T20:14:52Z,Claude (Anthropic),Amp,execute,unknown-agent,PHASE_05,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_05-2026-02-07-jym5pyj9-report.md
+2026-02-07T04:29:20Z,Claude (Anthropic),Amp,execute,unknown-agent,PHASE_06,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_06-2026-02-07-kvvrrb32-report.md
+2026-02-07T10:15:00Z,Gemini 3 pro,CLI,execute,implementation-agent,PHASE_07,.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_07-2026-02-07-7x9y2z1w-report.md
+2026-02-07T10:20:00Z,Gemini 3 pro,CLI,execute,implementation-agent,PHASE_08,.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_08-2026-02-07-cli-report.md
+2026-02-07T05:02:08Z,GPT 5.3 Codex medium,Codex CLI,execute,unknown-agent,PHASE_09,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_09-2026-02-07-q3md8p2k-report.md
+2026-02-07T10:52:00Z,auto,Cursor,execute,unknown-agent,PHASE_10,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_10-2026-02-07-ph10a7k2-report.md
+2026-02-07T19:01:00Z,Claude Sonnet 4.5,Cursor,execute,unknown-agent,PHASE_11,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec/phase-reports/PHASE_11-2026-02-07-ph11limits-report.md

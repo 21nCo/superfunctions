@@ -26,7 +26,6 @@ describe("REST Wrappers", () => {
     const { router } = await createDatafnServer({
       schema: testSchema,
       db,
-      // @ts-ignore - 'rest' prop is dynamic
       rest: true,
     });
 
@@ -45,11 +44,15 @@ describe("REST Wrappers", () => {
     const postRes = await router.handle(
       new Request("http://localhost/datafn/resources/task", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...mutationPayload, operation: "insert" }),
       }),
     );
 
     const postJson = await postRes.json();
+    if (!postJson.ok) {
+      console.error("REST POST failed:", JSON.stringify(postJson, null, 2));
+    }
     expect(postJson).toMatchObject({
       ok: true,
       result: {
@@ -87,7 +90,6 @@ describe("REST Wrappers", () => {
     const { router } = await createDatafnServer({
       schema: testSchema,
       db: memoryAdapter(),
-      // @ts-ignore
       rest: true,
     });
 

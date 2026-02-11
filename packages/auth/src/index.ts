@@ -7,6 +7,8 @@ export type {
   AuthSession,
   AuthProvider,
   AuthProviderConfig,
+  AuthContext,
+  AuthContextProvider,
 } from './types.js';
 
 // Errors

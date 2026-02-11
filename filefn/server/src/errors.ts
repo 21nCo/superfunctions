@@ -38,7 +38,10 @@ export const ErrorCodes = {
   UPLOAD_ABORTED: 'FILEFN_UPLOAD_ABORTED',
   UPLOAD_ALREADY_COMPLETED: 'FILEFN_UPLOAD_ALREADY_COMPLETED',
   IDEMPOTENCY_CONFLICT: 'FILEFN_IDEMPOTENCY_CONFLICT',
+  PART_CONFLICT: 'FILEFN_PART_CONFLICT',
+  UPLOAD_SIZE_MISMATCH: 'FILEFN_UPLOAD_SIZE_MISMATCH',
   NO_SUPPORTED_UPLOAD_MODE: 'FILEFN_NO_SUPPORTED_UPLOAD_MODE',
+  OFFLINE_UNSUPPORTED: 'FILEFN_OFFLINE_UNSUPPORTED',
   SESSION_NOT_FOUND: 'FILEFN_SESSION_NOT_FOUND',
   SHARE_EXPIRED: 'FILEFN_SHARE_EXPIRED',
   SHARE_REVOKED: 'FILEFN_SHARE_REVOKED',
@@ -93,7 +96,7 @@ export function quotaExceeded(current: number, limit: number, requested: number)
   );
 }
 
-export function rateLimited(resetAt: number): FileFnError {
+export function rateLimited(resetAt: string): FileFnError {
   return new FileFnError(ErrorCodes.RATE_LIMITED, 'Rate limit exceeded', 429, { resetAt });
 }
 
@@ -162,5 +165,31 @@ export function processingEnqueueFailed(): FileFnError {
     ErrorCodes.PROCESSING_ENQUEUE_FAILED,
     'Failed to enqueue processing',
     503
+  );
+}
+
+export function partConflict(uploadSessionId: string, partNumber: number): FileFnError {
+  return new FileFnError(
+    ErrorCodes.PART_CONFLICT,
+    'Part already completed with a different etag',
+    409,
+    { uploadSessionId, partNumber }
+  );
+}
+
+export function uploadSizeMismatch(expected: number, actual: number): FileFnError {
+  return new FileFnError(
+    ErrorCodes.UPLOAD_SIZE_MISMATCH,
+    'Uploaded size does not match expected size',
+    409,
+    { expected, actual }
+  );
+}
+
+export function offlineUnsupported(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.OFFLINE_UNSUPPORTED,
+    'OPFS unavailable',
+    400
   );
 }

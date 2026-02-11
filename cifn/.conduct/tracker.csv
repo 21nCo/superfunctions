@@ -1,0 +1,3 @@
+id, desc, status, completedAt, completionDoc
+2026-02-05-new-c8f2n1xq-spec, Self-hosted CI/CD (like CircleCI/GHA) for superfunctions ecosystem; pipeline-as-config, flowfn/filefn/secfn/logfn/hostfn/testfn integration; self-deployable., 1, 2026-02-07T19:01:00Z,
+2026-02-07-audit-fix-k9m2p7xq-spec, Fix CiFn audit findings: pipelineRef fetching; expressions/if; runner-scoped auth; integration adapters; client + deploy alignment., 1, 2026-02-11T05:17:00Z,

@@ -1,0 +1,4 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-05T12:00:00Z,unknown,Cursor,spec,unknown-agent,,cifn/.conduct/specs/2026-02-05-new-c8f2n1xq-spec
+2026-02-07T16:56:08Z,GPT-5.2,Cursor,audit,unknown-agent,,.conduct/audits/2026-02-07-r8c2m4p9-full-audit.md
+2026-02-07T17:17:04Z,GPT-5.2,Cursor,spec,unknown-agent,,.conduct/specs/2026-02-07-audit-fix-k9m2p7xq-spec

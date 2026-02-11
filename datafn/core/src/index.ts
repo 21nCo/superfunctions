@@ -23,3 +23,8 @@ export { normalizeDfql, dfqlKey } from "./normalize.js";
 
 // Re-export envelope utilities
 export { unwrapEnvelope } from "./envelope.js";
+
+export * from "./dfql";
+
+// Re-export KV utilities
+export { ensureBuiltinKv, kvId, KV_RESOURCE_NAME } from "./kv.js";

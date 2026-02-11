@@ -12,6 +12,55 @@ export interface EventFilter {
   action?: string | string[]; // CLIENT-FILTER-001
   fields?: string | string[]; // CLIENT-FILTER-001
   contextKeys?: string[]; // CLIENT-FILTER-001
+  context?: Record<string, unknown>; // EVT-002: shallow equality matching
+}
+
+/**
+ * Normalize a filter to a canonical form for deterministic comparison
+ */
+export function normalizeFilter(filter: EventFilter): EventFilter {
+  const normalized: EventFilter = {};
+
+  // Normalize arrays and sort them
+  if (filter.type !== undefined) {
+    normalized.type = Array.isArray(filter.type)
+      ? [...filter.type].sort()
+      : filter.type;
+  }
+  if (filter.resource !== undefined) {
+    normalized.resource = Array.isArray(filter.resource)
+      ? [...filter.resource].sort()
+      : filter.resource;
+  }
+  if (filter.ids !== undefined) {
+    normalized.ids = Array.isArray(filter.ids)
+      ? [...filter.ids].sort()
+      : filter.ids;
+  }
+  if (filter.mutationId !== undefined) {
+    normalized.mutationId = Array.isArray(filter.mutationId)
+      ? [...filter.mutationId].sort()
+      : filter.mutationId;
+  }
+  if (filter.action !== undefined) {
+    normalized.action = Array.isArray(filter.action)
+      ? [...filter.action].sort()
+      : filter.action;
+  }
+  if (filter.fields !== undefined) {
+    normalized.fields = Array.isArray(filter.fields)
+      ? [...filter.fields].sort()
+      : filter.fields;
+  }
+  if (filter.contextKeys !== undefined) {
+    normalized.contextKeys = [...filter.contextKeys].sort();
+  }
+  if (filter.context !== undefined) {
+    // Sort context keys for deterministic serialization
+    normalized.context = filter.context;
+  }
+
+  return normalized;
 }
 
 /**
@@ -90,6 +139,21 @@ export function matchesFilter(
     const ctx = event.context as Record<string, unknown>;
     const allExist = filter.contextKeys.every((key) => key in ctx);
     if (!allExist) return false;
+  }
+
+  // Match context - shallow equality (EVT-002)
+  if (filter.context !== undefined) {
+    if (!event.context || typeof event.context !== "object") {
+      return false;
+    }
+
+    const ctx = event.context as Record<string, unknown>;
+    // Check that all key/value pairs in filter.context match event.context
+    for (const [key, value] of Object.entries(filter.context)) {
+      if (ctx[key] !== value) {
+        return false;
+      }
+    }
   }
 
   return true;

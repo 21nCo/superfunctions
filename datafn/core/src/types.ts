@@ -2,9 +2,35 @@
  * DataFn Schema Types
  */
 
+import type { DatafnError } from "./errors.js";
+
 export type DatafnSchema = {
   resources: DatafnResourceSchema[];
   relations?: DatafnRelationSchema[];
+};
+
+/**
+ * Permissions policy shape for server-side authorization enforcement.
+ * All field arrays are optional; if omitted, no fields are accessible.
+ */
+export type DatafnPermissionsPolicy = {
+  /**
+   * Read policy: controls which fields can be selected and filtered.
+   */
+  read?: {
+    fields: string[];
+  };
+  /**
+   * Write policy: controls which fields can be written via mutations.
+   */
+  write?: {
+    fields: string[];
+  };
+  /**
+   * Optional owner field for owner-scoped resources.
+   * When set, additional owner-based authorization checks can be performed.
+   */
+  ownerField?: string;
 };
 
 export type DatafnResourceSchema = {
@@ -20,7 +46,7 @@ export type DatafnResourceSchema = {
         vector?: string[];
       }
     | string[];
-  permissions?: unknown;
+  permissions?: DatafnPermissionsPolicy;
 };
 
 export type DatafnFieldSchema = {
@@ -65,7 +91,9 @@ export interface DatafnEvent {
     | "mutation_applied"
     | "mutation_rejected"
     | "sync_applied"
-    | "sync_failed";
+    | "sync_failed"
+    | "ws_connected"
+    | "ws_disconnected";
   resource?: string;
   ids?: string[];
   mutationId?: string;
@@ -74,6 +102,10 @@ export interface DatafnEvent {
   context?: unknown;
   action?: string;
   fields?: string[];
+  // MUT-002: When true, marks mutation as system-initiated
+  system?: boolean;
+  // TAB-001: When true, marks event as received from another tab (prevents re-broadcast)
+  fromRemoteTab?: boolean;
 }
 
 export type DatafnEventFilter = Partial<{
@@ -84,6 +116,7 @@ export type DatafnEventFilter = Partial<{
   action: string | string[];
   fields: string | string[];
   contextKeys: string[];
+  context: Record<string, unknown>;
 }>;
 
 /**
@@ -93,6 +126,10 @@ export type DatafnEventFilter = Partial<{
 export interface DatafnSignal<T> {
   get(): T;
   subscribe(handler: (value: T) => void): () => void;
+  readonly loading: boolean;
+  readonly error: DatafnError | null;
+  readonly refreshing: boolean;
+  dispose(): void;
 }
 
 /**
@@ -128,12 +165,12 @@ export interface DatafnPlugin {
   ) => Promise<void> | void;
   beforeSync?: (
     ctx: DatafnHookContext,
-    phase: "seed" | "clone" | "pull" | "push",
+    phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
     payload: unknown,
   ) => Promise<unknown> | unknown;
   afterSync?: (
     ctx: DatafnHookContext,
-    phase: "seed" | "clone" | "pull" | "push",
+    phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
     payload: unknown,
     result: unknown,
   ) => Promise<void> | void;

@@ -1,26 +1,30 @@
-export interface KVStoreAdapter {
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string, ttlMs?: number): Promise<void>;
-  delete(key: string): Promise<void>;
-}
+import type { Adapter, KVStoreAdapter } from '@superfunctions/db';
+
+export { KVStoreAdapter };
 
 export interface RateLimitConfig {
   windowMs: number;
   maxRequests: number;
   keyPrefix?: string;
-  persistence?: KVStoreAdapter;
+  persistence?: Adapter | KVStoreAdapter;
   algorithm?: 'sliding-window' | 'fixed-window';
 }
 
 export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
-  resetAt: number;
+  resetAt: string; // ISO8601
   total: number;
 }
 
+export interface CheckLimitInput {
+  key: string;
+  windowSeconds?: number;
+  limit?: number;
+}
+
 export interface RateLimiter {
-  check(key: string): Promise<RateLimitResult>;
+  check(input: CheckLimitInput): Promise<RateLimitResult>;
   reset(key: string): Promise<void>;
 }
 
@@ -42,16 +46,52 @@ function createInMemoryKVStore(): KVStoreAdapter {
       }
       return entry.value;
     },
-    async set(key: string, value: string, ttlMs?: number): Promise<void> {
-      store.set(key, {
-        value,
-        expiresAt: ttlMs ? Date.now() + ttlMs : undefined,
+    async set(input: { key: string; value: string; ttlSeconds?: number }): Promise<void> {
+      store.set(input.key, {
+        value: input.value,
+        expiresAt: input.ttlSeconds ? Date.now() + input.ttlSeconds * 1000 : undefined,
       });
     },
     async delete(key: string): Promise<void> {
       store.delete(key);
     },
   };
+}
+
+function isAdapter(p: any): p is Adapter {
+  return typeof p.findOne === 'function' && typeof p.create === 'function';
+}
+
+function ensureKV(p: Adapter | KVStoreAdapter): KVStoreAdapter {
+  if (isAdapter(p)) {
+    return {
+      async get(key: string) {
+        const res = await p.findOne<{ value: string; expiresAt?: string }>({ 
+          model: 'rate_limits', 
+          where: [{ field: 'key', operator: 'eq', value: key }] 
+        });
+        if (!res) return null;
+        if (res.expiresAt && new Date(res.expiresAt).getTime() < Date.now()) {
+           await p.delete({ model: 'rate_limits', where: [{ field: 'key', operator: 'eq', value: key }] });
+           return null;
+        }
+        return res.value;
+      },
+      async set(input) {
+        const expiresAt = input.ttlSeconds ? new Date(Date.now() + input.ttlSeconds * 1000).toISOString() : undefined;
+        await p.upsert({
+          model: 'rate_limits',
+          where: [{ field: 'key', operator: 'eq', value: input.key }],
+          create: { key: input.key, value: input.value, expiresAt },
+          update: { value: input.value, expiresAt }
+        });
+      },
+      async delete(key) {
+        await p.delete({ model: 'rate_limits', where: [{ field: 'key', operator: 'eq', value: key }] });
+      }
+    };
+  }
+  return p;
 }
 
 export function createRateLimiter(config: RateLimitConfig): RateLimiter {
@@ -63,8 +103,10 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
     algorithm = 'fixed-window',
   } = config;
 
+  const kv = ensureKV(persistence);
+
   async function getState(key: string): Promise<RateLimitState | null> {
-    const data = await persistence.get(keyPrefix + key);
+    const data = await kv.get(keyPrefix + key);
     if (!data) return null;
     try {
       return JSON.parse(data) as RateLimitState;
@@ -73,59 +115,48 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
     }
   }
 
-  async function setState(key: string, state: RateLimitState): Promise<void> {
-    const ttl = state.windowStart + windowMs - Date.now();
-    if (ttl > 0) {
-      await persistence.set(keyPrefix + key, JSON.stringify(state), ttl);
+  async function setState(key: string, state: RateLimitState, windowDuration: number): Promise<void> {
+    const ttlMs = state.windowStart + windowDuration - Date.now();
+    if (ttlMs > 0) {
+      await kv.set({
+        key: keyPrefix + key, 
+        value: JSON.stringify(state), 
+        ttlSeconds: Math.ceil(ttlMs / 1000)
+      });
     }
   }
 
   return {
-    async check(key: string): Promise<RateLimitResult> {
+    async check(input: CheckLimitInput): Promise<RateLimitResult> {
+      const key = input.key;
+      const effectiveWindowMs = (input.windowSeconds ? input.windowSeconds * 1000 : undefined) ?? windowMs;
+      const effectiveLimit = input.limit ?? maxRequests;
+
       const now = Date.now();
       let state = await getState(key);
 
-      if (algorithm === 'fixed-window') {
-        // Fixed window: reset count when window expires
-        if (!state || now >= state.windowStart + windowMs) {
-          state = { count: 0, windowStart: now };
-        }
-
-        const allowed = state.count < maxRequests;
-        if (allowed) {
-          state.count++;
-          await setState(key, state);
-        }
-
-        return {
-          allowed,
-          remaining: Math.max(0, maxRequests - state.count),
-          resetAt: state.windowStart + windowMs,
-          total: maxRequests,
-        };
-      } else {
-        // Sliding window (simplified): use fixed window as fallback
-        if (!state || now >= state.windowStart + windowMs) {
-          state = { count: 0, windowStart: now };
-        }
-
-        const allowed = state.count < maxRequests;
-        if (allowed) {
-          state.count++;
-          await setState(key, state);
-        }
-
-        return {
-          allowed,
-          remaining: Math.max(0, maxRequests - state.count),
-          resetAt: state.windowStart + windowMs,
-          total: maxRequests,
-        };
+      if (!state || now >= state.windowStart + effectiveWindowMs) {
+        state = { count: 0, windowStart: now };
       }
+
+      const allowed = state.count < effectiveLimit;
+      if (allowed) {
+        state.count++;
+        await setState(key, state, effectiveWindowMs);
+      }
+
+      const resetAtTs = state.windowStart + effectiveWindowMs;
+
+      return {
+        allowed,
+        remaining: Math.max(0, effectiveLimit - state.count),
+        resetAt: new Date(resetAtTs).toISOString(),
+        total: effectiveLimit,
+      };
     },
 
     async reset(key: string): Promise<void> {
-      await persistence.delete(keyPrefix + key);
+      await kv.delete(keyPrefix + key);
     },
   };
 }

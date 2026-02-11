@@ -3,8 +3,9 @@
  * Tests TV-SUB-001, TV-SUB-002 from TEST_VECTORS.md
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDatafnClient } from "../src/client.js";
+import { DefaultHttpTransport } from "../src/transport/http.js";
 import type { DatafnEvent } from "@datafn/core";
 
 // Default schema for testing
@@ -23,47 +24,34 @@ const defaultSchema = {
   ],
 };
 
-const stubRemote = {
-  query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-  mutation: async () => ({ ok: true, result: { ok: true } }),
-  transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-  seed: async () => ({ ok: true, result: { ok: true } }),
-  clone: async () => ({ ok: true, result: { ok: true } }),
-  pull: async () => ({ ok: true, result: { ok: true } }),
-  push: async () => ({ ok: true, result: { ok: true } }),
-};
-
 describe("@datafn/client table subscription", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("TV-SUB-001: table.subscribe only receives events for its own resource", async () => {
     const observedEvents: DatafnEvent[] = [];
 
-    const mockRemote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({
+    vi.spyOn(DefaultHttpTransport.prototype, "mutation").mockResolvedValue({
+      ok: true,
+      result: {
         ok: true,
-        result: {
-          ok: true,
-          mutationId: "m1",
-          affectedIds: ["task:1"],
-          errors: [],
-          deduped: false,
-        },
-      }),
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+        mutationId: "m1",
+        affectedIds: ["task:1"],
+        errors: [],
+        deduped: false,
+      },
+    });
 
     const client = createDatafnClient({
       schema: defaultSchema,
-      remote: mockRemote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => 0,
     });
 
     // Subscribe via task table
-    const table = (client as any).task;
+    const table = client.task;
     table.subscribe((event: DatafnEvent) => {
       observedEvents.push(event);
     });
@@ -86,39 +74,32 @@ describe("@datafn/client table subscription", () => {
   it("TV-SUB-002: table.subscribe must NOT deliver other-resource events", async () => {
     const observedEvents: DatafnEvent[] = [];
 
-    const mockRemote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({
+    vi.spyOn(DefaultHttpTransport.prototype, "mutation").mockResolvedValue({
+      ok: true,
+      result: {
         ok: true,
-        result: {
-          ok: true,
-          mutationId: "m2",
-          affectedIds: ["goal:1"],
-          errors: [],
-          deduped: false,
-        },
-      }),
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+        mutationId: "m2",
+        affectedIds: ["goal:1"],
+        errors: [],
+        deduped: false,
+      },
+    });
 
     const client = createDatafnClient({
       schema: defaultSchema,
-      remote: mockRemote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => 0,
     });
 
     // Subscribe via task table
-    const taskTable = (client as any).task;
+    const taskTable = client.task;
     taskTable.subscribe((event: DatafnEvent) => {
       observedEvents.push(event);
     });
 
     // Execute mutation on goal (should NOT be received by task subscription)
-    const goalTable = (client as any).goal;
+    const goalTable = client.goal;
     await goalTable.mutate({
       operation: "insert",
       mutationId: "m2",
@@ -134,38 +115,31 @@ describe("@datafn/client table subscription", () => {
   it("Table subscription ignores user-provided resource filter", async () => {
     const observedEvents: DatafnEvent[] = [];
 
-    const mockRemote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({
+    vi.spyOn(DefaultHttpTransport.prototype, "mutation").mockResolvedValue({
+      ok: true,
+      result: {
         ok: true,
-        result: {
-          ok: true,
-          mutationId: "m3",
-          affectedIds: ["task:1"],
-          errors: [],
-          deduped: false,
-        },
-      }),
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+        mutationId: "m3",
+        affectedIds: ["task:1"],
+        errors: [],
+        deduped: false,
+      },
+    });
 
     const client = createDatafnClient({
       schema: defaultSchema,
-      remote: mockRemote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => 0,
     });
 
     // Subscribe via task table with goal resource filter (should be ignored)
-    const table = (client as any).task;
+    const table = client.task;
     table.subscribe(
       (event: DatafnEvent) => {
         observedEvents.push(event);
       },
-      { resource: "goal" } // This should be ignored
+      { resource: "goal" }, // This should be ignored
     );
 
     // Execute mutation on task
@@ -185,9 +159,9 @@ describe("@datafn/client table subscription", () => {
   it("Unsubscribe stops receiving events", async () => {
     const observedEvents: DatafnEvent[] = [];
 
-    const mockRemote = {
-      query: async () => ({ ok: true, result: { data: [], nextCursor: null } }),
-      mutation: async () => ({
+    const mutationSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "mutation")
+      .mockResolvedValue({
         ok: true,
         result: {
           ok: true,
@@ -196,21 +170,16 @@ describe("@datafn/client table subscription", () => {
           errors: [],
           deduped: false,
         },
-      }),
-      transact: async () => ({ ok: true, result: { ok: true, results: [] } }),
-      seed: async () => ({ ok: true, result: { ok: true } }),
-      clone: async () => ({ ok: true, result: { ok: true } }),
-      pull: async () => ({ ok: true, result: { ok: true } }),
-      push: async () => ({ ok: true, result: { ok: true } }),
-    };
+      });
 
     const client = createDatafnClient({
       schema: defaultSchema,
-      remote: mockRemote,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
       getTimestamp: () => 0,
     });
 
-    const table = (client as any).task;
+    const table = client.task;
     const unsubscribe = table.subscribe((event: DatafnEvent) => {
       observedEvents.push(event);
     });
@@ -230,6 +199,17 @@ describe("@datafn/client table subscription", () => {
     unsubscribe();
 
     // Mutation after unsubscribe
+    mutationSpy.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        ok: true,
+        mutationId: "m5",
+        affectedIds: ["task:2"],
+        errors: [],
+        deduped: false,
+      },
+    });
+
     await table.mutate({
       operation: "insert",
       mutationId: "m5",

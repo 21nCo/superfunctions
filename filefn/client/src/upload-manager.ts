@@ -1,11 +1,11 @@
-import type { HttpClient } from './client.js';
+import type { HttpClient } from "./client.js";
 import type {
   UploadInput,
   UploadHandle,
   UploadProgress,
   UploadResult,
   UploadStatusResponse,
-} from './types.js';
+} from "./types.js";
 
 interface UploadSession {
   uploadSessionId: string;
@@ -28,12 +28,12 @@ export class UploadManager {
 
   createHandle(
     input: UploadInput,
-    startUpload: () => Promise<UploadResult>
+    startUpload: () => Promise<UploadResult>,
   ): UploadHandle {
     let uploadPromise: Promise<UploadResult> | null = null;
 
     const handle: UploadHandle = {
-      uploadSessionId: '',
+      uploadSessionId: "",
       onProgress: (callback) => {
         this.progressCallbacks.push(callback);
       },
@@ -45,7 +45,7 @@ export class UploadManager {
           uploadPromise = startUpload();
         }
         const result = await uploadPromise;
-        handle.uploadSessionId = this.session?.uploadSessionId || '';
+        handle.uploadSessionId = this.session?.uploadSessionId || "";
         return result;
       },
     };
@@ -57,38 +57,72 @@ export class UploadManager {
     const signal = this.abortController.signal;
     this.file = input.file;
 
-    const fileName = input.fileName || (input.file instanceof File ? input.file.name : 'blob');
-    const contentType = input.file.type || 'application/octet-stream';
-    const fileSize = input.file.size;
+    const fileName =
+      input.fileName || (input.file instanceof File ? input.file.name : "blob");
+    const mimeType = input.file.type || "application/octet-stream";
+    const size = input.file.size;
 
-    const initResponse = await this.httpClient.initUpload({
-      policy: input.policy,
-      fileName,
-      fileSize,
-      contentType,
-      metadata: input.metadata,
-      fileId: input.fileId,
-      idempotencyKey: input.idempotencyKey,
-    }, signal);
+    const rawInit = await this.httpClient.initUpload(
+      {
+        policy: input.policy,
+        fileName,
+        size,
+        mimeType,
+        metadata: input.metadata,
+        fileId: input.fileId,
+        idempotencyKey: input.idempotencyKey,
+      },
+      signal,
+    );
+
+    // Accept both unwrapped { uploadSessionId, ... } and envelope { data: { uploadSessionId, ... } }
+    const initResponse =
+      rawInit && typeof rawInit === "object" && "uploadSessionId" in rawInit
+        ? rawInit
+        : (
+            rawInit as {
+              data?: {
+                uploadSessionId?: string;
+                totalParts?: number;
+                chunkSizeBytes?: number;
+              };
+            }
+          )?.data;
+
+    const uploadSessionId = initResponse?.uploadSessionId;
+    if (!uploadSessionId) {
+      throw new Error(
+        "Failed to create upload session: no session ID returned. Ensure the server returns { ok: true, data: { uploadSessionId, totalParts, chunkSizeBytes, ... } } or { uploadSessionId, ... }.",
+      );
+    }
 
     this.session = {
-      uploadSessionId: initResponse.uploadSessionId,
-      totalParts: initResponse.totalParts,
-      chunkSizeBytes: initResponse.chunkSizeBytes,
-      fileSize,
+      uploadSessionId,
+      totalParts: initResponse.totalParts ?? 1,
+      chunkSizeBytes: initResponse.chunkSizeBytes ?? 0,
+      fileSize: size,
     };
 
     await this.uploadAllParts(signal);
 
-    const result = await this.httpClient.completeUpload(this.session.uploadSessionId, signal);
+    const result = await this.httpClient.completeUpload(
+      this.session.uploadSessionId,
+      signal,
+    );
     return result;
   }
 
-  async resumeUpload(uploadSessionId: string, file: Blob): Promise<UploadResult> {
+  async resumeUpload(
+    uploadSessionId: string,
+    file: Blob,
+  ): Promise<UploadResult> {
     const signal = this.abortController.signal;
     this.file = file;
 
-    const status = await this.httpClient.getUploadStatus(uploadSessionId, signal);
+    const status = await this.httpClient.getUploadStatus(
+      uploadSessionId,
+      signal,
+    );
 
     this.session = {
       uploadSessionId,
@@ -104,7 +138,10 @@ export class UploadManager {
 
     await this.uploadAllParts(signal);
 
-    const result = await this.httpClient.completeUpload(uploadSessionId, signal);
+    const result = await this.httpClient.completeUpload(
+      uploadSessionId,
+      signal,
+    );
     return result;
   }
 
@@ -114,7 +151,8 @@ export class UploadManager {
       if (partNum < status.totalParts) {
         bytes += status.chunkSizeBytes;
       } else {
-        bytes += status.fileSize - (status.totalParts - 1) * status.chunkSizeBytes;
+        bytes +=
+          status.fileSize - (status.totalParts - 1) * status.chunkSizeBytes;
       }
     }
     return bytes;
@@ -122,12 +160,12 @@ export class UploadManager {
 
   private async uploadAllParts(signal: AbortSignal): Promise<void> {
     if (!this.session || !this.file) {
-      throw new Error('No active session');
+      throw new Error("No active session");
     }
 
     for (let partNum = 1; partNum <= this.session.totalParts; partNum++) {
       if (signal.aborted) {
-        throw new DOMException('Aborted', 'AbortError');
+        throw new DOMException("Aborted", "AbortError");
       }
 
       if (this.completedParts.has(partNum)) {
@@ -138,27 +176,44 @@ export class UploadManager {
     }
   }
 
-  private async uploadPart(partNumber: number, signal: AbortSignal): Promise<void> {
+  private async uploadPart(
+    partNumber: number,
+    signal: AbortSignal,
+  ): Promise<void> {
     if (!this.session || !this.file) {
-      throw new Error('No active session');
+      throw new Error("No active session");
     }
 
-    const { uploadSessionId, chunkSizeBytes, totalParts, fileSize } = this.session;
+    const { uploadSessionId, chunkSizeBytes, totalParts, fileSize } =
+      this.session;
 
     const start = (partNumber - 1) * chunkSizeBytes;
     const end = partNumber === totalParts ? fileSize : start + chunkSizeBytes;
     const chunk = this.file.slice(start, end);
 
-    const signResponse = await this.httpClient.signPart(uploadSessionId, partNumber, signal);
-
-    const etag = await this.httpClient.uploadPartToSignedUrl(
-      signResponse.url,
-      signResponse.headers,
-      chunk,
-      signal
+    const signResponse = await this.httpClient.signPart(
+      uploadSessionId,
+      partNumber,
+      chunk.size,
+      signal,
     );
 
-    await this.httpClient.completePart(uploadSessionId, partNumber, etag, signal);
+    const { etag, recorded } = await this.httpClient.uploadPartToSignedUrl(
+      signResponse.url,
+      signResponse.headers || {},
+      chunk,
+      signal,
+    );
+
+    if (!recorded) {
+      await this.httpClient.completePart(
+        uploadSessionId,
+        partNumber,
+        etag,
+        chunk.size,
+        signal,
+      );
+    }
 
     this.completedParts.add(partNumber);
     this.bytesUploaded += chunk.size;
