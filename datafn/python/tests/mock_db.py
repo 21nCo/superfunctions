@@ -56,7 +56,8 @@ class MockAdapter:
                     if not (rv < val): match = False
                 elif op == "lte":
                     if not (rv <= val): match = False
-                # Add other ops if needed for tests
+                elif op == "in":
+                    if rv not in val: match = False
             if match:
                 filtered.append(r)
         

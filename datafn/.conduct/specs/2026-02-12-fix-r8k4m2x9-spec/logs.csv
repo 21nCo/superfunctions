@@ -1,0 +1,7 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-12T18:50:00Z,Claude Sonnet 4,Gemini Code Assist,spec,antigravity,,datafn/.conduct/specs/2026-02-12-fix-r8k4m2x9-spec
+2026-02-13T12:00:00Z,Claude Sonnet 4,Amp,execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-02-12-fix-r8k4m2x9-spec/phase-reports/PHASE_00-2026-02-13-g7k4m2x8-report.md
+2026-02-13T12:22:00Z,Claude Sonnet 4,Amp,execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-02-12-fix-r8k4m2x9-spec/phase-reports/PHASE_01-2026-02-13-k9m3x7p2-report.md
+2026-02-13T04:59:00Z,Claude Sonnet 4,Amp,execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-02-12-fix-r8k4m2x9-spec/phase-reports/PHASE_02-2026-02-13-v7m3k9x2-report.md
+2026-02-13T05:06:00Z,Claude Sonnet 4,Amp,execute,unknown-agent,PHASE_03,datafn/.conduct/specs/2026-02-12-fix-r8k4m2x9-spec/phase-reports/PHASE_03-2026-02-13-m4k8x2p7-report.md
+2026-02-13T10:42:00Z,Claude Sonnet 4,Amp,execute,unknown-agent,PHASE_04,datafn/.conduct/specs/2026-02-12-fix-r8k4m2x9-spec/phase-reports/PHASE_04-2026-02-13-q8k3m7x2-report.md

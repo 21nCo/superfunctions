@@ -1,0 +1,11 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-24T20:15:00Z,Claude Opus 4.6,Factory Droid CLI,spec,Droid,,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec
+2026-02-24T19:30:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_00,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_00-2026-02-24-m8k3x7p2-report.md
+2026-02-24T19:40:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_01,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_01-2026-02-24-k3x9m7p4-report.md
+2026-02-24T20:13:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_02,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_02-2026-02-24-n4x7m3k9-report.md
+2026-02-24T23:30:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_03,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_03-2026-02-24-k9r4m7x3-report.md
+2026-02-25T00:25:00Z,Claude Opus 4.6,Claude Code,execute,Claude Code,PHASE_04,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_04-2026-02-24-p7m3k9x4-report.md
+2026-02-25T00:35:00Z,claude-4.6-sonnet-medium-thinking,Cursor,execute,Cursor Agent,PHASE_06,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_06-2026-02-25-r4m9k7x2-report.md
+2026-02-25T04:35:00Z,Claude Opus 4.6,Claude Code,execute,Claude Code,PHASE_07,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_07-2026-02-25-m7k9x3r4-report.md
+2026-02-25T04:42:00Z,Claude Opus 4.6,Claude Code,execute,Claude Code,PHASE_08,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_08-2026-02-25-k7x3m9p4-report.md
+2026-02-25T04:50:00Z,Claude Opus 4.6,Claude Code,execute,Claude Code,PHASE_09,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_09-2026-02-25-r7m4k9x3-report.md

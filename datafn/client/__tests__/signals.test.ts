@@ -80,10 +80,7 @@ describe("@datafn/client signals", () => {
     // Verify initial value (filter out undefined from loading states)
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
-    expect(definedValues[0]).toEqual({
-      data: [{ id: "task:1" }],
-      nextCursor: null,
-    });
+    expect(definedValues[0]).toEqual([{ id: "task:1" }]);
 
     // Emit mutation_applied event (should trigger refresh)
     (client as any).subscribe((event: DatafnEvent) => {
@@ -105,10 +102,7 @@ describe("@datafn/client signals", () => {
     // Verify refresh happened (filter out undefined)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
     expect(definedValues2).toHaveLength(2);
-    expect(definedValues2[1]).toEqual({
-      data: [{ id: "task:2" }],
-      nextCursor: null,
-    });
+    expect(definedValues2[1]).toEqual([{ id: "task:2" }]);
   });
 
   it("TV-SIGNAL-002: Failed refresh doesn't notify subscribers", async () => {
@@ -164,10 +158,7 @@ describe("@datafn/client signals", () => {
     // Verify initial value (filter out undefined)
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
-    expect(definedValues[0]).toEqual({
-      data: [{ id: "task:1" }],
-      nextCursor: null,
-    });
+    expect(definedValues[0]).toEqual([{ id: "task:1" }]);
 
     // Trigger mutation to emit event and cause refresh
     await table.mutate({
@@ -184,10 +175,7 @@ describe("@datafn/client signals", () => {
     // Verify NO new value notification (refresh failed silently, filter undefined)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
     expect(definedValues2).toHaveLength(1);
-    expect(definedValues2[0]).toEqual({
-      data: [{ id: "task:1" }],
-      nextCursor: null,
-    });
+    expect(definedValues2[0]).toEqual([{ id: "task:1" }]);
   });
 
   it("Delegates to @datafn/core.dfqlKey for cache key generation", () => {
@@ -325,10 +313,7 @@ describe("@datafn/client signals", () => {
 
     // Get value before dispose
     const valueBeforeDispose = signal.get();
-    expect(valueBeforeDispose).toEqual({
-      data: [{ id: "task:1", title: "Test" }],
-      nextCursor: null,
-    });
+    expect(valueBeforeDispose).toEqual([{ id: "task:1", title: "Test" }]);
 
     // Dispose signal
     signal.dispose();
@@ -567,7 +552,7 @@ describe("@datafn/client signals", () => {
     
     // Check the final value (after background re-fetch)
     const finalValue = definedValues2[definedValues2.length - 1] as any;
-    expect(finalValue.data).toEqual([
+    expect(finalValue).toEqual([
       { id: "task:1", title: "Task 1 updated" },
       { id: "task:2", title: "Task 2" }
     ]);
@@ -786,10 +771,7 @@ describe("@datafn/client signals", () => {
 
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(1);
-    expect(definedValues[0]).toEqual({
-      data: [{ id: "task:1", title: "Old", status: "open" }],
-      nextCursor: null,
-    });
+    expect(definedValues[0]).toEqual([{ id: "task:1", title: "Old", status: "open" }]);
 
     // Trigger merge mutation for task:1 (IS in cached results)
     await table.mutate({
@@ -809,7 +791,7 @@ describe("@datafn/client signals", () => {
     
     // The patched value should have new title but preserve status
     const patchedValue = definedValues2[1] as any;
-    expect(patchedValue.data[0]).toEqual({
+    expect(patchedValue[0]).toEqual({
       id: "task:1",
       title: "New",
       status: "open",
@@ -874,7 +856,7 @@ describe("@datafn/client signals", () => {
     expect(definedValues.length).toBeGreaterThanOrEqual(2);
     
     const patchedValue = definedValues[1] as any;
-    expect(patchedValue.data[0].title).toBe("Patched");
+    expect(patchedValue[0].title).toBe("Patched");
   });
 
   it("TV-SIG-003: Background re-fetch scheduled after patch", async () => {
@@ -986,7 +968,7 @@ describe("@datafn/client signals", () => {
     
     const definedValues = observedValues.filter((v) => v !== undefined);
     expect(definedValues).toHaveLength(2);
-    expect((definedValues[1] as any).data).toEqual([]);
+    expect(definedValues[1]).toEqual([]);
   });
 
   it("TV-SIG-003N: disableOptimistic skips patching", async () => {
@@ -1184,5 +1166,152 @@ describe("@datafn/client signals", () => {
     // Verify refresh occurred (relation footprint detected user resource)
     const definedValues2 = observedValues.filter((v) => v !== undefined);
     expect(definedValues2).toHaveLength(2);
+  });
+
+  // Loading state transition tests (issue 2026-02-25-k7m9x4r8)
+
+  it("loading transitions to false when data arrives (not stuck at true)", async () => {
+    vi.spyOn(DefaultHttpTransport.prototype, "query").mockResolvedValue({
+      ok: true,
+      result: { data: [{ id: "task:1", title: "Test" }], nextCursor: null },
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
+      getTimestamp: () => 0,
+    });
+
+    const table = client.task;
+    const signal = table.signal({ select: ["id", "title"] });
+
+    // Track loading state at notification time
+    const loadingStates: boolean[] = [];
+    signal.subscribe((value: unknown) => {
+      loadingStates.push(signal.loading);
+    });
+
+    // Wait for initial fetch
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // When data arrives, loading should be false at notification time
+    expect(loadingStates.length).toBeGreaterThanOrEqual(1);
+    expect(loadingStates[loadingStates.length - 1]).toBe(false);
+    expect(signal.loading).toBe(false);
+  });
+
+  it("refreshing transitions to false after background re-fetch completes", async () => {
+    let queryCallCount = 0;
+    vi.spyOn(DefaultHttpTransport.prototype, "query").mockImplementation(async () => {
+      queryCallCount++;
+      return {
+        ok: true,
+        result: { data: [{ id: `task:${queryCallCount}` }], nextCursor: null },
+      };
+    });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "mutation").mockResolvedValue({
+      ok: true,
+      result: { ok: true },
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
+      getTimestamp: () => 0,
+    });
+
+    const table = client.task;
+    const signal = table.signal({ select: ["id"] });
+
+    const refreshingStates: boolean[] = [];
+    signal.subscribe((value: unknown) => {
+      refreshingStates.push(signal.refreshing);
+    });
+
+    // Wait for initial fetch
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Trigger refresh via insert mutation
+    await table.mutate({
+      operation: "insert",
+      mutationId: "m1",
+      clientId: "client:1",
+      id: "task:99",
+      record: { title: "New" },
+    });
+
+    // Wait for refresh
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // After refresh, refreshing should be false at notification time
+    expect(refreshingStates[refreshingStates.length - 1]).toBe(false);
+    expect(signal.refreshing).toBe(false);
+  });
+
+  it("loading is false at notification time even during error path", async () => {
+    vi.spyOn(DefaultHttpTransport.prototype, "query").mockImplementation(async () => {
+      throw new Error("Network error");
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
+      getTimestamp: () => 0,
+    });
+
+    const table = client.task;
+    const signal = table.signal({ select: ["id"] });
+
+    const loadingStates: boolean[] = [];
+    signal.subscribe((value: unknown) => {
+      loadingStates.push(signal.loading);
+    });
+
+    // Wait for fetch to fail
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // On error notification, loading should be false
+    if (loadingStates.length > 0) {
+      expect(loadingStates[loadingStates.length - 1]).toBe(false);
+    }
+    expect(signal.loading).toBe(false);
+  });
+
+  it("data and loading:false arrive in a single notification", async () => {
+    vi.spyOn(DefaultHttpTransport.prototype, "query").mockResolvedValue({
+      ok: true,
+      result: { data: [{ id: "task:1" }], nextCursor: null },
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
+      getTimestamp: () => 0,
+    });
+
+    const table = client.task;
+    const signal = table.signal({ select: ["id"] });
+
+    // Capture data + loading together at notification time
+    const snapshots: { data: unknown; loading: boolean }[] = [];
+    signal.subscribe((value: unknown) => {
+      snapshots.push({ data: value, loading: signal.loading });
+    });
+
+    // Wait for initial fetch
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Should have data and loading:false in the same notification
+    const dataSnapshots = snapshots.filter(s => s.data !== undefined);
+    expect(dataSnapshots.length).toBeGreaterThanOrEqual(1);
+    expect(dataSnapshots[0]).toEqual({
+      data: [{ id: "task:1" }],
+      loading: false,
+    });
   });
 });

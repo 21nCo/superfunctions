@@ -10,9 +10,9 @@
 import type { DatafnSchema } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { createClientError } from "../errors.js";
+import { getJoinStoreKey } from "@datafn/core";
 import {
   normalizeRelationPayload,
-  getJoinStoreName,
   findRelation,
 } from "./relations.js";
 
@@ -155,7 +155,7 @@ async function validateRelationMutation(
             : toResources.find((r) => item.toId.startsWith(`${r}:`)) ||
               toResources[0];
 
-        const joinStore = getJoinStoreName(
+        const joinStore = getJoinStoreKey(
           fromResource,
           relationName,
           toResource,
@@ -253,7 +253,7 @@ async function applyRelate(
             : toResources.find((r) => item.toId.startsWith(`${r}:`)) ||
               toResources[0];
 
-        const joinStore = getJoinStoreName(
+        const joinStore = getJoinStoreKey(
           fromResource,
           relationName,
           toResource,
@@ -318,7 +318,7 @@ async function applyModifyRelation(
           : toResources.find((r) => item.toId.startsWith(`${r}:`)) ||
             toResources[0];
 
-      const joinStore = getJoinStoreName(fromResource, relationName, toResource);
+      const joinStore = getJoinStoreKey(fromResource, relationName, toResource);
 
       // Find existing join row (already validated to exist)
       const existingRows = await storage.getJoinRows(joinStore, id);
@@ -399,7 +399,7 @@ async function applyUnrelate(
             : toResources.find((r) => item.toId.startsWith(`${r}:`)) ||
               toResources[0];
 
-        const joinStore = getJoinStoreName(
+        const joinStore = getJoinStoreKey(
           fromResource,
           relationName,
           toResource,

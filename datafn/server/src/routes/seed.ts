@@ -6,6 +6,7 @@
 import { okResponse, errorResponse } from "../http/errors.js";
 import { getBodyFromContext } from "../http/json.js";
 import type { Adapter } from "@superfunctions/db";
+import { ensureInternalTable } from "../execution/internal-tables.js";
 
 /**
  * Create seed route handler
@@ -42,27 +43,23 @@ export function createSeedHandler(db?: Adapter, namespace: string = "datafn") {
 
     // Persist seed execution in __datafn_seed for idempotency (SERVER-SEED-001)
     if (db) {
+      await ensureInternalTable(db, "__datafn_seed");
       try {
         // Check if seed already exists for this namespace
-        const existing = await db.findOne({
-          model: "__datafn_seed",
-          where: [{ field: "namespace", operator: "eq", value: namespace }],
-          namespace,
-        });
+        const existing = await db.internal.findOne("__datafn_seed", [
+          { field: "namespace", op: "eq", value: namespace },
+        ]);
 
         if (!existing) {
           // Create seed record
           // Use payload timestamp if provided, else use 0 for determinism (DETERM-001)
           const timestamp = typeof payload.timestamp === "number" ? payload.timestamp : 0;
-          await db.create({
-            model: "__datafn_seed",
-            data: {
-              id: `seed:${namespace}`,
-              namespace,
-              seededAtMs: timestamp,
-              createdAt: new Date(timestamp).toISOString(), 
-            },
+          await db.internal.create("__datafn_seed", {
+            id: `seed:${namespace}`,
             namespace,
+            seed_id: `seed:${namespace}`,
+            status: "completed",
+            created_at: new Date(timestamp).toISOString(),
           });
         }
         // If exists, seed is idempotent - just return success

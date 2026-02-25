@@ -4,6 +4,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import type { Adapter } from "@superfunctions/db";
 import type { DataStore } from "../store.js";
 import type { DFQLQuery, QueryResult } from "./dfql.js";
 import { evaluateFilter } from "./filters.js";
@@ -12,6 +13,8 @@ import { applyLimitOffset, applyCursorAfter, computeNextCursor } from "./paginat
 import { materializeSelect } from "./select.js";
 import { executeAggregateQuery } from "./aggregate.js";
 import { DatafnExecutionError } from "../errors.js";
+import { classifyQuery } from "./planner.js";
+import { executePushdownQuery } from "./pushdown.js";
 
 /**
  * Execute a DFQL query against a data store
@@ -245,4 +248,37 @@ export function executeQuery(
     count,
     nextCursor,
   };
+}
+
+/**
+ * Execute a DFQL query using the optimal strategy determined by classifyQuery().
+ *
+ * - FULL_PUSHDOWN  → executePushdownQuery  (skips DataStore entirely)
+ * - PARTIAL_PUSHDOWN / IN_MEMORY → executeQuery  (requires DataStore)
+ *
+ * The `store` parameter is required for non-FULL_PUSHDOWN strategies.
+ * The `db` and `namespace` parameters are required for FULL_PUSHDOWN.
+ */
+export async function executeQueryWithStrategy(
+  query: DFQLQuery,
+  schema: DatafnSchema,
+  db: Adapter,
+  namespace: string,
+  store?: DataStore,
+): Promise<QueryResult | { groups: any[]; nextCursor: null }> {
+  const strategy = classifyQuery(query as unknown as Record<string, unknown>, schema);
+
+  if (strategy === "FULL_PUSHDOWN") {
+    return executePushdownQuery(query, schema, db, namespace);
+  }
+
+  if (!store) {
+    throw new DatafnExecutionError(
+      "INTERNAL",
+      `DataStore is required for ${strategy} strategy but was not provided`,
+      "$",
+    );
+  }
+
+  return executeQuery(query, schema, store);
 }

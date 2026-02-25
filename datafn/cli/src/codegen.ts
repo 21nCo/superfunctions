@@ -53,11 +53,45 @@ export function generateTypes(schemaInput: unknown): string {
     lines.push("");
   }
 
+  // Generate interfaces for many-many join tables with metadata
+  const relations = schema.relations ?? [];
+  const joinTableInterfaces: Array<{ name: string; pascalName: string }> = [];
+
+  for (const rel of relations) {
+    if (rel.type !== "many-many" || !rel.metadata || rel.metadata.length === 0) {
+      continue;
+    }
+
+    const jtName = rel.joinTable ?? `__datafn_join_${Array.isArray(rel.from) ? rel.from[0] : rel.from}_${rel.relation ?? (Array.isArray(rel.to) ? rel.to[0] : rel.to)}`;
+    const pascalName = toPascalCase(jtName);
+    const fromCol = rel.joinColumns?.from ?? "fromId";
+    const toCol = rel.joinColumns?.to ?? "toId";
+
+    lines.push(`export interface ${pascalName} {`);
+    lines.push(`  ${fromCol}: string;`);
+    lines.push(`  ${toCol}: string;`);
+
+    // Sort metadata fields for stability
+    const sortedMeta = [...rel.metadata].sort((a, b) => a.name.localeCompare(b.name));
+    for (const meta of sortedMeta) {
+      const tsType = mapFieldType(meta.type);
+      lines.push(`  ${meta.name}: ${tsType};`);
+    }
+
+    lines.push("}");
+    lines.push("");
+
+    joinTableInterfaces.push({ name: jtName, pascalName });
+  }
+
   // Generate 'Tables' mapping type
   lines.push("export interface Tables {");
   for (const resource of resources) {
     const pascalName = toPascalCase(resource.name);
     lines.push(`  ${resource.name}: ${pascalName};`);
+  }
+  for (const jt of joinTableInterfaces) {
+    lines.push(`  ${jt.name}: ${jt.pascalName};`);
   }
   lines.push("}");
   lines.push("");

@@ -122,6 +122,83 @@ describe("Local DFQL Expansion", () => {
     expect(result.data![0].tags[0].name).toBe("Tag 1");
   });
 
+  it("TV-OFFLINE-SORT-001: Local query sorts with '-field' prefix (descending)", async () => {
+    await storage.upsertRecord("tasks", {
+      id: "t2",
+      title: "A Earlier Task",
+      projectId: "p1",
+      status: "active",
+    });
+
+    const result = await executeLocalQuery(storage, schema, {
+      resource: "tasks",
+      sort: ["-title"],
+    });
+
+    const titles = result.data!.map((r: any) => r.title);
+    expect(titles[0]).toBe("Task 1");
+    expect(titles[1]).toBe("A Earlier Task");
+  });
+
+  it("TV-OFFLINE-SORT-002: Local query '-field' sort equivalent to 'field:desc'", async () => {
+    await storage.upsertRecord("tasks", {
+      id: "t2",
+      title: "A Earlier Task",
+      projectId: "p1",
+      status: "active",
+    });
+
+    const resultDash = await executeLocalQuery(storage, schema, {
+      resource: "tasks",
+      sort: ["-title"],
+    });
+
+    const resultColon = await executeLocalQuery(storage, schema, {
+      resource: "tasks",
+      sort: ["title:desc"],
+    });
+
+    const titlesDash = resultDash.data!.map((r: any) => r.title);
+    const titlesColon = resultColon.data!.map((r: any) => r.title);
+    expect(titlesDash).toEqual(titlesColon);
+  });
+
+  it("TV-OFFLINE-SORT-003: Local query mixed '-field' and 'field:asc' formats", async () => {
+    await storage.upsertRecord("tasks", {
+      id: "t2",
+      title: "A Earlier Task",
+      status: "done",
+    });
+
+    const result = await executeLocalQuery(storage, schema, {
+      resource: "tasks",
+      sort: ["-status", "title:asc"],
+    });
+
+    const statuses = result.data!.map((r: any) => r.status);
+    // "done" > "active" alphabetically, so desc means "done" first
+    expect(statuses[0]).toBe("done");
+    expect(statuses[1]).toBe("active");
+  });
+
+  it("TV-OFFLINE-SORT-004: Local query 'field:asc' ascending still works", async () => {
+    await storage.upsertRecord("tasks", {
+      id: "t2",
+      title: "A Earlier Task",
+      projectId: "p1",
+      status: "active",
+    });
+
+    const result = await executeLocalQuery(storage, schema, {
+      resource: "tasks",
+      sort: ["title:asc"],
+    });
+
+    const titles = result.data!.map((r: any) => r.title);
+    expect(titles[0]).toBe("A Earlier Task");
+    expect(titles[1]).toBe("Task 1");
+  });
+
   it("TV-OFFLINE-QUERY-GROUPBY-001: Local query aggregations", async () => {
     await storage.upsertRecord("tasks", {
       id: "t2",

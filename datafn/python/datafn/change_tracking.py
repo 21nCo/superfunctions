@@ -73,16 +73,18 @@ async def write_change(
     await db.create(CHANGES_TABLE, change_record, namespace=namespace)
 
 async def get_changes_since(
-    db: Adapter, 
-    namespace: str, 
-    table: str, 
-    cursor: Optional[str]
+    db: Adapter,
+    namespace: str,
+    table: str,
+    cursor: Optional[str],
+    limit: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Returns changes for a table since the given cursor (serverSeq).
+    When limit is provided, at most `limit` changes are returned (PY-002).
     """
     min_seq = int(cursor) if cursor else 0
-    
+
     # Find changes > min_seq
     changes = await db.find_many(
         CHANGES_TABLE,
@@ -92,6 +94,7 @@ async def get_changes_since(
             {"field": "serverSeq", "operator": "gt", "value": min_seq}
         ],
         sort=["serverSeq:asc"],
+        limit=limit,
         namespace=namespace
     )
     

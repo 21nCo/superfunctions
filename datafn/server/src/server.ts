@@ -3,7 +3,7 @@
  * Creates a Router with datafn endpoints
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin, RetentionConfig, RateLimitConfig, ObservabilityConfig } from "./core-types.js";
 import { validateSchema, ensureBuiltinKv } from "@datafn/core";
 import { createRouter, type Router, type Route } from "@superfunctions/http";
 import type { Adapter, RedisAdapter, KVStoreAdapter } from "@superfunctions/db";
@@ -22,10 +22,17 @@ import {
 } from "./routes/sync.js";
 import { createSeedHandler } from "./routes/seed.js";
 import { DbIdempotencyStore } from "./execution/idempotency-db.js";
+import { ChangeTrackingService } from "./execution/sync/change-tracking.js";
 import { errorResponse, errorToEnvelope } from "./http/errors.js";
 import { createRestRoutes } from "./routes/rest.js";
 import { enforcePayloadLimit } from "./http/middleware.js";
 import { WebSocketManager, type WebSocketClient } from "./ws.js";
+import {
+  RedisRateLimiter,
+  MemoryRateLimiter,
+  createRateLimitMiddleware,
+} from "./middleware/rate-limit.js";
+import { createTimingEmitter, type TimingEmitter } from "./middleware/timing.js";
 
 /**
  * Server configuration
@@ -61,6 +68,8 @@ export interface DatafnServerConfig<TContext = any> {
     maxLimit?: number;
     maxTransactSteps?: number;
     maxPayloadBytes?: number;
+    /** Max changes returned per pull request. Default: 1000. */
+    maxPullLimit?: number;
   };
 
   /** Optional server time provider (for testing) */
@@ -137,6 +146,15 @@ export interface DatafnServerConfig<TContext = any> {
    * ```
    */
   dbMapping?: DbMapping;
+
+  /** Data retention configuration for __datafn_changes and __datafn_idempotency tables. */
+  retention?: RetentionConfig;
+
+  /** Rate limiting configuration (RATE-001 through RATE-005). */
+  rateLimit?: RateLimitConfig<TContext>;
+
+  /** Observability configuration (OBS-001 through OBS-004). */
+  observability?: ObservabilityConfig;
 }
 
 /**
@@ -149,6 +167,8 @@ export interface DatafnServer<TContext = any> {
     removeClient(client: WebSocketClient): void;
     handleMessage(client: WebSocketClient, data: string): void;
   };
+  /** Stop the server: clears any active pruning interval. */
+  close(): void;
 }
 
 /**
@@ -178,6 +198,26 @@ export async function createDatafnServer<TContext = any>(
     await config.db.initialize();
   }
 
+  // Startup pruning (RET-004)
+  if (config.retention?.pruneOnStartup && config.db) {
+    try {
+      const ct = new ChangeTrackingService(config.db, "datafn");
+      if (config.retention.changeLogDays) {
+        const deleted = await ct.pruneChanges(config.retention.changeLogDays);
+        console.info(`Pruned ${deleted} change log entries`);
+      }
+      const idempotencyStoreForPrune = config.db
+        ? new DbIdempotencyStore(config.db)
+        : undefined;
+      if (config.retention.idempotencyDays && idempotencyStoreForPrune) {
+        const deleted = await idempotencyStoreForPrune.pruneIdempotency(config.retention.idempotencyDays);
+        console.info(`Pruned ${deleted} idempotency entries`);
+      }
+    } catch (error) {
+      console.warn("Startup pruning failed:", error);
+    }
+  }
+
   // Initialize Redis adapter health check if provided
   if (config.redis) {
     try {
@@ -203,7 +243,62 @@ export async function createDatafnServer<TContext = any>(
     maxLimit: config.limits?.maxLimit ?? 100,
     maxTransactSteps: config.limits?.maxTransactSteps,
     maxPayloadBytes: config.limits?.maxPayloadBytes,
+    maxPullLimit: config.limits?.maxPullLimit ?? 1000,
   };
+
+  // Observability: create timing emitter (OBS-004)
+  const timingEmitter = createTimingEmitter(config.observability);
+
+  // Rate limiting setup (RATE-001 through RATE-005)
+  let rateLimitMiddleware: ((endpoint: string, ctx: TContext) => Promise<Response | null>) | null = null;
+
+  if (config.rateLimit?.enabled) {
+    const limiter = config.redis
+      ? new RedisRateLimiter(config.redis)
+      : new MemoryRateLimiter();
+
+    const defaultKeyExtractor = async (ctx: TContext): Promise<string> => {
+      if (config.authContextProvider) {
+        try {
+          const authContext = await config.authContextProvider.getContext(ctx);
+          if (authContext?.userId) return String(authContext.userId);
+        } catch { /* fall through */ }
+      }
+      return "anonymous";
+    };
+
+    rateLimitMiddleware = createRateLimitMiddleware({
+      limiter,
+      maxRequests: config.rateLimit.maxRequests ?? 100,
+      windowSeconds: config.rateLimit.windowSeconds ?? 60,
+      endpoints: config.rateLimit.endpoints,
+      keyExtractor: config.rateLimit.keyExtractor ?? defaultKeyExtractor,
+    });
+  }
+
+  // Periodic pruning interval (RET-005)
+  let pruneInterval: ReturnType<typeof setInterval> | null = null;
+  if (config.retention?.pruneIntervalMs && config.db) {
+    const intervalMs = Math.max(config.retention.pruneIntervalMs, 60000);
+    const dbForInterval = config.db;
+    const retentionForInterval = config.retention;
+    pruneInterval = setInterval(async () => {
+      try {
+        const ct = new ChangeTrackingService(dbForInterval, "datafn");
+        if (retentionForInterval.changeLogDays) {
+          const deleted = await ct.pruneChanges(retentionForInterval.changeLogDays);
+          console.info(`Periodic prune: removed ${deleted} change log entries`);
+        }
+        const idStore = new DbIdempotencyStore(dbForInterval);
+        if (retentionForInterval.idempotencyDays) {
+          const deleted = await idStore.pruneIdempotency(retentionForInterval.idempotencyDays);
+          console.info(`Periodic prune: removed ${deleted} idempotency entries`);
+        }
+      } catch (e) {
+        console.warn("Periodic prune failed:", e);
+      }
+    }, intervalMs);
+  }
 
   // Helper to extract namespace from context using authContextProvider
   const extractNamespace = async (ctx: TContext): Promise<string> => {
@@ -239,6 +334,7 @@ export async function createDatafnServer<TContext = any>(
     config.db, // Pass adapter (not MemoryStore)
     config.plugins || [],
     extractNamespace,
+    timingEmitter,
   );
 
   // Create mutation handler and idempotency store
@@ -253,6 +349,7 @@ export async function createDatafnServer<TContext = any>(
     config.plugins || [], // Pass plugins
     extractNamespace,
     sequenceStore,
+    timingEmitter,
   );
 
   const transactHandler = createTransactHandler(
@@ -277,6 +374,8 @@ export async function createDatafnServer<TContext = any>(
     config.plugins || [],
     extractNamespace,
     sequenceStore,
+    limits.maxPullLimit,
+    timingEmitter,
   );
   const reconcileHandler = createReconcileHandler(
     validatedSchema,
@@ -297,6 +396,7 @@ export async function createDatafnServer<TContext = any>(
     extractNamespace,
     sequenceStore,
     (seq) => wsManager.broadcastCursor(String(seq)),
+    timingEmitter,
   );
   const seedHandler = createSeedHandler(config.db);
 
@@ -319,6 +419,12 @@ export async function createDatafnServer<TContext = any>(
     ) => Promise<Response> | Response,
   ) => {
     return async (req: Request, ctx: TContext & { parsedBody?: unknown }): Promise<Response> => {
+      // Rate limiting — applied BEFORE JSON parsing and authorization (RATE-001)
+      if (rateLimitMiddleware) {
+        const rateLimitResponse = await rateLimitMiddleware(action, ctx);
+        if (rateLimitResponse) return rateLimitResponse;
+      }
+
       // Enforce payload limits (LIMIT-001)
       if (limits.maxPayloadBytes) {
         const limiter = enforcePayloadLimit(limits.maxPayloadBytes);
@@ -513,6 +619,12 @@ export async function createDatafnServer<TContext = any>(
       addClient: (client) => wsManager.addClient(client),
       removeClient: (client) => wsManager.removeClient(client),
       handleMessage: (client, data) => wsManager.handleMessage(client, data),
+    },
+    close: () => {
+      if (pruneInterval) {
+        clearInterval(pruneInterval);
+        pruneInterval = null;
+      }
     },
   };
 }

@@ -8,42 +8,12 @@ import type {
   DatafnHydrationState,
   DatafnChangelogEntry,
 } from "../storage.js";
-
-function validateHydrationState(state: string): DatafnHydrationState {
-  if (state !== "notStarted" && state !== "hydrating" && state !== "ready") {
-    throw new Error(`Invalid hydration state: ${state}`);
-  }
-  return state as DatafnHydrationState;
-}
-
-function validateTransition(
-  from: DatafnHydrationState,
-  to: DatafnHydrationState,
-): void {
-  // Valid transitions:
-  // notStarted -> hydrating
-  // hydrating -> ready
-  // ready -> hydrating (re-sync)
-  // notStarted -> ready (maybe? usually via hydrating) - let's stick to strict graph if possible, but usually notStarted->ready might happen if loaded from cache?
-  // The spec says: "Valid transitions: notStarted→hydrating, hydrating→ready, ready→hydrating (re-sync)"
-  // "Invalid: ready→notStarted, hydrating→notStarted"
-
-  if (from === to) return;
-
-  if (from === "notStarted" && to === "hydrating") return;
-  if (from === "hydrating" && to === "ready") return;
-  if (from === "ready" && to === "hydrating") return;
-
-  // Additional valid path: initial load might go notStarted -> ready directly if using optimistic?
-  // But strictly following spec:
-  throw new Error(`Invalid hydration state transition: ${from} -> ${to}`);
-}
-
-function validateCursor(cursor: unknown): void {
-  if (cursor !== null && typeof cursor !== "string") {
-    throw new Error("Invalid cursor format");
-  }
-}
+import { KV_RESOURCE_NAME } from "@datafn/core";
+import {
+  validateHydrationState,
+  validateTransition,
+  validateCursor,
+} from "./shared.js";
 
 function validateMutation(mutation: any): void {
   if (!mutation.clientId) throw new Error("Missing clientId in mutation");
@@ -62,6 +32,8 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   constructor(resources?: string[]) {
     if (resources) {
       this.validResources = new Set(resources);
+      // Ensure built-in KV resource is always valid (KV-001)
+      this.validResources.add(KV_RESOURCE_NAME);
     }
     // Always create KV store (KV-001)
     this.records.set("kv", new Map());
@@ -280,12 +252,18 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   // --- Sync State ---
 
   async getCursor(resource: string): Promise<string | null> {
-    this.validateTableName(resource);
+    // Skip validation for internal cursor keys (SYNC-CURSOR-001)
+    if (resource !== "__global_cursor__") {
+      this.validateTableName(resource);
+    }
     return this.cursors.get(resource) || null;
   }
 
   async setCursor(resource: string, cursor: string | null): Promise<void> {
-    this.validateTableName(resource);
+    // Skip validation for internal cursor keys (SYNC-CURSOR-001)
+    if (resource !== "__global_cursor__") {
+      this.validateTableName(resource);
+    }
     validateCursor(cursor);
     if (cursor === null) {
       this.cursors.delete(resource);

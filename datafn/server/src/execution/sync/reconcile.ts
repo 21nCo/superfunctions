@@ -6,6 +6,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import { getJoinStoreKey, getJoinTableName } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { SequenceStore } from "./sequence-store.js";
@@ -122,17 +123,20 @@ export async function executeReconcile(
 
       if (!involvesRequestedResource) continue;
 
-      // Derive join store key (consistent with client naming)
-      const joinStoreKey = `join_${relation.from}_${relation.relation}_${relation.to}`;
+      // Logical key used by the client for its join store (matches change tracking and pull)
+      const joinStoreKey = getJoinStoreKey(relation.from as string, relation.relation!, relation.to as string);
+      // Actual DB table name (matches what relations.ts writes and what codegen generates)
+      const joinTableName = getJoinTableName(relation.from as string, relation.relation!, relation.joinTable);
 
       try {
-        // Count join rows deterministically
+        // Count join rows using the actual DB table name
         const joinRecords = await db.findMany({
-          model: joinStoreKey,
+          model: joinTableName,
           where: [],
           namespace,
         });
 
+        // Return count under the logical client store key
         joinCounts[joinStoreKey] = joinRecords.length;
       } catch (error) {
         // Join table might not exist or be queryable; count as 0

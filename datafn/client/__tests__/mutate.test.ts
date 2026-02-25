@@ -867,10 +867,10 @@ describe("@datafn/client date codec mutations (CODEC-001)", () => {
       mutationId: "m-1",
     });
 
-    // Verify the mutation sent to remote has serialized date
+    // Verify the mutation sent to remote has serialized date to epoch milliseconds
     expect(capturedMutation).toBeDefined();
-    expect(capturedMutation.record.date).toBe("2026-02-06T00:00:00.000Z");
-    expect(typeof capturedMutation.record.date).toBe("string");
+    expect(capturedMutation.record.date).toBe(1770336000000); // 2026-02-06T00:00:00.000Z as epoch
+    expect(typeof capturedMutation.record.date).toBe("number");
   });
 
   it("TV-CODEC-001N: Mutation with non-Date value in date field is rejected", async () => {

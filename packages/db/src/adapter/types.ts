@@ -46,6 +46,9 @@ export interface Adapter {
 
   // Optional: Schema generation for CLI
   createSchema?(params: CreateSchemaParams): Promise<SchemaCreation>;
+
+  /** Raw CRUD for internal tables, bypasses ORM schema resolution */
+  readonly internal: InternalCrud;
 }
 
 export interface TransactionAdapter extends Omit<Adapter, 'transaction' | 'close'> {
@@ -367,6 +370,53 @@ export interface AdapterImplementation {
 export interface AdapterFactoryOptions {
   config: AdapterFactoryConfig;
   adapter: (context: AdapterContext) => AdapterImplementation;
+}
+
+// ============================================================================
+// Internal CRUD Types (bypasses ORM schema resolution)
+// ============================================================================
+
+export interface InternalColumnDef {
+  name: string;
+  type: 'text' | 'integer';
+  primaryKey?: boolean;
+}
+
+export interface InternalCrud {
+  /** Ensure an internal table exists (CREATE TABLE IF NOT EXISTS) */
+  ensureTable(name: string, columns: InternalColumnDef[]): Promise<void>;
+
+  /** Create a record in an internal table */
+  create(
+    table: string,
+    data: Record<string, unknown>,
+  ): Promise<Record<string, unknown>>;
+
+  /** Find one record in an internal table */
+  findOne(
+    table: string,
+    where: Array<{ field: string; op: string; value: unknown }>,
+  ): Promise<Record<string, unknown> | null>;
+
+  /** Find many records in an internal table */
+  findMany(
+    table: string,
+    where: Array<{ field: string; op: string; value: unknown }>,
+    opts?: { orderBy?: string; limit?: number },
+  ): Promise<Record<string, unknown>[]>;
+
+  /** Update records matching where clause */
+  update(
+    table: string,
+    where: Array<{ field: string; op: string; value: unknown }>,
+    data: Record<string, unknown>,
+  ): Promise<number>;
+
+  /** Delete records matching where clause */
+  delete(
+    table: string,
+    where: Array<{ field: string; op: string; value: unknown }>,
+  ): Promise<number>;
 }
 
 // ============================================================================

@@ -6,7 +6,7 @@
 
 import type { DatafnRemoteAdapter } from "./client.js";
 import type { DatafnStorageAdapter } from "./storage.js";
-import type { DatafnPlugin, DatafnSchema } from "@datafn/core";
+import type { DatafnPlugin, DatafnSchema, SchemaIndex } from "@datafn/core";
 import { unwrapRemoteSuccess } from "./remote/unwrap.js";
 import { executeLocalQuery } from "./offline/query.js";
 import { runBeforeQuery, runAfterQuery } from "./plugins/run-hooks.js";
@@ -30,6 +30,7 @@ export async function executeQuery<T = unknown>(
   storage?: DatafnStorageAdapter,
   plugins: DatafnPlugin[] = [],
   schema?: DatafnSchema,
+  schemaIndex?: SchemaIndex,
 ): Promise<T | T[]> {
   // Run beforeQuery hooks (fail-closed)
   const transformedQuery = schema
@@ -106,7 +107,7 @@ export async function executeQuery<T = unknown>(
 
     // Local-first: execute against storage when table is ready
     if (hydrationState === "ready" && schema) {
-      let result = (await executeLocalQuery(storage, schema, query)) as T;
+      let result = (await executeLocalQuery(storage, schema, query, schemaIndex)) as T;
       
       // Apply inbound date codec for local query results (CODEC-001)
       result = parseQueryResultDates(schema, resource, result) as T;

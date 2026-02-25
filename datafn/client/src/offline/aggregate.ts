@@ -3,6 +3,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import { evaluateFilter as coreEvaluateFilter } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { expandRelation } from "./relations.js";
 
@@ -53,7 +54,7 @@ export async function executeAggregateQuery(
       // It doesn't explicitly demand full filter parity but implied.
       // I will assume `evaluateFilter` is available or implement a basic one.
       
-      records = records.filter(r => evaluateFilter(r, query.filters as Record<string, unknown>));
+      records = records.filter(r => coreEvaluateFilter(r, query.filters as Record<string, unknown>));
   }
 
   // 2. Group By
@@ -123,7 +124,7 @@ export async function executeAggregateQuery(
       // Filter results
       const having = query.having as Record<string, unknown>;
       // Reuse evaluateFilter
-      const filteredResults = results.filter(r => evaluateFilter(r, having));
+      const filteredResults = results.filter(r => coreEvaluateFilter(r, having));
       // Reassign
       results.length = 0;
       results.push(...filteredResults);
@@ -147,36 +148,4 @@ export async function executeAggregateQuery(
   };
 }
 
-// Basic filter evaluator (subset of DFQL)
-function evaluateFilter(record: Record<string, unknown>, filter: Record<string, unknown>): boolean {
-    for (const [key, value] of Object.entries(filter)) {
-        if (key === "$and") {
-            if (!Array.isArray(value)) return false;
-            if (!value.every(f => evaluateFilter(record, f))) return false;
-            continue;
-        }
-        if (key === "$or") {
-            if (!Array.isArray(value)) return false;
-            if (!value.some(f => evaluateFilter(record, f))) return false;
-            continue;
-        }
-        
-        // Field check
-        const recordVal = record[key];
-        
-        if (typeof value === "object" && value !== null) {
-            // Operators
-            for (const [op, opVal] of Object.entries(value)) {
-                if (op === "eq" || op === "$eq") {
-                    if (recordVal !== opVal) return false;
-                } else if (op === "gt" || op === "$gt") {
-                    if (!((recordVal as number) > (opVal as number))) return false;
-                }
-                // ... others
-            }
-        } else {
-            if (recordVal !== value) return false;
-        }
-    }
-    return true;
-}
+

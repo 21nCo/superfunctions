@@ -3,6 +3,7 @@
  */
 
 import type { DatafnSchema, DatafnRelation } from "@datafn/core";
+import { getJoinStoreKey } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { DFQLMutation } from "./dfql.js";
 
@@ -84,18 +85,21 @@ export async function executeRelate(
 
     const items = normalizeRelationPayload(payload);
 
-    // Validate targets exist
-    for (const item of items) {
-      const targetExists = await adapter.findOne({
+    // Batch validate targets exist (REL-OPT-001)
+    if (items.length > 0) {
+      const targetIds = items.map(i => i.toId);
+      const existingTargets = await adapter.findMany({
         model: relation.to,
-        where: [{ field: "id", operator: "eq", value: item.toId }],
+        where: [{ field: "id", operator: "in", value: targetIds }],
         namespace,
       });
-      if (!targetExists) {
+      const existingTargetIds = new Set(existingTargets.map((t: any) => t.id));
+      const missingId = targetIds.find(id => !existingTargetIds.has(id));
+      if (missingId !== undefined) {
         return {
           ok: false,
           code: "NOT_FOUND",
-          message: `Related record not found: ${item.toId}`,
+          message: `Related record not found: ${missingId}`,
           path: `relations.${relName}`,
         };
       }
@@ -139,48 +143,29 @@ export async function executeRelate(
         });
       }
     } else if (relation.type === "many-many") {
-      // Create join rows
-      // Table name convention: `__datafn_join_${from}_${relation}` (simplified)
-      // Actually we need a robust join table name generator.
-      // Let's assume `from_relation` format for now or use what `DbDataStore` used.
-      const joinTable = `__datafn_join_${mutation.resource}_${relName}`; // Matches DbDataStore
+      const tableName = relation.joinTable || `__datafn_join_${mutation.resource}_${relName}`;
+      const fromCol = relation.joinColumns?.from || "from";
+      const toCol = relation.joinColumns?.to || "to";
 
+      // Use upsert per join item instead of findOne + conditional create/update (REL-OPT-002)
+      // Target the `id` column (PK) for conflict detection, not (from, to) which may lack a unique constraint.
+      // The composite id `${from}:${to}` guarantees the same uniqueness semantics.
       for (const item of items) {
-        // Upsert join row (idempotent)
-        // Check if exists
-        const existing = await adapter.findOne({
-          model: joinTable,
+        const compositeId = `${mutation.id}:${item.toId}`;
+        await adapter.upsert({
+          model: tableName,
           where: [
-            { field: "from", operator: "eq", value: mutation.id },
-            { field: "to", operator: "eq", value: item.toId },
+            { field: "id", operator: "eq", value: compositeId },
           ],
+          create: {
+            id: compositeId,
+            [fromCol]: mutation.id,
+            [toCol]: item.toId,
+            ...item.metadata,
+          },
+          update: Object.keys(item.metadata).length > 0 ? item.metadata : {},
           namespace,
         });
-
-        if (existing) {
-            // Update metadata if any
-            if (Object.keys(item.metadata).length > 0) {
-                 await adapter.update({
-                    model: joinTable,
-                    where: [
-                        { field: "from", operator: "eq", value: mutation.id },
-                        { field: "to", operator: "eq", value: item.toId },
-                    ],
-                    data: item.metadata,
-                    namespace,
-                 });
-            }
-        } else {
-            await adapter.create({
-            model: joinTable,
-            data: {
-                from: mutation.id,
-                to: item.toId,
-                ...item.metadata,
-            },
-            namespace,
-            });
-        }
       }
     }
   }
@@ -222,41 +207,197 @@ export async function executeModifyRelation(
     }
 
     const items = normalizeRelationPayload(payload);
-    const joinTable = `__datafn_join_${mutation.resource}_${relName}`;
+    const tableName = relation.joinTable || `__datafn_join_${mutation.resource}_${relName}`;
+    const fromCol = relation.joinColumns?.from || "from";
+    const toCol = relation.joinColumns?.to || "to";
 
     for (const item of items) {
-        // Must exist
-        const existing = await adapter.findOne({
-            model: joinTable,
-            where: [
-                { field: "from", operator: "eq", value: mutation.id },
-                { field: "to", operator: "eq", value: item.toId },
-            ],
-            namespace,
-        });
-
-        if (!existing) {
-             return {
-                ok: false,
-                code: "NOT_FOUND",
-                message: `Relation not found between ${mutation.id} and ${item.toId}`,
-                path: `relations.${relName}`,
-            };
-        }
-
-        // Update
-        await adapter.update({
-            model: joinTable,
-             where: [
-                { field: "from", operator: "eq", value: mutation.id },
-                { field: "to", operator: "eq", value: item.toId },
-            ],
-            data: item.metadata,
-            namespace,
-        });
+      const existing = await adapter.findOne({
+        model: tableName,
+        where: [
+          { field: fromCol, operator: "eq", value: mutation.id },
+          { field: toCol, operator: "eq", value: item.toId },
+        ],
+        namespace,
+      });
+      if (!existing) {
+        return {
+          ok: false,
+          code: "NOT_FOUND",
+          message: `Relation not found between ${mutation.id} and ${item.toId}`,
+          path: `relations.${relName}`,
+        };
+      }
+      await adapter.update({
+        model: tableName,
+        where: [
+          { field: fromCol, operator: "eq", value: mutation.id },
+          { field: toCol, operator: "eq", value: item.toId },
+        ],
+        data: item.metadata,
+        namespace,
+      });
     }
   }
   return { ok: true, affectedIds: [mutation.id] };
+}
+
+/**
+ * Minimal mutation shape needed for change-delta helpers
+ */
+interface RelationMutationInput {
+  operation: string;
+  resource: string;
+  id: string;
+  relations?: Record<string, unknown>;
+}
+
+/**
+ * Extract join deltas for a relation mutation (many-many only).
+ * Returns array of { resource, id, op, record } for join store changes.
+ * Used by change-tracking in both push.ts and execute.ts.
+ */
+export function extractJoinDeltas(
+  mutation: RelationMutationInput,
+  schema: DatafnSchema,
+): Array<{
+  resource: string;
+  id: string;
+  op: "upsert" | "delete";
+  record: Record<string, unknown> | null;
+}> {
+  const deltas: Array<{
+    resource: string;
+    id: string;
+    op: "upsert" | "delete";
+    record: Record<string, unknown> | null;
+  }> = [];
+
+  if (!mutation.relations) {
+    return deltas;
+  }
+
+  for (const [relName, payload] of Object.entries(mutation.relations)) {
+    const relation = findRelation(schema, mutation.resource, relName);
+    if (!relation) {
+      continue;
+    }
+
+    // Only many-many relations produce join deltas
+    if (relation.type !== "many-many") {
+      continue;
+    }
+
+    const items = normalizeRelationPayload(payload);
+    const joinStoreKey = getJoinStoreKey(mutation.resource, relName, relation.to as string);
+
+    for (const item of items) {
+      const compositeId = `${mutation.id}:${item.toId}`;
+
+      if (mutation.operation === "relate" || mutation.operation === "modifyRelation") {
+        deltas.push({
+          resource: joinStoreKey,
+          id: compositeId,
+          op: "upsert",
+          record: {
+            from: mutation.id,
+            to: item.toId,
+            ...item.metadata,
+          },
+        });
+      } else if (mutation.operation === "unrelate") {
+        deltas.push({
+          resource: joinStoreKey,
+          id: compositeId,
+          op: "delete",
+          record: {
+            from: mutation.id,
+            to: item.toId,
+          },
+        });
+      }
+    }
+  }
+
+  return deltas;
+}
+
+/**
+ * Extract FK change deltas for relation mutations on non-many-many relations.
+ *
+ * - many-one relate:   merge on source resource with FK = target id
+ * - many-one unrelate: merge on source resource with FK = null
+ * - one-many relate:   merge on each target resource with FK = source id
+ * - one-many unrelate: merge on each target resource with FK = null
+ * - many-many / modifyRelation: returns empty (join deltas handle propagation)
+ *
+ * Used by change-tracking in both push.ts and execute.ts to avoid recording a
+ * spurious { op: "upsert", record: { id } } entry for the primary resource,
+ * which would overwrite full records on other clients (FIX-REL-001).
+ */
+export function extractRelationFkDeltas(
+  mutation: RelationMutationInput,
+  schema: DatafnSchema,
+): Array<{
+  resource: string;
+  id: string;
+  op: "merge";
+  record: Record<string, unknown>;
+}> {
+  const deltas: Array<{
+    resource: string;
+    id: string;
+    op: "merge";
+    record: Record<string, unknown>;
+  }> = [];
+
+  if (!mutation.relations) {
+    return deltas;
+  }
+
+  for (const [relName, payload] of Object.entries(mutation.relations)) {
+    const relation = findRelation(schema, mutation.resource, relName);
+    if (!relation) {
+      continue;
+    }
+
+    // many-many: join deltas handle propagation; no FK on primary resource changes
+    // modifyRelation: only applies to many-many, so also skip
+    if (relation.type === "many-many" || mutation.operation === "modifyRelation") {
+      continue;
+    }
+
+    const items = normalizeRelationPayload(payload);
+
+    if (relation.type === "many-one") {
+      // FK lives on the source record (mutation.resource)
+      const fkField = relation.fkField || `${relName}Id`;
+      const fkValue = mutation.operation === "unrelate" ? null : (items[0]?.toId ?? null);
+      deltas.push({
+        resource: mutation.resource,
+        id: mutation.id,
+        op: "merge",
+        record: { id: mutation.id, [fkField]: fkValue },
+      });
+    } else if (relation.type === "one-many") {
+      // FK lives on each target record (relation.to)
+      const fkField =
+        relation.fkField ||
+        (relation.inverse as string | undefined) ||
+        `${relation.from}Id`;
+      const fkValue = mutation.operation === "unrelate" ? null : mutation.id;
+      for (const item of items) {
+        deltas.push({
+          resource: relation.to as string,
+          id: item.toId,
+          op: "merge",
+          record: { id: item.toId, [fkField]: fkValue },
+        });
+      }
+    }
+  }
+
+  return deltas;
 }
 
 /**
@@ -306,13 +447,16 @@ export async function executeUnrelate(
           });
         }
       } else if (relation.type === "many-many") {
-        const joinTable = `__datafn_join_${mutation.resource}_${relName}`;
+        const tableName = relation.joinTable || `__datafn_join_${mutation.resource}_${relName}`;
+        const fromCol = relation.joinColumns?.from || "from";
+        const toCol = relation.joinColumns?.to || "to";
+
         for (const item of items) {
           await adapter.delete({
-            model: joinTable,
+            model: tableName,
             where: [
-                { field: "from", operator: "eq", value: mutation.id },
-                { field: "to", operator: "eq", value: item.toId },
+              { field: fromCol, operator: "eq", value: mutation.id },
+              { field: toCol, operator: "eq", value: item.toId },
             ],
             namespace,
           });

@@ -9,6 +9,12 @@ import type {
   DatafnRelationSchema,
 } from "@datafn/core";
 import type { DatafnErrorCode } from "@datafn/core";
+import {
+  SYSTEM_FIELDS as CORE_SYSTEM_FIELDS,
+  READONLY_SYSTEM_FIELDS as CORE_READONLY_SYSTEM_FIELDS,
+  buildSchemaIndex as buildCoreSchemaIndex,
+  type SchemaIndex as CoreSchemaIndex,
+} from "@datafn/core";
 
 /**
  * Validation error type - compatible with DatafnError
@@ -20,17 +26,18 @@ export type ValidationError = {
 };
 
 /**
- * Validation result - either success with value or failure with error
+ * Validation result - either success with result or failure with error.
+ * Uses "result" to align with DatafnEnvelope naming.
  */
 export type ValidationResult<T = void> =
-  | { ok: true; value: T }
+  | { ok: true; result: T }
   | { ok: false; error: ValidationError };
 
 /**
  * Create a successful validation result
  */
 export function vOk<T>(value: T): ValidationResult<T> {
-  return { ok: true, value };
+  return { ok: true, result: value };
 }
 
 /**
@@ -45,54 +52,46 @@ export function vErr(
 }
 
 /**
- * System fields that exist on all resources
+ * System fields that exist on all resources (imported from @datafn/core)
  */
-export const SYSTEM_FIELDS = new Set([
-  "id",
-  "createdAt",
-  "updatedAt",
-  "createdBy",
-  "updatedBy",
-  "isArchived",
-]);
+export const SYSTEM_FIELDS: ReadonlySet<string> = CORE_SYSTEM_FIELDS;
 
 /**
- * System fields that are read-only (clients cannot write)
+ * System fields that are read-only (clients cannot write) (imported from @datafn/core)
  */
-export const READONLY_SYSTEM_FIELDS = new Set([
-  "createdAt",
-  "updatedAt",
-  "createdBy",
-  "updatedBy",
-]);
+export const READONLY_SYSTEM_FIELDS: ReadonlySet<string> = CORE_READONLY_SYSTEM_FIELDS;
 
 /**
- * Schema index for efficient lookups during validation
+ * Server schema index — extends core's SchemaIndex with server-specific validation maps.
+ * fieldsByResource and relationsByResource use Set<string> for fast name-based lookups,
+ * while the underlying core index provides richer Map/array structures.
  */
-export interface SchemaIndex {
+export interface SchemaIndex
+  extends Omit<CoreSchemaIndex, "fieldsByResource" | "relationsByResource"> {
   schema: DatafnSchema;
-  resourcesByName: Map<string, DatafnResourceSchema>;
+  /** All field names (schema-defined + SYSTEM_FIELDS) per resource. */
   fieldsByResource: Map<string, Set<string>>;
+  /** Writable field names per resource. */
   writableFieldsByResource: Map<string, Set<string>>;
+  /** All relation names (forward + inverse) per resource. */
   relationsByResource: Map<string, Set<string>>;
-  relationsFromResource: Map<string, DatafnRelationSchema[]>;
 }
 
 /**
- * Build an index from a schema for efficient validation lookups
+ * Build a server schema index by extending core's buildSchemaIndex with
+ * server-specific validation maps (Set-based field/relation name lookups,
+ * writable field tracking).
  */
 export function buildSchemaIndex(schema: DatafnSchema): SchemaIndex {
-  const resourcesByName = new Map<string, DatafnResourceSchema>();
+  // Delegate to core for resourcesByName and relationsFromResource
+  const coreIndex = buildCoreSchemaIndex(schema);
+
   const fieldsByResource = new Map<string, Set<string>>();
   const writableFieldsByResource = new Map<string, Set<string>>();
   const relationsByResource = new Map<string, Set<string>>();
-  const relationsFromResource = new Map<string, DatafnRelationSchema[]>();
 
-  // Index resources and fields
   for (const resource of schema.resources) {
-    resourcesByName.set(resource.name, resource);
-
-    // All fields (including system fields)
+    // All fields (schema-defined + system fields)
     const allFields = new Set<string>(SYSTEM_FIELDS);
     const writableFields = new Set<string>();
     writableFields.add("id"); // id is writable on insert
@@ -108,13 +107,25 @@ export function buildSchemaIndex(schema: DatafnSchema): SchemaIndex {
     fieldsByResource.set(resource.name, allFields);
     writableFieldsByResource.set(resource.name, writableFields);
     relationsByResource.set(resource.name, new Set());
-    relationsFromResource.set(resource.name, []);
   }
 
-  // Index relations
+  // Fix 1: Add FK fields from many-one relations to fieldsByResource and writableFieldsByResource
+  // so mutations that include FK fields (e.g. catId, goalId) are accepted.
   if (schema.relations) {
     for (const rel of schema.relations) {
-      // Handle polymorphic from (can be string or string[])
+      if (rel.type === "many-one") {
+        const fromResources = Array.isArray(rel.from) ? rel.from : [rel.from];
+        for (const fromRes of fromResources) {
+          const fkField = (rel as any).fkField ?? `${rel.relation}Id`;
+          fieldsByResource.get(fromRes)?.add(fkField);
+          writableFieldsByResource.get(fromRes)?.add(fkField);
+        }
+      }
+    }
+  }
+
+  if (schema.relations) {
+    for (const rel of schema.relations) {
       const fromResources = Array.isArray(rel.from) ? rel.from : [rel.from];
       const toResources = Array.isArray(rel.to) ? rel.to : [rel.to];
 
@@ -122,9 +133,6 @@ export function buildSchemaIndex(schema: DatafnSchema): SchemaIndex {
         if (rel.relation) {
           relationsByResource.get(fromRes)?.add(rel.relation);
         }
-        const existing = relationsFromResource.get(fromRes) || [];
-        existing.push(rel);
-        relationsFromResource.set(fromRes, existing);
       }
 
       for (const toRes of toResources) {
@@ -137,11 +145,11 @@ export function buildSchemaIndex(schema: DatafnSchema): SchemaIndex {
 
   return {
     schema,
-    resourcesByName,
+    resourcesByName: coreIndex.resourcesByName,
+    relationsFromResource: coreIndex.relationsFromResource,
     fieldsByResource,
     writableFieldsByResource,
     relationsByResource,
-    relationsFromResource,
   };
 }
 

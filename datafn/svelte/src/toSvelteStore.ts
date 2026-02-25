@@ -2,44 +2,163 @@
  * Convert DataFn signal to Svelte store
  */
 
-import type { DatafnSignal } from "@datafn/core";
+import type { DatafnSignal, DatafnError } from "@datafn/core";
 import type { Readable } from "svelte/store";
 import { readable } from "svelte/store";
 
 /**
- * Store type that wraps signal value with state properties
+ * A client reference that can notify subscribers when the underlying client
+ * changes. Compatible with `{ subscribe: client.subscribeClient }` from a
+ * unified `createDatafnClient`, or any Svelte writable store holding a client.
+ *
+ * @deprecated No longer needed. Signals from `createDatafnClient` are
+ * lifecycle-aware via LiveSignals — they survive `switchContext()` and rebind
+ * automatically. Use `toSvelteStore(signal)` instead.
+ */
+export type ClientRef<C> = {
+  subscribe(fn: (client: C) => void): () => void;
+};
+
+/**
+ * Store type that wraps signal value with state properties.
+ * Returned by both overloads.
  */
 export type DatafnSvelteStore<T> = Readable<{
   data: T;
   loading: boolean;
-  error: import("@datafn/core").DatafnError | null;
+  error: DatafnError | null;
   refreshing: boolean;
+  nextCursor?: string | null;
 }>;
 
 /**
- * Convert a DataFn signal to a Svelte readable store with state properties
+ * Convert a lifecycle-aware DataFn signal directly to a Svelte readable store.
+ *
+ * Signals from `createDatafnClient` are lifecycle-aware — they survive
+ * `switchContext()` and rebind automatically. No factory pattern or `clientRef`
+ * is needed.
+ *
+ * ```typescript
+ * const todosStore = toSvelteStore(
+ *   client.todos.signal({ sort: ["-createdAt"] })
+ * );
+ * // Template: {#each $todosStore.data ?? [] as todo}
+ * // Also: {#if $todosStore.loading} Loading... {/if}
+ * ```
  */
-export function toSvelteStore<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T> {
+export function toSvelteStore<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T>;
+
+/**
+ * Convert a DataFn signal factory to a reactive Svelte readable store.
+ *
+ * @deprecated Use the single-argument form `toSvelteStore(signal)` with
+ * lifecycle-aware signals from `createDatafnClient`. This factory-based
+ * overload will be removed in the next major version.
+ *
+ * Accepts a `clientRef` (anything with a `subscribe(fn)` API) and a
+ * `signalFactory` that creates a new signal from the current client. The store
+ * automatically disposes the old signal and creates a fresh one whenever the
+ * client changes, preventing memory leaks and ensuring signals are always
+ * bound to the active client.
+ */
+export function toSvelteStore<T, C>(
+  clientRef: ClientRef<C>,
+  signalFactory: (client: C) => DatafnSignal<T>,
+): DatafnSvelteStore<T>;
+
+export function toSvelteStore<T, C = any>(
+  signalOrClientRef: DatafnSignal<T> | ClientRef<C>,
+  signalFactory?: (client: C) => DatafnSignal<T>,
+): DatafnSvelteStore<T> {
+  if (signalFactory !== undefined) {
+    return toSvelteStoreFactory(signalOrClientRef as ClientRef<C>, signalFactory);
+  }
+  return toSvelteStoreDirect(signalOrClientRef as DatafnSignal<T>);
+}
+
+/**
+ * Direct signal overload: wraps a DatafnSignal as a Svelte readable store.
+ * The store emits `{ data, loading, error, refreshing }` on each update.
+ * Does NOT call signal.dispose() on teardown — the signal's lifecycle is
+ * managed by the LiveSignalRegistry, allowing multiple stores to share a
+ * deduplicated signal safely.
+ */
+function toSvelteStoreDirect<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T> {
   return readable(
     {
       data: signal.get(),
       loading: signal.loading,
       error: signal.error,
       refreshing: signal.refreshing,
+      nextCursor: signal.nextCursor ?? null,
     },
     (set) => {
-      // Subscribe to signal changes and update the store with current state
-      const unsubscribe = signal.subscribe((value: T) => {
+      const unsub = signal.subscribe((value: T) => {
         set({
           data: value,
           loading: signal.loading,
           error: signal.error,
           refreshing: signal.refreshing,
+          nextCursor: signal.nextCursor ?? null,
+        });
+      });
+      return () => {
+        unsub();
+      };
+    },
+  );
+}
+
+/**
+ * Factory overload: subscribes to clientRef, creates/disposes signal on each
+ * client change. Returns a DatafnSvelteStore with { data, loading, error, refreshing }.
+ */
+function toSvelteStoreFactory<T, C>(
+  clientRef: ClientRef<C>,
+  signalFactory: (client: C) => DatafnSignal<T>,
+): DatafnSvelteStore<T> {
+  return readable(
+    { data: undefined as unknown as T, loading: true as boolean, error: null as DatafnError | null, refreshing: false as boolean, nextCursor: null as string | null },
+    (set) => {
+      let currentSignal: DatafnSignal<T> | null = null;
+      let currentUnsubSignal: (() => void) | null = null;
+
+      const unsubClient = clientRef.subscribe((client) => {
+        // Tear down previous signal
+        currentUnsubSignal?.();
+        currentSignal?.dispose();
+
+        // Create a fresh signal from the new client
+        currentSignal = signalFactory(client);
+
+        // Emit the initial value immediately
+        set({
+          data: currentSignal.get(),
+          loading: currentSignal.loading,
+          error: currentSignal.error,
+          refreshing: currentSignal.refreshing,
+          nextCursor: currentSignal.nextCursor ?? null,
+        });
+
+        // Subscribe to future updates
+        currentUnsubSignal = currentSignal.subscribe((value: T) => {
+          set({
+            data: value,
+            loading: currentSignal!.loading,
+            error: currentSignal!.error,
+            refreshing: currentSignal!.refreshing,
+            nextCursor: currentSignal!.nextCursor ?? null,
+          });
         });
       });
 
-      // Return unsubscribe function
-      return unsubscribe;
-    }
+      // Cleanup when all Svelte subscribers unsubscribe
+      return () => {
+        unsubClient();
+        currentUnsubSignal?.();
+        currentSignal?.dispose();
+        currentSignal = null;
+      };
+    },
   );
 }

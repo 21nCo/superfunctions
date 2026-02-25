@@ -1,72 +1,24 @@
 /**
- * DFQL sorting logic
+ * DFQL sorting logic — delegates to @datafn/core with server-specific default sort.
  */
 
-export interface SortTerm {
-  field: string;
-  direction: "asc" | "desc";
-}
+import {
+  parseSortTerms as coreParseSort,
+  sortRecords as coreSortRecords,
+  type SortTerm,
+} from "@datafn/core";
+
+export type { SortTerm };
+
+export { coreSortRecords as sortRecords };
 
 /**
- * Parse sort terms from string format
- * Formats: "field", "field:asc", "field:desc"
+ * Parse sort terms, defaulting to id:asc when sort is undefined or empty
+ * (server requirement: queries always have a deterministic default order).
  */
 export function parseSortTerms(sort: string[] | undefined): SortTerm[] {
-  if (!sort || sort.length === 0) {
-    // Default sort: id:asc
-    return [{ field: "id", direction: "asc" }];
-  }
-
-  return sort.map((term) => {
-    const parts = term.split(":");
-    const field = parts[0];
-    const direction = (parts[1] as "asc" | "desc") || "asc";
-    return { field, direction };
-  });
-}
-
-/**
- * Sort records based on sort terms
- * Ensures stable deterministic ordering by tie-breaking with id
- */
-export function sortRecords(
-  records: Record<string, unknown>[],
-  sortTerms: SortTerm[]
-): Record<string, unknown>[] {
-  return [...records].sort((a, b) => {
-    for (const term of sortTerms) {
-      const aVal = a[term.field];
-      const bVal = b[term.field];
-
-      let cmp = 0;
-
-      if (aVal === bVal) {
-        continue;
-      }
-
-      if (aVal === null || aVal === undefined) {
-        cmp = -1;
-      } else if (bVal === null || bVal === undefined) {
-        cmp = 1;
-      } else if (typeof aVal === "string" && typeof bVal === "string") {
-        cmp = aVal.localeCompare(bVal);
-      } else if (typeof aVal === "number" && typeof bVal === "number") {
-        cmp = aVal - bVal;
-      } else {
-        // Fallback to string comparison
-        cmp = String(aVal).localeCompare(String(bVal));
-      }
-
-      if (cmp !== 0) {
-        return term.direction === "asc" ? cmp : -cmp;
-      }
-    }
-
-    // Final tie-breaker: id (should always be present)
-    const aId = String(a.id || "");
-    const bId = String(b.id || "");
-    return aId.localeCompare(bId);
-  });
+  const terms = coreParseSort(sort);
+  return terms.length > 0 ? terms : [{ field: "id", direction: "asc" }];
 }
 
 /**

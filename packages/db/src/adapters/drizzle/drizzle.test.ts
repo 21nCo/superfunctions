@@ -32,7 +32,6 @@ describe('DrizzleAdapter - SQLite', () => {
   beforeEach(() => {
     // Create in-memory SQLite database
     sqlite = new Database(':memory:');
-    const db = drizzle(sqlite);
 
     // Create tables
     sqlite.exec(`
@@ -61,10 +60,13 @@ describe('DrizzleAdapter - SQLite', () => {
       appliedAt: text('appliedAt').notNull(),
     });
 
+    // Pass schema to drizzle() constructor so it's available in db._.fullSchema
+    const schema = { users, posts, __superfunctions_schema_versions: schemaVersionsTable };
+    const db = drizzle(sqlite, { schema });
+
     adapter = drizzleAdapter({
       db,
       dialect: 'sqlite',
-      schema: { users, posts },
       upsertKeys: { users: 'id', posts: 'id' },
       schemaVersionsTable,
       debug: false,
@@ -278,6 +280,30 @@ describe('DrizzleAdapter - SQLite', () => {
       expect(user).toMatchObject({ id: '19', name: 'Paul', age: 36 });
     });
 
+    it('should upsert with empty update (insert-if-not-exists)', async () => {
+      // This tests the fix for "No values to set" error when update is empty
+      // (e.g. many-many relate with no metadata)
+      const user = await adapter.upsert({
+        model: 'users',
+        where: [{ field: 'id', operator: 'eq', value: 'empty-upd-1' }],
+        create: { id: 'empty-upd-1', name: 'NoMeta', email: 'nometa@example.com', age: 22 },
+        update: {},
+      });
+
+      expect(user).toMatchObject({ id: 'empty-upd-1', name: 'NoMeta', age: 22 });
+
+      // Second call should be idempotent (no-op, row already exists)
+      const user2 = await adapter.upsert({
+        model: 'users',
+        where: [{ field: 'id', operator: 'eq', value: 'empty-upd-1' }],
+        create: { id: 'empty-upd-1', name: 'Overwrite', email: 'overwrite@example.com', age: 99 },
+        update: {},
+      });
+
+      // Should return existing row, not the new create data
+      expect(user2).toMatchObject({ id: 'empty-upd-1', name: 'NoMeta', age: 22 });
+    });
+
     it('should upsert - update on conflict', async () => {
       await adapter.create({
         model: 'users',
@@ -454,5 +480,186 @@ describe('DrizzleAdapter - SQLite', () => {
       });
       expect(results.length).toBeGreaterThanOrEqual(4);
     });
+  });
+
+  describe('Internal CRUD (TV-DRZ-INTERNAL-001)', () => {
+    it('should roundtrip create/findOne/update/delete on internal table', async () => {
+      await adapter.internal.ensureTable('__datafn_meta', [
+        { name: 'id', type: 'text', primaryKey: true },
+        { name: 'namespace', type: 'text' },
+        { name: 'nextServerSeq', type: 'integer' },
+      ]);
+
+      // Create
+      await adapter.internal.create('__datafn_meta', {
+        id: 'datafn:nextServerSeq',
+        namespace: 'datafn',
+        nextServerSeq: 1,
+      });
+
+      // FindOne
+      const row = await adapter.internal.findOne('__datafn_meta', [
+        { field: 'id', op: 'eq', value: 'datafn:nextServerSeq' },
+      ]);
+      expect(row).toMatchObject({ id: 'datafn:nextServerSeq', namespace: 'datafn', nextServerSeq: 1 });
+
+      // Update
+      const updated = await adapter.internal.update(
+        '__datafn_meta',
+        [{ field: 'id', op: 'eq', value: 'datafn:nextServerSeq' }],
+        { nextServerSeq: 2 },
+      );
+      expect(updated).toBe(1);
+
+      // FindOne after update
+      const afterUpdate = await adapter.internal.findOne('__datafn_meta', [
+        { field: 'id', op: 'eq', value: 'datafn:nextServerSeq' },
+      ]);
+      expect(afterUpdate).toMatchObject({ nextServerSeq: 2 });
+
+      // Delete
+      const deleted = await adapter.internal.delete('__datafn_meta', [
+        { field: 'id', op: 'eq', value: 'datafn:nextServerSeq' },
+      ]);
+      expect(deleted).toBe(1);
+
+      // Verify deleted
+      const gone = await adapter.internal.findOne('__datafn_meta', [
+        { field: 'id', op: 'eq', value: 'datafn:nextServerSeq' },
+      ]);
+      expect(gone).toBeNull();
+    });
+
+    it('should cache ensureTable calls (DDL runs only once)', async () => {
+      await adapter.internal.ensureTable('__datafn_meta', [
+        { name: 'id', type: 'text', primaryKey: true },
+        { name: 'namespace', type: 'text' },
+        { name: 'nextServerSeq', type: 'integer' },
+      ]);
+      // Second call should not throw
+      await adapter.internal.ensureTable('__datafn_meta', [
+        { name: 'id', type: 'text', primaryKey: true },
+        { name: 'namespace', type: 'text' },
+        { name: 'nextServerSeq', type: 'integer' },
+      ]);
+    });
+
+    it('should reject invalid table names (TV-ENSURE-002)', async () => {
+      await expect(
+        adapter.internal.ensureTable('users', [{ name: 'id', type: 'text', primaryKey: true }]),
+      ).rejects.toThrow('ensureTable: table name must start with "__datafn_": "users"');
+    });
+  });
+
+  describe('Internal CRUD FindMany (TV-DRZ-INTERNAL-002)', () => {
+    it('should return filtered, ordered results with limit', async () => {
+      await adapter.internal.ensureTable('__datafn_changes', [
+        { name: 'id', type: 'text', primaryKey: true },
+        { name: 'namespace', type: 'text' },
+        { name: 'serverSeq', type: 'integer' },
+        { name: 'resource', type: 'text' },
+      ]);
+
+      await adapter.internal.create('__datafn_changes', {
+        id: 'c1', namespace: 'datafn', serverSeq: 3, resource: 'todos',
+      });
+      await adapter.internal.create('__datafn_changes', {
+        id: 'c2', namespace: 'datafn', serverSeq: 1, resource: 'todos',
+      });
+      await adapter.internal.create('__datafn_changes', {
+        id: 'c3', namespace: 'datafn', serverSeq: 2, resource: 'todos',
+      });
+
+      const rows = await adapter.internal.findMany(
+        '__datafn_changes',
+        [{ field: 'namespace', op: 'eq', value: 'datafn' }],
+        { orderBy: 'serverSeq', limit: 2 },
+      );
+
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ id: 'c2', serverSeq: 1 });
+      expect(rows[1]).toMatchObject({ id: 'c3', serverSeq: 2 });
+    });
+  });
+});
+
+describe('DrizzleAdapter - Postgres/MySQL Dialect Support', () => {
+  /**
+   * This test verifies that the dialect-aware execution paths work correctly.
+   * We verify that db.execute() is called instead of db.run()/db.all() for Postgres/MySQL.
+   */
+  it('should use db.execute() for Postgres dialect instead of db.run()/db.all()', async () => {
+    const executeCalls: any[] = [];
+
+    // Mock Postgres Drizzle instance (no run/all methods, only execute)
+    const mockDb = {
+      async execute(query: any): Promise<any> {
+        executeCalls.push({ type: 'execute', query });
+        // Return empty result for DDL, rows array for SELECT, rowCount for DML
+        const queryStr = query.queryChunks 
+          ? query.queryChunks.map((chunk: any) => (typeof chunk === 'string' ? chunk : '?')).join('')
+          : '';
+        if (queryStr.includes('CREATE TABLE')) return { rowCount: 0 };
+        if (queryStr.includes('SELECT')) return [];
+        return { rowCount: 0 };
+      },
+    };
+
+    const adapter = drizzleAdapter({
+      db: mockDb,
+      dialect: 'postgres',
+      debug: false,
+    });
+
+    // Verify ensureTable uses db.execute()
+    await adapter.internal.ensureTable('__datafn_test', [
+      { name: 'id', type: 'text', primaryKey: true },
+    ]);
+
+    expect(executeCalls.length).toBeGreaterThan(0);
+    expect(executeCalls[0].type).toBe('execute');
+
+    // Verify create uses db.execute()
+    executeCalls.length = 0;
+    await adapter.internal.create('__datafn_test', { id: 'test' });
+    expect(executeCalls.length).toBeGreaterThan(0);
+    expect(executeCalls[0].type).toBe('execute');
+
+    // Verify findOne uses db.execute()
+    executeCalls.length = 0;
+    await adapter.internal.findOne('__datafn_test', [{ field: 'id', op: 'eq', value: 'test' }]);
+    expect(executeCalls.length).toBeGreaterThan(0);
+    expect(executeCalls[0].type).toBe('execute');
+  });
+
+  it('should use db.execute() for MySQL dialect', async () => {
+    const executeCalls: any[] = [];
+
+    // Mock MySQL Drizzle instance (no run/all methods, only execute)
+    const mockDb = {
+      async execute(query: any): Promise<any> {
+        executeCalls.push({ type: 'execute', query });
+        const queryStr = query.queryChunks 
+          ? query.queryChunks.map((chunk: any) => (typeof chunk === 'string' ? chunk : '?')).join('')
+          : '';
+        if (queryStr.includes('CREATE TABLE')) return { rowsAffected: 0 };
+        if (queryStr.includes('SELECT')) return { rows: [] };
+        return { rowsAffected: 0 };
+      },
+    };
+
+    const adapter = drizzleAdapter({
+      db: mockDb,
+      dialect: 'mysql',
+      debug: false,
+    });
+
+    // Verify ensureTable uses db.execute()
+    await adapter.internal.ensureTable('__datafn_test', [
+      { name: 'id', type: 'text', primaryKey: true },
+    ]);
+
+    expect(executeCalls.length).toBeGreaterThan(0);
+    expect(executeCalls[0].type).toBe('execute');
   });
 });

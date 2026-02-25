@@ -1,0 +1,5 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-16T13:00:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),spec,claude-opus-4-6,,datafn/.conduct/specs/2026-02-16-new-k9m7x3p5-spec
+2026-02-16T13:45:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),execute,claude-opus-4-6,PHASE_00,datafn/.conduct/specs/2026-02-16-new-k9m7x3p5-spec/phase-reports/PHASE_00-2026-02-16-r7k3m9x2-report.md
+2026-02-17T00:20:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),execute,claude-opus-4-6,PHASE_01,datafn/.conduct/specs/2026-02-16-new-k9m7x3p5-spec/phase-reports/PHASE_01-2026-02-17-m4x7k9p2-report.md
+2026-02-17T06:58:16Z,Claude Sonnet 4.5,VS Code (Claude Code Extension),execute,factory-droid,PHASE_02,datafn/.conduct/specs/2026-02-16-new-k9m7x3p5-spec/phase-reports/PHASE_02-2026-02-17-x9k4m7p2-report.md

@@ -3,6 +3,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import { coerceDateFieldsToEpoch } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
@@ -12,7 +13,8 @@ import {
   executeRelate,
   executeModifyRelation,
   executeUnrelate,
-  normalizeRelationPayload,
+  extractJoinDeltas,
+  extractRelationFkDeltas,
 } from "../mutation/relations.js";
 
 export interface PushRequest {
@@ -30,89 +32,24 @@ export interface PushResult {
     path: string;
   }>;
   cursor: string;
+  cursorBefore?: string; // global seq before this push started; absent on early-exit error paths
+  cursors?: Record<string, string>; // per-resource max serverSeq after this push
 }
 
-/**
- * Helper to find relation definition in schema
- */
-function findRelation(
+function applyDateCoercion(
   schema: DatafnSchema,
   resource: string,
-  relationName: string,
-) {
-  return schema.relations?.find(
-    (r) => r.from === resource && r.relation === relationName,
-  );
-}
-
-/**
- * Extract join deltas for a relation mutation
- * Returns array of { resource, id, op, record } where:
- * - resource = join store key (e.g., "join_node_properties_property")
- * - id = composite key "${from}::${to}"
- * - op = "upsert" | "delete"
- * - record = { from, to, ...metadata } or null
- */
-function extractJoinDeltas(
-  mutation: any,
-  schema: DatafnSchema,
-): Array<{
-  resource: string;
-  id: string;
-  op: "upsert" | "delete";
-  record: Record<string, unknown> | null;
-}> {
-  const deltas: Array<{
-    resource: string;
-    id: string;
-    op: "upsert" | "delete";
-    record: Record<string, unknown> | null;
-  }> = [];
-
-  if (!mutation.relations) {
-    return deltas;
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const resourceDef = schema.resources.find((r) => r.name === resource);
+  if (!resourceDef || !resourceDef.fields) {
+    console.warn(
+      `applyDateCoercion: resource "${resource}" not found in schema — skipping date coercion. ` +
+        `Known resources: ${schema.resources.map((r) => r.name).join(", ")}`,
+    );
+    return data;
   }
-
-  for (const [relName, payload] of Object.entries(mutation.relations)) {
-    const relation = findRelation(schema, mutation.resource, relName);
-    if (!relation) {
-      continue;
-    }
-
-    // Only many-many relations produce join deltas
-    if (relation.type !== "many-many") {
-      continue;
-    }
-
-    const items = normalizeRelationPayload(payload);
-    const joinStoreKey = `join_${mutation.resource}_${relName}_${relation.to}`;
-
-    for (const item of items) {
-      const compositeId = `${mutation.id}::${item.toId}`;
-
-      if (mutation.operation === "relate" || mutation.operation === "modifyRelation") {
-        deltas.push({
-          resource: joinStoreKey,
-          id: compositeId,
-          op: "upsert",
-          record: {
-            from: mutation.id,
-            to: item.toId,
-            ...item.metadata,
-          },
-        });
-      } else if (mutation.operation === "unrelate") {
-        deltas.push({
-          resource: joinStoreKey,
-          id: compositeId,
-          op: "delete",
-          record: null,
-        });
-      }
-    }
-  }
-
-  return deltas;
+  return coerceDateFieldsToEpoch({ ...data }, resourceDef.fields);
 }
 
 /**
@@ -192,7 +129,12 @@ export async function executePush(
 
   // Create change tracking service with user/tenant namespace and optional sequence store
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore, onChange);
+  // Capture the global sequence counter BEFORE any mutations are processed so the client
+  // can determine whether foreign changes exist (cursorBefore == localCursor → no foreign changes)
+  const cursorBeforeSeq = await changeTracking.getCurrentServerSeq();
   let latestSeq = 0;
+  // Track per-resource max serverSeq so the client can advance per-table cursors (FIX-B)
+  const resourceSeqs: Record<string, number> = {};
 
   // Process each mutation
   for (const mutation of request.mutations) {
@@ -237,48 +179,47 @@ export async function executePush(
     try {
       switch (mut.operation) {
         case "insert":
-          await db.create({
-            model: mut.resource,
-            data: {
-              id: mut.id,
-              ...(mut.record || {}),
-            },
-            namespace,
-          });
-          opResult = { ok: true };
+          {
+            const coercedData = applyDateCoercion(
+              schema,
+              mut.resource,
+              mut.record || {},
+            );
+            await db.create({
+              model: mut.resource,
+              data: {
+                id: mut.id,
+                ...coercedData,
+              },
+              namespace,
+            });
+            opResult = { ok: true };
+          }
           break;
 
         case "merge":
         case "replace":
-          // Use upsert semantics: first check if record exists
+          // MUT-003: Use db.upsert() instead of findOne + conditional create/update
           try {
-            const existing = await db.findOne({
+            const coercedData = applyDateCoercion(
+              schema,
+              mut.resource,
+              mut.record || {},
+            );
+
+            await db.upsert({
               model: mut.resource,
               where: [{ field: "id", operator: "eq", value: mut.id }],
+              create: { id: mut.id, ...coercedData },
+              update: coercedData,
               namespace,
             });
-
-            if (existing) {
-              // Record exists, update it
-              await db.update({
-                model: mut.resource,
-                where: [{ field: "id", operator: "eq", value: mut.id }],
-                data: mut.record || {},
-                namespace,
-              });
-            } else {
-              // Record doesn't exist, create it
-              await db.create({
-                model: mut.resource,
-                data: {
-                  id: mut.id,
-                  ...(mut.record || {}),
-                },
-                namespace,
-              });
-            }
             opResult = { ok: true };
           } catch (innerError) {
+            console.error(
+              `Push operation failed [${mut.operation}] for resource "${mut.resource}", id "${mut.id}":`,
+              innerError
+            );
             opResult = {
               ok: false,
               code: "INTERNAL",
@@ -354,6 +295,10 @@ export async function executePush(
           };
       }
     } catch (error) {
+      console.error(
+        `Push operation failed [${mut.operation}] for resource "${mut.resource}", id "${mut.id}":`,
+        error
+      );
       opResult = {
         ok: false,
         code: "INTERNAL",
@@ -366,34 +311,40 @@ export async function executePush(
     if (opResult.ok) {
       applied.push(mut.mutationId);
 
-      // Record change tracking for the primary resource
+      // Record change tracking (FIX-REL-001)
       try {
-        const serverSeq = await changeTracking.getNextServerSeq();
-        latestSeq = Math.max(latestSeq, serverSeq);
-        
-        await changeTracking.recordChange({
-          serverSeq,
-          resource: mut.resource,
-          id: mut.id,
-          op: mut.operation === "delete" ? "delete" : "upsert",
-          record:
-            mut.operation === "delete"
-              ? null
-              : { id: mut.id, ...(mut.record || {}) },
-        });
-
-        // Record join deltas for relation operations
-        if (
+        const isRelationMutation =
           mut.operation === "relate" ||
           mut.operation === "modifyRelation" ||
-          mut.operation === "unrelate"
-        ) {
+          mut.operation === "unrelate";
+
+        if (isRelationMutation) {
+          // Relation mutations must NOT record a primary resource upsert with only
+          // { id } — that would overwrite full records on other clients.
+          // Instead: record targeted FK merge deltas (many-one/one-many) and join
+          // deltas (many-many). For many-many, join deltas alone are sufficient.
+
+          // FK merge deltas for many-one and one-many relations
+          const fkDeltas = extractRelationFkDeltas(mut, schema);
+          for (const delta of fkDeltas) {
+            const fkSeq = await changeTracking.getNextServerSeq();
+            latestSeq = Math.max(latestSeq, fkSeq);
+            resourceSeqs[delta.resource] = Math.max(resourceSeqs[delta.resource] || 0, fkSeq);
+            await changeTracking.recordChange({
+              serverSeq: fkSeq,
+              resource: delta.resource,
+              id: delta.id,
+              op: delta.op,
+              record: delta.record,
+            });
+          }
+
+          // Join deltas for many-many relations
           const joinDeltas = extractJoinDeltas(mut, schema);
           for (const delta of joinDeltas) {
-            // Each join delta gets its own serverSeq for deterministic ordering
             const joinSeq = await changeTracking.getNextServerSeq();
             latestSeq = Math.max(latestSeq, joinSeq);
-
+            resourceSeqs[delta.resource] = Math.max(resourceSeqs[delta.resource] || 0, joinSeq);
             await changeTracking.recordChange({
               serverSeq: joinSeq,
               resource: delta.resource,
@@ -402,6 +353,34 @@ export async function executePush(
               record: delta.record,
             });
           }
+        } else {
+          // Regular mutations (insert/merge/replace/delete): record primary resource change
+          const serverSeq = await changeTracking.getNextServerSeq();
+          latestSeq = Math.max(latestSeq, serverSeq);
+          resourceSeqs[mut.resource] = Math.max(resourceSeqs[mut.resource] || 0, serverSeq);
+
+          // Coerce date fields in the change record
+          const changeRecord =
+            mut.operation === "delete"
+              ? null
+              : {
+                  id: mut.id,
+                  ...applyDateCoercion(schema, mut.resource, mut.record || {}),
+                };
+
+          const changeOp =
+            mut.operation === "delete" ? "delete" :
+            mut.operation === "insert" ? "insert" :
+            mut.operation === "merge" ? "merge" :
+            "replace"; // only remaining op is "replace"
+
+          await changeTracking.recordChange({
+            serverSeq,
+            resource: mut.resource,
+            id: mut.id,
+            op: changeOp,
+            record: changeRecord,
+          });
         }
       } catch (error) {
         console.error("Change tracking failed in push:", error);
@@ -438,10 +417,18 @@ export async function executePush(
     latestSeq = await changeTracking.getCurrentServerSeq();
   }
 
+  // Build per-resource cursors map for client to advance per-table cursors (FIX-B)
+  const cursors: Record<string, string> = {};
+  for (const [resource, seq] of Object.entries(resourceSeqs)) {
+    cursors[resource] = String(seq);
+  }
+
   return {
     ok: true,
     applied,
     errors,
     cursor: String(latestSeq),
+    cursorBefore: String(cursorBeforeSeq),
+    cursors,
   };
 }

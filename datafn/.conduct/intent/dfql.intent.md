@@ -119,6 +119,7 @@ If the request is an array of queries, the response should be an array of result
 ## Select
 List of fields to select from the query.
 - Not specifying `select` selects all base fields on the record (no relation expansion).
+- `"*"` as a select token selects all base fields on the record (equivalent to omitting `select`). Use `select: ["*", "relation.*"]` to get all base fields plus specific relation expansions.
 - Relation expansion is always explicit via tokens like `parent.*`, `children.**`, `collections.#`, etc.
 
 

@@ -3,6 +3,12 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import {
+  evaluateFilter as coreEvaluateFilter,
+  parseSortTerms,
+  sortRecords,
+  type SchemaIndex,
+} from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { materializeSelect } from "./relations.js";
 import { executeAggregateQuery } from "./aggregate.js";
@@ -14,6 +20,7 @@ export async function executeLocalQuery(
   storage: DatafnStorageAdapter,
   schema: DatafnSchema,
   query: Record<string, unknown>,
+  _schemaIndex?: SchemaIndex,
 ): Promise<{ data?: any[]; groups?: any[]; nextCursor?: any }> {
   // Check for aggregation
   if (query.groupBy) {
@@ -57,27 +64,17 @@ export async function executeLocalQuery(
 
   // Apply filters (if not fully satisfied by routing)
   if (query.filters) {
-    records = records.filter((r) =>
-      evaluateFilter(r, query.filters as Record<string, unknown>),
-    );
+    const normalized = normalizeFilterOps(query.filters as Record<string, unknown>);
+    records = records.filter((r) => applyFilter(r, normalized));
   }
 
-  // Sort (with stable id:asc tie-breaker if no explicit orderBy and scan path was used)
+  // Sort using shared core utilities
   if (query.sort) {
-    const sort = query.sort as string[];
-    records.sort((a, b) => {
-      for (const term of sort) {
-        const [field, dir] = term.split(":");
-        const va = a[field] as any;
-        const vb = b[field] as any;
-        if (va < vb) return dir === "desc" ? 1 : -1;
-        if (va > vb) return dir === "desc" ? -1 : 1;
-      }
-      return 0;
-    });
+    const terms = parseSortTerms(query.sort as string[]);
+    records = sortRecords(records, terms);
   } else if (!usedIndexedPath) {
     // Deterministic ordering: stable sort by id:asc when scan path is used
-    records.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    records = sortRecords(records, [{ field: "id", direction: "asc" }]);
   }
 
   // Pagination
@@ -102,6 +99,76 @@ export async function executeLocalQuery(
     data: records,
     nextCursor: null,
   };
+}
+
+/** Wrap core evaluateFilter to add field-path context to error messages. */
+function applyFilter(
+  record: Record<string, unknown>,
+  filters: Record<string, unknown>,
+  path = "filters",
+): boolean {
+  for (const [key, value] of Object.entries(filters)) {
+    const fieldPath = `${path}.${key}`;
+    try {
+      if (key === "$and" && Array.isArray(value)) {
+        for (const sub of value as Record<string, unknown>[]) {
+          if (!applyFilter(record, sub, path)) return false;
+        }
+        continue;
+      }
+      if (key === "$or" && Array.isArray(value)) {
+        let matched = false;
+        for (const sub of value as Record<string, unknown>[]) {
+          try {
+            if (applyFilter(record, sub, path)) { matched = true; break; }
+          } catch { /* continue */ }
+        }
+        if (!matched) {
+          // Re-run to surface errors from all branches
+          for (const sub of value as Record<string, unknown>[]) {
+            applyFilter(record, sub, path);
+          }
+          return false;
+        }
+        continue;
+      }
+      if (!coreEvaluateFilter(record, { [key]: value })) return false;
+    } catch (err: any) {
+      if (err && (err.code === "DFQL_UNSUPPORTED" || err.code === "DFQL_INVALID")) {
+        throw { ...err, message: `${err.message}: ${fieldPath}` };
+      }
+      throw err;
+    }
+  }
+  return true;
+}
+
+const OP_REMAP: Record<string, string> = {
+  eq: "$eq", ne: "$ne", gt: "$gt", gte: "$gte", lt: "$lt", lte: "$lte",
+  in: "$in", not_in: "$nin",
+  like: "$like", ilike: "$ilike", not_like: "$not_like", not_ilike: "$not_ilike",
+  is_null: "$is_null", is_not_null: "$is_not_null", is_empty: "$is_empty", is_not_empty: "$is_not_empty",
+  before: "$before", after: "$after", between: "$between", not_between: "$not_between",
+};
+
+/** Recursively remap non-$-prefixed operator names to core's $-prefixed form. */
+function normalizeFilterOps(filters: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if ((key === "$and" || key === "$or") && Array.isArray(value)) {
+      out[key] = (value as Record<string, unknown>[]).map(normalizeFilterOps);
+    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const ops = value as Record<string, unknown>;
+      const normalized: Record<string, unknown> = {};
+      for (const [op, opVal] of Object.entries(ops)) {
+        normalized[OP_REMAP[op] ?? op] = opVal;
+      }
+      out[key] = normalized;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 /**
@@ -134,109 +201,3 @@ function detectSingleFieldEq(
   return null;
 }
 
-/**
- * Evaluate filter recursively with full operator coverage (OFFQ-002).
- * Rejects unsupported operators with deterministic error.
- */
-function evaluateFilter(
-  record: Record<string, unknown>,
-  filter: Record<string, unknown>,
-  path: string = "filters",
-): boolean {
-  for (const [key, value] of Object.entries(filter)) {
-    const currentPath = `${path}.${key}`;
-    
-    // Logical operators
-    if (key === "$and") {
-      if (!Array.isArray(value)) {
-        throw {
-          code: "DFQL_INVALID",
-          message: "Invalid DFQL: $and must be array",
-          details: { path: currentPath },
-        };
-      }
-      // Short-circuit: if any fails, return false immediately
-      for (const subFilter of value) {
-        if (!evaluateFilter(record, subFilter, currentPath)) {
-          return false;
-        }
-      }
-      continue;
-    }
-    
-    if (key === "$or") {
-      if (!Array.isArray(value)) {
-        throw {
-          code: "DFQL_INVALID",
-          message: "Invalid DFQL: $or must be array",
-          details: { path: currentPath },
-        };
-      }
-      // Short-circuit: if any succeeds, return true immediately
-      for (const subFilter of value) {
-        if (evaluateFilter(record, subFilter, currentPath)) {
-          return true;
-        }
-      }
-      // If we get here, none matched
-      return false;
-    }
-
-    // Field-level filters
-    const recordVal = record[key];
-
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      // Operator object: { $op: operand }
-      for (const [op, opVal] of Object.entries(value)) {
-        if (op === "eq" || op === "$eq") {
-          if (recordVal !== opVal) return false;
-        } else if (op === "$ne") {
-          if (recordVal === opVal) return false;
-        } else if (op === "$gt") {
-          if (!((recordVal as any) > (opVal as any))) return false;
-        } else if (op === "$gte") {
-          if (!((recordVal as any) >= (opVal as any))) return false;
-        } else if (op === "$lt") {
-          if (!((recordVal as any) < (opVal as any))) return false;
-        } else if (op === "$lte") {
-          if (!((recordVal as any) <= (opVal as any))) return false;
-        } else if (op === "$in") {
-          if (!Array.isArray(opVal)) {
-            throw {
-              code: "DFQL_INVALID",
-              message: "Invalid DFQL: $in operand must be array",
-              details: { path: `${currentPath}.$in` },
-            };
-          }
-          if (!opVal.includes(recordVal)) return false;
-        } else if (op === "$nin") {
-          if (!Array.isArray(opVal)) {
-            throw {
-              code: "DFQL_INVALID",
-              message: "Invalid DFQL: $nin operand must be array",
-              details: { path: `${currentPath}.$nin` },
-            };
-          }
-          if (opVal.includes(recordVal)) return false;
-        } else if (op === "$contains") {
-          if (!Array.isArray(recordVal)) {
-            // If field is not an array, $contains cannot match
-            return false;
-          }
-          if (!recordVal.includes(opVal)) return false;
-        } else {
-          // Unsupported operator
-          throw {
-            code: "DFQL_UNSUPPORTED",
-            message: `Unsupported DFQL feature: ${currentPath}.${op}`,
-            details: { path: currentPath },
-          };
-        }
-      }
-    } else {
-      // Direct equality: { field: value }
-      if (recordVal !== value) return false;
-    }
-  }
-  return true;
-}

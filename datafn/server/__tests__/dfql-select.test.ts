@@ -378,3 +378,284 @@ describe("DFQL select extensions (Phase 11)", () => {
     });
   });
 });
+
+describe("DFQL bare * wildcard in select", () => {
+  async function createDfqlServer() {
+    const { memoryAdapter } = await import("@superfunctions/db/adapters");
+    const db = memoryAdapter();
+    await db.initialize();
+
+    return await createDatafnServer({
+      schema: fixtureDfqlSchema,
+      limits: { maxLimit: 100 },
+      db,
+    });
+  }
+
+  async function seedTask(server: Awaited<ReturnType<typeof createDfqlServer>>, id: string, record: Record<string, unknown>) {
+    await server.router.handle(
+      new Request("http://localhost/datafn/mutation", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          operation: "insert",
+          clientId: "client:1",
+          mutationId: `m-seed-${id}`,
+          id,
+          record,
+        }),
+      }),
+      {},
+    );
+  }
+
+  async function seedTag(server: Awaited<ReturnType<typeof createDfqlServer>>, id: string, record: Record<string, unknown>) {
+    await server.router.handle(
+      new Request("http://localhost/datafn/mutation", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "tag",
+          version: 1,
+          operation: "insert",
+          clientId: "client:1",
+          mutationId: `m-seed-${id}`,
+          id,
+          record,
+        }),
+      }),
+      {},
+    );
+  }
+
+  it("TV-DFQL-WILDCARD-001: select:[\"*\"] passes validation (no 400 error)", async () => {
+    const server = await createDfqlServer();
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          select: ["*"],
+        }),
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("TV-DFQL-WILDCARD-002: select:[\"*\"] returns all base fields (equivalent to omitting select)", async () => {
+    const server = await createDfqlServer();
+    await seedTask(server, "task:w1", { title: "Wildcard Task" });
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          select: ["*"],
+          filters: { id: "task:w1" },
+        }),
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.result.data).toHaveLength(1);
+    const record = body.result.data[0];
+    expect(record.id).toBe("task:w1");
+    expect(record.title).toBe("Wildcard Task");
+    // Should NOT have a literal "*" key
+    expect("*" in record).toBe(false);
+  });
+
+  it("TV-DFQL-WILDCARD-003: select:[\"*\"] does not expand relations", async () => {
+    const server = await createDfqlServer();
+    await seedTask(server, "task:w2", { title: "No Relations" });
+    await seedTag(server, "tag:w1", { label: "some-tag" });
+
+    // Relate
+    await server.router.handle(
+      new Request("http://localhost/datafn/mutation", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          operation: "relate",
+          clientId: "client:1",
+          mutationId: "m-relate-w2",
+          id: "task:w2",
+          relations: { tags: { $ref: "tag:w1", order: 0 } },
+        }),
+      }),
+      {},
+    );
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          select: ["*"],
+          filters: { id: "task:w2" },
+        }),
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    const record = body.result.data[0];
+    // Relations should NOT be expanded
+    expect(record.tags).toBeUndefined();
+  });
+
+  it("TV-DFQL-WILDCARD-004: select:[\"*\",\"tags.*\"] returns all base fields + expanded many-many relation", async () => {
+    const server = await createDfqlServer();
+    await seedTask(server, "task:w3", { title: "With Tags" });
+    await seedTag(server, "tag:w2", { label: "urgent" });
+    await seedTag(server, "tag:w3", { label: "home" });
+
+    await server.router.handle(
+      new Request("http://localhost/datafn/mutation", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          operation: "relate",
+          clientId: "client:1",
+          mutationId: "m-relate-w3a",
+          id: "task:w3",
+          relations: { tags: { $ref: "tag:w2", order: 0 } },
+        }),
+      }),
+      {},
+    );
+
+    await server.router.handle(
+      new Request("http://localhost/datafn/mutation", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          operation: "relate",
+          clientId: "client:1",
+          mutationId: "m-relate-w3b",
+          id: "task:w3",
+          relations: { tags: { $ref: "tag:w3", order: 1 } },
+        }),
+      }),
+      {},
+    );
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          select: ["*", "tags.*"],
+          filters: { id: "task:w3" },
+        }),
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    const record = body.result.data[0];
+    // All base fields present
+    expect(record.id).toBe("task:w3");
+    expect(record.title).toBe("With Tags");
+    // Relation expanded
+    expect(Array.isArray(record.tags)).toBe(true);
+    expect(record.tags).toHaveLength(2);
+    expect(record.tags[0].label).toBe("urgent");
+    expect(record.tags[1].label).toBe("home");
+    // No literal "*" key
+    expect("*" in record).toBe(false);
+  });
+
+  it("TV-DFQL-WILDCARD-005: select:[\"*\",\"tags.#\"] returns all base fields + join rows", async () => {
+    const server = await createDfqlServer();
+    await seedTask(server, "task:w4", { title: "Join Rows" });
+    await seedTag(server, "tag:w4", { label: "joinable" });
+
+    await server.router.handle(
+      new Request("http://localhost/datafn/mutation", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          operation: "relate",
+          clientId: "client:1",
+          mutationId: "m-relate-w4",
+          id: "task:w4",
+          relations: { tags: { $ref: "tag:w4", order: 0 } },
+        }),
+      }),
+      {},
+    );
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          select: ["*", "tags.#"],
+          filters: { id: "task:w4" },
+        }),
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    const record = body.result.data[0];
+    expect(record.id).toBe("task:w4");
+    expect(record.title).toBe("Join Rows");
+    // Join rows present
+    expect(Array.isArray(record.tags)).toBe(true);
+    expect(record.tags[0].from).toBe("task:w4");
+    expect(record.tags[0].to).toBe("tag:w4");
+  });
+
+  it("TV-DFQL-WILDCARD-006: select:[\"*\"] with omit:[\"title\"] omits the field but keeps others", async () => {
+    const server = await createDfqlServer();
+    await seedTask(server, "task:w5", { title: "Omit Me" });
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          select: ["*"],
+          omit: ["title"],
+          filters: { id: "task:w5" },
+        }),
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    const record = body.result.data[0];
+    expect(record.id).toBe("task:w5");
+    // omitted field absent
+    expect(record.title).toBeUndefined();
+  });
+});

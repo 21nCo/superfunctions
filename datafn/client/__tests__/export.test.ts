@@ -39,7 +39,7 @@ const testSchema: DatafnSchema = {
   relations: [
     {
       from: "task",
-      field: "tags",
+      relation: "tags",
       to: "tag",
       type: "many-many",
       inverse: "tasks",

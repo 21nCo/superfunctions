@@ -1,0 +1,5 @@
+timestamp,model,IDE/Editor,command,agent_name,phase(s),path
+2026-02-14T03:52:50Z,Claude Sonnet 4.5,Claude Code (VSCode),spec,claude-sonnet-4-5-20250929,,.conduct/specs/2026-02-14-change-k7m9x4p2-spec
+2026-02-15T00:38:00Z,unknown,Cursor,execute,unknown-agent,PHASE_01,.conduct/specs/2026-02-14-change-k7m9x4p2-spec/phase-reports/PHASE_01-2026-02-15-k7m9x4p2-report.md
+2026-02-15T00:45:00Z,unknown,Cursor,execute,unknown-agent,PHASE_02,.conduct/specs/2026-02-14-change-k7m9x4p2-spec/phase-reports/PHASE_02-2026-02-15-m4k8p2x9-report.md
+2026-02-15T00:58:00Z,unknown,Cursor,execute,unknown-agent,PHASE_03,.conduct/specs/2026-02-14-change-k7m9x4p2-spec/phase-reports/PHASE_03-2026-02-15-q7k2m4x9-report.md

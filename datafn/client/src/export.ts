@@ -3,6 +3,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import { getJoinStoreKey } from "@datafn/core";
 import type { DatafnStorageAdapter } from "./storage.js";
 import { createClientError } from "./errors.js";
 import type { SyncFacade } from "./sync.js";
@@ -73,18 +74,6 @@ function resolveExportScope(
 }
 
 /**
- * Resolve join store name from relation
- */
-function resolveJoinStoreName(relation: any): string {
-  // Match the server-side join store naming convention
-  // Format: join_{from}_{fromField}_{to}
-  const fromResource = relation.from;
-  const field = relation.field;
-  const toResource = relation.to;
-  return `join_${fromResource}_${field}_${toResource}`;
-}
-
-/**
  * Export all local records and join rows as structured JSON
  */
 export async function exportData(
@@ -107,15 +96,21 @@ export async function exportData(
     payload.resources[resource.name] = await storage.listRecords(resource.name);
   }
   
-  // Export join rows for many-many relations
+  // Export join rows for many-many relations (handle multi-resource from/to arrays)
   for (const relation of schema.relations ?? []) {
-    if (relation.type === "many-many") {
-      const storeName = resolveJoinStoreName(relation);
-      try {
-        payload.joins![storeName] = await storage.listJoinRows(storeName);
-      } catch (err) {
-        // Join store may not exist if no relations have been created
-        // Continue without error
+    if (relation.type !== "many-many") continue;
+    const froms = Array.isArray(relation.from) ? relation.from : [relation.from];
+    const tos = Array.isArray(relation.to) ? relation.to : [relation.to];
+    const relName = relation.relation ?? "rel";
+    for (const f of froms) {
+      for (const t of tos) {
+        const storeName = getJoinStoreKey(f, relName, t);
+        try {
+          payload.joins![storeName] = await storage.listJoinRows(storeName);
+        } catch (err) {
+          // Join store may not exist if no relations have been created
+          // Continue without error
+        }
       }
     }
   }
@@ -129,7 +124,7 @@ export async function exportData(
 export async function importData(
   storage: DatafnStorageAdapter,
   schema: DatafnSchema,
-  sync: SyncFacade & { cloneUp?: () => Promise<void> },
+  sync: SyncFacade,
   data: DatafnExportPayload,
   options?: DatafnImportOptions,
 ): Promise<DatafnImportResult> {

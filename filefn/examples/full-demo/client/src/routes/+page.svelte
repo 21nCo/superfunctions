@@ -9,7 +9,7 @@
 
   // Use absolute URL to connect directly to server (works with any server)
   // In production, this could be an environment variable
-  const SERVER_URL = 'http://localhost:3000';
+  const SERVER_URL = 'http://localhost:3001';
   const API_BASE = `${SERVER_URL}/filefn`;
 
   // Client for uploads - uses absolute URL to work with any server

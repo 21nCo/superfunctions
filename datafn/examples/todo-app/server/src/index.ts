@@ -4,12 +4,12 @@ import { cors } from "hono/cors";
 import { createDatafnServer } from "@datafn/server";
 import { toHono } from "@superfunctions/http-hono";
 import { adapter } from "./db.js";
-import { datafnSchema } from "./schema.js";
+import schema from "./schema.datafn.js";
 
 async function main() {
   // ── Create DataFn Server ───────────────────────────────────────────
   const datafn = await createDatafnServer({
-    schema: datafnSchema,
+    schema,
     db: adapter,
 
     // Authorization — allow everything in this example.
@@ -43,7 +43,7 @@ async function main() {
   app.route("/", datafnApp);
 
   // ── Start server ───────────────────────────────────────────────────
-  const port = Number(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT ?? 3001);
   console.log(`DataFn Todo Server running → http://localhost:${port}`);
   console.log(`  POST /datafn/query      — execute queries`);
   console.log(`  POST /datafn/mutation    — execute mutations`);

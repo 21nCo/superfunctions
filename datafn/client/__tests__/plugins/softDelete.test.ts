@@ -88,14 +88,14 @@ describe("Soft-Delete Plugin (SD-001)", () => {
       expect(requestBody.operation).toBe("merge");
       expect(requestBody.record).toMatchObject({
         isDeleted: true,
-        deletedAt: expect.any(String), // Date serialized to ISO string by date codec
+        deletedAt: expect.any(Number), // Date serialized to epoch milliseconds by date codec
       });
       
-      // Verify deletedAt is a valid date string
+      // Verify deletedAt is a valid epoch timestamp
       const record = requestBody.record as Record<string, unknown>;
-      const deletedAt = new Date(record.deletedAt as string);
-      expect(deletedAt).toBeInstanceOf(Date);
-      expect(deletedAt.getTime()).toBeLessThanOrEqual(Date.now());
+      const deletedAt = record.deletedAt as number;
+      expect(typeof deletedAt).toBe("number");
+      expect(deletedAt).toBeLessThanOrEqual(Date.now());
     });
 
     it("should use custom field names when configured", async () => {

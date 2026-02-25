@@ -1,0 +1,6 @@
+timestamp,model,IDE/Editor,command,agent_name,phase(s),path
+2026-02-15T18:00:00Z,Claude Opus 4.6,Claude Code (VSCode),spec,claude-opus-4-6,,.conduct/specs/2026-02-15-change-m8k3x7p4-spec
+2026-02-15T23:17:00Z,Claude Opus 4.6,CLI,execute,claude-opus-4-6,PHASE_01,.conduct/specs/2026-02-15-change-m8k3x7p4-spec/phase-reports/PHASE_01-2026-02-15-k7m9x4p2-report.md
+2026-02-15T23:32:00Z,Claude Opus 4.6,Claude Code (VSCode),execute,claude-opus-4-6,PHASE_02,.conduct/specs/2026-02-15-change-m8k3x7p4-spec/phase-reports/PHASE_02-2026-02-15-m4k8x7p3-report.md
+2026-02-15T18:14:00Z,claude-sonnet-4-5-20250929,VS Code (Claude Code),execute,claude-sonnet-4-5,PHASE_03,.conduct/specs/2026-02-15-change-m8k3x7p4-spec/phase-reports/PHASE_03-2026-02-15-k4m9x2p7-report.md
+2026-02-16T00:00:00Z,claude-sonnet-4-5-20250929,VS Code (Claude Code),execute,claude-sonnet-4-5,PHASE_04,.conduct/specs/2026-02-15-change-m8k3x7p4-spec/phase-reports/PHASE_04-2026-02-16-n7k9x4m2-report.md

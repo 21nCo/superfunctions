@@ -18,6 +18,7 @@ import { runBeforeMutation, runAfterMutation } from "../plugins/run-hooks.js";
 import { executeMutation } from "../execution/mutation/execute.js";
 import { buildSchemaIndex, validateMutationBody } from "../validation/index.js";
 import { logRequest, redactSensitiveFields } from "../logging.js";
+import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 
 /**
  * Create mutation route handler
@@ -29,6 +30,7 @@ export function createMutationHandler(
   plugins: DatafnPlugin[] = [],
   extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
+  timingEmitter?: TimingEmitter | null,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -36,8 +38,10 @@ export function createMutationHandler(
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
     let body: any;
+    const timer = timingEmitter ? new ExecutionTimer() : null;
 
     try {
+        timer?.startPhase("validate");
         // Get body from context (pre-parsed by withAuth) or parse from request
         const parseResult = await getBodyFromContext(req, ctx);
         if (!parseResult.ok) {
@@ -69,7 +73,7 @@ export function createMutationHandler(
         });
         }
 
-        const { isBatch, mutations: transformedMutations } = validationResult.value;
+        const { isBatch, mutations: transformedMutations } = validationResult.result;
 
         // PHASE_11: Enforce write permissions for each mutation
         const { validateMutationAuthz } = await import("../validation/authz.js");
@@ -102,8 +106,10 @@ export function createMutationHandler(
         const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
 
         // Process each mutation
+        timer?.startPhase("guard");
         const results: MutationResult[] = [];
 
+        timer?.startPhase("execute");
         for (const mut of transformedMutations) {
         const result = await executeMutation(
             mut as DFQLMutation,
@@ -117,10 +123,17 @@ export function createMutationHandler(
         results.push(result);
         }
 
+        timer?.startPhase("changeLog");
+        timer?.startPhase("idempotency");
         const finalResult = isBatch ? results : results[0];
 
         // Run afterMutation hooks
         await runAfterMutation(transformedBody, finalResult, hookCtx, plugins);
+
+        if (timingEmitter && timer) {
+          const m = body as any;
+          timingEmitter(timer.build("/datafn/mutation", m?.resource, m?.operation));
+        }
 
         // If single mutation failed with specific error, return top-level error (EXEC-002)
         if (

@@ -12,6 +12,7 @@ import {
   getRelationTarget,
   getRelation,
 } from "./schema.js";
+import { parseSelectToken } from "@datafn/core";
 import { validateFilterDepth, validateRelationDepth } from "./depth.js";
 
 /**
@@ -38,7 +39,7 @@ export function validateQuery(
     return resourceResult;
   }
 
-  const resource = resourceResult.value;
+  const resource = resourceResult.result;
   const resourceName = q.resource;
 
   // Get field and relation sets for this resource
@@ -111,11 +112,12 @@ export function validateQuery(
             const lastSort = q.sort[q.sort.length - 1];
             if (typeof lastSort === "string") {
                 const parts = lastSort.split(":");
-                const field = parts[0];
+                const rawField = parts[0];
+                const field = rawField.startsWith("-") ? rawField.slice(1) : rawField;
                 if (field !== "id") {
                     return vErr(
                         "DFQL_INVALID",
-                        "Cursor pagination requires id as final sort key",
+                        "Invalid DFQL: cursor requires sort with id tie-breaker",
                         "sort",
                     );
                 }
@@ -182,9 +184,10 @@ export function validateQuery(
       const sortItem = q.sort[i];
       if (typeof sortItem !== "string") continue;
 
-      // Parse sort field (can be "fieldName" or "fieldName:asc/desc")
+      // Parse sort field (can be "fieldName", "fieldName:asc/desc", or "-fieldName")
       const parts = sortItem.split(":");
-      const fieldName = parts[0];
+      const rawField = parts[0];
+      const fieldName = rawField.startsWith("-") ? rawField.slice(1) : rawField;
 
       // Allow sorting by aggregation aliases
       if (q.aggregations && typeof q.aggregations === "object" && !Array.isArray(q.aggregations)) {
@@ -271,10 +274,11 @@ function validateSelectTokens(
     const token = select[i];
     if (typeof token !== "string") continue;
 
+    // Bare wildcard selects all base fields — pass without further validation
+    if (token === "*") continue;
+
     // Parse token (e.g., "goal.*", "tags.#", "id", "tasks.tags.*")
-    const parts = token.split(".");
-    const baseName = parts[0];
-    const directive = parts.slice(1).join(".") || undefined;
+    const { path: parts, baseName, directive } = parseSelectToken(token);
 
     // HTREE support
     const isHtreeToken = baseName === "parent" || baseName === "children";

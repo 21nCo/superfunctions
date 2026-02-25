@@ -4,6 +4,7 @@
  * Handles relation expansion and mutation operations in offline mode.
  */
 import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
+import { getJoinStoreKey } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 
 /**
@@ -50,18 +51,6 @@ export function normalizeRelationPayload(
     return [{ toId: $ref as string, metadata: meta }];
   }
   throw new Error("Invalid relation payload: must be string, object with $ref, or array");
-}
-
-/**
- * Compute deterministic join-store name for a relation
- * Format: join_{fromResource}_{relationName}_{toResource}
- */
-export function getJoinStoreName(
-  fromResource: string,
-  relationName: string,
-  toResource: string,
-): string {
-  return `join_${fromResource}_${relationName}_${toResource}`;
 }
 
 /**
@@ -150,12 +139,12 @@ export async function expandRelation(
     if (isForward) {
       // Forward: We are 'from' (resource). Query all 'to' targets.
       for (const t of toResources) {
-        storesToQuery.push(`join_${resource}_${relationName}_${t}`);
+        storesToQuery.push(getJoinStoreKey(resource, relationName, t));
       }
     } else {
       // Inverse: We are 'to' (resource). Query all 'from' sources.
       for (const f of fromResources) {
-        storesToQuery.push(`join_${f}_${relationName}_${resource}`);
+        storesToQuery.push(getJoinStoreKey(f, relationName, resource));
       }
     }
 

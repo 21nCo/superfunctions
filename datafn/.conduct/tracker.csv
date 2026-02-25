@@ -4,3 +4,38 @@ id, desc, status, completedAt, completionDoc
 2026-02-06-audit-fix-k4m2p9x7-spec, Close Flux-to-datafn gaps and refactor Nucleus to datafn, 0, , 
 2026-02-11-audit-fixes,Fix remaining audit issues (AUTH-002 namespace security and sync test regressions),1,2026-02-11T19:10:00Z,2026-02-11-78feda09-completion
 2026-02-11-audit-fix-r9k4m7x2-spec,Resolve all remaining Nucleus migration gaps: debounce + lifecycle + resilience + offline + UX improvements,1,2026-02-11T19:11:01Z,
+2026-02-12-k7x3m9p2-issue,IndexedDbStorageAdapter not creating resource object stores — Store not found on mutation,1,2026-02-12T22:10:00Z,2026-02-12-m7x4k9p3-completion
+2026-02-12-p8x2k4m7-issue,No built-in tenant/context switching — destroy-and-recreate is the only path for multi-tenant UIs,1,2026-02-12T06:56:37Z,2026-02-12-p8x2k4m7-completion
+2026-02-12-b3k9m2x7-issue,Sync start failed — Unknown table: __global_cursor__ when using schema-based IndexedDB adapter,1,2026-02-12T22:00:00Z,2026-02-12-k3x7m9b4-completion
+2026-02-12-j5m8k2n7-issue,Unknown table: kv — IndexedDB adapter validResources missing built-in kv resource,1,2026-02-12T16:43:03Z,2026-02-12-k9m3p7x2-completion
+2026-02-12-x9k4m7p3-issue,Drizzle adapter resolveTable throws for internal __datafn_* tables — breaks all mutations with real databases,0,,
+2026-02-12-fix-r8k4m2x9-spec,Fix internal table resolution across all adapters + joinTable schema extension,1,2026-02-13T10:42:00Z,
+2026-02-13-m4k8p2x9-issue,Push fails with 400 and sync keeps calling /datafn/push without backing off the interval,1,2026-02-13T19:51:00Z,2026-02-13-k7x4m9p5-completion
+2026-02-13-n7k2x4p9-issue,Drizzle internal CRUD uses SQLite-only API — db.run is not a function with Postgres,1,2026-02-13T06:22:45Z,2026-02-13-n7k2x4p9-completion
+2026-02-13-q8m3k7x5-issue,CLI generate-types command not wired — generateTypes() exists but inaccessible from CLI,1,2026-02-13T20:45:00Z,2026-02-13-q8m3k7x5-completion
+2026-02-14-change-k7m9x4p2-spec,CLI TypeScript schema support with .datafn.ts convention and auto-discovery,1,2026-02-15T00:58:00Z,
+2026-02-15-change-m8k3x7p4-spec,Unified schema generation (Drizzle codegen) and join table refactor,1,2026-02-16T00:00:00Z,
+2026-02-16-new-k9m7x3p5-spec,Schema index validation and type-safe defineSchema() helper,1,2026-02-17T06:58:16Z,
+2026-02-17-k8m3x7p4-issue,Client date codec produces ISO strings but generated Drizzle schema expects bigint — push inserts fail,1,2026-02-17T07:46:00Z,2026-02-17-k8m3x7p4-completion
+2026-02-18-k9x3m7p2-issue,PostgreSQL column name case-folding causes serverSeq to always return 1 — duplicate key on __datafn_changes,1,2026-02-19T05:55:00Z,2026-02-19-k9x3m7p2-completion
+2026-02-19-k7m4x9p3-issue,DFQL sort "-field" prefix format documented and used but not implemented — queries fail with DFQL_UNKNOWN_FIELD,1,2026-02-19T13:00:00Z,2026-02-19-k7m4x9p3-completion
+2026-02-19-m7k3x9p4-issue,Drizzle adapter missing KV table + join table naming mismatch — push/clone/pull silently fail or crash,1,2026-02-19T13:07:00Z,2026-02-19-m9k3x7p4-completion
+2026-02-21-k3m7x9p8-issue,Server rejects bare * wildcard in DFQL select — client/server spec divergence breaks relation expansion queries,1,2026-02-21T13:20:00Z,2026-02-21-w4k9m3x7-completion
+2026-02-23-k9x3m7vq-issue, DataFn SyncEngine missing window.focus listener and clone-on-every-reload bug, 1, 2026-02-23T00:00:00Z, 2026-02-23-k9x3m7vq-completion
+2026-02-23-r4wp8n2j-issue, Push always triggers redundant pull due to missing cursorBefore in push response, 1, 2026-02-23T17:10:00Z, 2026-02-23-r9m4k7x2-completion
+2026-02-23-m6bx9tkf-issue, Signals require manual rebinding on client switch — library should auto-recreate, 1, 2026-02-23T15:00:00Z, 2026-02-23-m6bx9tkf-completion
+2026-02-23-k7x9m4vr-issue, Unify Client/Svelte API surface and add offline connectivity awareness, 1, 2026-02-23T12:38:52Z, 2026-02-23-k7x9m4vr-completion
+2026-02-23-m3k7xv9p-issue, toSvelteStore requires manual ClientRef construction and as-any casts due to incomplete API unification, 0, , 
+2026-02-23-new-r4m9kx7v-spec, Lifecycle-aware signals — eliminate framework adapter boilerplate via LiveSignal (supersedes m3k7xv9p-issue), 1, 2026-02-23T21:52:00Z, 
+2026-02-23-k4m7x9v3-issue, Query signals emit paginated envelope instead of array — causes .data.data double nesting in framework stores, 1, 2026-02-23T22:35:00Z, 2026-02-23-k4m7x9v3-completion
+2026-02-24-m7k9x2p4-issue, Merge mutations lose data in IndexedDB — changelog stores partial record + per-table cursors not advanced after push, 1, 2026-02-24T13:05:00Z, 2026-02-24-p4k7m9x2-completion
+2026-02-24-r7k3m9x4-issue, Relate/unrelate push records spurious upsert with only {id} for primary resource — overwrites full records on other clients, 1, 2026-02-24T08:25:00Z, 2026-02-24-n9k3x7m4-completion
+2026-02-24-k4x7m9p3-issue, Pull never fetches join store changes — join cursors missing from client cursor map + duplicated join store name derivation, 1, 2026-02-24T11:10:00Z, 2026-02-24-j5r8n2k9-completion
+2026-02-24-fix-k7m4x9p2-spec, Consolidate duplicated code across datafn packages into @datafn/core, 1, 2026-02-24T19:00:00Z, datafn/.conduct/specs/2026-02-24-fix-k7m4x9p2-spec/phase-reports/PHASE_03-2026-02-24-k4r9m7x2-report.md
+2026-02-24-audit-fix-k9r4m7x3-spec, Fix all production-readiness audit findings: query push-down + bounded sync + mutation optimization + retention + rate limiting + observability, 1, 2026-02-25T04:50:00Z, datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_09-2026-02-25-r7m4k9x3-report.md
+2026-02-25-audit-fix-r7m4k9x2-spec, Fix remaining production-readiness gaps: IN_MEMORY secondary loading + getLatestServerSeq + batch mutation deltas + client pull pagination, 1, 2026-02-25T12:45:00Z, datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec/phase-reports/PHASE_04-2026-02-25-x4k7r9m2-report.md
+2026-02-25-k7m9x4r8-issue,QuerySignal notifies subscribers before clearing inFlight flag — loading stuck at true,1,2026-02-25T17:26:00Z,2026-02-25-k7m9x4r8-completion
+2026-02-25-r4k7m9x3-issue,IndexedDbStorageAdapter validResources missing join store keys — pull and push crash with Unknown table,1,2026-02-25T18:30:00Z,2026-02-25-r4k7m9x3-completion
+2026-02-25-m7k4x9r3-issue,Drizzle upsert fails with "No values to set" on many-many relate push with empty update,1,2026-02-25T21:36:00Z,2026-02-25-m7k4x9r3-completion
+2026-02-25-k9x4m7r3-issue,Drizzle codegen omits UNIQUE(from/to) constraint on join tables — ON CONFLICT upsert fails on PostgreSQL,0,,
+2026-02-25-r7x4m9k3-issue,Unrelate mutation does not propagate to other clients — composite ID separator mismatch between change tracking and pull parsing,1,2026-02-25T16:00:00Z,2026-02-25-r7x4m9k3-completion

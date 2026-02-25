@@ -42,12 +42,14 @@ export interface PullRequestCanonical {
 export interface PullResultCanonical {
   ok: boolean;
   records: Record<string, Array<Record<string, unknown>>>;
+  merged?: Record<string, Array<Record<string, unknown>>>; // partial records applied via mergeRecord (FIX-A)
   deleted: Record<string, string[]>;
   joins?: Record<string, {
     upsert: Array<Record<string, unknown>>;
     delete: Array<{ from: string; to: string }>;
   }>;
   cursors: Record<string, string>;
+  hasMore?: boolean; // CLIENT-PULL-001: true when changes were truncated
   error?: {
     code: string;
     message: string;
@@ -83,6 +85,7 @@ export async function executePull(
   db: Adapter,
   namespace: string,
   sequenceStore?: SequenceStore,
+  maxPullLimit?: number,
 ): Promise<PullResult> {
   // Validate clientId (common to both protocols)
   if (!request.clientId || typeof request.clientId !== "string") {
@@ -102,7 +105,7 @@ export async function executePull(
   if (isLegacyPull(request)) {
     return executePullLegacy(request, schema, db, namespace, sequenceStore);
   } else {
-    return executePullCanonical(request as PullRequestCanonical, schema, db, namespace, sequenceStore);
+    return executePullCanonical(request as PullRequestCanonical, schema, db, namespace, sequenceStore, maxPullLimit);
   }
 }
 
@@ -184,6 +187,7 @@ async function executePullCanonical(
   db: Adapter,
   namespace: string,
   sequenceStore?: SequenceStore,
+  maxPullLimit?: number,
 ): Promise<PullResultCanonical> {
   // Validate cursors object
   if (!request.cursors || typeof request.cursors !== "object") {
@@ -217,8 +221,8 @@ async function executePullCanonical(
     }
   }
 
-  const limit = request.limit ?? 200;
-  if (!Number.isInteger(limit) || limit <= 0) {
+  const requestLimit = request.limit ?? 200;
+  if (!Number.isInteger(requestLimit) || requestLimit <= 0) {
     return {
       ok: false,
       records: {},
@@ -232,10 +236,15 @@ async function executePullCanonical(
     };
   }
 
+  // Enforce server-side maxPullLimit (SYNC-002)
+  const effectiveMaxPullLimit = maxPullLimit && maxPullLimit > 0 ? maxPullLimit : 1000;
+  const limit = Math.min(requestLimit, effectiveMaxPullLimit);
+
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
-  
+
   // Initialize result structures
   const records: Record<string, Array<Record<string, unknown>>> = {};
+  const merged: Record<string, Array<Record<string, unknown>>> = {}; // merge deltas (FIX-A)
   const deleted: Record<string, string[]> = {};
   const joins: Record<string, { upsert: Array<Record<string, unknown>>; delete: Array<{ from: string; to: string }> }> = {};
   const cursors: Record<string, string> = {};
@@ -247,14 +256,16 @@ async function executePullCanonical(
     cursors[resource] = request.cursors[resource]; // Start with original cursor
   }
 
-  // Fetch changes per resource
+  // Fetch changes per resource with bounded limit (SYNC-001)
   const allChanges: Array<{ resource: string; change: any }> = [];
-  
+
   for (const [resource, cursor] of Object.entries(request.cursors)) {
     const sinceSeq = parseInt(cursor, 10);
+    // Fetch limit+1 so we can detect truncation without a separate COUNT query
     const resourceChanges = await changeTracking.getChangesSince({
       resource,
       sinceSeq,
+      limit: limit + 1,
     });
 
     for (const change of resourceChanges) {
@@ -264,6 +275,9 @@ async function executePullCanonical(
 
   // Sort all changes by serverSeq (deterministic ordering)
   allChanges.sort((a, b) => a.change.serverSeq - b.change.serverSeq);
+
+  // CLIENT-PULL-001: detect truncation before slicing
+  const hasMore = allChanges.length > limit;
 
   // Apply limit across all resources
   const limitedChanges = allChanges.slice(0, limit);
@@ -286,7 +300,7 @@ async function executePullCanonical(
         joins[resource] = { upsert: [], delete: [] };
       }
 
-      if (change.op === "upsert" && change.record) {
+      if ((change.op === "upsert" || change.op === "insert" || change.op === "replace") && change.record) {
         joins[resource].upsert.push(change.record);
       } else if (change.op === "delete") {
         // For join deletes, extract from/to from id or record
@@ -295,8 +309,14 @@ async function executePullCanonical(
         joins[resource].delete.push({ from, to });
       }
     } else {
-      // Regular resource change
-      if (change.op === "upsert" && change.record) {
+      // Regular resource change — dispatch based on op type (FIX-A)
+      if (change.op === "merge" && change.record) {
+        // Merge delta: client must apply via mergeRecord() to preserve unspecified fields
+        if (!merged[resource]) {
+          merged[resource] = [];
+        }
+        merged[resource].push(change.record);
+      } else if ((change.op === "insert" || change.op === "replace" || change.op === "upsert") && change.record) {
         records[resource].push(change.record);
       } else if (change.op === "delete") {
         deleted[resource].push(change.id);
@@ -314,7 +334,13 @@ async function executePullCanonical(
     records,
     deleted,
     cursors,
+    hasMore,
   };
+
+  // Include merged deltas if any exist (FIX-A)
+  if (Object.keys(merged).length > 0) {
+    result.merged = merged;
+  }
 
   // Include joins if requested
   if (request.includeJoins && Object.keys(joins).length > 0) {

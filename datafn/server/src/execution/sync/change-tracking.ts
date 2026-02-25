@@ -5,8 +5,8 @@
  * for sync operations (SERVER-CONFLICT-001, SERVER-SYNC-001/002/003).
  *
  * Internal tables:
- * - __datafn_meta: stores nextServerSeq per namespace
- * - __datafn_changes: stores change entries with (namespace, resource, serverSeq) index
+ * - __datafn_meta: stores next_server_seq per namespace
+ * - __datafn_changes: stores change entries with (namespace, resource, server_seq) index
  *
  * Supports pluggable sequence stores (Redis, KV, or database fallback) for
  * high-performance serverSeq generation.
@@ -14,6 +14,7 @@
 
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
+import { ensureInternalTable } from "../internal-tables.js";
 
 /**
  * Change entry representing a mutation effect
@@ -23,18 +24,32 @@ export interface ChangeEntry {
   serverSeq: number;
   resource: string;
   id: string;
-  op: "upsert" | "delete";
+  op: "insert" | "merge" | "replace" | "upsert" | "delete";
+  record: Record<string, unknown> | null;
+}
+
+/**
+ * Input type for recording a change entry (without namespace, which is supplied by the service)
+ */
+export interface ChangeEntryInput {
+  serverSeq: number;
+  resource: string;
+  id: string;
+  op: "insert" | "merge" | "replace" | "upsert" | "delete";
   record: Record<string, unknown> | null;
 }
 
 /**
  * Service for managing serverSeq and change tracking
- * 
+ *
  * When a sequenceStore is provided, serverSeq generation uses that store
  * (e.g., Redis for atomic INCR). Otherwise, falls back to the database
  * with CAS retry loop.
  */
 export class ChangeTrackingService {
+  private metaEnsured = false;
+  private changesEnsured = false;
+
   constructor(
     private db: Adapter,
     private namespace: string = "datafn",
@@ -47,18 +62,22 @@ export class ChangeTrackingService {
    * Returns the next available serverSeq for this namespace
    *
    * Implements SERVER-SEQ-001: atomic monotonic increment per namespace
-   * 
+   *
    * When a sequenceStore is configured (Redis/KV), uses that for atomic increment.
    * Otherwise, uses compare-and-swap retry loop with the database.
    */
   async getNextServerSeq(): Promise<number> {
-    // Use sequence store if available (Redis/KV for atomic increment)
-    if (this.sequenceStore) {
-      return await this.sequenceStore.getNext(this.namespace);
-    }
+    return (await this.getNextServerSeqBatch(1))[0];
+  }
 
-    // Fallback to database with CAS retry loop
-    return await this.getNextServerSeqFromDb();
+  /**
+   * Allocate a batch of contiguous serverSeq values atomically
+   */
+  async getNextServerSeqBatch(count: number): Promise<number[]> {
+    if (this.sequenceStore) {
+      return await this.sequenceStore.getNextN(this.namespace, count);
+    }
+    return await this.getNextServerSeqBatchFromDb(count);
   }
 
   /**
@@ -66,67 +85,57 @@ export class ChangeTrackingService {
    * Used when no secondary database (Redis/KV) is configured
    */
   private async getNextServerSeqFromDb(): Promise<number> {
+    return (await this.getNextServerSeqBatchFromDb(1))[0];
+  }
+
+  private async getNextServerSeqBatchFromDb(count: number): Promise<number[]> {
+    if (!this.metaEnsured) {
+      await ensureInternalTable(this.db, "__datafn_meta");
+      this.metaEnsured = true;
+    }
+
     const MAX_RETRIES = 10;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        // Try to find existing meta record
-        const meta = await this.db.findOne({
-          model: "__datafn_meta",
-          where: [
-            { field: "namespace", operator: "eq", value: this.namespace },
-          ],
-          namespace: this.namespace,
-        });
+        const meta = await this.db.internal.findOne("__datafn_meta", [
+          { field: "namespace", op: "eq", value: this.namespace },
+        ]);
 
         if (!meta) {
-          // Initialize meta record with nextServerSeq = 1
-          // This may fail due to concurrent initialization - that's ok, we'll retry
           try {
-            await this.db.create({
-              model: "__datafn_meta",
-              data: {
-                id: `meta:${this.namespace}`,
-                namespace: this.namespace,
-                nextServerSeq: 2, // Next one will be 2
-              },
+            await this.db.internal.create("__datafn_meta", {
+              id: `meta:${this.namespace}`,
               namespace: this.namespace,
+              next_server_seq: 1 + count,
             });
-            // Successfully initialized - return 1
-            return 1;
+            return Array.from({ length: count }, (_, i) => 1 + i);
           } catch (createError) {
-            // Concurrent create detected - retry to read the created record
             continue;
           }
         } else {
-          // Read current value
-          const currentSeq = (meta.nextServerSeq as number) || 1;
+          const currentSeq = (meta.next_server_seq as number) || 1;
 
-          // Attempt atomic update using where clause as CAS check
-          // Note: This assumes the adapter supports conditional updates
-          // For memory adapter, this is synchronous and atomic
           try {
-            await this.db.update({
-              model: "__datafn_meta",
-              where: [
-                { field: "namespace", operator: "eq", value: this.namespace },
-                { field: "nextServerSeq", operator: "eq", value: currentSeq },
+            const affected = await this.db.internal.update(
+              "__datafn_meta",
+              [
+                { field: "namespace", op: "eq", value: this.namespace },
+                { field: "next_server_seq", op: "eq", value: currentSeq },
               ],
-              data: {
-                nextServerSeq: currentSeq + 1,
-              },
-              namespace: this.namespace,
-            });
+              { next_server_seq: currentSeq + count },
+            );
 
-            // Update succeeded - return the allocated sequence
-            return currentSeq;
+            if (affected === 0) {
+              continue;
+            }
+
+            return Array.from({ length: count }, (_, i) => currentSeq + i);
           } catch (updateError) {
-            // Update failed (concurrent modification) - retry
             continue;
           }
         }
       } catch (error) {
-        // On last attempt, throw deterministic INTERNAL error
         if (attempt === MAX_RETRIES - 1) {
           console.error(
             "Failed to get next serverSeq after max retries:",
@@ -136,49 +145,48 @@ export class ChangeTrackingService {
             "INTERNAL: Failed to allocate serverSeq after maximum retries",
           );
         }
-        // Otherwise retry
       }
     }
 
-    // Should never reach here due to loop, but TypeScript needs this
     throw new Error(
       "INTERNAL: Failed to allocate serverSeq after maximum retries",
     );
   }
 
   /**
-   * Record a change entry for a mutation
+   * Record a change entry for a mutation (delegates to recordChanges)
    */
-  async recordChange(params: {
-    serverSeq: number;
-    resource: string;
-    id: string;
-    op: "upsert" | "delete";
-    record: Record<string, unknown> | null;
-  }): Promise<void> {
-    try {
-      await this.db.create({
-        model: "__datafn_changes",
-        data: {
-          id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
-          namespace: this.namespace,
-          serverSeq: params.serverSeq,
-          resource: params.resource,
-          recordId: params.id,
-          op: params.op,
-          record: params.record ? JSON.stringify(params.record) : null,
-          createdAt: new Date().toISOString(),
-        },
+  async recordChange(params: ChangeEntryInput): Promise<void> {
+    return this.recordChanges([params]);
+  }
+
+  /**
+   * Record multiple change entries in a single call.
+   * Ensures internal table once. Propagates errors immediately.
+   */
+  async recordChanges(entries: ChangeEntryInput[]): Promise<void> {
+    if (entries.length === 0) return;
+
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+
+    for (const params of entries) {
+      await this.db.internal.create("__datafn_changes", {
+        id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
         namespace: this.namespace,
+        server_seq: params.serverSeq,
+        resource: params.resource,
+        record_id: params.id,
+        op: params.op,
+        record: params.record ? JSON.stringify(params.record) : null,
+        created_at: new Date().toISOString(),
       });
 
-      // Notify callback if present
       if (this.onChange) {
         this.onChange(params.serverSeq);
       }
-    } catch (error) {
-      // Log but don't throw - change tracking errors shouldn't block mutations
-      console.error("Failed to record change:", error);
     }
   }
 
@@ -197,17 +205,20 @@ export class ChangeTrackingService {
     }
 
     // Fallback to database
+    if (!this.metaEnsured) {
+      await ensureInternalTable(this.db, "__datafn_meta");
+      this.metaEnsured = true;
+    }
+
     try {
-      const meta = await this.db.findOne({
-        model: "__datafn_meta",
-        where: [{ field: "namespace", operator: "eq", value: this.namespace }],
-        namespace: this.namespace,
-      });
+      const meta = await this.db.internal.findOne("__datafn_meta", [
+        { field: "namespace", op: "eq", value: this.namespace },
+      ]);
 
       if (!meta) {
         return 0;
       }
-      return ((meta.nextServerSeq as number) || 1) - 1;
+      return ((meta.next_server_seq as number) || 1) - 1;
     } catch (error) {
       console.error("Failed to get current serverSeq:", error);
       return 0;
@@ -222,24 +233,27 @@ export class ChangeTrackingService {
     sinceSeq: number;
     limit: number;
   }): Promise<ChangeEntry[]> {
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+
     try {
-      const changes = await this.db.findMany({
-        model: "__datafn_changes",
-        where: [
-          { field: "namespace", operator: "eq", value: this.namespace },
-          { field: "serverSeq", operator: "gt", value: params.sinceSeq },
+      const changes = await this.db.internal.findMany(
+        "__datafn_changes",
+        [
+          { field: "namespace", op: "eq", value: this.namespace },
+          { field: "server_seq", op: "gt", value: params.sinceSeq },
         ],
-        orderBy: [{ field: "serverSeq", direction: "asc" }],
-        limit: params.limit,
-        namespace: this.namespace,
-      });
+        { orderBy: "server_seq", limit: params.limit },
+      );
 
       return changes.map((change) => ({
         namespace: this.namespace,
-        serverSeq: change.serverSeq as number,
+        serverSeq: change.server_seq as number,
         resource: change.resource as string,
-        id: change.recordId as string,
-        op: change.op as "upsert" | "delete",
+        id: change.record_id as string,
+        op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
       }));
     } catch (error) {
@@ -250,29 +264,40 @@ export class ChangeTrackingService {
 
   /**
    * Get changes since a given serverSeq for a resource
+   * When limit is provided, only that many entries are returned (bounded fetch).
    */
   async getChangesSince(params: {
     resource: string;
     sinceSeq: number;
+    limit?: number;
   }): Promise<ChangeEntry[]> {
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+
     try {
-      const changes = await this.db.findMany({
-        model: "__datafn_changes",
-        where: [
-          { field: "namespace", operator: "eq", value: this.namespace },
-          { field: "resource", operator: "eq", value: params.resource },
-          { field: "serverSeq", operator: "gt", value: params.sinceSeq },
+      const opts: { orderBy: string; limit?: number } = { orderBy: "server_seq" };
+      if (params.limit != null && params.limit > 0) {
+        opts.limit = params.limit;
+      }
+
+      const changes = await this.db.internal.findMany(
+        "__datafn_changes",
+        [
+          { field: "namespace", op: "eq", value: this.namespace },
+          { field: "resource", op: "eq", value: params.resource },
+          { field: "server_seq", op: "gt", value: params.sinceSeq },
         ],
-        orderBy: [{ field: "serverSeq", direction: "asc" }],
-        namespace: this.namespace,
-      });
+        opts,
+      );
 
       return changes.map((change) => ({
         namespace: this.namespace,
-        serverSeq: change.serverSeq as number,
+        serverSeq: change.server_seq as number,
         resource: change.resource as string,
-        id: change.recordId as string,
-        op: change.op as "upsert" | "delete",
+        id: change.record_id as string,
+        op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
         record: change.record ? JSON.parse(change.record as string) : null,
       }));
     } catch (error) {
@@ -282,27 +307,42 @@ export class ChangeTrackingService {
   }
 
   /**
+   * Delete change entries older than retentionDays for this namespace.
+   * Returns the number of rows deleted.
+   */
+  async pruneChanges(retentionDays: number): Promise<number> {
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+    const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
+    return await this.db.internal.delete("__datafn_changes", [
+      { field: "namespace", op: "eq", value: this.namespace },
+      { field: "created_at", op: "lt", value: cutoff },
+    ]);
+  }
+
+  /**
    * Get the latest serverSeq for a resource
    * Returns 0 if no changes exist
    */
   async getLatestServerSeq(params: { resource: string }): Promise<number> {
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+
     try {
-      const changes = await this.db.findMany({
-        model: "__datafn_changes",
-        where: [
-          { field: "namespace", operator: "eq", value: this.namespace },
-          { field: "resource", operator: "eq", value: params.resource },
+      const changes = await this.db.internal.findMany(
+        "__datafn_changes",
+        [
+          { field: "namespace", op: "eq", value: this.namespace },
+          { field: "resource", op: "eq", value: params.resource },
         ],
-        orderBy: [{ field: "serverSeq", direction: "desc" }],
-        limit: 1,
-        namespace: this.namespace,
-      });
+        { orderBy: "-server_seq", limit: 1 },
+      );
 
-      if (changes.length === 0) {
-        return 0;
-      }
-
-      return (changes[0].serverSeq as number) || 0;
+      return (changes[0]?.server_seq as number) ?? 0;
     } catch (error) {
       console.error("Failed to get latest serverSeq:", error);
       return 0;

@@ -280,6 +280,100 @@ describe("/datafn/query validation", () => {
     expect(body.error.details.index).toBe(1);
   });
 
+  it("accepts sort with '-field' prefix (descending shorthand)", async () => {
+    const server = await createDatafnServer({
+      schema: fixtureF1Schema,
+      limits: { maxLimit: 100 },
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        version: 1,
+        sort: ["-updatedAt"],
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("accepts sort with mixed '-field' and 'field:asc' formats", async () => {
+    const server = await createDatafnServer({
+      schema: fixtureF1Schema,
+      limits: { maxLimit: 100 },
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        version: 1,
+        sort: ["-updatedAt", "id:asc"],
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("rejects sort with '-nonExistentField' prefix", async () => {
+    const server = await createDatafnServer({
+      schema: fixtureF1Schema,
+      limits: { maxLimit: 100 },
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        version: 1,
+        sort: ["-doesNotExist"],
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
+  });
+
+  it("accepts cursor pagination with '-field' sort prefix as tie-breaker", async () => {
+    const server = await createDatafnServer({
+      schema: fixtureF1Schema,
+      limits: { maxLimit: 100 },
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        version: 1,
+        sort: ["-updatedAt", "-id"],
+        cursor: { after: { id: "t1", updatedAt: "2026-01-01" } },
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
   it("validates relation expansions correctly", async () => {
     const server = await createDatafnServer({
       schema: fixtureF1Schema,

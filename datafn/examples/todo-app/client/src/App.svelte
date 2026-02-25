@@ -2,26 +2,28 @@
   import { onMount, onDestroy } from "svelte";
   import { toSvelteStore } from "@datafn/svelte";
   import {
-    client as initialClient,
+    client,
     switchMode,
     auditLog,
     type AppMode,
     type AuditEntry,
   } from "./lib/datafn";
 
-  // ── Reactive client reference ──────────────────────────────────────────
-  let client = initialClient;
-
   // ── Mode toggle (sync vs local-only) ──────────────────────────────────
   let currentMode: AppMode = "sync";
+  let isSwitching = false;
 
-  function handleModeSwitch() {
+  async function handleModeSwitch() {
+    if (isSwitching) return;
     const next: AppMode = currentMode === "sync" ? "local-only" : "sync";
-    currentMode = next;
-    client = switchMode(next);
-    rebindSignals();
-    if (next === "sync") {
-      client.sync.start().catch(console.error);
+    isSwitching = true;
+    try {
+      currentMode = next;
+      await switchMode(next);
+    } catch (e) {
+      console.error("[DEBUG] Mode switch failed:", e);
+    } finally {
+      isSwitching = false;
     }
   }
 
@@ -34,85 +36,83 @@
   let filterView: "all" | "active" | "completed" = "all";
   let activeTab = "todos";
 
-  // ── KV Preferences ────────────────────────────────────────────────────
-  let themeSignalStore: any;
-  let sortSignalStore: any;
-
   // ── Event log ──────────────────────────────────────────────────────────
   let eventEntries: Array<{ ts: number; type: string; detail: string }> = [];
   let unsubEvents: (() => void) | null = null;
   const MAX_EVENTS = 40;
 
-  function subscribeEvents() {
+  // Re-subscribe to the event bus whenever the underlying client changes.
+  // client.subscribeClient passes the stable proxy on each switch.
+  const unsubClientForEvents = client.subscribeClient((c) => {
     unsubEvents?.();
-    unsubEvents = client.subscribe((event) => {
+    unsubEvents = c.subscribe((event) => {
+      console.log("[DEBUG] Event:", event.type, (event as any).resource, (event as any).action, (event as any).ids);
       eventEntries = [
         {
           ts: event.timestampMs,
           type: event.type,
-          detail: `${event.action ?? ""} ${event.resource ?? ""} ${(event.ids ?? []).join(",")}`.trim(),
+          detail: `${(event as any).action ?? ""} ${(event as any).resource ?? ""} ${((event as any).ids ?? []).join(",")}`.trim(),
         },
         ...eventEntries,
       ].slice(0, MAX_EVENTS);
     });
-  }
+  });
 
-  // ── Signals ────────────────────────────────────────────────────────────
-  let allTodosStore: any;
-  let activeTodosStore: any;
-  let completedTodosStore: any;
-  let categoriesStore: any;
+  // ── Signals — lifecycle-aware LiveSignals (survive switchContext automatically) ──
+  const allTodosStore = toSvelteStore(
+    client.table("todos").signal({ sort: ["-createdAt"], select: ["*", "tags.*"] })
+  );
 
-  function rebindSignals() {
-    // Table signals — reactive queries auto-update when data changes
-    allTodosStore = toSvelteStore(
-      client.table("todos").signal({ sort: ["-createdAt"] })
-    );
+  const activeTodosStore = toSvelteStore(
+    client.table("todos").signal({ filters: { completed: false }, sort: ["createdAt:desc"], select: ["*", "tags.*"] })
+  );
 
-    activeTodosStore = toSvelteStore(
-      client
-        .table("todos")
-        .signal({ filters: { completed: false }, sort: ["-createdAt"] })
-    );
+  const completedTodosStore = toSvelteStore(
+    client.table("todos").signal({ filters: { completed: true }, sort: ["createdAt:desc"], select: ["*", "tags.*"] })
+  );
 
-    completedTodosStore = toSvelteStore(
-      client
-        .table("todos")
-        .signal({ filters: { completed: true }, sort: ["-createdAt"] })
-    );
+  const categoriesStore = toSvelteStore(
+    client.table("categories").signal({ sort: ["name"] })
+  );
 
-    categoriesStore = toSvelteStore(
-      client.table("categories").signal({ sort: ["name"] })
-    );
+  // KV signals — reactive key-value preferences
+  const themeSignalStore = toSvelteStore(
+    client.kv.signal<string>("pref:theme", { defaultValue: "dark" })
+  );
 
-    // KV signals — reactive key-value preferences
-    themeSignalStore = toSvelteStore(
-      client.kv.signal<string>("pref:theme", { defaultValue: "dark" })
-    );
-
-    sortSignalStore = toSvelteStore(
-      client.kv.signal<string>("pref:sort", { defaultValue: "-createdAt" })
-    );
-
-    subscribeEvents();
-  }
+  const sortSignalStore = toSvelteStore(
+    client.kv.signal<string>("pref:sort", { defaultValue: "createdAt:desc" })
+  );
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
   onMount(async () => {
-    rebindSignals();
+    // Debug: test a direct query to see what comes back
+    try {
+      const directResult = await client.table("todos").query({ sort: ["createdAt:desc"] });
+      console.log("[DEBUG] Direct query result:", JSON.stringify(directResult, null, 2));
+    } catch (err) {
+      console.error("[DEBUG] Direct query failed:", err);
+    }
 
     if (currentMode === "sync") {
       try {
         await client.sync.start();
-        console.log("Sync started — hydration in progress…");
+        console.log("[DEBUG] Sync started OK");
+        try {
+          const postSyncResult = await client.table("todos").query({ sort: ["createdAt:desc"] });
+          console.log("[DEBUG] Post-sync query result:", JSON.stringify(postSyncResult, null, 2));
+        } catch (err2) {
+          console.error("[DEBUG] Post-sync query failed:", err2);
+        }
       } catch (e) {
-        console.error("Sync start failed:", e);
+        console.error("[DEBUG] Sync start failed:", e);
       }
     }
   });
 
   onDestroy(() => {
     unsubEvents?.();
+    unsubClientForEvents();
   });
 
   // ── Computed (reactive) ────────────────────────────────────────────────
@@ -123,13 +123,18 @@
         ? $completedTodosStore
         : $allTodosStore;
 
+  $: console.log("[DEBUG] $allTodosStore:", JSON.stringify($allTodosStore));
+  $: console.log("[DEBUG] typeof $allTodosStore:", typeof $allTodosStore, "keys:", $allTodosStore && typeof $allTodosStore === "object" ? Object.keys($allTodosStore) : "N/A");
+
   $: todoData = visibleTodos?.data ?? [];
   $: allCount = ($allTodosStore?.data ?? []).length;
   $: activeCount = ($activeTodosStore?.data ?? []).length;
   $: completedCount = ($completedTodosStore?.data ?? []).length;
   $: categories = $categoriesStore?.data ?? [];
   $: currentTheme = $themeSignalStore?.data ?? "dark";
-  $: currentSort = $sortSignalStore?.data ?? "-createdAt";
+  $: currentSort = $sortSignalStore?.data ?? "createdAt:desc";
+
+  $: console.log("[DEBUG] todoData:", JSON.stringify(todoData), "length:", todoData?.length, "isArray:", Array.isArray(todoData));
 
   // ── Mutations ──────────────────────────────────────────────────────────
 
@@ -137,16 +142,22 @@
     const text = newTodoText.trim();
     if (!text) return;
 
-    await client.table("todos").mutate({
-      operation: "insert",
-      record: {
-        text,
-        completed: false,
-        priority: newTodoPriority,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    });
+    console.log("[DEBUG] Adding todo:", text);
+    try {
+      const result = await client.table("todos").mutate({
+        operation: "insert",
+        record: {
+          text,
+          completed: false,
+          priority: newTodoPriority,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+      console.log("[DEBUG] addTodo result:", JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error("[DEBUG] addTodo failed:", err);
+    }
 
     newTodoText = "";
     newTodoPriority = 3;
@@ -239,8 +250,9 @@
       version: 1,
       operation: "relate",
       id: todoId,
-      relation: "tags",
-      targetId: categoryId,
+      relations: {
+        tags: { $ref: categoryId },
+      },
     });
   }
 
@@ -250,8 +262,9 @@
       version: 1,
       operation: "unrelate",
       id: todoId,
-      relation: "tags",
-      targetId: categoryId,
+      relations: {
+        tags: { $ref: categoryId },
+      },
     });
   }
 
@@ -295,6 +308,17 @@
 </script>
 
 <main class:light={currentTheme === "light"}>
+  <!-- ─── DEBUG PANEL ─────────────────────────────────────────────── -->
+  <div style="background: #1a0a0a; border: 2px solid red; padding: 12px; margin: 8px; font-family: monospace; font-size: 11px; color: #ff6666; max-height: 200px; overflow: auto;">
+    <strong>DEBUG PANEL</strong><br/>
+    <div>$allTodosStore: {JSON.stringify($allTodosStore)?.slice(0, 300)}</div>
+    <div>typeof: {typeof $allTodosStore}</div>
+    <div>todoData length: {todoData?.length ?? "N/A"} | isArray: {Array.isArray(todoData)}</div>
+    <div>allCount: {allCount} | activeCount: {activeCount} | completedCount: {completedCount}</div>
+    <div>visibleTodos: {JSON.stringify(visibleTodos)?.slice(0, 200)}</div>
+    <div>filterView: {filterView} | currentMode: {currentMode}</div>
+  </div>
+
   <!-- ─── Header ────────────────────────────────────────────────────── -->
   <header>
     <h1>DataFn Todo App</h1>
@@ -421,6 +445,18 @@
 
               <span class="text">{todo.text}</span>
 
+              <!-- Assigned tags -->
+              {#if todo.tags && todo.tags.length > 0}
+                <div class="todo-tags">
+                  {#each todo.tags as tag (tag.id)}
+                    <span class="todo-tag" style="background:{tag.color}" title={tag.name}>
+                      {tag.name}
+                      <button class="untag-btn" on:click={() => untagTodo(todo.id, tag.id)}>×</button>
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+
               <!-- Relation: tag selector -->
               {#if categories.length}
                 <select
@@ -525,8 +561,8 @@
           <p>Current: <strong>{currentSort}</strong></p>
           <div class="kv-actions">
             <button
-              class:active={currentSort === "-createdAt"}
-              on:click={() => setSortPref("-createdAt")}
+              class:active={currentSort === "createdAt:desc"}
+              on:click={() => setSortPref("createdAt:desc")}
             >
               Newest first
             </button>
@@ -879,6 +915,41 @@ client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code></pre>
     max-width: 90px;
     font-size: 0.75rem;
     padding: 0.3rem 0.4rem;
+  }
+
+  .todo-tags {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+
+  .todo-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+  }
+
+  .untag-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    padding: 0;
+    font-size: 0.85rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+  }
+
+  .untag-btn:hover {
+    color: #fff;
   }
 
   .delete-btn {

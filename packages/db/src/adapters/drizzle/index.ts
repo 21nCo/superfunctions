@@ -25,6 +25,7 @@ import type {
 } from '../../adapter/types.js';
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { OperationNotSupportedError } from '../../adapter/errors.js';
+import { createDrizzleInternalCrud } from './internal.js';
 
 // Import Drizzle helpers loosely to avoid strict peer typing
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -264,26 +265,45 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
           target = where.length === 1 ? where[0].field : where.map((w) => w.field);
         }
 
+        const hasUpdate = update && Object.keys(update).length > 0;
+
         if (config.dialect === 'mysql') {
-          const q = db.insert(tbl).values(create as any).onDuplicateKeyUpdate({ set: update as any });
+          const q = hasUpdate
+            ? db.insert(tbl).values(create as any).onDuplicateKeyUpdate({ set: update as any })
+            : db.insert(tbl).values(create as any).$onDuplicateKeyUpdate
+              ? db.insert(tbl).values(create as any).onDuplicateKeyUpdate({ set: create as any })
+              : db.insert(tbl).values(create as any);
           if (select && select.length > 0) {
-            await q.execute();
+            try { await q.execute(); } catch (e: any) {
+              // MySQL INSERT IGNORE equivalent: if duplicate, ignore
+              if (!hasUpdate && e?.code === 'ER_DUP_ENTRY') { /* no-op: row already exists */ }
+              else throw e;
+            }
             // reselect
             const row = await this.findOne<T>({ model, where, select });
             if (!row) throw new Error('Upsert failed to return a row');
             return row;
           } else {
-            await q.execute();
+            try { await q.execute(); } catch (e: any) {
+              if (!hasUpdate && e?.code === 'ER_DUP_ENTRY') { /* no-op: row already exists */ }
+              else throw e;
+            }
             return (create as any) as T;
           }
         } else {
           const keys = Array.isArray(target) ? target.map((k) => (tbl as any)[k]) : [(tbl as any)[target as string]];
           const returning = select && select.length > 0 ? Object.fromEntries(select.map((k) => [k, (tbl as any)[k]])) : undefined;
-          const q = db
-            .insert(tbl)
-            .values(create as any)
-            .onConflictDoUpdate({ target: keys as any, set: update as any });
+          const q = hasUpdate
+            ? db.insert(tbl).values(create as any)
+                .onConflictDoUpdate({ target: keys as any, set: update as any })
+            : db.insert(tbl).values(create as any)
+                .onConflictDoNothing({ target: keys as any });
           const res = await (returning ? q.returning(returning as any) : q.returning()).execute();
+          // onConflictDoNothing returns empty array when conflict occurs; fall back to findOne
+          if ((!res || (Array.isArray(res) && res.length === 0)) && !hasUpdate) {
+            const row = await this.findOne<T>({ model, where, select });
+            return row as T;
+          }
           return (Array.isArray(res) ? res[0] : (res as any)) as T;
         }
       },
@@ -439,6 +459,7 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
     adapter: createImpl,
   });
 
-  // Return an adapter instance for default (no library-provided overrides)
-  return factory({});
+  const adapter = factory({});
+  const internalCrud = createDrizzleInternalCrud(config.db, config.dialect);
+  return Object.assign(adapter, { internal: internalCrud });
 }

@@ -45,6 +45,7 @@ describe("/datafn/status", () => {
       maxLimit: 2,
       maxTransactSteps: 2,
       maxPayloadBytes: 1048576,
+      maxPullLimit: 1000,
     });
     expect(body.result.serverTimeMs).toBe(fakeTime);
   });

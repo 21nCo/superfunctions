@@ -3,6 +3,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import { getJoinStoreKey, getJoinTableName } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
@@ -201,19 +202,22 @@ export async function executeClone(
       // Skip relations that aren't many-many (no join rows)
       if (relation.type !== "many-many") continue;
 
-      // Derive join store key (consistent with client naming)
-      const joinStoreKey = `join_${relation.from}_${relation.relation}_${relation.to}`;
+      // Logical key used by the client for its join store (matches change tracking and pull)
+      const joinStoreKey = getJoinStoreKey(relation.from as string, relation.relation!, relation.to as string);
+      // Actual DB table name (matches what relations.ts writes and what codegen generates)
+      const joinTableName = getJoinTableName(relation.from as string, relation.relation!, relation.joinTable);
 
       try {
-        // Query join table for all rows
+        // Query join table for all rows using the actual DB table name
         const joinRecords = await db.findMany({
-          model: joinStoreKey,
+          model: joinTableName,
           where: [],
           orderBy: [{ field: "from", direction: "asc" }],
           namespace,
         });
 
         if (joinRecords.length > 0) {
+          // Return results under the logical client store key
           joins[joinStoreKey] = joinRecords;
         }
       } catch (error) {

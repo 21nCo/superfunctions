@@ -15,6 +15,7 @@ import {
 import { isSearchPlugin } from "../plugins/searchfn.js";
 import { buildSchemaIndex, validateQueryBody } from "../validation/index.js";
 import { logRequest } from "../logging.js";
+import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 
 /**
  * Validate a single query object against the schema
@@ -768,6 +769,7 @@ export function createQueryHandler(
   db?: Adapter, // Use Adapter instead of store
   plugins: DatafnPlugin[] = [],
   extractNamespace: (ctx: any) => Promise<string>,
+  timingEmitter?: TimingEmitter | null,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -775,8 +777,10 @@ export function createQueryHandler(
     return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
       const startTime = Date.now();
       let resource: string | undefined;
-      
+      const timer = timingEmitter ? new ExecutionTimer() : null;
+
       try {
+        timer?.startPhase("validate");
         // Get body from context (pre-parsed by withAuth) or parse from request
         const parseResult = await getBodyFromContext(req, ctx);
         if (!parseResult.ok) {
@@ -818,7 +822,7 @@ export function createQueryHandler(
           });
         }
   
-        const { isBatch, queries: transformedQueries } = validationResult.value;
+        const { isBatch, queries: transformedQueries } = validationResult.result;
   
         // PHASE_11: Enforce read permissions for each query
         const { validateQueryAuthz } = await import("../validation/authz.js");
@@ -840,19 +844,68 @@ export function createQueryHandler(
           const { executeQuery } = await import("../execution/query/execute.js");
           const { DbDataStore } = await import("../execution/db-store.js");
           const { classifyExecutionError } = await import("../execution/errors.js");
+          const { classifyQuery, extractPushableFilters } = await import("../execution/query/planner.js");
+          const { executePushdownQuery, executePartialPushdownQuery } = await import("../execution/query/pushdown.js");
   
           // Extract namespace from context
           const namespace = await extractNamespace(ctx);
 
+          timer?.startPhase("plan");
           const results = await Promise.all(
             transformedQueries.map(async (q) => {
               const query = q as Record<string, unknown>;
-              // Create DataStore with automatic related resource discovery
+
+              // Phase 02/03: dispatch based on query strategy
+              const strategy = classifyQuery(query, validatedSchema);
+
+              timer?.startPhase("fetch");
+              if (strategy === "FULL_PUSHDOWN") {
+                // Skip DbDataStore — push entire query to adapter
+                return executePushdownQuery(
+                  query as any,
+                  validatedSchema,
+                  db,
+                  namespace,
+                );
+              }
+
+              if (strategy === "PARTIAL_PUSHDOWN") {
+                // Push primary-resource fetch to adapter; expand relations in-memory
+                return executePartialPushdownQuery(
+                  query as any,
+                  validatedSchema,
+                  db,
+                  namespace,
+                );
+              }
+
+              // IN_MEMORY: load records via DbDataStore.
+              // Extract base-field (pushable) filters to pre-filter the primary
+              // resource at the adapter level before in-memory evaluation (SCALE-004).
+              // Skip pre-filtering for HTREE queries — HTREE expansion needs all
+              // ancestor/descendant records, not just the one matching the filter.
+              const selectHasHtree = Array.isArray(query.select) &&
+                (query.select as string[]).some(
+                  (t) => typeof t === "string" && (t.startsWith("parent.") || t.startsWith("children."))
+                );
+              let preFilterWhere: import("@superfunctions/db").WhereClause[] | undefined;
+              if (!selectHasHtree && query.filters && typeof query.filters === "object") {
+                const { pushable } = extractPushableFilters(
+                  query.filters as Record<string, unknown>,
+                  query.resource as string,
+                  validatedSchema,
+                );
+                if (pushable.length > 0) {
+                  preFilterWhere = pushable as import("@superfunctions/db").WhereClause[];
+                }
+              }
+
               const store = await DbDataStore.forQuery(
                 db,
                 query as { resource: string; select?: string[] },
                 validatedSchema,
                 namespace,
+                preFilterWhere,
               );
   
               // Execute query using proper execution engine
@@ -873,17 +926,20 @@ export function createQueryHandler(
                 );
               }
   
-              const result = executeQuery(query as any, validatedSchema, store);
-  
-              return result;
+              return executeQuery(query as any, validatedSchema, store);
             }),
           );
   
+          timer?.startPhase("materialize");
           let result = isBatch ? results : results[0];
-  
+
           // Run afterQuery hooks (fail-open)
           result = await runAfterQuery(transformedBody, result, hookCtx, plugins);
-  
+
+          if (timingEmitter && timer) {
+            timingEmitter(timer.build("/datafn/query", resource, "query"));
+          }
+
           return okResponse(result);
         } else {
           // Phase 01: Return empty results if no DB provided

@@ -75,13 +75,19 @@ export async function executeTransaction(
         step.mutation,
         schema,
         stepDb,
-        idempotencyStore, // Idempotency store might need tx context? Usually persistent.
-        // If atomic, we want to update idempotency ONLY on commit.
-        // But `executeMutation` writes to store.
-        // We might need a "buffered" idempotency store or accept that idempotency might be written even on rollback (if store is external).
-        // For now, pass as is.
+        idempotencyStore,
         changeTracking,
       );
+      // Expose the first error as a top-level `.error` property so that
+      // transact callers can access result.results[i].error.code directly
+      // (in addition to the standard errors[] array).
+      if (!mutationResult.ok && mutationResult.errors?.length > 0) {
+        const e = mutationResult.errors[0];
+        return {
+          ...mutationResult,
+          error: { code: e.code, message: e.message, path: e.path },
+        };
+      }
       return mutationResult;
     }
     return null; // Should not happen due to validation
@@ -118,50 +124,43 @@ export async function executeTransaction(
           },
         };
       }
-      // Unexpected error
-      return {
-        ok: false,
-        error: { code: "INTERNAL", message: error.message },
-      };
+      // Adapter doesn't support transactions (e.g. memory adapter) — fall through
+      // to sequential execution below. Clear any partial results first.
+      results.length = 0;
     }
-  } else {
-    // Non-atomic or no transaction support (sequential execution)
-    // Or atomic: false explicitly requested
-    for (const step of steps) {
-      try {
-        const result = await executeStep(step, db);
-        results.push(result);
-
-        if (isAtomic && step.mutation) {
-          const mutRes = result as MutationResult;
-          if (!mutRes.ok) {
-            // Stop on first failure if atomic (even without rollback support we stop)
-            return { ok: true, result: { ok: false, results } };
-          }
-        }
-      } catch (e: any) {
-        // Unexpected error during step execution
-         console.log("Transact Step Error:", e);
-         // Map to an error result
-         results.push({
-             ok: false,
-             error: { code: "INTERNAL", message: e.message }
-         });
-         if (isAtomic) return { ok: true, result: { ok: false, results } };
-      }
-    }
-    
-    // Check for any failures in results
-    const anyFailed = results.some(r => {
-        // Mutation result has ok: boolean
-        if ('ok' in r) return !r.ok;
-        // Query result has data: [] (success) or is envelope? 
-        // executeQuery returns { data: ... } on success.
-        // It throws on error, which is caught above.
-        // So if we have result here, it's success.
-        return false; 
-    });
-    
-    return { ok: true, result: { ok: !anyFailed, results } };
   }
+
+  // Sequential execution (non-atomic, or atomic fallback when transaction not supported)
+  for (const step of steps) {
+    try {
+      const result = await executeStep(step, db);
+      results.push(result);
+
+      if (isAtomic && step.mutation) {
+        const mutRes = result as any;
+        if (mutRes?.ok === false) {
+          // Stop on first failure if atomic (even without rollback support we stop)
+          return { ok: true, result: { ok: false, results } };
+        }
+      }
+    } catch (e: any) {
+      // Unexpected error during step execution
+      console.log("Transact Step Error:", e);
+      // Map to an error result
+      results.push({
+        ok: false,
+        error: { code: e.code || "INTERNAL", message: e.message }
+      });
+      if (isAtomic) return { ok: true, result: { ok: false, results } };
+    }
+  }
+
+  // Check for any failures in results
+  const anyFailed = results.some(r => {
+    if (r == null) return false;
+    if (typeof r === 'object' && 'ok' in r) return !r.ok;
+    return false;
+  });
+
+  return { ok: true, result: { ok: !anyFailed, results } };
 }

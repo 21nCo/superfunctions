@@ -1,0 +1,7 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-23T18:30:00Z,claude-4.6-opus-high-thinking,Cursor,spec,unknown-agent,,datafn/.conduct/specs/2026-02-23-new-r4m9kx7v-spec
+2026-02-23T19:23:00Z,claude-sonnet-4-6,Claude Code,execute,claude-sonnet-4-6,PHASE_00,datafn/.conduct/specs/2026-02-23-new-r4m9kx7v-spec/phase-reports/PHASE_00-2026-02-23-k3m7x9p2-report.md
+2026-02-23T19:42:00Z,claude-sonnet-4-6,Claude Code,execute,claude-sonnet-4-6,PHASE_01,datafn/.conduct/specs/2026-02-23-new-r4m9kx7v-spec/phase-reports/PHASE_01-2026-02-23-m4x7k9p2-report.md
+2026-02-23T21:35:00Z,claude-sonnet-4-6,Claude Code,execute,claude-sonnet-4-6,PHASE_02,datafn/.conduct/specs/2026-02-23-new-r4m9kx7v-spec/phase-reports/PHASE_02-2026-02-23-r9m4k7x2-report.md
+2026-02-23T21:45:00Z,claude-sonnet-4-6,Claude Code,execute,claude-sonnet-4-6,PHASE_03,datafn/.conduct/specs/2026-02-23-new-r4m9kx7v-spec/phase-reports/PHASE_03-2026-02-23-k4m7x9p3-report.md
+2026-02-23T21:52:00Z,claude-sonnet-4-6,Claude Code,execute,claude-sonnet-4-6,PHASE_04,datafn/.conduct/specs/2026-02-23-new-r4m9kx7v-spec/phase-reports/PHASE_04-2026-02-23-m9k4x7p3-report.md

@@ -3,7 +3,7 @@
  */
 
 import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
-import { validateSchema } from "@datafn/core";
+import { validateSchema, buildSchemaIndex } from "@datafn/core";
 import { EventBus, type EventHandler } from "./events/bus.js";
 import type { EventFilter } from "./events/filter.js";
 import { createClientError } from "./errors.js";
@@ -13,6 +13,7 @@ import { executeQuery } from "./query.js";
 import { executeMutation } from "./mutate.js";
 import { executeTransact } from "./transact.js";
 import { SignalRegistry } from "./signals/querySignal.js";
+import { LiveSignalRegistry } from "./signals/liveSignal.js";
 import { createSyncFacade, type SyncFacade } from "./sync.js";
 import type { DatafnStorageAdapter, DatafnStorageFactory } from "./storage.js";
 import type { AuthContext, AuthContextProvider } from "@superfunctions/auth";
@@ -135,11 +136,31 @@ export interface DatafnSyncConfig {
   };
 
   /**
+   * Push interval exponential backoff configuration when push keeps failing.
+   * When a push round exhausts all retries and fails, the next round is delayed
+   * using exponential backoff: pushInterval * multiplier^consecutiveFailures.
+   * On first success after failures, backoff is reset to configured pushInterval.
+   * Default: baseMultiplier=2, maxDelayMs=300000 (5 minutes), jitterMs=1000.
+   */
+  pushIntervalBackoff?: {
+    baseMultiplier?: number;
+    maxDelayMs?: number;
+    jitterMs?: number;
+  };
+
+  /**
    * Pull batch size limit per request.
    * Must be a positive integer between 10 and 10000.
    * Default: 200.
    */
   pullBatchSize?: number;
+
+  /**
+   * Maximum number of catch-up pull iterations per sync cycle (CLIENT-PULL-003).
+   * Prevents infinite loops if the server continuously returns hasMore=true.
+   * Default: 50.
+   */
+  maxPullIterations?: number;
 
   /**
    * Enable cross-tab coordination via BroadcastChannel.
@@ -208,6 +229,19 @@ export interface DatafnClientConfig<S extends DatafnSchema> {
   generateId?: (params: { resource: string; idPrefix?: string }) => string;
 }
 
+/**
+ * Override options for switchContext.
+ * Only the provided fields are changed; everything else is inherited from the current config.
+ */
+export type SwitchContextOverride = {
+  /** New auth context (replaces current) */
+  authContext?: AuthContext;
+  /** New sync configuration (replaces current, not merged) */
+  sync?: DatafnSyncConfig;
+  /** New storage adapter or factory (replaces current) */
+  storage?: DatafnStorageAdapter | DatafnStorageFactory;
+};
+
 export type DatafnClient<S extends DatafnSchema> = {
   table<Name extends ResourceNames<S>>(name: Name): DatafnTable<S, Name>;
   query(q: unknown | unknown[]): Promise<unknown>;
@@ -236,14 +270,30 @@ export type DatafnClient<S extends DatafnSchema> = {
   importData(data: unknown, options?: { triggerCloneUp?: boolean }): Promise<unknown>;
   /** Check storage health and verify hydration state consistency. */
   checkHealth(): Promise<{ ok: boolean; issues: string[]; action?: "none" | "reclone" }>;
+  /**
+   * Switch to a different configuration context (auth, sync mode, or storage).
+   * Destroys the current underlying client and recreates it with merged config.
+   * Concurrent calls are serialized. Auto-starts sync when sync.mode is "sync".
+   */
+  switchContext(override: SwitchContextOverride): Promise<void>;
+  /** Get the current resolved auth context, or undefined if not configured. */
+  currentContext(): AuthContext | undefined;
+  /**
+   * Subscribe to client lifecycle changes.
+   * The callback fires immediately with the stable proxy reference,
+   * and again after every switchContext() completes.
+   * Returns an unsubscribe function.
+   */
+  subscribeClient(fn: (client: DatafnClient<S>) => void): () => void;
 } & {
   [Name in ResourceNames<S>]: DatafnTable<S, Name>;
 };
 
 /**
- * Create a DataFn client
+ * Internal: creates a one-shot DataFn client without switching capability.
+ * Used by createDatafnClient (the public API that adds switchContext).
  */
-export function createDatafnClient<S extends DatafnSchema>(
+function _buildRawClient<S extends DatafnSchema>(
   config: DatafnClientConfig<S>,
 ): DatafnClient<S> {
   // Validate schema at client creation (CLIENT-API-001)
@@ -341,6 +391,8 @@ export function createDatafnClient<S extends DatafnSchema>(
 
   // Ensure built-in KV resource exists in schema (KV-001)
   const schema = ensureBuiltinKv(validationResult.result);
+  // Build O(1) schema index for offline query path (IDX-003)
+  const schemaIndex = buildSchemaIndex(schema);
   const eventBus = new EventBus();
   const getTimestamp = config.getTimestamp || (() => Date.now());
 
@@ -433,12 +485,48 @@ export function createDatafnClient<S extends DatafnSchema>(
     );
   }
 
+  // STORAGE-INIT-001: Validate storage has all required resource stores.
+  // Probes each resource with a lightweight getRecord call. If a store is
+  // missing (e.g. schema was not passed to IndexedDbStorageAdapter), this
+  // throws a clear error on the first query/mutation instead of a cryptic
+  // "Store not found" deep in the stack.
+  // Defined before localOnlyInitPromise so that it can be awaited first.
+  const storageValidationPromise = resolvedStorage
+    ? (async () => {
+        for (const resource of schema.resources) {
+          if (resource.isRemoteOnly) continue;
+          try {
+            await resolvedStorage.getRecord(resource.name, "__storage_probe__");
+          } catch (err: any) {
+            if (
+              typeof err?.message === "string" &&
+              err.message.includes("Store not found")
+            ) {
+              createClientError(
+                "DFQL_INVALID",
+                `Storage is missing object store for resource "${resource.name}". ` +
+                  `Pass schema when creating IndexedDbStorageAdapter: ` +
+                  `IndexedDbStorageAdapter.create({ dbName, schema })`,
+                { path: "storage", resource: resource.name },
+              );
+            }
+            throw err;
+          }
+        }
+      })()
+    : Promise.resolve();
+
+  // Suppress unhandled rejection — the error is re-thrown when awaited in mutate/query.
+  storageValidationPromise.catch(() => {});
+
   // For local-only mode, we'll lazily initialize hydration state on first query/mutation (CFG-002)
+  // Must await storageValidationPromise first to avoid using a broken storage.
   const needsLocalOnlyInit =
     config.sync?.mode === "local-only" && resolvedStorage;
   const localOnlyInitPromise =
     needsLocalOnlyInit && resolvedStorage
       ? (async () => {
+          await storageValidationPromise;
           // Mark all non-remote-only resources as ready
           // Must follow valid transitions: notStarted -> hydrating -> ready
           for (const resource of schema.resources) {
@@ -452,6 +540,9 @@ export function createDatafnClient<S extends DatafnSchema>(
           }
         })()
       : Promise.resolve();
+
+  // Suppress unhandled rejection — the error is re-thrown when awaited in mutate/query.
+  localOnlyInitPromise.catch(() => {});
 
   // Resolve remote adapter (CFG-001)
   let remote: DatafnRemoteAdapter;
@@ -531,6 +622,13 @@ export function createDatafnClient<S extends DatafnSchema>(
         );
       },
       push: async () => {
+        throw createClientError(
+          "TRANSPORT_ERROR",
+          "No remote adapter configured",
+          { path: "sync" },
+        );
+      },
+      reconcile: async () => {
         throw createClientError(
           "TRANSPORT_ERROR",
           "No remote adapter configured",
@@ -618,7 +716,7 @@ export function createDatafnClient<S extends DatafnSchema>(
       throw createClientError(
         "DFQL_INVALID",
         "Client has been destroyed",
-        { context: "client lifecycle" }
+        { path: "client", context: "client lifecycle" }
       );
     }
   };
@@ -654,6 +752,7 @@ export function createDatafnClient<S extends DatafnSchema>(
      */
     async query(q: unknown | unknown[]) {
       guardDestroyed();
+      await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
       return executeQuery(
         remote,
@@ -661,6 +760,7 @@ export function createDatafnClient<S extends DatafnSchema>(
         resolvedStorage,
         config.plugins || [],
         schema,
+        schemaIndex,
       );
     },
 
@@ -682,6 +782,7 @@ export function createDatafnClient<S extends DatafnSchema>(
      */
     async mutate(mutation: unknown | unknown[]) {
       guardDestroyed();
+      await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
       return executeMutation(
         remote,
@@ -813,7 +914,7 @@ export function createDatafnClient<S extends DatafnSchema>(
         throw createClientError(
           "DFQL_INVALID",
           "Export requires storage adapter",
-          { context: "exportData" }
+          { path: "exportData", context: "exportData" }
         );
       }
       
@@ -833,7 +934,7 @@ export function createDatafnClient<S extends DatafnSchema>(
         throw createClientError(
           "DFQL_INVALID",
           "Import requires storage adapter",
-          { context: "importData" }
+          { path: "importData", context: "importData" }
         );
       }
       
@@ -923,4 +1024,236 @@ export function createDatafnClient<S extends DatafnSchema>(
       return undefined;
     },
   }) as DatafnClient<S>;
+}
+
+/**
+ * Resolve the auth context from a DatafnClientConfig.
+ * Returns undefined if not configured or if the provider returns a Promise.
+ */
+function _resolveAuthContext(config: DatafnClientConfig<any>): AuthContext | undefined {
+  const auth = config.authContext;
+  if (!auth) return undefined;
+  if ("getContext" in auth) {
+    const result = auth.getContext();
+    if (result instanceof Promise) return undefined;
+    return result;
+  }
+  return auth as AuthContext;
+}
+
+/**
+ * Create a DataFn client with built-in context switching.
+ *
+ * The returned client is a stable Proxy reference that always delegates to the
+ * current underlying client. Use `switchContext()` to switch auth, sync mode,
+ * or storage without replacing the reference. Use `subscribeClient()` to react
+ * to switches (e.g. to recreate signals in framework adapters).
+ */
+export function createDatafnClient<S extends DatafnSchema>(
+  config: DatafnClientConfig<S>,
+): DatafnClient<S> {
+  let realClient = _buildRawClient(config);
+  let currentConfig = config;
+  let isDestroyed = false;
+  let switchInProgress = false;
+  let switchQueue: Array<() => Promise<void>> = [];
+  const subscribers = new Set<(c: DatafnClient<S>) => void>();
+
+  const liveRegistry = new LiveSignalRegistry();
+
+  // Cache of wrapped table handles, keyed by table name.
+  // Ensures `client.table("task") === client.task` (identity preserved across calls).
+  const wrappedTableCache = new Map<string, DatafnTable<S, any>>();
+  // Cached wrapped KV handle (singleton per client proxy).
+  let wrappedKv: DatafnKvApi | null = null;
+
+  // Return a cached wrapped table handle for `tableName`.
+  // The handle intercepts .signal() to return LiveSignals; all other props delegate
+  // dynamically to the current realClient's raw table (so they remain correct after
+  // performSwitch reassigns realClient).
+  //
+  // CRITICAL: factory closures capture `realClient` by reference (the `let` variable).
+  // After performSwitch reassigns realClient, re-calling factory() uses the new client.
+  // Do NOT destructure or snapshot realClient into a local const inside the factory.
+  function getOrCreateWrappedTable(tableName: string): DatafnTable<S, any> {
+    const cached = wrappedTableCache.get(tableName);
+    if (cached) return cached;
+
+    // Validate the table name upfront — throws DFQL_UNKNOWN_RESOURCE if not in schema.
+    // This preserves the same eager-throw behavior as direct realClient.table() calls.
+    realClient.table(tableName);
+
+    const wrapped = new Proxy(Object.create(null), {
+      get(_proxyTarget, prop) {
+        if (prop === "signal") {
+          return (query: unknown, options?: { disableOptimistic?: boolean }) => {
+            const currentRawTable = realClient.table(tableName);
+            const version = (currentRawTable as any).version as number;
+            const factory = () => realClient.table(tableName).signal(query as any, options);
+            return liveRegistry.getOrCreateTableSignal(tableName, version, query, options, factory);
+          };
+        }
+        // Delegate all other property accesses to the current realClient's raw table.
+        // This ensures non-signal methods (mutate, query, subscribe) are always bound
+        // to the current underlying client, not a stale snapshot.
+        return (realClient.table(tableName) as any)[prop];
+      },
+    }) as DatafnTable<S, any>;
+
+    wrappedTableCache.set(tableName, wrapped);
+    return wrapped;
+  }
+
+  function getOrCreateWrappedKv(): DatafnKvApi {
+    if (!wrappedKv) {
+      wrappedKv = new Proxy(Object.create(null), {
+        get(_proxyTarget, prop) {
+          if (prop === "signal") {
+            return (key: string, options?: { defaultValue?: unknown }) => {
+              const factory = () => realClient.kv.signal(key, options);
+              return liveRegistry.getOrCreateKvSignal(key, factory);
+            };
+          }
+          return (realClient.kv as any)[prop];
+        },
+      }) as DatafnKvApi;
+    }
+    return wrappedKv;
+  }
+
+  function isTableLike(val: unknown): val is DatafnTable<S, any> {
+    return (
+      val !== null &&
+      typeof val === "object" &&
+      typeof (val as any).signal === "function" &&
+      typeof (val as any).query === "function" &&
+      typeof (val as any).name === "string" &&
+      typeof (val as any).version === "number"
+    );
+  }
+
+  // outer is declared with let so closures can reference it before assignment
+  let outer: DatafnClient<S>;
+
+  async function performSwitch(overrides: SwitchContextOverride): Promise<void> {
+    await realClient.destroy();
+
+    // Build new config by applying overrides
+    const newConfig: DatafnClientConfig<S> = {
+      ...currentConfig,
+      ...(overrides.authContext !== undefined ? { authContext: overrides.authContext } : {}),
+      ...(overrides.sync !== undefined ? { sync: overrides.sync } : {}),
+      ...(overrides.storage !== undefined ? { storage: overrides.storage } : {}),
+    };
+    currentConfig = newConfig;
+    realClient = _buildRawClient(newConfig);
+
+    // Rebind all LiveSignals to the new realClient BEFORE notifying subscribers (PROXY-006).
+    // Ordering is critical: factories use the updated realClient, and subscribers see rebound signals.
+    liveRegistry.rebindAll();
+
+    // Notify subscribers with the stable outer proxy
+    for (const fn of subscribers) {
+      fn(outer);
+    }
+
+    // Auto-start sync when switching into sync mode
+    if (newConfig.sync?.mode === "sync") {
+      await realClient.sync.start();
+    }
+  }
+
+  async function switchContextFn(overrides: SwitchContextOverride): Promise<void> {
+    if (isDestroyed) {
+      throw createClientError("DFQL_INVALID", "Cannot switch context on a destroyed client", { path: "client" });
+    }
+
+    if (switchInProgress) {
+      return new Promise<void>((resolve, reject) => {
+        switchQueue.push(async () => {
+          try { await performSwitch(overrides); resolve(); }
+          catch (err) { reject(err); }
+        });
+      });
+    }
+
+    switchInProgress = true;
+    try {
+      await performSwitch(overrides);
+      while (switchQueue.length > 0) {
+        const next = switchQueue.shift();
+        if (next) await next();
+      }
+    } finally {
+      switchInProgress = false;
+    }
+  }
+
+  function currentContextFn(): AuthContext | undefined {
+    return _resolveAuthContext(currentConfig);
+  }
+
+  function subscribeClientFn(fn: (c: DatafnClient<S>) => void): () => void {
+    subscribers.add(fn);
+    fn(outer); // Fire immediately with current (stable) proxy
+    return () => subscribers.delete(fn);
+  }
+
+  async function destroyFn(): Promise<void> {
+    // Wait for any in-progress switch to complete
+    while (switchInProgress) {
+      await new Promise<void>(r => setTimeout(r, 10));
+    }
+    switchQueue = [];
+    isDestroyed = true;
+    subscribers.clear();
+    liveRegistry.disposeAll(); // PROXY-007: dispose all LiveSignals before destroying underlying client
+    return realClient.destroy();
+  }
+
+  outer = new Proxy(function () {} as unknown as DatafnClient<S>, {
+    get(_target, prop) {
+      if (prop === "switchContext") return switchContextFn;
+      if (prop === "currentContext") return currentContextFn;
+      if (prop === "subscribeClient") return subscribeClientFn;
+      if (prop === "destroy") return destroyFn;
+
+      if (prop === "table") {
+        return (name: string) => getOrCreateWrappedTable(name);
+      }
+
+      if (prop === "kv") {
+        return getOrCreateWrappedKv();
+      }
+
+      const val = (realClient as any)[prop];
+
+      if (isTableLike(val)) {
+        return getOrCreateWrappedTable((val as any).name);
+      }
+
+      // Bind functions to realClient so 'this' is correct if ever needed
+      if (typeof val === "function") return val.bind(realClient);
+      return val;
+    },
+    has(_target, prop) {
+      return (
+        prop === "switchContext" ||
+        prop === "currentContext" ||
+        prop === "subscribeClient" ||
+        prop in realClient
+      );
+    },
+    ownKeys(_target) {
+      return [...Reflect.ownKeys(realClient), "switchContext", "currentContext", "subscribeClient"];
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      if (prop === "switchContext" || prop === "currentContext" || prop === "subscribeClient") {
+        return { configurable: true, enumerable: true, writable: true, value: undefined };
+      }
+      return Object.getOwnPropertyDescriptor(realClient, prop);
+    },
+  }) as DatafnClient<S>;
+
+  return outer;
 }

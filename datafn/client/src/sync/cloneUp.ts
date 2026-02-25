@@ -1,4 +1,5 @@
 import type { DatafnSchema, DatafnResourceSchema, DatafnRelationSchema } from "@datafn/core";
+import { getJoinStoreKey } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter } from "../client.js";
 import type { EventBus } from "../events/bus.js";
@@ -34,6 +35,8 @@ export type CloneUpResult = {
     message: string;
     path: string;
   }>;
+  /** Optional total count of uploaded records (for event context) */
+  uploadedCount?: number;
 };
 
 export type CloneUpDeps = {
@@ -505,7 +508,7 @@ function enumerateJoinStores(
       if (!resolvedResourceSet.has(f)) continue;
       for (const t of toResources) {
         entries.push({
-          storeName: `join_${f}_${relName}_${t}`,
+          storeName: getJoinStoreKey(f, relName, t),
           fromResource: f,
           relationName: relName,
           relation: rel,

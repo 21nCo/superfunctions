@@ -93,7 +93,7 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
     ): Promise<{ ok: true; key: string } | { ok: false; error: unknown }> {
       if (typeof key !== "string") {
         return {
-          ok: false,
+          ok: false as const,
           error: {
             code: "DFQL_INVALID",
             message: "Invalid KV key: must be string",
@@ -118,14 +118,14 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
         } as any)) as any;
 
         if (!result || typeof result !== "object" || !("ok" in result)) {
-          return { ok: false, error: result };
+          return { ok: false as const, error: result };
         }
 
         if (!result.ok) {
-          return { ok: false, error: result };
+          return { ok: false as const, error: result };
         }
 
-        return { ok: true, key };
+        return { ok: true as const, key };
       };
 
       try {
@@ -155,13 +155,13 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
               }
             },
           );
-          return { ok: true, key };
+          return { ok: true as const, key };
         }
 
         // Without debounce, execute immediately
         return await executeMutation();
       } catch (error) {
-        return { ok: false, error };
+        return { ok: false as const, error };
       }
     },
 
@@ -172,7 +172,7 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
     ): Promise<{ ok: true; key: string } | { ok: false; error: unknown }> {
       if (typeof key !== "string") {
         return {
-          ok: false,
+          ok: false as const,
           error: {
             code: "DFQL_INVALID",
             message: "Invalid KV key: must be string",
@@ -187,7 +187,7 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
         Array.isArray(patch)
       ) {
         return {
-          ok: false,
+          ok: false as const,
           error: {
             code: "DFQL_INVALID",
             message: "Invalid KV merge: patch must be a plain object",
@@ -209,7 +209,7 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
             Array.isArray(existing))
         ) {
           return {
-            ok: false,
+            ok: false as const,
             error: {
               code: "DFQL_INVALID",
               message:
@@ -236,14 +236,14 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
         } as any)) as any;
 
         if (!result || typeof result !== "object" || !("ok" in result)) {
-          return { ok: false, error: result };
+          return { ok: false as const, error: result };
         }
 
         if (!result.ok) {
-          return { ok: false, error: result };
+          return { ok: false as const, error: result };
         }
 
-        return { ok: true, key };
+        return { ok: true as const, key };
       };
 
       try {
@@ -296,13 +296,13 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
               }
             },
           );
-          return { ok: true, key };
+          return { ok: true as const, key };
         }
 
         // Without debounce, execute immediately
         return await executeMutation();
       } catch (error) {
-        return { ok: false, error };
+        return { ok: false as const, error };
       }
     },
 
@@ -312,7 +312,7 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
     ): Promise<{ ok: true; key: string } | { ok: false; error: unknown }> {
       if (typeof key !== "string") {
         return {
-          ok: false,
+          ok: false as const,
           error: {
             code: "DFQL_INVALID",
             message: "Invalid KV key: must be string",
@@ -335,16 +335,16 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
         } as any)) as any;
 
         if (!result || typeof result !== "object" || !("ok" in result)) {
-          return { ok: false, error: result };
+          return { ok: false as const, error: result };
         }
 
         if (!result.ok) {
-          return { ok: false, error: result };
+          return { ok: false as const, error: result };
         }
 
-        return { ok: true, key };
+        return { ok: true as const, key };
       } catch (error) {
-        return { ok: false, error };
+        return { ok: false as const, error };
       }
     },
 
@@ -411,45 +411,30 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
         select: ["id", "value"],
       } as any);
 
-      // Transform the signal to extract the value field
+      // Transform the signal to extract the value field.
+      // After the query signal unwrap, baseSignal emits the record array directly.
       const transformedSignal: DatafnSignal<T> = {
         subscribe: (handler: (value: T) => void) => {
-          return baseSignal.subscribe((queryResult: any) => {
-            if (
-              queryResult &&
-              typeof queryResult === "object" &&
-              "data" in queryResult &&
-              Array.isArray(queryResult.data)
-            ) {
-              const records = queryResult.data;
-              if (records.length > 0) {
-                handler(records[0].value as T);
-              } else {
-                handler(options?.defaultValue ?? (null as T));
-              }
+          return baseSignal.subscribe((records: any) => {
+            if (Array.isArray(records) && records.length > 0) {
+              handler(records[0].value as T);
             } else {
               handler(options?.defaultValue ?? (null as T));
             }
           });
         },
         get: () => {
-          const queryResult = baseSignal.get() as any;
-          if (
-            queryResult &&
-            typeof queryResult === "object" &&
-            "data" in queryResult &&
-            Array.isArray(queryResult.data)
-          ) {
-            const records = queryResult.data;
-            if (records.length > 0) {
-              return records[0].value as T;
-            }
+          const records = baseSignal.get() as any;
+          if (Array.isArray(records) && records.length > 0) {
+            return records[0].value as T;
           }
           return options?.defaultValue ?? (null as T);
         },
-        loading: baseSignal.loading,
-        error: baseSignal.error,
-        refreshing: baseSignal.refreshing,
+        get loading() { return baseSignal.loading; },
+        get error() { return baseSignal.error; },
+        get refreshing() { return baseSignal.refreshing; },
+        get nextCursor() { return baseSignal.nextCursor; },
+        dispose: () => baseSignal.dispose(),
       };
 
       return transformedSignal;

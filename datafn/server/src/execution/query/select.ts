@@ -3,29 +3,12 @@
  */
 
 import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
+import { parseSelectToken } from "@datafn/core";
 import type { DataStore } from "../store.js";
 
-export interface SelectToken {
-  path: string[]; // e.g., ["tags", "*#"]
-  baseName: string; // e.g., "tags"
-  directive?: string; // "*", "#", "*#", "**"
-}
+export type { SelectToken } from "@datafn/core";
 
-/**
- * Parse a select token string into components
- * Examples: "id", "goal.*", "tags.#", "tags.*#"
- */
-export function parseSelectToken(token: string): SelectToken {
-  const parts = token.split(".");
-  const baseName = parts[0];
-  const directive = parts.slice(1).join(".") || undefined;
-
-  return {
-    path: parts,
-    baseName,
-    directive,
-  };
-}
+export { parseSelectToken };
 
 /**
  * Apply omit to a record, removing specified fields (but never id)
@@ -124,6 +107,19 @@ export function materializeSelect(
 
   // Process select tokens
   for (const token of select) {
+    // Bare wildcard: include all schema-defined base fields (mirrors no-select path)
+    if (token === "*") {
+      result.id = record.id;
+      includedFields.add("id");
+      for (const field of resourceSchema.fields) {
+        if (record[field.name] !== undefined) {
+          result[field.name] = record[field.name];
+          includedFields.add(field.name);
+        }
+      }
+      continue;
+    }
+
     // Handle nested select traversal (e.g., "tasks.tags.*")
     if (isNestedSelectToken(token)) {
       const parts = token.split(".");

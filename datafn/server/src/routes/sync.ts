@@ -14,6 +14,7 @@ import { executePush } from "../execution/sync/push.js";
 import { executeReconcile } from "../execution/sync/reconcile.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 import { logRequest } from "../logging.js";
+import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 
 /**
  * Create clone route handler
@@ -123,12 +124,16 @@ export function createPullHandler(
   plugins: DatafnPlugin[] = [],
   extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
+  maxPullLimit?: number,
+  timingEmitter?: TimingEmitter | null,
 ) {
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
     let body: any;
+    const timer = timingEmitter ? new ExecutionTimer() : null;
 
     try {
+        timer?.startPhase("validate");
         // Get body from context (pre-parsed by withAuth) or parse from request
         const parseResult = await getBodyFromContext(req, ctx);
         if (!parseResult.ok) {
@@ -162,14 +167,17 @@ export function createPullHandler(
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
 
+        timer?.startPhase("fetchChanges");
         const result = await executePull(
         beforeHookResult.payload as any,
         validatedSchema,
         db,
         namespace,
         sequenceStore,
+        maxPullLimit,
         );
 
+        timer?.startPhase("buildResult");
         // Always return result (even if result.ok is false)
         // Pull errors are returned wrapped in a successful HTTP response
 
@@ -181,6 +189,10 @@ export function createPullHandler(
         hookCtx,
         plugins,
         );
+
+        if (timingEmitter && timer) {
+          timingEmitter(timer.build("/datafn/pull", undefined, "pull"));
+        }
 
         return new Response(JSON.stringify({ ok: true, result }), {
         status: 200,
@@ -216,12 +228,15 @@ export function createPushHandler(
   extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
   onChange?: (seq: number) => void,
+  timingEmitter?: TimingEmitter | null,
 ) {
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
     let body: any;
+    const timer = timingEmitter ? new ExecutionTimer() : null;
 
     try {
+        timer?.startPhase("validate");
         // Get body from context (pre-parsed by withAuth) or parse from request
         const parseResult = await getBodyFromContext(req, ctx);
         if (!parseResult.ok) {
@@ -315,6 +330,7 @@ export function createPushHandler(
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
 
+        timer?.startPhase("execute");
         const result = await executePush(
         beforeHookResult.payload as any,
         validatedSchema,
@@ -325,6 +341,7 @@ export function createPushHandler(
         onChange,
         );
 
+        timer?.startPhase("changeLog");
         // If validation failed at the request level, return error response
         if (!result.ok && result.errors.length > 0) {
         return errorResponse(
@@ -345,6 +362,10 @@ export function createPushHandler(
         hookCtx,
         plugins,
         );
+
+        if (timingEmitter && timer) {
+          timingEmitter(timer.build("/datafn/push", undefined, "push"));
+        }
 
         return new Response(JSON.stringify({ ok: true, result }), {
         status: 200,

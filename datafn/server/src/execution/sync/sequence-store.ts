@@ -9,6 +9,7 @@
 
 import type { Adapter } from "@superfunctions/db";
 import type { RedisAdapter, KVStoreAdapter } from "@superfunctions/db";
+import { ensureInternalTable } from "../internal-tables.js";
 
 /**
  * Interface for sequence generation stores
@@ -16,10 +17,13 @@ import type { RedisAdapter, KVStoreAdapter } from "@superfunctions/db";
 export interface SequenceStore {
   /** Get and increment sequence atomically, returns the next value */
   getNext(namespace: string): Promise<number>;
-  
+
+  /** Get and increment sequence atomically by count, returns array of contiguous values */
+  getNextN(namespace: string, count: number): Promise<number[]>;
+
   /** Get current sequence value (without incrementing) */
   getCurrent(namespace: string): Promise<number>;
-  
+
   /** Check if the store is healthy/available */
   isHealthy?(): Promise<boolean>;
 }
@@ -37,8 +41,17 @@ export class RedisSequenceStore implements SequenceStore {
   }
 
   async getNext(namespace: string): Promise<number> {
+    return (await this.getNextN(namespace, 1))[0];
+  }
+
+  async getNextN(namespace: string, count: number): Promise<number[]> {
+    if (!Number.isInteger(count) || count < 1 || count > 1000) {
+      throw new Error("count must be a positive integer between 1 and 1000");
+    }
     const key = this.getKey(namespace);
-    return await this.redis.incr(key, 1);
+    const end = await this.redis.incr(key, count);
+    const start = end - count + 1;
+    return Array.from({ length: count }, (_, i) => start + i);
   }
 
   async getCurrent(namespace: string): Promise<number> {
@@ -69,9 +82,18 @@ export class KVSequenceStore implements SequenceStore {
   }
 
   async getNext(namespace: string): Promise<number> {
+    return (await this.getNextN(namespace, 1))[0];
+  }
+
+  async getNextN(namespace: string, count: number): Promise<number[]> {
+    if (!Number.isInteger(count) || count < 1 || count > 1000) {
+      throw new Error("count must be a positive integer between 1 and 1000");
+    }
     const key = this.getKey(namespace);
-    const result = await this.kvStore.incr!({ key, by: 1 });
-    return result.value;
+    const result = await this.kvStore.incr!({ key, by: count });
+    const end = result.value;
+    const start = end - count + 1;
+    return Array.from({ length: count }, (_, i) => start + i);
   }
 
   async getCurrent(namespace: string): Promise<number> {
@@ -86,53 +108,61 @@ export class KVSequenceStore implements SequenceStore {
  * This is the fallback implementation using the main database adapter
  */
 export class DatabaseSequenceStore implements SequenceStore {
+  private ensured = false;
+
   constructor(private db: Adapter) {}
 
   async getNext(namespace: string): Promise<number> {
+    return (await this.getNextN(namespace, 1))[0];
+  }
+
+  async getNextN(namespace: string, count: number): Promise<number[]> {
+    if (!Number.isInteger(count) || count < 1 || count > 1000) {
+      throw new Error("count must be a positive integer between 1 and 1000");
+    }
+
+    if (!this.ensured) {
+      await ensureInternalTable(this.db, "__datafn_meta");
+      this.ensured = true;
+    }
+
     const MAX_RETRIES = 10;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        const meta = await this.db.findOne({
-          model: "__datafn_meta",
-          where: [
-            { field: "namespace", operator: "eq", value: namespace },
-          ],
-          namespace: namespace,
-        });
+        const meta = await this.db.internal.findOne("__datafn_meta", [
+          { field: "namespace", op: "eq", value: namespace },
+        ]);
 
         if (!meta) {
           try {
-            await this.db.create({
-              model: "__datafn_meta",
-              data: {
-                id: `meta:${namespace}`,
-                namespace: namespace,
-                nextServerSeq: 2,
-              },
+            await this.db.internal.create("__datafn_meta", {
+              id: `meta:${namespace}`,
               namespace: namespace,
+              next_server_seq: 1 + count,
             });
-            return 1;
+            return Array.from({ length: count }, (_, i) => 1 + i);
           } catch {
             continue;
           }
         } else {
-          const currentSeq = (meta.nextServerSeq as number) || 1;
+          const currentSeq = (meta.next_server_seq as number) || 1;
 
           try {
-            await this.db.update({
-              model: "__datafn_meta",
-              where: [
-                { field: "namespace", operator: "eq", value: namespace },
-                { field: "nextServerSeq", operator: "eq", value: currentSeq },
+            const affected = await this.db.internal.update(
+              "__datafn_meta",
+              [
+                { field: "namespace", op: "eq", value: namespace },
+                { field: "next_server_seq", op: "eq", value: currentSeq },
               ],
-              data: {
-                nextServerSeq: currentSeq + 1,
-              },
-              namespace: namespace,
-            });
+              { next_server_seq: currentSeq + count },
+            );
 
-            return currentSeq;
+            if (affected === 0) {
+              continue;
+            }
+
+            return Array.from({ length: count }, (_, i) => currentSeq + i);
           } catch {
             continue;
           }
@@ -149,17 +179,20 @@ export class DatabaseSequenceStore implements SequenceStore {
   }
 
   async getCurrent(namespace: string): Promise<number> {
+    if (!this.ensured) {
+      await ensureInternalTable(this.db, "__datafn_meta");
+      this.ensured = true;
+    }
+
     try {
-      const meta = await this.db.findOne({
-        model: "__datafn_meta",
-        where: [{ field: "namespace", operator: "eq", value: namespace }],
-        namespace: namespace,
-      });
+      const meta = await this.db.internal.findOne("__datafn_meta", [
+        { field: "namespace", op: "eq", value: namespace },
+      ]);
 
       if (!meta) {
         return 0;
       }
-      return ((meta.nextServerSeq as number) || 1) - 1;
+      return ((meta.next_server_seq as number) || 1) - 1;
     } catch (error) {
       console.error("Failed to get current serverSeq:", error);
       return 0;
@@ -177,18 +210,22 @@ export class FallbackSequenceStore implements SequenceStore {
   ) {}
 
   async getNext(namespace: string): Promise<number> {
+    return (await this.getNextN(namespace, 1))[0];
+  }
+
+  async getNextN(namespace: string, count: number): Promise<number[]> {
     try {
       if (this.primary.isHealthy) {
         const healthy = await this.primary.isHealthy();
         if (!healthy) {
           console.warn("Primary sequence store unhealthy, using fallback");
-          return await this.fallback.getNext(namespace);
+          return await this.fallback.getNextN(namespace, count);
         }
       }
-      return await this.primary.getNext(namespace);
+      return await this.primary.getNextN(namespace, count);
     } catch (error) {
       console.warn("Primary sequence store failed, using fallback:", error);
-      return await this.fallback.getNext(namespace);
+      return await this.fallback.getNextN(namespace, count);
     }
   }
 

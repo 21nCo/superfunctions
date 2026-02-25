@@ -42,6 +42,8 @@ export type {
   KVStoreAdapterFactory,
   RedisAdapter,
   RedisAdapterFactory,
+  InternalCrud,
+  InternalColumnDef,
 } from './adapter/types.js';
 
 // Capabilities

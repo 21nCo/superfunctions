@@ -45,7 +45,7 @@ export class ExtensionSubscriptionManager {
    */
   async registerSubscriber(
     filter: EventFilter | undefined,
-  ): Promise<() => void> {
+  ): Promise<() => Promise<void>> {
     const key = filterToKey(filter);
     let remoteSub = this.remoteSubscriptions.get(key);
 

@@ -3,7 +3,7 @@
  * Returns server metadata, capabilities, limits, and schema hash
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../core-types.js";
 import { normalizeDfql } from "@datafn/core";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { createHash } from "crypto";
@@ -68,10 +68,8 @@ export function createStatusHandler(
         "dfql.query",
         "dfql.mutation",
         "dfql.transact",
-        "sync.seed",
-        "sync.clone",
-        "sync.pull",
-        "sync.push",
+        "dfql.sync",
+        "dfql.seed",
       ],
       limits,
       serverTimeMs: getServerTime(),

@@ -75,7 +75,7 @@ export function validateMutation(
   }
 
   // Validate id prefix if defined in schema
-  const resource = resourceResult.value;
+  const resource = resourceResult.result;
   if (resource.idPrefix && !m.id.startsWith(resource.idPrefix)) {
     return vErr(
       "DFQL_INVALID",
@@ -112,7 +112,7 @@ export function validateMutation(
 
     // Check required fields for insert/replace
     if (m.operation === "insert" || m.operation === "replace") {
-        const resource = resourceResult.value;
+        const resource = resourceResult.result;
         const record = m.record as Record<string, unknown>;
         for (const field of resource.fields) {
             if (field.required && !field.default && field.name !== "id" && !field.readonly) {

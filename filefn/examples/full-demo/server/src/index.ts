@@ -2,7 +2,8 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createFileFn } from "@filefn/server";
-import { createFakeDbAdapter, createMemoryStorage } from "./adapters.js";
+import { createLocalStorageAdapter } from "@superfunctions/storage-local";
+import { createFakeDbAdapter } from "./adapters.js";
 
 const app = new Hono();
 
@@ -20,8 +21,10 @@ app.use(
   }),
 );
 
+const port = Number(process.env.PORT) || 3001;
+
 const db = createFakeDbAdapter();
-const storage = createMemoryStorage();
+const storage = createLocalStorageAdapter({ rootDir: "./uploads" });
 
 const fileFn = createFileFn({
   db,
@@ -67,29 +70,7 @@ app.all("/filefn/*", async (c) => {
   return response;
 });
 
-// Storage serve endpoints
-app.put("/_storage/upload/:path", async (c) => {
-  const encodedPath = c.req.param("path");
-  const key = Buffer.from(encodedPath, "base64").toString("utf-8");
-  const body = await c.req.arrayBuffer();
 
-  storage.directWrite(key, Buffer.from(body));
-
-  return c.json({ ok: true });
-});
-
-app.get("/_storage/download/:path", async (c) => {
-  const encodedPath = c.req.param("path");
-  const key = Buffer.from(encodedPath, "base64").toString("utf-8");
-  const content = storage.directRead(key);
-
-  if (!content) return c.notFound();
-
-  // Minimal mime type guessing or default
-  return c.body(content as any);
-});
-
-const port = 3000;
 console.log(`Server is running on port ${port}`);
 
 serve({

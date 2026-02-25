@@ -1,205 +1,77 @@
 /**
  * Plugin hook runner for client-side plugins
- * Implements CLIENT-PLUG-001: registration order, runsOn enforcement, fail semantics
+ * Delegates to shared @datafn/core hook runner with env: "client"
  */
 
-import type {
-  DatafnPlugin,
-  DatafnHookContext,
-  DatafnSchema,
-} from "@datafn/core";
+import type { DatafnPlugin, DatafnHookContext, DatafnSchema } from "@datafn/core";
+import { runBeforeHook, runAfterHook } from "@datafn/core";
 
-/**
- * Filter plugins to only those that run on client
- */
-export function getClientPlugins(plugins: DatafnPlugin[]): DatafnPlugin[] {
-  return plugins.filter((p) => p.runsOn && p.runsOn.includes("client"));
-}
-
-/**
- * Run beforeQuery hooks (fail-closed)
- * Throws deterministic error if any hook fails
- */
 export async function runBeforeQuery(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
   query: unknown,
 ): Promise<unknown> {
-  let transformed = query;
   const ctx: DatafnHookContext = { env: "client", schema };
-
-  for (const plugin of getClientPlugins(plugins)) {
-    if (plugin.beforeQuery) {
-      try {
-        const result = await plugin.beforeQuery(ctx, transformed);
-        if (result !== undefined) {
-          transformed = result;
-        }
-      } catch (error: any) {
-        // Fail-closed: throw with deterministic path
-        throw {
-          code: error.code || "INTERNAL",
-          message: error.message || "Plugin error",
-          details: {
-            path: `plugins.${plugin.name}.beforeQuery`,
-            ...(error.details || {}),
-          },
-        };
-      }
-    }
-  }
-
-  return transformed;
+  const result = await runBeforeHook(plugins, "client", "beforeQuery", ctx, query);
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
-/**
- * Run afterQuery hooks (fail-open)
- * Logs errors but continues execution
- */
 export async function runAfterQuery(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
   query: unknown,
-  result: unknown,
+  queryResult: unknown,
 ): Promise<unknown> {
-  let transformed = result;
   const ctx: DatafnHookContext = { env: "client", schema };
-
-  for (const plugin of getClientPlugins(plugins)) {
-    if (plugin.afterQuery) {
-      try {
-        const pluginResult = await plugin.afterQuery(ctx, query, transformed);
-        if (pluginResult !== undefined) {
-          transformed = pluginResult;
-        }
-      } catch (error) {
-        // Fail-open: log but continue
-        console.error(`Plugin ${plugin.name}.afterQuery failed:`, error);
-      }
-    }
-  }
-
-  return transformed;
+  await runAfterHook(plugins, "client", "afterQuery", ctx, query, queryResult);
+  return queryResult;
 }
 
-/**
- * Run beforeMutation hooks (fail-closed)
- */
 export async function runBeforeMutation(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
   mutation: unknown,
 ): Promise<unknown> {
-  let transformed = mutation;
   const ctx: DatafnHookContext = { env: "client", schema };
-
-  for (const plugin of getClientPlugins(plugins)) {
-    if (plugin.beforeMutation) {
-      try {
-        const result = await plugin.beforeMutation(ctx, transformed);
-        if (result !== undefined) {
-          transformed = result;
-        }
-      } catch (error: any) {
-        throw {
-          code: error.code || "INTERNAL",
-          message: error.message || "Plugin error",
-          details: {
-            path: `plugins.${plugin.name}.beforeMutation`,
-            ...(error.details || {}),
-          },
-        };
-      }
-    }
-  }
-
-  return transformed;
+  const result = await runBeforeHook(plugins, "client", "beforeMutation", ctx, mutation);
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
-/**
- * Run afterMutation hooks (fail-open)
- */
 export async function runAfterMutation(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
   mutation: unknown,
-  result: unknown,
+  mutationResult: unknown,
 ): Promise<unknown> {
-  let transformed = result;
   const ctx: DatafnHookContext = { env: "client", schema };
-
-  for (const plugin of getClientPlugins(plugins)) {
-    if (plugin.afterMutation) {
-      try {
-        await plugin.afterMutation(ctx, mutation, transformed);
-        // afterMutation returns void, no transformation
-      } catch (error) {
-        console.error(`Plugin ${plugin.name}.afterMutation failed:`, error);
-      }
-    }
-  }
-
-  return transformed;
+  await runAfterHook(plugins, "client", "afterMutation", ctx, mutation, mutationResult);
+  return mutationResult;
 }
 
-/**
- * Run beforeSync hooks (fail-closed)
- */
 export async function runBeforeSync(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
   phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
   payload: unknown,
 ): Promise<unknown> {
-  let transformed = payload;
   const ctx: DatafnHookContext = { env: "client", schema };
-
-  for (const plugin of getClientPlugins(plugins)) {
-    if (plugin.beforeSync) {
-      try {
-        const result = await plugin.beforeSync(ctx, phase, transformed);
-        if (result !== undefined) {
-          transformed = result;
-        }
-      } catch (error: any) {
-        throw {
-          code: error.code || "INTERNAL",
-          message: error.message || "Plugin error",
-          details: {
-            path: `plugins.${plugin.name}.beforeSync`,
-            ...(error.details || {}),
-          },
-        };
-      }
-    }
-  }
-
-  return transformed;
+  // beforeSync signature: (ctx, phase, payload) — phase is a pre-arg
+  const result = await runBeforeHook(plugins, "client", "beforeSync", ctx, payload, [phase]);
+  if (!result.ok) throw result.error;
+  return result.value;
 }
 
-/**
- * Run afterSync hooks (fail-open)
- */
 export async function runAfterSync(
   plugins: DatafnPlugin[],
   schema: DatafnSchema,
   phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
   payload: unknown,
-  result: unknown,
+  syncResult: unknown,
 ): Promise<unknown> {
-  let transformed = result;
   const ctx: DatafnHookContext = { env: "client", schema };
-
-  for (const plugin of getClientPlugins(plugins)) {
-    if (plugin.afterSync) {
-      try {
-        await plugin.afterSync(ctx, phase, payload, transformed);
-        // afterSync returns void, no transformation
-      } catch (error) {
-        console.error(`Plugin ${plugin.name}.afterSync failed:`, error);
-      }
-    }
-  }
-
-  return transformed;
+  // afterSync signature: (ctx, phase, payload, result) — phase is a pre-arg
+  await runAfterHook(plugins, "client", "afterSync", ctx, payload, syncResult, [phase]);
+  return syncResult;
 }

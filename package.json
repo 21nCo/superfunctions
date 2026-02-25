@@ -31,6 +31,7 @@
     "drawfn/*",
     "filefn/*",
     "filefn/examples/full-demo/*",
+    "filefn/examples/production/*",
     "iconfn/*",
     "userfn/*",
     "cifn/typescript/*",

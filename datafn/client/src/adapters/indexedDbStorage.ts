@@ -9,50 +9,23 @@ import type {
   DatafnChangelogEntry,
 } from "../storage.js";
 import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
+import { KV_RESOURCE_NAME, getJoinStoreKey, enumerateJoinStoreKeys } from "@datafn/core";
+import {
+  validateHydrationState,
+  validateTransition,
+  validateCursor,
+} from "./shared.js";
 
 const DB_NAME = "datafn_client_db";
 const DB_VERSION = 2;
-
-function validateHydrationState(state: string): DatafnHydrationState {
-  if (state !== "notStarted" && state !== "hydrating" && state !== "ready") {
-    throw new Error(`Invalid hydration state: ${state}`);
-  }
-  return state as DatafnHydrationState;
-}
-
-function validateTransition(
-  from: DatafnHydrationState,
-  to: DatafnHydrationState,
-): void {
-  if (from === to) return;
-  if (from === "notStarted" && to === "hydrating") return;
-  if (from === "hydrating" && to === "ready") return;
-  if (from === "ready" && to === "hydrating") return;
-  throw new Error(`Invalid hydration state transition: ${from} -> ${to}`);
-}
-
-function validateCursor(cursor: unknown): void {
-  if (cursor !== null && typeof cursor !== "string") {
-    throw new Error("Invalid cursor format");
-  }
-}
 
 function validateMutation(mutation: any): void {
   if (!mutation.clientId) throw new Error("Missing clientId in mutation");
   if (!mutation.mutationId) throw new Error("Missing mutationId in mutation");
 }
 
-function getJoinStoreName(
-  fromResource: string,
-  relationName: string,
-  toResource: string,
-): string {
-  // Sanitize to ensure valid store name
-  return `join_${fromResource}_${relationName}_${toResource}`;
-}
-
 /**
- * Deep merge helper: one-level-deep merge for object-type fields.
+ * Deep merge helper
  * - Top-level scalar fields: overwrite
  * - Top-level object fields: shallow-merge the nested object
  * - Arrays: overwrite (no array merging)
@@ -90,6 +63,45 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   readonly dbName: string;
 
   /**
+   * Create an IndexedDB storage adapter with schema-aware store creation.
+   * This is the **recommended** way to create the adapter — schema is required,
+   * ensuring all resource object stores and join tables are created in IndexedDB.
+   *
+   * If the database already exists but is missing stores (stale DB), the adapter
+   * automatically bumps the version and creates the missing stores.
+   *
+   * @param options.dbName - Database name (e.g., "my-app-db")
+   * @param options.schema - DataFn schema (required — used to create object stores)
+   *
+   * @example
+   * ```typescript
+   * const storage = IndexedDbStorageAdapter.create({
+   *   dbName: "my-app-db",
+   *   schema,
+   * });
+   * ```
+   */
+  static create(options: {
+    dbName: string;
+    schema: DatafnSchema;
+  }): IndexedDbStorageAdapter {
+    const resources = options.schema.resources.map((r) => r.name);
+    // Ensure built-in KV resource is always valid (KV-001)
+    if (!resources.includes(KV_RESOURCE_NAME)) {
+      resources.push(KV_RESOURCE_NAME);
+    }
+    // Register join store keys for many-many relations
+    if (options.schema.relations) {
+      for (const key of enumerateJoinStoreKeys(options.schema.relations)) {
+        if (!resources.includes(key)) {
+          resources.push(key);
+        }
+      }
+    }
+    return new IndexedDbStorageAdapter(options.dbName, resources, options.schema);
+  }
+
+  /**
    * Create an IndexedDB storage adapter with automatic user/tenant isolation.
    * Database name is constructed as: `${baseDbName}_${tenantId}_${userId}` or `${baseDbName}_${userId}`
    * 
@@ -97,15 +109,15 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
    * @param userId - User identifier for data isolation
    * @param tenantId - Optional tenant identifier for multi-tenant isolation
    * @param resources - Optional list of valid resource names
-   * @param schema - Optional schema for creating indexes
+   * @param schema - Schema for creating object stores and indexes (strongly recommended)
    * 
    * @example
    * ```typescript
    * // Single-tenant
-   * const storage = IndexedDbStorageAdapter.createForUser("my-app", userId);
+   * const storage = IndexedDbStorageAdapter.createForUser("my-app", userId, undefined, undefined, schema);
    * 
    * // Multi-tenant
-   * const storage = IndexedDbStorageAdapter.createForUser("my-app", userId, tenantId);
+   * const storage = IndexedDbStorageAdapter.createForUser("my-app", userId, tenantId, undefined, schema);
    * ```
    */
   static createForUser(
@@ -118,7 +130,28 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     const dbName = tenantId
       ? `${baseDbName}_${tenantId}_${userId}`
       : `${baseDbName}_${userId}`;
-    return new IndexedDbStorageAdapter(dbName, resources, schema);
+    
+    // Derive resources from schema if not provided
+    let finalResources = resources;
+    if (!finalResources && schema) {
+      finalResources = schema.resources.map((r) => r.name);
+    }
+
+    // Ensure built-in KV resource is always included (KV-001)
+    if (finalResources && !finalResources.includes(KV_RESOURCE_NAME)) {
+      finalResources = [...finalResources, KV_RESOURCE_NAME];
+    }
+
+    // Register join store keys for many-many relations
+    if (finalResources && schema?.relations) {
+      for (const key of enumerateJoinStoreKeys(schema.relations)) {
+        if (!finalResources.includes(key)) {
+          finalResources.push(key);
+        }
+      }
+    }
+
+    return new IndexedDbStorageAdapter(dbName, finalResources, schema);
   }
 
   constructor(
@@ -129,23 +162,38 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
     this.dbName = dbName;
     if (resources) {
       this.validResources = new Set(resources);
+      // Ensure built-in KV resource is always valid (KV-001)
+      this.validResources.add(KV_RESOURCE_NAME);
     }
     this.schema = schema;
 
-    this.dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(dbName, DB_VERSION);
+    // Open the database, then verify all expected stores exist.
+    // If stores are missing (stale DB from prior version without schema),
+    // close and reopen with a bumped version to trigger onupgradeneeded.
+    this.dbPromise = this.openDatabase(DB_VERSION).then((db) =>
+      this.ensureStores(db),
+    );
+  }
+
+  /**
+   * Open (or upgrade) the IndexedDB database at the given version.
+   * All object store creation happens inside `onupgradeneeded`.
+   */
+  private openDatabase(version: number): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, version);
 
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve(request.result);
 
-      request.onupgradeneeded = async (event) => {
+      request.onupgradeneeded = (event) => {
         const db = request.result;
         const txn = request.transaction!;
 
         // --- Migration from v1 (IDB-001: Two-phase migration approach) ---
         // Phase 1: Detect and log old version for migration tracking
         if (event.oldVersion < 2 && event.oldVersion > 0) {
-          console.log(`IndexedDB migration: Detected v${event.oldVersion}, upgrading to v${DB_VERSION}`);
+          console.log(`IndexedDB migration: Detected v${event.oldVersion}, upgrading to v${version}`);
           
           // Store migration metadata in __datafn_meta for tracking
           if (!db.objectStoreNames.contains("__datafn_meta")) {
@@ -222,7 +270,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
                 
                 for (const f of froms) {
                   for (const t of tos) {
-                    const storeName = getJoinStoreName(f, rel.relation || "rel", t);
+                    const storeName = getJoinStoreKey(f, rel.relation || "rel", t);
                     if (!db.objectStoreNames.contains(storeName)) {
                       const store = db.createObjectStore(storeName, {
                         keyPath: ["from", "to"],
@@ -269,6 +317,50 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
         }
       };
     });
+  }
+
+  /**
+   * Verify all expected stores exist after initial open.
+   * If stores are missing (stale DB opened without schema previously),
+   * close the database and reopen with a bumped version to trigger
+   * `onupgradeneeded`, which will create the missing stores.
+   */
+  private async ensureStores(db: IDBDatabase): Promise<IDBDatabase> {
+    if (!this.schema) return db;
+
+    const missing: string[] = [];
+
+    // Check resource stores
+    for (const resource of this.schema.resources) {
+      if (!db.objectStoreNames.contains(resource.name)) {
+        missing.push(resource.name);
+      }
+    }
+
+    // Check join stores (many-many)
+    if (this.schema.relations) {
+      for (const rel of this.schema.relations) {
+        if (rel.type === "many-many") {
+          const froms = Array.isArray(rel.from) ? rel.from : [rel.from];
+          const tos = Array.isArray(rel.to) ? rel.to : [rel.to];
+          for (const f of froms) {
+            for (const t of tos) {
+              const storeName = getJoinStoreKey(f, rel.relation || "rel", t);
+              if (!db.objectStoreNames.contains(storeName)) {
+                missing.push(storeName);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (missing.length === 0) return db;
+
+    // Close stale DB and reopen with bumped version to create missing stores
+    const nextVersion = db.version + 1;
+    db.close();
+    return this.openDatabase(nextVersion);
   }
 
   private validateTableName(table: string) {
@@ -501,7 +593,10 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   // --- Sync State ---
 
   async getCursor(resource: string): Promise<string | null> {
-    this.validateTableName(resource);
+    // Skip validation for internal cursor keys (SYNC-CURSOR-001)
+    if (resource !== "__global_cursor__") {
+      this.validateTableName(resource);
+    }
     const store = await this.getStore("meta", "readonly");
     return new Promise((resolve, reject) => {
       const request = store.get(["cursor", resource]);
@@ -511,7 +606,10 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   }
 
   async setCursor(resource: string, cursor: string | null): Promise<void> {
-    this.validateTableName(resource);
+    // Skip validation for internal cursor keys (SYNC-CURSOR-001)
+    if (resource !== "__global_cursor__") {
+      this.validateTableName(resource);
+    }
     validateCursor(cursor);
     const store = await this.getStore("meta", "readwrite");
     return new Promise((resolve, reject) => {
@@ -672,7 +770,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
       }
       
       transaction.oncomplete = () => {
-        Promise.all(clearPromises).then(resolve).catch(reject);
+        Promise.all(clearPromises).then(() => resolve()).catch(reject);
       };
       transaction.onerror = () => reject(transaction.error);
     });

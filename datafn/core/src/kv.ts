@@ -46,6 +46,11 @@ export function ensureBuiltinKv(schema: DatafnSchema): DatafnSchema {
     idPrefix: KV_RESOURCE_NAME,
     fields: [
       {
+        name: "id",
+        type: "string",
+        required: true,
+      },
+      {
         name: "value",
         type: "object",
         required: false,

@@ -7,7 +7,15 @@ export {
   type DatafnClient,
   type DatafnClientConfig,
   type DatafnRemoteAdapter,
+  type SwitchContextOverride,
 } from "./client.js";
+
+/** @deprecated Use `createDatafnClient` which includes built-in `switchContext`, `subscribeClient`, and `currentContext`. Will be removed in next major version. */
+export {
+  createSwitchableClient,
+  type SwitchableClient,
+  type SwitchableClientConfig,
+} from "./switchableClient.js";
 export { EventBus, type EventHandler } from "./events/bus.js";
 export { matchesFilter, type EventFilter } from "./events/filter.js";
 export { type DatafnClientError, createClientError } from "./errors.js";

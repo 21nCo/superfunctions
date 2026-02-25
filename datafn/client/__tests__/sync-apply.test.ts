@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDatafnClient } from "../src/index.js";
 import { DefaultHttpTransport } from "../src/transport/http.js";
+import { applyPullResult } from "../src/sync/apply.js";
 import type {
   DatafnStorageAdapter,
   DatafnHydrationState,
@@ -50,6 +51,20 @@ class MockStorageAdapter implements DatafnStorageAdapter {
 
   async deleteRecord(resource: string, id: string): Promise<void> {
     this.records.get(resource)?.delete(id);
+  }
+
+  async mergeRecord(
+    resource: string,
+    id: string,
+    partial: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!this.records.has(resource)) {
+      this.records.set(resource, new Map());
+    }
+    const existing = this.records.get(resource)!.get(id) || {};
+    const merged = { ...existing, ...partial, id };
+    this.records.get(resource)!.set(id, merged);
+    return merged;
   }
 
   async getCursor(resource: string): Promise<string | null> {
@@ -346,6 +361,130 @@ describe("Sync Apply Tests", () => {
       { from: "node:1", to: "property:1", value: "v" },
     );
     expect(joinStoreData.get("join_node_properties_property")).toHaveLength(1);
+  });
+
+  // FIX-A: Merge pull tests
+
+  it("TV-MERGE-PULL-001: applyPullResult with merged entry calls mergeRecord (not upsertRecord) preserving existing fields", async () => {
+    const storage = new MockStorageAdapter();
+
+    // Pre-populate storage with a full todo record
+    await storage.upsertRecord("todo", {
+      id: "todo:1",
+      name: "Buy groceries",
+      completed: false,
+      updatedAt: 1000,
+    });
+
+    const mergeRecordSpy = vi.spyOn(storage, "mergeRecord");
+    const upsertRecordSpy = vi.spyOn(storage, "upsertRecord");
+
+    // Apply a canonical pull result with a merged entry (only partial fields)
+    await applyPullResult(storage, {
+      ok: true,
+      records: {},
+      merged: {
+        todo: [{ id: "todo:1", completed: true, updatedAt: 1500 }],
+      },
+      deleted: {},
+      cursors: { todo: "5" },
+    });
+
+    // mergeRecord must have been called for the merge delta
+    expect(mergeRecordSpy).toHaveBeenCalledTimes(1);
+    expect(mergeRecordSpy).toHaveBeenCalledWith(
+      "todo",
+      "todo:1",
+      { id: "todo:1", completed: true, updatedAt: 1500 },
+    );
+
+    // upsertRecord should NOT have been called for the merge entry
+    // (it may be called zero times or from initial setup, but not for merge entry)
+    const upsertCallsAfterApply = upsertRecordSpy.mock.calls.filter(
+      ([res, rec]) => rec.id === "todo:1" && rec.completed === true,
+    );
+    expect(upsertCallsAfterApply).toHaveLength(0);
+
+    // Verify that the existing field 'name' was preserved (not overwritten)
+    const result = await storage.getRecord("todo", "todo:1");
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe("Buy groceries"); // preserved
+    expect(result!.completed).toBe(true); // merged
+    expect(result!.updatedAt).toBe(1500); // merged
+  });
+
+  it("TV-MERGE-PULL-002: applyPullResult with records entry (insert) uses upsertRecord (full replace)", async () => {
+    const storage = new MockStorageAdapter();
+
+    const mergeRecordSpy = vi.spyOn(storage, "mergeRecord");
+    const upsertRecordSpy = vi.spyOn(storage, "upsertRecord");
+
+    // Apply a canonical pull result with records (insert/replace)
+    await applyPullResult(storage, {
+      ok: true,
+      records: {
+        todo: [{ id: "todo:1", name: "New todo", completed: false, updatedAt: 1000 }],
+      },
+      deleted: {},
+      cursors: { todo: "3" },
+    });
+
+    // upsertRecord should have been called (not mergeRecord)
+    expect(upsertRecordSpy).toHaveBeenCalledWith(
+      "todo",
+      { id: "todo:1", name: "New todo", completed: false, updatedAt: 1000 },
+    );
+    expect(mergeRecordSpy).not.toHaveBeenCalled();
+
+    const result = await storage.getRecord("todo", "todo:1");
+    expect(result).toEqual({ id: "todo:1", name: "New todo", completed: false, updatedAt: 1000 });
+  });
+
+  it("TV-MERGE-PULL-003: Per-table cursors are updated after applying merged pull result", async () => {
+    const storage = new MockStorageAdapter();
+
+    await applyPullResult(storage, {
+      ok: true,
+      records: {},
+      merged: { todo: [{ id: "todo:1", completed: true }] },
+      deleted: {},
+      cursors: { todo: "7" },
+    });
+
+    const cursor = await storage.getCursor("todo");
+    expect(cursor).toBe("7");
+  });
+
+  it("TV-MERGE-PULL-004: Pull with merged and records in same result applies both correctly", async () => {
+    const storage = new MockStorageAdapter();
+
+    // Pre-populate existing record for merge target
+    await storage.upsertRecord("todo", {
+      id: "todo:existing",
+      name: "Keep me",
+      completed: false,
+    });
+
+    await applyPullResult(storage, {
+      ok: true,
+      records: {
+        todo: [{ id: "todo:new", name: "Brand new", completed: false }],
+      },
+      merged: {
+        todo: [{ id: "todo:existing", completed: true }],
+      },
+      deleted: {},
+      cursors: { todo: "10" },
+    });
+
+    // New record created via upsert
+    const newRecord = await storage.getRecord("todo", "todo:new");
+    expect(newRecord).toEqual({ id: "todo:new", name: "Brand new", completed: false });
+
+    // Existing record merged (name preserved)
+    const existingRecord = await storage.getRecord("todo", "todo:existing");
+    expect(existingRecord!.name).toBe("Keep me"); // preserved
+    expect(existingRecord!.completed).toBe(true); // merged
   });
 
   it("TV-REL-002N: Join store delta with missing store is rejected deterministically", async () => {

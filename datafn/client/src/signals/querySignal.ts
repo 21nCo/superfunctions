@@ -232,6 +232,7 @@ function createQuerySignal<T>(
   options?: { disableOptimistic?: boolean },
 ): DatafnSignal<T> {
   let currentValue: T | undefined;
+  let currentCursor: string | null = null;
   const subscribers = new Set<(value: T) => void>();
   let inFlight = false;
   let isRefresh = false;
@@ -240,10 +241,10 @@ function createQuerySignal<T>(
   const resource = fullQuery.resource;
   let disposed = false;
   let unsubscribeFn: (() => void) | null = null;
-  
+
   // Track cached record IDs for fine-grained invalidation (SIG-002)
   let cachedIds: Set<string> | null = null;
-  
+
   // Optimistic update option (SIG-003)
   const disableOptimistic = options?.disableOptimistic ?? false;
 
@@ -271,13 +272,19 @@ function createQuerySignal<T>(
 
     try {
       const result = await client.query(fullQuery);
-      currentValue = result as T;
+      // Unwrap pagination envelope: emit the record array directly
+      const queryResult = result as { data?: any[]; nextCursor?: string | null };
+      currentValue = (queryResult.data ?? result) as T;
+      currentCursor = queryResult.nextCursor ?? null;
       currentError = null;
-      
-      // Extract and cache record IDs from result (SIG-002)
-      cachedIds = extractRecordIds(result);
 
-      // Notify subscribers of value change only (not loading state)
+      // Extract and cache record IDs from result (SIG-002)
+      cachedIds = extractRecordIds(currentValue);
+
+      // Clear flight flags BEFORE notifying so loading/refreshing read correctly
+      inFlight = false;
+      isRefresh = false;
+
       notifySubscribers();
     } catch (error: any) {
       // Convert error to DatafnError format
@@ -290,6 +297,9 @@ function createQuerySignal<T>(
       if (!refresh) {
         // Initial load error - store and notify
         currentError = dfError;
+        // Clear flight flags BEFORE notifying so loading reads correctly
+        inFlight = false;
+        isRefresh = false;
         notifySubscribers();
         // Still throw for backward compatibility
         throw error;
@@ -329,11 +339,24 @@ function createQuerySignal<T>(
     });
   };
 
-  // Listen for mutation_applied events for auto-refresh (SIG-002, SIG-003)
+  // Listen for mutation_applied and sync_applied events for auto-refresh (SIG-002, SIG-003)
   // Store unsubscribe function for disposal
   unsubscribeFn = eventBus.subscribe((event) => {
     // Check disposed flag to prevent refresh after dispose
     if (disposed) {
+      return;
+    }
+
+    // Refresh after sync operations (clone/pull) that may have updated local storage
+    if (event.type === "sync_applied") {
+      const ctx = (event as any).context;
+      const phase = ctx?.phase;
+      if (phase === "clone" || phase === "pull") {
+        const affectedResources: string[] = ctx?.resources ?? [];
+        if (affectedResources.length === 0 || affectedResources.some(r => footprint.has(r))) {
+          scheduleRefresh();
+        }
+      }
       return;
     }
 
@@ -447,6 +470,10 @@ function createQuerySignal<T>(
 
     get refreshing(): boolean {
       return inFlight && isRefresh;
+    },
+
+    get nextCursor(): string | null {
+      return currentCursor;
     },
 
     dispose(): void {

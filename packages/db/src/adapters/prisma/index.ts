@@ -23,6 +23,7 @@ import type {
 } from '../../adapter/types.js';
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { OperationNotSupportedError } from '../../adapter/errors.js';
+import { createPrismaInternalCrud } from './internal.js';
 
 export interface PrismaAdapterConfig {
   prisma: any; // PrismaClient instance
@@ -327,5 +328,7 @@ export function prismaAdapter(config: PrismaAdapterConfig): Adapter {
     adapter: createImpl,
   });
 
-  return factory({});
+  const adapter = factory({});
+  const internalCrud = createPrismaInternalCrud(config.prisma);
+  return Object.assign(adapter, { internal: internalCrud });
 }

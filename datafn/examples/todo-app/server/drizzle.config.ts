@@ -9,7 +9,7 @@ const dbUrl =
   "postgres://postgres:postgres@localhost:5432/todo_app";
 
 export default defineConfig({
-  schema: "./src/schema.ts",
+  schema: "./src/datafn-schema.drizzle.ts",
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {

@@ -40,12 +40,14 @@ export type PullResultLegacy = {
 export type PullResultCanonical = {
   ok: boolean;
   records: Record<string, Array<Record<string, unknown>>>;
+  merged?: Record<string, Array<Record<string, unknown>>>; // partial records to apply via mergeRecord (FIX-A)
   deleted: Record<string, string[]>;
   joins?: Record<string, {
     upsert: Array<Record<string, unknown>>;
     delete: Array<{ from: string; to: string }>;
   }>;
   cursors: Record<string, string>;
+  hasMore?: boolean; // CLIENT-PULL-001: true when more changes remain on server
 };
 
 export type PullResult = PullResultLegacy | PullResultCanonical;
@@ -171,12 +173,22 @@ async function applyPullResultCanonical(
   storage: DatafnStorageAdapter,
   result: PullResultCanonical,
 ): Promise<void> {
-  const { records, deleted, joins, cursors } = result;
+  const { records, merged, deleted, joins, cursors } = result;
 
-  // Apply record upserts
+  // Apply record upserts (insert/replace/upsert ops — full record replacement)
   for (const [resource, resourceRecords] of Object.entries(records)) {
     for (const record of resourceRecords) {
       await storage.upsertRecord(resource, record);
+    }
+  }
+
+  // Apply merge deltas (merge op — partial record, must not overwrite unset fields) (FIX-A)
+  if (merged) {
+    for (const [resource, mergedRecords] of Object.entries(merged)) {
+      for (const record of mergedRecords) {
+        const id = record.id as string;
+        await storage.mergeRecord(resource, id, record);
+      }
     }
   }
 
@@ -239,7 +251,7 @@ async function applyPullResultCanonical(
  * Set cursor only if new cursor is greater than existing cursor.
  * Cursors are base-10 integer strings representing serverSeq.
  */
-async function setCursorMonotonically(
+export async function setCursorMonotonically(
   storage: DatafnStorageAdapter,
   resource: string,
   newCursor: string,

@@ -1,7 +1,7 @@
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { drizzleAdapter } from "@superfunctions/db/adapters";
-import { schema } from "./schema.js";
+import { schema } from "./datafn-schema.drizzle.js";
 import { config } from "dotenv";
 
 // Load environment variables from .env file
@@ -14,7 +14,6 @@ const DATABASE_URL =
   process.env.DATABASE_URL ||
   "postgres://postgres:postgres@localhost:5432/todo_app";
 
-console.log("Database URL:", DATABASE_URL ? `${DATABASE_URL.split('@')[0]}@***` : "not set");
 
 // Initialize Postgres Pool
 export const pool = new Pool({

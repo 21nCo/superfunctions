@@ -23,6 +23,7 @@ import type {
 } from '../../adapter/types.js';
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { OperationNotSupportedError } from '../../adapter/errors.js';
+import { createKyselyInternalCrud } from './internal.js';
 
 export type KyselyDialect = 'postgres' | 'mysql' | 'sqlite';
 
@@ -239,13 +240,16 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
       async upsert<T = any>({ model, where, create, update, select }: UpsertParams): Promise<T> {
         const table = resolveTable(model);
 
+        const hasUpdate = update && Object.keys(update).length > 0;
+
         // Kysely doesn't have native upsert; use insert...onConflict or fallback to update/insert
         if (dialect === 'postgres' || dialect === 'sqlite') {
           const conflictColumn = where.length > 0 ? where[0].field : 'id';
-          let qb = db
-            .insertInto(table)
-            .values(create)
-            .onConflict((oc: any) => oc.column(conflictColumn).doUpdateSet(update));
+          let qb = hasUpdate
+            ? db.insertInto(table).values(create)
+                .onConflict((oc: any) => oc.column(conflictColumn).doUpdateSet(update))
+            : db.insertInto(table).values(create)
+                .onConflict((oc: any) => oc.column(conflictColumn).doNothing());
 
           if (select && select.length > 0) {
             qb = qb.returning(select);
@@ -253,25 +257,48 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
             qb = qb.returning(['*' as any]);
           }
           const result = await qb.executeTakeFirst();
+          // doNothing returns no rows on conflict; fall back to findOne
+          if (!result && !hasUpdate) {
+            const row = await this.findOne<T>({ model, where, select });
+            return row as T;
+          }
           return result as T;
         } else {
+          if (!hasUpdate) {
+            // MySQL: INSERT IGNORE equivalent — just try inserting, ignore duplicate
+            const columns = Object.keys(create);
+            const values = Object.values(create);
+
+            const escapeIdentifier = (identifier: string): string => {
+              return `\`${identifier.replace(/`/g, '``')}\``;
+            };
+
+            const sql = `
+              INSERT IGNORE INTO ${escapeIdentifier(table)} (${columns.map(escapeIdentifier).join(', ')})
+              VALUES (${columns.map(() => '?').join(', ')})
+            `;
+            await db.executeQuery({ sql, parameters: values } as any);
+
+            const result = await this.findOne<T>({ model, where, select });
+            if (!result) {
+              throw new Error('Upsert succeeded but failed to retrieve result');
+            }
+            return result;
+          }
+
           // MySQL: use INSERT...ON DUPLICATE KEY UPDATE for atomic upsert
-          // Merge create and update data
           const allData = { ...create, ...update };
           const columns = Object.keys(allData);
           const values = Object.values(allData);
 
-          // Helper function to escape MySQL identifiers
           const escapeIdentifier = (identifier: string): string => {
             return `\`${identifier.replace(/`/g, '``')}\``;
           };
 
-          // Build UPDATE SET clause for ON DUPLICATE KEY
           const updateSet = Object.keys(update)
             .map(key => `${escapeIdentifier(key)} = VALUES(${escapeIdentifier(key)})`)
             .join(', ');
 
-          // Execute raw SQL for atomic upsert with properly escaped identifiers
           const sql = `
             INSERT INTO ${escapeIdentifier(table)} (${columns.map(escapeIdentifier).join(', ')})
             VALUES (${columns.map(() => '?').join(', ')})
@@ -280,7 +307,6 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
 
           await db.executeQuery({ sql, parameters: values } as any);
 
-          // Re-select the upserted row
           const result = await this.findOne<T>({ model, where, select });
           if (!result) {
             throw new Error('Upsert succeeded but failed to retrieve result');
@@ -378,5 +404,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
     adapter: createImpl,
   });
 
-  return factory({});
+  const adapter = factory({});
+  const internalCrud = createKyselyInternalCrud(config.db, config.dialect);
+  return Object.assign(adapter, { internal: internalCrud });
 }

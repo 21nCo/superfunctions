@@ -1,11 +1,11 @@
 import { createDatafnClient, IndexedDbStorageAdapter } from "@datafn/client";
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnPlugin } from "@datafn/core";
 
 // ---------------------------------------------------------------------------
 // Schema — two resources + a many-many relation
 // ---------------------------------------------------------------------------
 
-export const schema: DatafnSchema = {
+export const schema = {
   resources: [
     {
       name: "todos",
@@ -13,9 +13,22 @@ export const schema: DatafnSchema = {
       idPrefix: "todo",
       fields: [
         { name: "id", type: "string", required: true, unique: true },
-        { name: "text", type: "string", required: true, minLength: 1, maxLength: 500 },
+        {
+          name: "text",
+          type: "string",
+          required: true,
+          minLength: 1,
+          maxLength: 500,
+        },
         { name: "completed", type: "boolean", required: true, default: false },
-        { name: "priority", type: "number", required: false, min: 1, max: 5, default: 3 },
+        {
+          name: "priority",
+          type: "number",
+          required: false,
+          min: 1,
+          max: 5,
+          default: 3,
+        },
         { name: "createdAt", type: "date", required: true },
         { name: "updatedAt", type: "date", required: true },
       ],
@@ -29,7 +42,13 @@ export const schema: DatafnSchema = {
       idPrefix: "cat",
       fields: [
         { name: "id", type: "string", required: true, unique: true },
-        { name: "name", type: "string", required: true, minLength: 1, maxLength: 100 },
+        {
+          name: "name",
+          type: "string",
+          required: true,
+          minLength: 1,
+          maxLength: 100,
+        },
         { name: "color", type: "string", required: true, default: "#646cff" },
         { name: "createdAt", type: "date", required: true },
       ],
@@ -98,45 +117,10 @@ const auditPlugin: DatafnPlugin = {
 };
 
 // ---------------------------------------------------------------------------
-// Client factory — creates a client for a given mode
+// Mode type
 // ---------------------------------------------------------------------------
 
 export type AppMode = "sync" | "local-only";
-
-/**
- * Creates a fully configured DataFn client.
- *
- * Demonstrates:
- *  - Schema with two resources + many-many relation
- *  - IndexedDB offline storage
- *  - Plugin system (audit logger)
- *  - Sync vs local-only mode toggle
- *  - KV workflow (available via client.kv)
- *  - Signals (available via table.signal / client.kv.signal)
- */
-export function makeClient(mode: AppMode = "sync") {
-  return createDatafnClient({
-    schema,
-    clientId: getOrCreateClientId(),
-    storage: new IndexedDbStorageAdapter("todo-app-db"),
-    plugins: [auditPlugin],
-    sync:
-      mode === "local-only"
-        ? { mode: "local-only" }
-        : {
-            mode: "sync",
-            offlinability: true,
-            remote: "http://localhost:3000/datafn",
-            ws: false,
-            pushInterval: 2000,
-            pushBatchSize: 100,
-            pushMaxRetries: 3,
-            hydration: {
-              bootResources: ["todos", "categories"],
-            },
-          },
-  });
-}
 
 /** Persist a stable clientId in localStorage. */
 function getOrCreateClientId(): string {
@@ -149,17 +133,45 @@ function getOrCreateClientId(): string {
   return id;
 }
 
+function makeSyncConfig(mode: AppMode) {
+  if (mode === "local-only") {
+    return { mode: "local-only" as const };
+  }
+  return {
+    mode: "sync" as const,
+    offlinability: true,
+    remote: "http://localhost:3001/datafn",
+    ws: false,
+    pushInterval: 2000,
+    pushBatchSize: 100,
+    pushMaxRetries: 3,
+    hydration: {
+      bootResources: ["todos", "categories"],
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Default client instance (sync mode)
+// Unified client — stable Proxy reference with built-in mode switching
 // ---------------------------------------------------------------------------
 
-export let client = makeClient("sync");
+export const client = createDatafnClient({
+  schema,
+  clientId: getOrCreateClientId(),
+  storage: IndexedDbStorageAdapter.create({ dbName: "todo-app-db", schema }),
+  plugins: [auditPlugin],
+  sync: makeSyncConfig("sync"),
+});
 
 /**
- * Recreate the client with a different mode.
- * Returns the new client so the UI can re-bind.
+ * Switch the client between sync and local-only mode.
+ * Creates a fresh storage adapter on each switch (same IndexedDB name, new connection).
+ * Sync is auto-started by switchContext when switching to "sync" mode.
  */
-export function switchMode(mode: AppMode) {
-  client = makeClient(mode);
-  return client;
+export async function switchMode(mode: AppMode): Promise<void> {
+  console.log("[DEBUG] switchMode called with mode:", mode);
+  await client.switchContext({
+    sync: makeSyncConfig(mode),
+    storage: IndexedDbStorageAdapter.create({ dbName: "todo-app-db", schema }),
+  });
 }

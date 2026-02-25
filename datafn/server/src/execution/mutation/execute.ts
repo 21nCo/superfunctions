@@ -6,7 +6,7 @@ import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
 import { type DFQLMutation, buildReplaceRecord } from "./dfql.js";
-import { executeRelate, executeModifyRelation, executeUnrelate } from "./relations.js";
+import { executeRelate, executeModifyRelation, executeUnrelate, extractJoinDeltas, extractRelationFkDeltas } from "./relations.js";
 import { ChangeTrackingService } from "../sync/change-tracking.js";
 import { evaluateGuard } from "./guards.js";
 import { isSearchPlugin } from "../../plugins/searchfn.js";
@@ -23,31 +23,18 @@ export async function executeMutation(
   plugins: DatafnPlugin[] = [],
   namespace: string,
 ): Promise<MutationResult> {
-  // Validate required fields
-  if (!mutation.clientId || !mutation.mutationId) {
-    return {
-      ok: false,
-      mutationId: mutation.mutationId || "",
-      affectedIds: [],
-      errors: [
-        {
-          code: "DFQL_INVALID",
-          message: "Invalid DFQL: missing clientId or mutationId",
-          path: "$",
-          retryable: false,
-        },
-      ],
-      deduped: false,
-    };
-  }
+  // clientId and mutationId are optional. When absent, skip idempotency tracking.
+  const effectiveMutationId = mutation.mutationId || `anon-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  // Check idempotency
-  const cached = await idempotencyStore.get(
-    mutation.clientId,
-    mutation.mutationId,
-  );
-  if (cached) {
-    return { ...cached, deduped: true };
+  // Check idempotency only when both IDs are provided
+  if (mutation.clientId && mutation.mutationId) {
+    const cached = await idempotencyStore.get(
+      mutation.clientId,
+      mutation.mutationId,
+    );
+    if (cached) {
+      return { ...cached, deduped: true };
+    }
   }
 
   // Validate operation
@@ -63,7 +50,7 @@ export async function executeMutation(
   if (!validOps.includes(mutation.operation)) {
     const result: MutationResult = {
       ok: false,
-      mutationId: mutation.mutationId,
+      mutationId: effectiveMutationId,
       affectedIds: [],
       errors: [
         {
@@ -75,7 +62,9 @@ export async function executeMutation(
       ],
       deduped: false,
     };
-    await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+    if (mutation.clientId && mutation.mutationId) {
+      await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+    }
     return result;
   }
 
@@ -93,7 +82,7 @@ export async function executeMutation(
     if (!guardResult.match) {
       const result: MutationResult = {
         ok: false,
-        mutationId: mutation.mutationId,
+        mutationId: effectiveMutationId,
         affectedIds: [],
         errors: [
           {
@@ -105,40 +94,28 @@ export async function executeMutation(
         ],
         deduped: false,
       };
-      await idempotencyStore.set(
-        mutation.clientId,
-        mutation.mutationId,
-        result,
-      );
+      if (mutation.clientId && mutation.mutationId) {
+        await idempotencyStore.set(
+          mutation.clientId,
+          mutation.mutationId,
+          result,
+        );
+      }
       return result;
     }
   }
 
-  // Execute operation using Adapter
+  // Execute operation
   let opResult:
     | { ok: true }
     | { ok: false; code: string; message: string; path: string };
+  // For replace, capture the full resolved record for the changelog (FIX-A)
+  let resolvedRecord: Record<string, unknown> | undefined;
 
   try {
     switch (mutation.operation) {
       case "insert":
-        // Enforce uniqueness: check if record exists
-        const exists = await db.findOne({
-          model: mutation.resource,
-          where: [{ field: "id", operator: "eq", value: mutation.id }],
-          namespace,
-        });
-        if (exists) {
-          opResult = {
-            ok: false,
-            code: "CONFLICT",
-            message: "Record already exists",
-            path: "id",
-          };
-          break;
-        }
-
-        // Use adapter.create for insert
+        // MUT-002: Direct create without findOne pre-check
         try {
           await db.create({
             model: mutation.resource,
@@ -150,53 +127,36 @@ export async function executeMutation(
           });
           opResult = { ok: true };
         } catch (error: any) {
-          // Log the actual error for debugging
-          console.error("=== INSERT OPERATION FAILED ===");
-          console.error("Error:", error);
-          console.error("Error message:", error?.message);
-          console.error("Error stack:", error?.stack);
-          console.error("Mutation data:", {
-            id: mutation.id,
-            record: mutation.record,
-          });
-          console.error("================================");
-          opResult = {
-            ok: false,
-            code: "INTERNAL",
-            message: error?.message || "Internal error",
-            path: "$",
-          };
+          const msg = (error?.message || "").toLowerCase();
+          if (msg.includes("unique") || msg.includes("duplicate") || msg.includes("already exists") || msg.includes("conflict")) {
+            opResult = {
+              ok: false,
+              code: "CONFLICT",
+              message: "Record already exists",
+              path: "id",
+            };
+          } else {
+            opResult = {
+              ok: false,
+              code: "INTERNAL",
+              message: error?.message || "Internal error",
+              path: "$",
+            };
+          }
         }
         break;
 
       case "merge":
-        // Use upsert semantics: first check if record exists
+        // MUT-001: Use db.upsert() instead of findOne + conditional create/update
         try {
-          const existing = await db.findOne({
+          const mergeData = mutation.record || {};
+          await db.upsert({
             model: mutation.resource,
             where: [{ field: "id", operator: "eq", value: mutation.id }],
+            create: { id: mutation.id, ...mergeData },
+            update: mergeData,
             namespace,
           });
-
-          if (existing) {
-            // Record exists, update it (merge)
-            await db.update({
-              model: mutation.resource,
-              where: [{ field: "id", operator: "eq", value: mutation.id }],
-              data: mutation.record || {},
-              namespace,
-            });
-          } else {
-            // Record doesn't exist, create it
-            await db.create({
-              model: mutation.resource,
-              data: {
-                id: mutation.id,
-                ...(mutation.record || {}),
-              },
-              namespace,
-            });
-          }
           opResult = { ok: true };
         } catch (error) {
           opResult = {
@@ -251,6 +211,8 @@ export async function executeMutation(
             data: buildResult.record,
             namespace,
           });
+          // Capture the full resolved record so changelog stores the complete record (FIX-A)
+          resolvedRecord = buildResult.record;
           opResult = { ok: true };
         } catch (error) {
           opResult = {
@@ -320,17 +282,6 @@ export async function executeMutation(
         };
     }
   } catch (error: any) {
-    // Adapter errors - log for debugging
-    console.error("=== OUTER CATCH - MUTATION EXECUTION FAILED ===");
-    console.error("Error:", error);
-    console.error("Error message:", error?.message);
-    console.error("Error stack:", error?.stack);
-    console.error("Mutation:", {
-      resource: mutation.resource,
-      operation: mutation.operation,
-      id: mutation.id,
-    });
-    console.error("==============================================");
     opResult = {
       ok: false,
       code: "INTERNAL",
@@ -343,14 +294,14 @@ export async function executeMutation(
   const result: MutationResult = opResult.ok
     ? {
         ok: true,
-        mutationId: mutation.mutationId,
+        mutationId: effectiveMutationId,
         affectedIds: [mutation.id],
         errors: [],
         deduped: false,
       }
     : {
         ok: false,
-        mutationId: mutation.mutationId,
+        mutationId: effectiveMutationId,
         affectedIds: [],
         errors: [
           {
@@ -363,20 +314,60 @@ export async function executeMutation(
         deduped: false,
       };
 
-  // Record change tracking for successful mutations
+  // Record change tracking for successful mutations (FIX-REL-001)
   if (opResult.ok) {
     try {
-      const serverSeq = await changeTracking.getNextServerSeq();
-      await changeTracking.recordChange({
-        serverSeq,
-        resource: mutation.resource,
-        id: mutation.id,
-        op: mutation.operation === "delete" ? "delete" : "upsert",
-        record:
+      const isRelationMutation =
+        mutation.operation === "relate" ||
+        mutation.operation === "modifyRelation" ||
+        mutation.operation === "unrelate";
+
+      if (isRelationMutation) {
+        // Relation mutations must NOT record a primary resource upsert with only
+        // { id } — that would overwrite full records on other clients.
+        // Instead: record targeted FK merge deltas (many-one/one-many) and join
+        // deltas (many-many). For many-many, join deltas alone are sufficient.
+
+        // Batch allocate serverSeqs and record all relation deltas in one call (BATCH-CHG-002)
+        const fkDeltas = extractRelationFkDeltas(mutation, schema);
+        const joinDeltas = extractJoinDeltas(mutation, schema);
+        const allDeltas = [...fkDeltas, ...joinDeltas];
+        if (allDeltas.length > 0) {
+          const seqs = await changeTracking.getNextServerSeqBatch(allDeltas.length);
+          await changeTracking.recordChanges(
+            allDeltas.map((delta, i) => ({
+              serverSeq: seqs[i],
+              resource: delta.resource,
+              id: delta.id,
+              op: delta.op,
+              record: delta.record,
+            }))
+          );
+        }
+      } else {
+        // Regular mutations (insert/merge/replace/delete): record primary resource change
+        const serverSeq = await changeTracking.getNextServerSeq();
+        // Preserve the original operation type so clients can dispatch correctly (FIX-A)
+        const changeOp =
+          mutation.operation === "delete" ? "delete" :
+          mutation.operation === "insert" ? "insert" :
+          mutation.operation === "merge" ? "merge" :
+          "replace"; // only remaining op is "replace"
+        // For replace, use the fully resolved record; for all others use mutation.record (FIX-A)
+        const changeRecord =
           mutation.operation === "delete"
             ? null
-            : { id: mutation.id, ...(mutation.record || {}) },
-      });
+            : mutation.operation === "replace" && resolvedRecord !== undefined
+              ? { id: mutation.id, ...resolvedRecord }
+              : { id: mutation.id, ...(mutation.record || {}) };
+        await changeTracking.recordChange({
+          serverSeq,
+          resource: mutation.resource,
+          id: mutation.id,
+          op: changeOp,
+          record: changeRecord,
+        });
+      }
     } catch (error) {
       // Log but don't fail the mutation if change tracking fails
       console.error("Change tracking failed:", error);
@@ -403,8 +394,10 @@ export async function executeMutation(
     }
   }
 
-  // Store for idempotency
-  await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+  // Store for idempotency only when IDs were provided
+  if (mutation.clientId && mutation.mutationId) {
+    await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+  }
 
   return result;
 }

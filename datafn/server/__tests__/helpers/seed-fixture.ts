@@ -29,16 +29,18 @@ export async function seedFixture(
     }
   }
 
-  // Seed join tables for many-many relations
+  // Seed join tables for many-many relations via the main store so
+  // loadJoinRows (which uses db.findMany) can find them.
   if (fixtureData.joins) {
     for (const [relationKey, joinRows] of Object.entries(fixtureData.joins)) {
       // relationKey format: "resource.relation" e.g. "task.tags"
       const joinTableName = `__datafn_join_${relationKey.replace(".", "_")}`;
 
       for (const joinRow of joinRows) {
+        const id = (joinRow.id as string) ?? `${(joinRow as any).from}:${(joinRow as any).to}`;
         await db.create({
           model: joinTableName,
-          data: joinRow,
+          data: { id, ...joinRow },
           namespace,
         });
       }

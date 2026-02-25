@@ -116,56 +116,51 @@ async def handle_pull(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
         # Usually pull is global.
         # Let's iterate all resources in schema that are not remote-only.
         
+        # Collect all changes across resources
+        all_resource_changes: Dict[str, Any] = {}
+
         for res_name, res_def in index.resources_by_name.items():
             if res_def.get("isRemoteOnly"): continue
-            
+
             cursor = cursors.get(res_name)
-            # Get changes
-            changes_result = await get_changes_since(config.db, "datafn", res_name, cursor)
+            # Get changes — pass limit for bounded fetching (PY-002)
+            pull_limit = getattr(config, "max_pull_limit", None)
+            changes_result = await get_changes_since(config.db, "datafn", res_name, cursor, limit=pull_limit)
             changes = changes_result["changes"]
             new_cursor = changes_result["cursor"]
-            
+
             if changes:
-                # Separate upserts and deletes
-                upserts = []
-                deletes = []
-                
-                # Fetch full records for upserts
-                # Optimization: fetch all needed IDs in one go
-                upsert_ids = [c["recordId"] for c in changes if c["operation"] != "delete"]
-                delete_ids = [c["recordId"] for c in changes if c["operation"] == "delete"]
-                
-                if upsert_ids:
-                    # fetch records
-                    # MockAdapter/Adapter might not support "in" operator easily?
-                    # Adapter protocol has find_many with where.
-                    # Use "id" "in" upsert_ids
-                    # If adapter doesn't support IN, we loop.
-                    # For now assume IN is supported or loop.
-                    # MockAdapter supports simple ops.
-                    # Let's loop for safety unless we update Adapter.
-                    # Or assume `find_many` with `id` in list works.
-                    # Let's just fetch one by one for correctness in MVP.
-                    for uid in set(upsert_ids):
-                         rec = await config.db.find_one(res_name, [{"field": "id", "operator": "eq", "value": uid}])
-                         if rec:
-                             upserts.append(rec)
-                         else:
-                             # Record deleted but change log says upsert?
-                             # Maybe deleted later? 
-                             # If we process changes in order, we might see insert then delete.
-                             # But here we just want latest state.
-                             # If record missing, treat as deleted?
-                             pass
-                
-                # Deletes: we just need IDs
-                deletes = list(set(delete_ids))
-                
-                if upserts: result_records[res_name] = upserts
-                if deletes: result_deleted[res_name] = deletes
-                
-            if new_cursor:
+                all_resource_changes[res_name] = {
+                    "changes": changes,
+                    "new_cursor": new_cursor,
+                }
+            elif new_cursor:
                 result_cursors[res_name] = new_cursor
+
+        # PY-001: Batch-fetch records for all upserts across all resources
+        for res_name, info in all_resource_changes.items():
+            changes = info["changes"]
+            new_cursor = info["new_cursor"]
+
+            upsert_ids = list(set(
+                c["recordId"] for c in changes if c["operation"] != "delete"
+            ))
+            delete_ids = list(set(
+                c["recordId"] for c in changes if c["operation"] == "delete"
+            ))
+
+            upserts: List[Dict[str, Any]] = []
+            if upsert_ids:
+                # Single batch query using IN filter instead of N individual find_one calls
+                rows = await config.db.find_many(
+                    res_name,
+                    where=[{"field": "id", "operator": "in", "value": upsert_ids}],
+                )
+                upserts = rows
+
+            if upserts: result_records[res_name] = upserts
+            if delete_ids: result_deleted[res_name] = delete_ids
+            if new_cursor: result_cursors[res_name] = new_cursor
                 
         return ok_response({
             "records": result_records,

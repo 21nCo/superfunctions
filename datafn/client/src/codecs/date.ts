@@ -2,20 +2,21 @@
  * Date Codec (CODEC-001)
  *
  * Provides schema-driven date serialization and parsing:
- * - Outbound (mutation): Date objects → ISO 8601 strings (UTC)
- * - Inbound (query result): ISO strings → Date objects for schema date fields
+ * - Outbound (mutation): Date objects → epoch milliseconds (number)
+ * - Inbound (query result): epoch milliseconds or ISO strings → Date objects for schema date fields
  * - Deterministic error behavior for invalid dates
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import { toEpochMs, fromEpochMs } from "@datafn/core";
 
 /**
- * Serialize Date fields in mutation records to ISO 8601 strings (CODEC-001 outbound)
+ * Serialize Date fields in mutation records to epoch milliseconds (CODEC-001 outbound)
  *
  * @param schema Schema definition
  * @param resource Resource name
  * @param record Record to serialize
- * @returns Serialized record with Date → ISO string
+ * @returns Serialized record with Date → epoch milliseconds (number)
  * @throws DFQL_INVALID if a date field contains a non-Date value
  */
 export function serializeDateFields(
@@ -37,27 +38,22 @@ export function serializeDateFields(
 
   for (const field of dateFields) {
     const value = serialized[field.name];
+    if (value === undefined || value === null) continue;
 
-    // Skip if field is not present
-    if (value === undefined || value === null) {
-      continue;
-    }
-
-    // Convert Date to ISO string
-    if (value instanceof Date) {
-      if (isNaN(value.getTime())) {
-        throw {
-          code: "DFQL_INVALID",
-          message: "Invalid date value",
-          details: { path: `record.${field.name}` },
-        };
-      }
-      serialized[field.name] = value.toISOString();
-    } else {
-      // Non-Date value in a date field - deterministic rejection
+    // Client strictly requires Date objects for outbound serialization
+    if (!(value instanceof Date)) {
       throw {
         code: "DFQL_INVALID",
         message: "Invalid date value: expected Date object",
+        details: { path: `record.${field.name}` },
+      };
+    }
+    try {
+      serialized[field.name] = toEpochMs(value);
+    } catch {
+      throw {
+        code: "DFQL_INVALID",
+        message: "Invalid date value",
         details: { path: `record.${field.name}` },
       };
     }
@@ -67,13 +63,13 @@ export function serializeDateFields(
 }
 
 /**
- * Parse date fields in query results from ISO strings to Date objects (CODEC-001 inbound)
+ * Parse date fields in query results from epoch milliseconds or ISO strings to Date objects (CODEC-001 inbound)
  *
  * @param schema Schema definition
  * @param resource Resource name
  * @param record Record to parse
- * @returns Parsed record with ISO string → Date
- * @throws DFQL_INVALID if a date field contains an invalid ISO string
+ * @returns Parsed record with epoch milliseconds or ISO string → Date
+ * @throws DFQL_INVALID if a date field contains an invalid value
  */
 export function parseDateFields(
   schema: DatafnSchema,
@@ -94,38 +90,14 @@ export function parseDateFields(
 
   for (const field of dateFields) {
     const value = parsed[field.name];
+    if (value === undefined || value === null) continue;
 
-    // Skip if field is not present
-    if (value === undefined || value === null) {
-      continue;
-    }
-
-    // Parse ISO string to Date
-    if (typeof value === "string") {
-      const date = new Date(value);
-      if (isNaN(date.getTime())) {
-        throw {
-          code: "DFQL_INVALID",
-          message: "Invalid date value",
-          details: { path: `data[].${field.name}` },
-        };
-      }
-      parsed[field.name] = date;
-    } else if (value instanceof Date) {
-      // Already a Date object (passthrough)
-      if (isNaN(value.getTime())) {
-        throw {
-          code: "DFQL_INVALID",
-          message: "Invalid date value",
-          details: { path: `data[].${field.name}` },
-        };
-      }
-      parsed[field.name] = value;
-    } else {
-      // Non-string, non-Date value - deterministic rejection
+    try {
+      parsed[field.name] = fromEpochMs(value);
+    } catch {
       throw {
         code: "DFQL_INVALID",
-        message: "Invalid date value: expected ISO string or Date",
+        message: "Invalid date value",
         details: { path: `data[].${field.name}` },
       };
     }

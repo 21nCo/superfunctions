@@ -138,6 +138,19 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
       normalizedIndices = { base: [], search: [], vector: [] };
     }
 
+    // Validate index field names against declared fields
+    for (const [category, idxFields] of Object.entries(normalizedIndices)) {
+      for (const idxField of idxFields) {
+        if (!fieldNames.has(idxField)) {
+          return err(
+            "SCHEMA_INVALID",
+            `Invalid schema: index field "${idxField}" in indices.${category} does not match any field in resource "${r.name}". Available fields: ${[...fieldNames].join(", ")}`,
+            { path: `resources.${r.name}.indices.${category}` }
+          );
+        }
+      }
+    }
+
     normalizedResources.push({
       ...r,
       indices: normalizedIndices,
@@ -146,6 +159,34 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
 
   // Normalize relations (default to empty array)
   const relations = Array.isArray(s.relations) ? s.relations : [];
+
+  // Validate relation fields
+  for (const rel of relations) {
+    if (typeof rel !== "object" || rel === null || Array.isArray(rel)) {
+      return err("SCHEMA_INVALID", "Invalid schema: relation must be object", {
+        path: "relations",
+      });
+    }
+    const r = rel as Record<string, unknown>;
+    if (r.joinTable !== undefined && typeof r.joinTable !== "string") {
+      return err("SCHEMA_INVALID", "Invalid schema: relation.joinTable must be string", {
+        path: "relations",
+      });
+    }
+    if (r.joinColumns !== undefined) {
+      if (typeof r.joinColumns !== "object" || r.joinColumns === null || Array.isArray(r.joinColumns)) {
+        return err("SCHEMA_INVALID", "Invalid schema: relation.joinColumns must be object with from/to strings", {
+          path: "relations",
+        });
+      }
+      const jc = r.joinColumns as Record<string, unknown>;
+      if (typeof jc.from !== "string" || typeof jc.to !== "string") {
+        return err("SCHEMA_INVALID", "Invalid schema: relation.joinColumns.from and .to must be strings", {
+          path: "relations",
+        });
+      }
+    }
+  }
 
   return ok({
     resources: normalizedResources,

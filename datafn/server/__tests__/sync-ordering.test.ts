@@ -294,7 +294,8 @@ describe("Phase 09: Server Sync Semantics", () => {
       expect(body1.ok).toBe(true);
       expect(body1.result.ok).toBe(true);
       expect(body1.result.changes).toHaveLength(1);
-      expect(body1.result.changes[0].op).toBe("upsert");
+      // After FIX-A, insert ops preserve op type in changelog (was "upsert", now "insert")
+      expect(body1.result.changes[0].op).toBe("insert");
       expect(body1.result.changes[0].id).toBe("task:1");
       expect(body1.result.changes[0].record.title).toBe("A");
       expect(body1.result.nextCursor).toBe("1");
@@ -411,7 +412,8 @@ describe("Phase 09: Server Sync Semantics", () => {
       expect(body2.ok).toBe(true);
       expect(body2.result.ok).toBe(true);
       expect(body2.result.changes).toHaveLength(1);
-      expect(body2.result.changes[0].op).toBe("upsert");
+      // After FIX-A, merge ops preserve op type in changelog (was "upsert", now "merge")
+      expect(body2.result.changes[0].op).toBe("merge");
       expect(body2.result.changes[0].id).toBe("task:1");
       expect(body2.result.changes[0].record.title).toBe("P");
       expect(body2.result.nextCursor).toBe("1");

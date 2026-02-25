@@ -1,4 +1,4 @@
-timestamp,model,IDE/Editor,command,agent_name,phase(s),path
+timestamp,model,launcher,command,agent_name,phase(s),path
 2026-01-24T19:25:00Z,Claude Sonnet 4.5,Factory Droid,spec,factory-droid,.conduct/2026-01-24-audit-fix-comprehensive-spec
 2026-01-26T06:44:25.140805Z,gpt-5.2 (xhigh reasoning),Warp,spec,unknown-agent,,datafn/.conduct/specs/2026-01-26-fix-bs0rjtzf-spec
 2026-01-26T15:12:49Z,Auto,Cursor,document-issue,unknown-agent,,.conduct/issues/2026-01-26-e9a8cd06-issue.md
@@ -24,3 +24,78 @@ timestamp,model,IDE/Editor,command,agent_name,phase(s),path
 2026-02-11T19:10:00Z,Claude Sonnet 4.5,Cursor,execute-issue,unknown-agent,,.conduct/issue-completions/2026-02-11-78feda09-completion.md
 2026-02-11T20:00:00Z,Claude 4.6 Opus (high thinking),Cursor,audit,unknown-agent,,.conduct/audits/2026-02-11-nucleus-migration-gap-status-audit.md
 2026-02-11T20:30:00Z,Claude 4.6 Opus (high thinking),Cursor,spec,unknown-agent,,/Users/ar/dev/superfunctions/datafn/.conduct/specs/2026-02-11-audit-fix-r9k4m7x2-spec
+2026-02-12T21:45:00Z,Claude 4.6 Opus (high thinking),Cursor,document-issue,unknown-agent,,.conduct/issues/2026-02-12-k7x3m9p2-issue.md
+2026-02-12T22:10:00Z,Claude 4.6 Opus (high thinking),Cursor,execute-issue,unknown-agent,,.conduct/issue-completions/2026-02-12-m7x4k9p3-completion.md
+2026-02-12T22:30:00Z,Claude 4.6 Opus (high thinking),Cursor,document-issue,unknown-agent,,.conduct/issues/2026-02-12-p8x2k4m7-issue.md
+2026-02-12T06:56:37Z,Claude Sonnet 4.5,Cursor,execute-issue,factory-droid[bot],,.conduct/issue-completions/2026-02-12-p8x2k4m7-completion.md
+2026-02-12T23:15:00Z,unknown,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-12-b3k9m2x7-issue.md
+2026-02-12T22:00:00Z,Claude Sonnet 4.5,Factory Droid,execute-issue,factory-droid[bot],,.conduct/issue-completions/2026-02-12-k3x7m9b4-completion.md
+2026-02-12T23:45:00Z,unknown,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-12-j5m8k2n7-issue.md
+2026-02-12T16:43:03Z,Claude Sonnet 4.5,Cursor,execute-issue,Droid,,.conduct/issue-completions/2026-02-12-k9m3p7x2-completion.md
+2026-02-12T18:20:00Z,Claude Sonnet 4,Gemini Code Assist,document-issue,antigravity,,.conduct/issues/2026-02-12-x9k4m7p3-issue.md
+2026-02-12T18:50:00Z,Claude Sonnet 4,Gemini Code Assist,spec,antigravity,,datafn/.conduct/specs/2026-02-12-fix-r8k4m2x9-spec
+2026-02-13T10:55:00Z,Claude Sonnet 4,Amp,audit,unknown-agent,,datafn/.conduct/audits/2026-02-13-q7m3k9x4-full-audit.md
+2026-02-13T16:30:00Z,Claude Opus 4.6,Factory Droid CLI,audit,Droid,,datafn/.conduct/audits/2026-02-13-r7k9m3x2-full-audit.md
+2026-02-13T12:00:00Z,unknown,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-13-m4k8p2x9-issue.md
+2026-02-13T17:00:00Z,unknown,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-13-n7k2x4p9-issue.md
+2026-02-13T19:51:00Z,Claude Sonnet 4.5,Cursor,execute-issue,factory-droid,,.conduct/issue-completions/2026-02-13-k7x4m9p5-completion.md
+2026-02-13T06:22:45Z,Claude Sonnet 4.5,CLI,execute-issue,factory-droid,,.conduct/issue-completions/2026-02-13-n7k2x4p9-completion
+2026-02-13T20:15:00Z,Claude Opus 4.6,Claude Code (VSCode),document-issue,claude-opus-4.6,,datafn/.conduct/issues/2026-02-13-q8m3k7x5-issue.md
+2026-02-13T20:45:00Z,Claude Sonnet 4.5,Claude Code (VSCode),execute-issue,claude-sonnet-4-5-20250929,,.conduct/issue-completions/2026-02-13-q8m3k7x5-completion.md
+2026-02-14T03:52:50Z,Claude Sonnet 4.5,Claude Code (VSCode),spec,claude-sonnet-4-5-20250929,,datafn/.conduct/specs/2026-02-14-change-k7m9x4p2-spec
+2026-02-15T12:00:00Z,Claude Opus 4.6,Claude Code (VSCode),audit,claude-opus-4-6,,datafn/.conduct/audits/2026-02-15-k9m4x7p2-full-audit.md
+2026-02-15T18:00:00Z,Claude Opus 4.6,Claude Code (VSCode),spec,claude-opus-4-6,,datafn/.conduct/specs/2026-02-15-change-m8k3x7p4-spec
+2026-02-15T18:14:00Z,Claude Sonnet 4.5,Claude Code (VSCode),execute-phase,claude-sonnet-4-5-20250929,PHASE_03,datafn/.conduct/specs/2026-02-15-change-m8k3x7p4-spec
+2026-02-16T00:00:00Z,Claude Sonnet 4.5,Claude Code (VSCode),execute-phase,claude-sonnet-4-5-20250929,PHASE_04,datafn/.conduct/specs/2026-02-15-change-m8k3x7p4-spec
+2026-02-16T12:00:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),audit,claude-opus-4-6,,datafn/.conduct/audits/2026-02-16-k7m3x9p4-full-audit.md
+2026-02-16T13:00:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),spec,claude-opus-4-6,,datafn/.conduct/specs/2026-02-16-new-k9m7x3p5-spec
+2026-02-16T13:45:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),execute,claude-opus-4-6,PHASE_00,datafn/.conduct/specs/2026-02-16-new-k9m7x3p5-spec/phase-reports/PHASE_00-2026-02-16-r7k3m9x2-report.md
+2026-02-17T00:20:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),execute,claude-opus-4-6,PHASE_01,datafn/.conduct/specs/2026-02-16-new-k9m7x3p5-spec/phase-reports/PHASE_01-2026-02-17-m4x7k9p2-report.md
+2026-02-17T07:06:37Z,Claude Sonnet 4.5,CLI,audit,factory-droid,,datafn/.conduct/audits/2026-02-17-k9m7x3p5-full-audit.md
+2026-02-17T07:45:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-17-k8m3x7p4-issue.md
+2026-02-17T07:46:00Z,Claude Sonnet 4.5,Factory Droid,execute-issue,claude-sonnet-4.5,,.conduct/issue-completions/2026-02-17-k8m3x7p4-completion.md
+2026-02-18T07:45:00Z,Claude 4.6 Opus (high thinking),Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-18-k9x3m7p2-issue.md
+2026-02-19T05:55:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),execute-issue,claude-opus-4-6,,datafn/.conduct/issue-completions/2026-02-19-k9x3m7p2-completion.md
+2026-02-19T06:15:00Z,Claude 4.6 Opus (high thinking),Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-19-k7m4x9p3-issue.md
+2026-02-19T07:50:00Z,Claude 4.6 Opus (high thinking),Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-19-m7k3x9p4-issue.md
+2026-02-19T13:00:00Z,claude-4.6-sonnet-medium-thinking,Cursor,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-02-19-k7m4x9p3-completion.md
+2026-02-19T13:07:00Z,claude-4.6-sonnet-medium-thinking,Cursor,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-02-19-m9k3x7p4-completion.md
+2026-02-21T12:00:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-21-k3m7x9p8-issue.md
+2026-02-21T13:20:00Z,claude-4.6-sonnet-medium-thinking,Cursor,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-02-21-w4k9m3x7-completion.md
+2026-02-23T12:00:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-23-k9x3m7vq-issue.md
+2026-02-23T14:30:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-23-r4wp8n2j-issue.md
+2026-02-23T14:35:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-23-m6bx9tkf-issue.md
+2026-02-23T15:00:00Z,claude-sonnet-4-6,Claude Code (Zed),execute-issue,claude-sonnet-4-6,investigate+implement+verify,superfunctions/datafn/.conduct/issue-completions/2026-02-23-m6bx9tkf-completion.md
+2026-02-23T00:00:00Z,claude-sonnet-4-6,Claude Code (Zed),execute-issue,claude-sonnet-4-6,investigate+implement+verify,superfunctions/datafn/.conduct/issues/2026-02-23-k9x3m7vq-issue.md
+2026-02-23T17:10:00Z,claude-4.6-sonnet-medium-thinking,Cursor,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-02-23-r9m4k7x2-completion.md
+2026-02-23T22:30:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-23-k7x9m4vr-issue.md
+2026-02-23T12:38:52Z,claude-sonnet-4-6,Claude Code,execute-issue,claude-sonnet-4-6,investigate+implement+verify,datafn/.conduct/issue-completions/2026-02-23-k7x9m4vr-completion.md
+2026-02-23T23:45:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-23-m3k7xv9p-issue.md
+2026-02-23T18:30:00Z,claude-4.6-opus-high-thinking,Cursor,spec,unknown-agent,,datafn/.conduct/specs/2026-02-23-new-r4m9kx7v-spec
+2026-02-23T23:58:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-23-k4m7x9v3-issue.md
+2026-02-23T22:35:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute-issue,claude-opus-4-6,investigate+implement+verify,datafn/.conduct/issue-completions/2026-02-23-k4m7x9v3-completion.md
+2026-02-24T07:15:16Z,claude 4.6 opus (max),Warp,document-issue,unknown-agent,,datafn/.conduct/issues/2026-02-24-m7k9x2p4-issue.md
+2026-02-24T13:05:00Z,claude 4.6 sonnet (max),Warp,execute-issue,Oz,,datafn/.conduct/issue-completions/2026-02-24-p4k7m9x2-completion.md
+2026-02-24T07:58:17Z,auto,Warp,document-issue,Oz,,datafn/.conduct/issues/2026-02-24-r7k3m9x4-issue.md
+2026-02-24T08:25:00Z,claude 4.6 sonnet (max),Warp,execute-issue,Oz,,datafn/.conduct/issue-completions/2026-02-24-n9k3x7m4-completion.md
+2026-02-24T17:45:00Z,auto,Warp,document-issue,Oz,,datafn/.conduct/issues/2026-02-24-k4x7m9p3-issue.md
+2026-02-24T11:10:00Z,claude 4.6 sonnet (max),Warp,execute-issue,Oz,,datafn/.conduct/issue-completions/2026-02-24-j5r8n2k9-completion.md
+2026-02-24T12:00:00Z,claude-opus-4-6,CLI,spec,factory-droid,,datafn/.conduct/specs/2026-02-24-fix-k7m4x9p2-spec
+2026-02-24T17:40:00Z,claude-opus-4-6,CLI,execute,factory-droid,PHASE_00,datafn/.conduct/specs/2026-02-24-fix-k7m4x9p2-spec/phase-reports/PHASE_00-2026-02-24-m4r7k9x2-report.md
+2026-02-24T18:10:00Z,claude-opus-4-6,CLI,execute,factory-droid,PHASE_01,datafn/.conduct/specs/2026-02-24-fix-k7m4x9p2-spec/phase-reports/PHASE_01-2026-02-24-k9r3m7x2-report.md
+2026-02-24T18:35:00Z,claude-opus-4-6,CLI,execute,factory-droid,PHASE_02,datafn/.conduct/specs/2026-02-24-fix-k7m4x9p2-spec/phase-reports/PHASE_02-2026-02-24-m3k7x9r4-report.md
+2026-02-24T19:00:00Z,claude-opus-4-6,CLI,execute,factory-droid,PHASE_03,datafn/.conduct/specs/2026-02-24-fix-k7m4x9p2-spec/phase-reports/PHASE_03-2026-02-24-k4r9m7x2-report.md
+2026-02-24T20:15:00Z,Claude Opus 4.6,Factory Droid CLI,spec,Droid,,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec
+2026-02-25T18:50:00Z,claude-opus-4-6,CLI,execute,factory-droid,PHASE_05,datafn/.conduct/specs/2026-02-24-audit-fix-k9r4m7x3-spec/phase-reports/PHASE_05-2026-02-25-k7m9x4r3-report.md
+2026-02-25T10:30:00Z,claude-opus-4-6[1m],Claude Code (Warp),audit,Claude Code,,datafn/.conduct/audits/2026-02-25-k9r4m7x3-spec-audit.md
+2026-02-25T18:30:00Z,Claude Opus 4.6,VS Code,spec,claude-code,,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec
+2026-02-25T19:30:00Z,Claude Opus 4.6,Claude Code (VSCode),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-25-k7m9x4r8-issue.md
+2026-02-25T12:45:00Z,Claude Sonnet 4.6,CLI,execute,Droid,PHASE_04,datafn/.conduct/specs/2026-02-25-audit-fix-r7m4k9x2-spec/phase-reports/PHASE_04-2026-02-25-x4k7r9m2-report.md
+2026-02-25T17:26:00Z,claude-opus-4-6[1m],Claude Code (VSCode),execute-issue,claude-opus-4-6,,.conduct/issue-completions/2026-02-25-k7m9x4r8-completion.md
+2026-02-25T12:43:42Z,claude-opus-4-6[1m],Claude Code (Warp),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-25-r4k7m9x3-issue.md
+2026-02-25T18:30:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute-issue,claude-opus-4-6,,.conduct/issue-completions/2026-02-25-r4k7m9x3-completion.md
+2026-02-25T21:05:00Z,claude-opus-4-6,VS Code (Claude Code Extension),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-25-m7k4x9r3-issue.md
+2026-02-25T21:36:00Z,claude-opus-4-6,VS Code (Claude Code Extension),execute-issue,claude-opus-4-6,investigate+implement+verify,datafn/.conduct/issue-completions/2026-02-25-m7k4x9r3-completion.md
+2026-02-25T22:00:00Z,claude-opus-4-6,VS Code (Claude Code Extension),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-25-k9x4m7r3-issue.md
+2026-02-25T23:15:00Z,claude-opus-4-6,VS Code (Claude Code Extension),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-25-r7x4m9k3-issue.md
+2026-02-25T16:00:00Z,claude-opus-4-6,VS Code (Claude Code Extension),execute-issue,claude-opus-4-6,,datafn/.conduct/issue-completions/2026-02-25-r7x4m9k3-completion.md

@@ -444,6 +444,367 @@ describe("@datafn/client sync", () => {
     client.sync.stop();
   });
 
+  // TV-PULL-JOIN tests: join store cursors in pull and WS hello (Issue k4x7m9p3 Fix)
+
+  it("TV-PULL-JOIN-001: pullNow() includes join store cursor when schema has many-many relation", async () => {
+    const storage = new MockStorageAdapter();
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("tag", "ready");
+    storage.hydrationStates.set("kv", "ready");
+    storage.cursors.set("task", "5");
+    storage.cursors.set("tag", "5");
+    storage.cursors.set("kv", "5");
+    storage.cursors.set("join_task_tags_tag", "3");
+
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({
+        ok: true,
+        result: {
+          ok: true,
+          records: {},
+          deleted: {},
+          cursors: { task: "5", tag: "5", kv: "5", "join_task_tags_tag": "3" },
+        },
+      });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: {} },
+    });
+
+    const schemaWithRelations = {
+      resources: [
+        { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: true }] },
+        { name: "tag", version: 1, fields: [{ name: "label", type: "string" as const, required: true }] },
+      ],
+      relations: [
+        { from: "task", relation: "tags", to: "tag", type: "many-many" as const, inverse: "tasks" },
+      ],
+    };
+
+    const client = createDatafnClient({
+      schema: schemaWithRelations,
+      sync: { offlinability: true, remote: "http://example.com" },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+
+    expect(pullSpy).toHaveBeenCalled();
+    expect(pullSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cursors: expect.objectContaining({
+          task: "5",
+          tag: "5",
+          "join_task_tags_tag": "3",
+        }),
+      }),
+    );
+
+    client.sync.stop();
+  });
+
+  it("TV-PULL-JOIN-002: pullNow() defaults join cursor to '0' when not yet stored", async () => {
+    const storage = new MockStorageAdapter();
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("tag", "ready");
+    storage.hydrationStates.set("kv", "ready");
+    storage.cursors.set("task", "0");
+    storage.cursors.set("tag", "0");
+    storage.cursors.set("kv", "0");
+    // No join cursor stored — should default to "0"
+
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({
+        ok: true,
+        result: { ok: true, records: {}, deleted: {}, cursors: {} },
+      });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: {} },
+    });
+
+    const schemaWithRelations = {
+      resources: [
+        { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: true }] },
+        { name: "tag", version: 1, fields: [{ name: "label", type: "string" as const, required: true }] },
+      ],
+      relations: [
+        { from: "task", relation: "tags", to: "tag", type: "many-many" as const, inverse: "tasks" },
+      ],
+    };
+
+    const client = createDatafnClient({
+      schema: schemaWithRelations,
+      sync: { offlinability: true, remote: "http://example.com" },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+
+    expect(pullSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cursors: expect.objectContaining({ "join_task_tags_tag": "0" }),
+      }),
+    );
+
+    client.sync.stop();
+  });
+
+  it("TV-WS-JOIN-001: WS hello includes join store cursor for many-many relation", async () => {
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("task", "5");
+    storage.cursors.set("tag", "5");
+    storage.cursors.set("kv", "5");
+    storage.cursors.set("join_task_tags_tag", "3");
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: {} },
+    });
+
+    const schemaWithRelations = {
+      resources: [
+        { name: "task", version: 1, fields: [{ name: "title", type: "string" as const, required: true }] },
+        { name: "tag", version: 1, fields: [{ name: "label", type: "string" as const, required: true }] },
+      ],
+      relations: [
+        { from: "task", relation: "tags", to: "tag", type: "many-many" as const, inverse: "tasks" },
+      ],
+    };
+
+    const client = createDatafnClient({
+      schema: schemaWithRelations,
+      sync: {
+        offlinability: true,
+        remote: "http://example.com",
+        ws: true,
+      },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+    await vi.runAllTimersAsync();
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+    const ws = MockWebSocket.instances[0];
+
+    // Find the hello message sent on WS open
+    const helloCall = ws.send.mock.calls.find((call: any[]) => {
+      try { return JSON.parse(call[0]).type === "hello"; } catch { return false; }
+    });
+    expect(helloCall).toBeDefined();
+    const helloMsg = JSON.parse(helloCall![0]);
+
+    // Verify hello cursors include the join store key
+    expect(helloMsg.cursors).toMatchObject({
+      task: "5",
+      tag: "5",
+      "join_task_tags_tag": "3",
+    });
+
+    client.sync.stop();
+  });
+
+  // TV-CURSOR-BEFORE tests: push with cursorBefore in response
+
+  it("TV-CURSOR-BEFORE-001: Single client — cursorBefore == localCursor → cursor advanced locally, no pull", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.changelogAppend({
+      clientId: "c1",
+      mutationId: "m1",
+      timestampMs: 1,
+      mutation: { resource: "task", operation: "merge", id: "t1" },
+    });
+    // Pre-set global cursor to "5"; hydration states are "notStarted" (default) so init does clone, not pull
+    storage.cursors.set("__global_cursor__", "5");
+
+    // Clone mock: init path — does NOT trigger pull
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: { task: "5", user: "5" } },
+    });
+
+    // Push returns cursorBefore == localCursor (5), cursor == 6
+    vi.spyOn(DefaultHttpTransport.prototype, "push").mockResolvedValue({
+      ok: true,
+      result: { ok: true, applied: ["m1"], cursor: "6", cursorBefore: "5", errors: [] },
+    });
+
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({ ok: true, result: { ok: true, records: {}, deleted: {}, cursors: {} } });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { offlinability: true, remote: "http://example.com", pushInterval: 1000 },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTimeAsync(10); // settle any setTimeout(0) callbacks
+
+    // Pull should NOT have been triggered (no foreign changes; init used clone, not pull)
+    expect(pullSpy).not.toHaveBeenCalled();
+
+    // Global cursor should have been advanced to "6"
+    const updatedCursor = await storage.getCursor("__global_cursor__");
+    expect(updatedCursor).toBe("6");
+
+    client.sync.stop();
+  });
+
+  it("TV-CURSOR-BEFORE-002: Foreign changes exist — cursorBefore != localCursor → pull triggered", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.changelogAppend({
+      clientId: "c1",
+      mutationId: "m1",
+      timestampMs: 1,
+      mutation: { resource: "task", operation: "merge", id: "t1" },
+    });
+    // Local cursor is "5", but server's cursorBefore is "7" (another client pushed 2 seqs)
+    storage.cursors.set("__global_cursor__", "5");
+    storage.cursors.set("task", "5");
+    storage.cursors.set("user", "5");
+    storage.cursors.set("kv", "5");
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("user", "ready");
+    storage.hydrationStates.set("kv", "ready");
+
+    vi.spyOn(DefaultHttpTransport.prototype, "push").mockResolvedValue({
+      ok: true,
+      result: { ok: true, applied: ["m1"], cursor: "8", cursorBefore: "7", errors: [] },
+    });
+
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({
+        ok: true,
+        result: { ok: true, records: {}, deleted: {}, cursors: { task: "8", user: "8", kv: "8" } },
+      });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: { task: "5", user: "5", kv: "5" } },
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { offlinability: true, remote: "http://example.com", pushInterval: 1000 },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTimeAsync(10); // settle setTimeout(0)
+
+    // Pull SHOULD have been triggered (foreign changes detected)
+    expect(pullSpy).toHaveBeenCalled();
+
+    client.sync.stop();
+  });
+
+  it("TV-CURSOR-BEFORE-003: Legacy server (no cursorBefore) falls back to old cursor comparison", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.changelogAppend({
+      clientId: "c1",
+      mutationId: "m1",
+      timestampMs: 1,
+      mutation: { resource: "task", operation: "merge", id: "t1" },
+    });
+    storage.cursors.set("__global_cursor__", "10");
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("user", "ready");
+    storage.hydrationStates.set("kv", "ready");
+
+    // Legacy server: no cursorBefore field, but cursor > storedSeq
+    vi.spyOn(DefaultHttpTransport.prototype, "push").mockResolvedValue({
+      ok: true,
+      result: { ok: true, applied: ["m1"], cursor: "20", errors: [] }, // no cursorBefore
+    });
+
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({
+        ok: true,
+        result: { ok: true, records: {}, deleted: {}, cursors: { task: "20", user: "20", kv: "20" } },
+      });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: { task: "10", user: "10", kv: "10" } },
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { offlinability: true, remote: "http://example.com", pushInterval: 1000 },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Legacy fallback: cursor (20) > storedSeq (10) → pull should have been triggered
+    expect(pullSpy).toHaveBeenCalled();
+
+    client.sync.stop();
+  });
+
+  it("TV-CURSOR-BEFORE-004: Legacy server (no cursorBefore), cursor == storedSeq → no pull", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.changelogAppend({
+      clientId: "c1",
+      mutationId: "m1",
+      timestampMs: 1,
+      mutation: { resource: "task", operation: "merge", id: "t1" },
+    });
+    // hydration states are "notStarted" (default) so init does clone, not pull
+    storage.cursors.set("__global_cursor__", "20");
+
+    // Clone returns no cursors so global cursor stays at "20"
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: {} },
+    });
+
+    // Legacy server: no cursorBefore, cursor == storedSeq
+    vi.spyOn(DefaultHttpTransport.prototype, "push").mockResolvedValue({
+      ok: true,
+      result: { ok: true, applied: ["m1"], cursor: "20", errors: [] }, // no cursorBefore
+    });
+
+    const pullSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "pull")
+      .mockResolvedValue({ ok: true, result: { ok: true } });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { offlinability: true, remote: "http://example.com", pushInterval: 1000 },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Legacy fallback: cursor (20) == storedSeq (20) → no pull
+    expect(pullSpy).not.toHaveBeenCalled();
+
+    client.sync.stop();
+  });
+
   it("TV-PULL-005: After successful push with newer cursor, trigger pull", async () => {
     const storage = new MockStorageAdapter();
     // Preload changelog
@@ -1143,4 +1504,402 @@ describe("@datafn/client sync", () => {
 
     client.sync.stop();
   });
+
+  // PHASE_08 Tests - Interval Backoff when push keeps failing
+  it("TV-PUSH-INTERVAL-BACKOFF: Push interval backs off when push keeps failing", async () => {
+    const storage = new MockStorageAdapter();
+    // Add a mutation that will keep failing
+    await storage.changelogAppend({
+      clientId: "c1",
+      mutationId: "m1",
+      timestampMs: 1,
+      mutation: { resource: "task", operation: "merge", id: "t1" },
+    });
+
+    // Mock clone/pull
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: {} },
+    });
+    vi.spyOn(DefaultHttpTransport.prototype, "pull").mockResolvedValue({
+      ok: true,
+      result: { ok: true, records: {}, deleted: {}, cursors: {} },
+    });
+
+    // Mock remote push to always fail
+    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockResolvedValue({
+      ok: false,
+      error: { code: "SERVER_ERROR", message: "Server error" },
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: {
+        offlinability: true,
+        remote: "http://example.com",
+        pushMaxRetries: 2, // Only 2 retries to speed up test
+        pushInterval: 1000, // 1 second base interval
+        pushRetryBackoff: {
+          baseDelayMs: 50, // Fast per-attempt retries
+          multiplier: 2,
+          maxDelayMs: 200,
+          jitterMs: 0,
+        },
+        pushIntervalBackoff: {
+          baseMultiplier: 2, // Double the interval each time
+          maxDelayMs: 10000, // Cap at 10 seconds
+          jitterMs: 0, // No jitter for predictable testing
+        },
+      },
+      clientId: "c1",
+      storage,
+    });
+
+    const eventHandler = vi.fn();
+    client.subscribe(eventHandler);
+
+    await client.sync.start();
+
+    // First push round: 3 attempts (initial + 2 retries) all fail
+    // Wait for initial interval (1000ms) + retry delays (50ms + 100ms) + buffer
+    await vi.advanceTimersByTimeAsync(1000); // Initial interval
+    await vi.advanceTimersByTimeAsync(50);   // First retry delay
+    await vi.advanceTimersByTimeAsync(100);  // Second retry delay
+    await vi.advanceTimersByTimeAsync(100);  // Buffer
+    expect(pushSpy).toHaveBeenCalledTimes(3); // 3 attempts
+    
+    // After first failure, next push should be delayed by: 1000 * 2^1 = 2000ms
+    // (not the regular 1000ms interval)
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(pushSpy).toHaveBeenCalledTimes(3); // Still only 3 (next push not yet)
+
+    await vi.advanceTimersByTimeAsync(500); // Complete the 2000ms delay
+    await vi.advanceTimersByTimeAsync(50);   // First retry delay
+    await vi.advanceTimersByTimeAsync(100);  // Second retry delay
+    await vi.advanceTimersByTimeAsync(100);  // Buffer
+    expect(pushSpy).toHaveBeenCalledTimes(6); // Second round: 3 more attempts
+
+    // After second failure, next push should be delayed by: 1000 * 2^2 = 4000ms
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(pushSpy).toHaveBeenCalledTimes(6); // Still only 6
+
+    await vi.advanceTimersByTimeAsync(500); // Complete the 4000ms delay
+    await vi.advanceTimersByTimeAsync(50);  // First retry delay
+    await vi.advanceTimersByTimeAsync(100); // Second retry delay
+    await vi.advanceTimersByTimeAsync(100); // Buffer
+    expect(pushSpy).toHaveBeenCalledTimes(9); // Third round: 3 more attempts
+
+    // Verify sync_failed events were emitted
+    const failedEvents = eventHandler.mock.calls
+      .map((call) => call[0])
+      .filter((event: any) => event.type === "sync_failed" && event.context.phase === "push");
+    
+    expect(failedEvents.length).toBeGreaterThanOrEqual(3); // At least 3 failed rounds
+
+    client.sync.stop();
+  });
+
+  it("TV-PUSH-INTERVAL-BACKOFF (Reset): Interval backoff resets after successful push", async () => {
+    const storage = new MockStorageAdapter();
+    await storage.changelogAppend({
+      clientId: "c1",
+      mutationId: "m1",
+      timestampMs: 1,
+      mutation: { resource: "task", operation: "merge", id: "t1" },
+    });
+
+    // Mock clone/pull
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: {}, cursors: {} },
+    });
+    vi.spyOn(DefaultHttpTransport.prototype, "pull").mockResolvedValue({
+      ok: true,
+      result: { ok: true, records: {}, deleted: {}, cursors: {} },
+    });
+
+    let pushCount = 0;
+    const pushSpy = vi.spyOn(DefaultHttpTransport.prototype, "push").mockImplementation(() => {
+      pushCount++;
+      if (pushCount <= 3) {
+        // First round: fail
+        return Promise.resolve({
+          ok: false,
+          error: { code: "SERVER_ERROR", message: "Server error" },
+        });
+      } else if (pushCount <= 6) {
+        // Second round: fail
+        return Promise.resolve({
+          ok: false,
+          error: { code: "SERVER_ERROR", message: "Server error" },
+        });
+      } else {
+        // Third round onwards: succeed
+        return Promise.resolve({
+          ok: true,
+          result: { ok: true, applied: ["m1"] },
+        });
+      }
+    });
+
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: {
+        offlinability: true,
+        remote: "http://example.com",
+        pushMaxRetries: 2,
+        pushInterval: 1000,
+        pushRetryBackoff: {
+          baseDelayMs: 50,
+          multiplier: 2,
+          maxDelayMs: 200,
+          jitterMs: 0,
+        },
+        pushIntervalBackoff: {
+          baseMultiplier: 2,
+          maxDelayMs: 10000,
+          jitterMs: 0,
+        },
+      },
+      clientId: "c1",
+      storage,
+    });
+
+    const eventHandler = vi.fn();
+    client.subscribe(eventHandler);
+
+    await client.sync.start();
+
+    // First round: fail (3 attempts)
+    await vi.advanceTimersByTimeAsync(1000); // Initial interval
+    await vi.advanceTimersByTimeAsync(50);   // First retry
+    await vi.advanceTimersByTimeAsync(100);  // Second retry
+    await vi.advanceTimersByTimeAsync(100);  // Buffer
+    expect(pushCount).toBe(3);
+
+    // Second round: delayed by 2000ms (1000 * 2^1), fail (3 more attempts)
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pushCount).toBe(6);
+
+    // Third round: delayed by 4000ms (1000 * 2^2), succeed (1 attempt)
+    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pushCount).toBe(7); // Success on first attempt
+
+    // Add another mutation
+    await storage.changelogAppend({
+      clientId: "c1",
+      mutationId: "m2",
+      timestampMs: 2,
+      mutation: { resource: "task", operation: "merge", id: "t2" },
+    });
+
+    // After success, interval should be reset to 1000ms (not 8000ms)
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pushCount).toBe(8); // Fourth round with reset interval
+
+    // Verify we got a success event
+    const successEvents = eventHandler.mock.calls
+      .map((call) => call[0])
+      .filter((event: any) => event.type === "sync_applied" && event.context.phase === "push");
+    
+    expect(successEvents.length).toBeGreaterThanOrEqual(1);
+
+    client.sync.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // TV-CLIENT-PULL-003..006: catch-up loop tests
+  // ---------------------------------------------------------------------------
+
+  describe("Client pull catch-up loop (CLIENT-PULL-002..004)", () => {
+  const taskSchema = {
+    resources: [
+      {
+        name: "task",
+        version: 1,
+        fields: [{ name: "title", type: "string" as const, required: true }],
+      },
+    ],
+  };
+
+  function makeMockRemote(pullImpl: () => any) {
+    return {
+      clone: vi.fn().mockResolvedValue({ ok: true, result: { ok: true, data: {}, cursors: {} } }),
+      pull: vi.fn().mockImplementation(() => Promise.resolve(pullImpl())),
+      push: vi.fn().mockResolvedValue({ ok: true, result: { ok: true } }),
+      reconcile: vi.fn().mockResolvedValue({ ok: true, result: { ok: true } }),
+    };
+  }
+
+  it("TV-CLIENT-PULL-003: catch-up loop issues 2 pulls and 1 sync_applied event", async () => {
+    const storage = new MockStorageAdapter();
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("kv", "ready");
+    storage.cursors.set("task", "0");
+
+    let callN = 0;
+    const remote = makeMockRemote(() => {
+      callN++;
+      if (callN === 1) {
+        return { ok: true, result: { ok: true, records: { task: [{ id: "t1", title: "T1" }] }, deleted: { task: [] }, cursors: { task: "50" }, hasMore: true } };
+      }
+      return { ok: true, result: { ok: true, records: { task: [{ id: "t2", title: "T2" }] }, deleted: { task: [] }, cursors: { task: "80" }, hasMore: false } };
+    });
+
+    const events: any[] = [];
+    const client = createDatafnClient({
+      schema: taskSchema,
+      sync: { offlinability: true, remoteAdapter: remote as any },
+      clientId: "c1",
+      storage,
+      getTimestamp: () => 0,
+    });
+    client.subscribe((e) => events.push(e));
+
+    await client.sync.start();
+
+    // remote.pull() called exactly 2 times
+    expect(remote.pull.mock.calls).toHaveLength(2);
+    // First call uses initial cursors { task: "0" }
+    expect((remote.pull.mock.calls[0] as any[])[0]).toMatchObject({ cursors: { task: "0" } });
+    // Second call uses updated cursors from first response
+    expect((remote.pull.mock.calls[1] as any[])[0]).toMatchObject({ cursors: { task: "50" } });
+
+    // sync_applied emitted exactly once (after all iterations)
+    const pullApplied = events.filter(
+      (e: any) => e.type === "sync_applied" && e.context?.phase === "pull",
+    );
+    expect(pullApplied).toHaveLength(1);
+
+    // Both records applied to storage
+    expect(await storage.getRecord("task", "t1")).toMatchObject({ id: "t1" });
+    expect(await storage.getRecord("task", "t2")).toMatchObject({ id: "t2" });
+
+    client.sync.stop();
+  });
+
+  it("TV-CLIENT-PULL-004: single-batch pull (hasMore=false) — 1 pull, 1 event, no regression", async () => {
+    const storage = new MockStorageAdapter();
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("kv", "ready");
+    storage.cursors.set("task", "0");
+
+    const remote = makeMockRemote(() => ({
+      ok: true,
+      result: { ok: true, records: { task: [{ id: "t1", title: "T1" }] }, deleted: { task: [] }, cursors: { task: "30" }, hasMore: false },
+    }));
+
+    const events: any[] = [];
+    const client = createDatafnClient({
+      schema: taskSchema,
+      sync: { offlinability: true, remoteAdapter: remote as any },
+      clientId: "c1",
+      storage,
+      getTimestamp: () => 0,
+    });
+    client.subscribe((e) => events.push(e));
+
+    await client.sync.start();
+
+    expect(remote.pull.mock.calls).toHaveLength(1);
+
+    const pullApplied = events.filter(
+      (e: any) => e.type === "sync_applied" && e.context?.phase === "pull",
+    );
+    expect(pullApplied).toHaveLength(1);
+
+    client.sync.stop();
+  });
+
+  it("TV-CLIENT-PULL-005: max iterations cap — stops at maxPullIterations with warning", async () => {
+    const storage = new MockStorageAdapter();
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("kv", "ready");
+    storage.cursors.set("task", "0");
+
+    // Always returns hasMore=true — should be capped at maxPullIterations=3
+    const remote = makeMockRemote(() => ({
+      ok: true,
+      result: { ok: true, records: { task: [] }, deleted: { task: [] }, cursors: { task: "1" }, hasMore: true },
+    }));
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const events: any[] = [];
+    const client = createDatafnClient({
+      schema: taskSchema,
+      sync: { offlinability: true, remoteAdapter: remote as any, maxPullIterations: 3 },
+      clientId: "c1",
+      storage,
+      getTimestamp: () => 0,
+    });
+    client.subscribe((e) => events.push(e));
+
+    await client.sync.start();
+
+    expect(remote.pull.mock.calls).toHaveLength(3);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("max iterations"));
+
+    const pullApplied = events.filter(
+      (e: any) => e.type === "sync_applied" && e.context?.phase === "pull",
+    );
+    expect(pullApplied).toHaveLength(1);
+
+    warnSpy.mockRestore();
+    client.sync.stop();
+  });
+
+  it("TV-CLIENT-PULL-006: beforeSync and afterSync hooks each run exactly once across all iterations", async () => {
+    const storage = new MockStorageAdapter();
+    storage.hydrationStates.set("task", "ready");
+    storage.hydrationStates.set("kv", "ready");
+    storage.cursors.set("task", "0");
+
+    let callN = 0;
+    const remote = makeMockRemote(() => {
+      callN++;
+      return { ok: true, result: { ok: true, records: { task: [] }, deleted: { task: [] }, cursors: { task: callN === 1 ? "50" : "80" }, hasMore: callN === 1 } };
+    });
+
+    const beforeSyncSpy = vi.fn((_ctx: any, _phase: string, payload: any) => payload);
+    const afterSyncSpy = vi.fn();
+
+    const testPlugin = {
+      name: "test-hooks",
+      runsOn: ["client" as const],
+      beforeSync: beforeSyncSpy,
+      afterSync: afterSyncSpy,
+    };
+
+    const client = createDatafnClient({
+      schema: taskSchema,
+      sync: { offlinability: true, remoteAdapter: remote as any },
+      plugins: [testPlugin as any],
+      clientId: "c1",
+      storage,
+      getTimestamp: () => 0,
+    });
+
+    await client.sync.start();
+
+    // beforeSync called exactly once with phase="pull" (before loop)
+    const pullBeforeCalls = beforeSyncSpy.mock.calls.filter(
+      (args: any[]) => args[1] === "pull",
+    );
+    expect(pullBeforeCalls).toHaveLength(1);
+
+    // afterSync called exactly once with phase="pull" (after loop)
+    const pullAfterCalls = afterSyncSpy.mock.calls.filter(
+      (args: any[]) => args[1] === "pull",
+    );
+    expect(pullAfterCalls).toHaveLength(1);
+
+    client.sync.stop();
+  });
+});
 });

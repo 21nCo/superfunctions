@@ -53,6 +53,152 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
     expect(body.result.cursor).not.toBe("0"); // Should be > 0 after mutation
   });
 
+  it("TV-CURSOR-BEFORE-001: Push returns cursorBefore for single client (no foreign changes)", async () => {
+    const server = await createF1Server(db);
+
+    // First push: no prior seqs, so cursorBefore should be "0"
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "client:1", mutationId: "m1", id: "tag:1", record: { label: "one" } },
+          ],
+        }),
+      }),
+    );
+    const body = await res.json();
+    expect(body.result.ok).toBe(true);
+    expect(typeof body.result.cursorBefore).toBe("string");
+    expect(body.result.cursorBefore).toMatch(/^\d+$/);
+    // cursorBefore should be 0 (nothing before this push)
+    expect(body.result.cursorBefore).toBe("0");
+    // cursor should be > cursorBefore
+    expect(parseInt(body.result.cursor, 10)).toBeGreaterThan(
+      parseInt(body.result.cursorBefore, 10),
+    );
+  });
+
+  it("TV-CURSOR-BEFORE-002: cursorBefore reflects sequence before push, cursor reflects after", async () => {
+    const server = await createF1Server(db);
+
+    // Client A pushes first — advances global seq
+    const resA = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:A",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "client:A", mutationId: "mA1", id: "tag:A1", record: { label: "A" } },
+          ],
+        }),
+      }),
+    );
+    const bodyA = await resA.json();
+    expect(bodyA.result.ok).toBe(true);
+    const cursorAfterA = parseInt(bodyA.result.cursor, 10);
+
+    // Client B pushes second — cursorBefore should equal cursor returned by A's push
+    const resB = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:B",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "client:B", mutationId: "mB1", id: "tag:B1", record: { label: "B" } },
+          ],
+        }),
+      }),
+    );
+    const bodyB = await resB.json();
+    expect(bodyB.result.ok).toBe(true);
+
+    // B's cursorBefore should equal A's final cursor (B saw A's changes)
+    expect(parseInt(bodyB.result.cursorBefore, 10)).toBe(cursorAfterA);
+    // B's cursor should be greater than cursorBefore
+    expect(parseInt(bodyB.result.cursor, 10)).toBeGreaterThan(
+      parseInt(bodyB.result.cursorBefore, 10),
+    );
+  });
+
+  it("TV-CURSOR-BEFORE-003: Push with relate mutation returns cursorBefore correctly", async () => {
+    const server = await createF1Server(db);
+
+    // Insert prerequisite records
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "task", version: 1, operation: "insert", clientId: "seed", mutationId: "ms1", id: "task:1", record: { label: "T1", priority: 1, goalId: "goal:g1", isArchived: false, updatedAt: "2026-01-01" } },
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "ms2", id: "tag:1", record: { label: "urgent" } },
+          ],
+        }),
+      }),
+    );
+
+    // Capture seq before relate push
+    const resRelate = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          mutations: [
+            {
+              resource: "task",
+              version: 1,
+              operation: "relate",
+              id: "task:1",
+              relations: { tags: [{ $ref: "tag:1", order: 1 }] },
+              clientId: "client:1",
+              mutationId: "m-relate-1",
+            },
+          ],
+        }),
+      }),
+    );
+    const bodyRelate = await resRelate.json();
+    expect(bodyRelate.result.ok).toBe(true);
+    // cursorBefore must be present and be a valid integer string
+    expect(typeof bodyRelate.result.cursorBefore).toBe("string");
+    expect(bodyRelate.result.cursorBefore).toMatch(/^\d+$/);
+    // cursor > cursorBefore (relation mutations consume 2+ seqs)
+    expect(parseInt(bodyRelate.result.cursor, 10)).toBeGreaterThan(
+      parseInt(bodyRelate.result.cursorBefore, 10),
+    );
+  });
+
+  it("TV-CURSOR-BEFORE-004: Deduped push returns cursorBefore correctly", async () => {
+    const server = await createF1Server(db);
+
+    const payload = {
+      clientId: "client:1",
+      mutations: [
+        { resource: "tag", version: 1, operation: "insert", clientId: "client:1", mutationId: "m-dup", id: "tag:dup", record: { label: "dup" } },
+      ],
+    };
+
+    // First push
+    const res1 = await server.router.handle(
+      new Request("http://localhost/datafn/push", { method: "POST", body: JSON.stringify(payload) }),
+    );
+    const body1 = await res1.json();
+    expect(body1.result.ok).toBe(true);
+
+    // Second push (idempotent retry)
+    const res2 = await server.router.handle(
+      new Request("http://localhost/datafn/push", { method: "POST", body: JSON.stringify(payload) }),
+    );
+    const body2 = await res2.json();
+    expect(body2.result.ok).toBe(true);
+    expect(body2.result.applied).toContain("m-dup");
+    // cursorBefore should still be present
+    expect(typeof body2.result.cursorBefore).toBe("string");
+    expect(body2.result.cursorBefore).toMatch(/^\d+$/);
+  });
+
   it("PROTO-PULL-001: Pull supports global cursor and pagination", async () => {
     const server = await createF1Server(db);
 
@@ -224,26 +370,25 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
     expect(pushBody.result.applied).toContain("m-1");
     expect(pushBody.result.errors).toHaveLength(0);
 
-    // Verify join row was created
+    // Verify join row was created (uses standard adapter CRUD)
     const joinRow = await db.findOne({
       model: "__datafn_join_node_properties",
       where: [
         { field: "from", operator: "eq", value: "node:1" },
         { field: "to", operator: "eq", value: "property:1" },
       ],
-      namespace: "datafn",
+      namespace: "datafn"
     });
     expect(joinRow).toBeDefined();
-    expect(joinRow.value).toBe("v");
+    expect(joinRow!.value).toBe("v");
 
-    // Verify change tracking recorded join delta
-    const changes = await db.findMany({
-      model: "__datafn_changes",
-      where: [{ field: "namespace", operator: "eq", value: "datafn" }],
-      orderBy: [{ field: "serverSeq", direction: "asc" }],
-      namespace: "datafn",
-    });
-    
+    // Verify change tracking recorded join delta (uses internal CRUD store)
+    const changes = await db.internal.findMany(
+      "__datafn_changes",
+      [{ field: "namespace", op: "eq", value: "datafn" }],
+      { orderBy: "server_seq" },
+    );
+
     // Should have at least one change for the join
     const joinChanges = changes.filter(
       (c: any) => c.resource && c.resource.startsWith("join_")
@@ -718,6 +863,678 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
     expect(body.error.message).toContain("Unknown resource: unknown");
   });
 
+  // FIX-A+B: Merge operation and per-resource cursors tests
+
+  it("TV-MERGE-CHANGELOG-001: Push merge mutation records op=merge in changelog", async () => {
+    const server = await createF1Server(db);
+
+    // Insert a tag first
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "m-insert", id: "tag:1", record: { label: "original" } },
+          ],
+        }),
+      }),
+    );
+
+    // Merge (partial update) the tag
+    const pushRes = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          mutations: [
+            { resource: "tag", version: 1, operation: "merge", clientId: "client:1", mutationId: "m-merge", id: "tag:1", record: { label: "updated" } },
+          ],
+        }),
+      }),
+    );
+
+    const pushBody = await pushRes.json();
+    expect(pushBody.result.ok).toBe(true);
+    expect(pushBody.result.applied).toContain("m-merge");
+
+    // Check the changelog — the merge entry must have op="merge"
+    const changes = await db.internal.findMany(
+      "__datafn_changes",
+      [{ field: "namespace", op: "eq", value: "datafn" }],
+      { orderBy: "server_seq" },
+    );
+
+    const mergeChange = changes.find((c: any) => c.record_id === "tag:1" && c.op === "merge");
+    expect(mergeChange).toBeDefined();
+    expect(mergeChange!.op).toBe("merge");
+
+    // The changelog record must only contain the partial fields (not the full record)
+    const changeRecord = JSON.parse(mergeChange!.record as string);
+    expect(changeRecord.label).toBe("updated");
+  });
+
+  it("TV-MERGE-PULL-001: Canonical pull returns merged field (not records) for merge mutations", async () => {
+    const server = await createF1Server(db);
+
+    // Insert a tag
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "m-insert", id: "tag:1", record: { label: "original" } },
+          ],
+        }),
+      }),
+    );
+
+    // Capture the cursor after insert
+    const insertPull = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "c1", cursors: { tag: "0" } }),
+      }),
+    );
+    const insertPullBody = await insertPull.json();
+    const cursorAfterInsert = insertPullBody.result.cursors.tag;
+
+    // Now merge
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          mutations: [
+            { resource: "tag", version: 1, operation: "merge", clientId: "client:1", mutationId: "m-merge", id: "tag:1", record: { label: "updated" } },
+          ],
+        }),
+      }),
+    );
+
+    // Pull only the new changes (since the insert cursor)
+    const pullRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "c2",
+          cursors: { tag: cursorAfterInsert },
+          limit: 100,
+        }),
+      }),
+    );
+
+    const pullBody = await pullRes.json();
+    expect(pullBody.result.ok).toBe(true);
+
+    // The merge delta must appear in `merged`, NOT in `records`
+    expect(pullBody.result.merged).toBeDefined();
+    expect(pullBody.result.merged.tag).toBeDefined();
+    expect(pullBody.result.merged.tag).toHaveLength(1);
+    expect(pullBody.result.merged.tag[0].id).toBe("tag:1");
+    expect(pullBody.result.merged.tag[0].label).toBe("updated");
+
+    // The merge record must NOT appear in records[] as a full upsert
+    const mergeInRecords = (pullBody.result.records.tag || []).find(
+      (r: any) => r.id === "tag:1" && r.label === "updated",
+    );
+    expect(mergeInRecords).toBeUndefined();
+  });
+
+  it("TV-PUSH-CURSORS-001: Push returns per-resource cursors map", async () => {
+    const server = await createF1Server(db);
+
+    const pushRes = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "client:1", mutationId: "m1", id: "tag:1", record: { label: "X" } },
+          ],
+        }),
+      }),
+    );
+
+    const pushBody = await pushRes.json();
+    expect(pushBody.result.ok).toBe(true);
+
+    // cursors must be present with the tag resource
+    expect(pushBody.result.cursors).toBeDefined();
+    expect(typeof pushBody.result.cursors).toBe("object");
+    expect(pushBody.result.cursors.tag).toBeDefined();
+    expect(pushBody.result.cursors.tag).toMatch(/^\d+$/);
+    // The tag cursor must match the push cursor value
+    expect(parseInt(pushBody.result.cursors.tag, 10)).toBe(
+      parseInt(pushBody.result.cursor, 10),
+    );
+  });
+
+  it("TV-PUSH-CURSORS-002: Push with multiple resources returns cursors for each", async () => {
+    const server = await createF1Server(db);
+
+    const pushRes = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "client:1", mutationId: "m1", id: "tag:1", record: { label: "X" } },
+            { resource: "goal", version: 1, operation: "insert", clientId: "client:1", mutationId: "m2", id: "goal:1", record: { label: "G", status: "active", isArchived: false } },
+          ],
+        }),
+      }),
+    );
+
+    const pushBody = await pushRes.json();
+    expect(pushBody.result.ok).toBe(true);
+
+    expect(pushBody.result.cursors.tag).toBeDefined();
+    expect(pushBody.result.cursors.goal).toBeDefined();
+    // Both cursors must be integer strings
+    expect(pushBody.result.cursors.tag).toMatch(/^\d+$/);
+    expect(pushBody.result.cursors.goal).toMatch(/^\d+$/);
+    // They can be different since each mutation gets its own serverSeq
+    expect(parseInt(pushBody.result.cursors.tag, 10)).toBeGreaterThan(0);
+    expect(parseInt(pushBody.result.cursors.goal, 10)).toBeGreaterThan(0);
+  });
+
+  it("TV-INSERT-CHANGELOG-001: Push insert mutation records op=insert in changelog", async () => {
+    const server = await createF1Server(db);
+
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "client:1", mutationId: "m1", id: "tag:1", record: { label: "X" } },
+          ],
+        }),
+      }),
+    );
+
+    const changes = await db.internal.findMany(
+      "__datafn_changes",
+      [{ field: "namespace", op: "eq", value: "datafn" }],
+      { orderBy: "server_seq" },
+    );
+
+    const insertChange = changes.find((c: any) => c.record_id === "tag:1");
+    expect(insertChange).toBeDefined();
+    expect(insertChange!.op).toBe("insert");
+  });
+
+  it("TV-INSERT-PULL-001: Canonical pull returns insert changes in records field", async () => {
+    const server = await createF1Server(db);
+
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "m1", id: "tag:1", record: { label: "X" } },
+          ],
+        }),
+      }),
+    );
+
+    const pullRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "c1", cursors: { tag: "0" } }),
+      }),
+    );
+    const pullBody = await pullRes.json();
+    expect(pullBody.result.ok).toBe(true);
+
+    // Insert appears in records[] (full record)
+    expect(pullBody.result.records.tag).toBeDefined();
+    expect(pullBody.result.records.tag).toHaveLength(1);
+    expect(pullBody.result.records.tag[0].id).toBe("tag:1");
+
+    // merged should be absent or empty for inserts
+    const mergedTags = pullBody.result.merged?.tag;
+    expect(mergedTags === undefined || mergedTags.length === 0).toBe(true);
+  });
+
+  // FIX-REL-001: Relate/unrelate spurious upsert bug regression tests
+
+  it("TV-REL-NOSPURIOUS-001: many-many relate does NOT produce id-only stub in pull records", async () => {
+    const server = await createF1Server(db);
+
+    // Insert task and tag with full fields
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "task", version: 1, operation: "insert", clientId: "seed", mutationId: "m1",
+              id: "task:1", record: { label: "Buy milk", priority: 1, goalId: "goal:g1", isArchived: false, updatedAt: "2026-01-01" } },
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "m2",
+              id: "tag:1", record: { label: "urgent" } },
+          ],
+        }),
+      }),
+    );
+
+    // Capture the cursor after seed — "Client B" starts here
+    const pullAfterSeed = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "clientB", cursors: { task: "0", tag: "0", join_task_tags_tag: "0" }, includeJoins: true }),
+      }),
+    );
+    const seedBody = await pullAfterSeed.json();
+    const cursorAfterSeed = seedBody.result.cursors.task;
+
+    // Client A performs a many-many relate
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientA",
+          mutations: [
+            {
+              resource: "task", version: 1, operation: "relate",
+              id: "task:1", relations: { tags: [{ $ref: "tag:1", order: 1 }] },
+              clientId: "clientA", mutationId: "m-relate",
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Client B pulls changes since seed cursor
+    const pullRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientB",
+          cursors: { task: cursorAfterSeed, tag: cursorAfterSeed, join_task_tags_tag: cursorAfterSeed },
+          includeJoins: true,
+        }),
+      }),
+    );
+    const pullBody = await pullRes.json();
+    expect(pullBody.result.ok).toBe(true);
+
+    // CRITICAL: task should NOT appear in records[] with a stub { id } — that would corrupt Client B's record
+    const taskRecords: any[] = pullBody.result.records.task || [];
+    const idOnlyStub = taskRecords.find((r: any) => r.id === "task:1" && Object.keys(r).length === 1);
+    expect(idOnlyStub).toBeUndefined(); // No id-only stub should exist
+
+    // The join row SHOULD appear in joins
+    expect(pullBody.result.joins).toBeDefined();
+    expect(pullBody.result.joins["join_task_tags_tag"]).toBeDefined();
+    expect(pullBody.result.joins["join_task_tags_tag"].upsert.length).toBeGreaterThan(0);
+    expect(pullBody.result.joins["join_task_tags_tag"].upsert[0].from).toBe("task:1");
+    expect(pullBody.result.joins["join_task_tags_tag"].upsert[0].to).toBe("tag:1");
+  });
+
+  it("TV-REL-NOSPURIOUS-002: many-many unrelate does NOT produce id-only stub in pull records", async () => {
+    const server = await createF1Server(db);
+
+    // Seed task, tag, and existing relation
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "task", version: 1, operation: "insert", clientId: "seed", mutationId: "m1",
+              id: "task:1", record: { label: "Buy milk", priority: 1, goalId: "goal:g1", isArchived: false, updatedAt: "2026-01-01" } },
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "m2",
+              id: "tag:1", record: { label: "urgent" } },
+            { resource: "task", version: 1, operation: "relate",
+              id: "task:1", relations: { tags: [{ $ref: "tag:1", order: 1 }] },
+              clientId: "seed", mutationId: "m3" },
+          ],
+        }),
+      }),
+    );
+
+    const pullAfterSeed = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "clientB", cursors: { task: "0", tag: "0", join_task_tags_tag: "0" }, includeJoins: true }),
+      }),
+    );
+    const seedBody = await pullAfterSeed.json();
+    const cursorAfterSeed = seedBody.result.cursors.task;
+
+    // Client A performs unrelate
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientA",
+          mutations: [
+            {
+              resource: "task", version: 1, operation: "unrelate",
+              id: "task:1", relations: { tags: "tag:1" },
+              clientId: "clientA", mutationId: "m-unrelate",
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Client B pulls changes since seed
+    const pullRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientB",
+          cursors: { task: cursorAfterSeed, tag: cursorAfterSeed, join_task_tags_tag: cursorAfterSeed },
+          includeJoins: true,
+        }),
+      }),
+    );
+    const pullBody = await pullRes.json();
+    expect(pullBody.result.ok).toBe(true);
+
+    // CRITICAL: task should NOT appear in records[] with a stub { id }
+    const taskRecords: any[] = pullBody.result.records.task || [];
+    const idOnlyStub = taskRecords.find((r: any) => r.id === "task:1" && Object.keys(r).length === 1);
+    expect(idOnlyStub).toBeUndefined();
+
+    // The join row delete SHOULD appear
+    expect(pullBody.result.joins).toBeDefined();
+    expect(pullBody.result.joins["join_task_tags_tag"]).toBeDefined();
+    expect(pullBody.result.joins["join_task_tags_tag"].delete.length).toBeGreaterThan(0);
+  });
+
+  it("TV-REL-MANYOONE-FK-001: many-one relate produces FK merge delta in pull merged (not id-only in records)", async () => {
+    const server = await createF1Server(db);
+
+    // Insert task (without goalId initially) and goal
+    // Note: F1 schema has task with goalId required, so we use a placeholder goal
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "goal", version: 1, operation: "insert", clientId: "seed", mutationId: "m1",
+              id: "goal:1", record: { label: "Goal 1", status: "active", isArchived: false } },
+            { resource: "goal", version: 1, operation: "insert", clientId: "seed", mutationId: "m2",
+              id: "goal:2", record: { label: "Goal 2", status: "active", isArchived: false } },
+            { resource: "task", version: 1, operation: "insert", clientId: "seed", mutationId: "m3",
+              id: "task:10", record: { label: "My task", priority: 5, goalId: "goal:1", isArchived: false, updatedAt: "2026-01-01" } },
+          ],
+        }),
+      }),
+    );
+
+    // Capture cursor after seed
+    const pullAfterSeed = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "clientB", cursors: { task: "0", goal: "0" } }),
+      }),
+    );
+    const seedBody = await pullAfterSeed.json();
+    const cursorAfterSeedTask = seedBody.result.cursors.task;
+
+    // Client A reassigns the task to goal:2 via many-one relate
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientA",
+          mutations: [
+            {
+              resource: "task", version: 1, operation: "relate",
+              id: "task:10", relations: { goal: "goal:2" },
+              clientId: "clientA", mutationId: "m-relate-goal",
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Client B pulls changes
+    const pullRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientB",
+          cursors: { task: cursorAfterSeedTask, goal: cursorAfterSeedTask },
+        }),
+      }),
+    );
+    const pullBody = await pullRes.json();
+    expect(pullBody.result.ok).toBe(true);
+
+    // CRITICAL: task should NOT appear in records[] with a stub { id }
+    const taskRecords: any[] = pullBody.result.records.task || [];
+    const idOnlyStub = taskRecords.find((r: any) => r.id === "task:10" && Object.keys(r).length === 1);
+    expect(idOnlyStub).toBeUndefined();
+
+    // The FK change SHOULD appear in merged[] as a partial { id, goalId: "goal:2" }
+    expect(pullBody.result.merged).toBeDefined();
+    expect(pullBody.result.merged.task).toBeDefined();
+    const fkDelta = pullBody.result.merged.task.find((r: any) => r.id === "task:10");
+    expect(fkDelta).toBeDefined();
+    expect(fkDelta.goalId).toBe("goal:2"); // FK was updated
+    // Merge delta must NOT contain other fields (it is partial — only the FK)
+    expect(fkDelta.label).toBeUndefined();
+    expect(fkDelta.priority).toBeUndefined();
+  });
+
+  it("TV-REL-MANYOONE-UNRELATE-001: many-one unrelate clears FK via merge delta (no id-only stub)", async () => {
+    const server = await createF1Server(db);
+
+    // Seed task with a goal
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "goal", version: 1, operation: "insert", clientId: "seed", mutationId: "m1",
+              id: "goal:1", record: { label: "Goal 1", status: "active", isArchived: false } },
+            { resource: "task", version: 1, operation: "insert", clientId: "seed", mutationId: "m2",
+              id: "task:10", record: { label: "My task", priority: 5, goalId: "goal:1", isArchived: false, updatedAt: "2026-01-01" } },
+          ],
+        }),
+      }),
+    );
+
+    const pullAfterSeed = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "clientB", cursors: { task: "0", goal: "0" } }),
+      }),
+    );
+    const seedBody = await pullAfterSeed.json();
+    const cursorAfterSeedTask = seedBody.result.cursors.task;
+
+    // Client A unrelates task from goal
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientA",
+          mutations: [
+            {
+              resource: "task", version: 1, operation: "unrelate",
+              id: "task:10", relations: { goal: "goal:1" },
+              clientId: "clientA", mutationId: "m-unrelate-goal",
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Client B pulls changes
+    const pullRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientB",
+          cursors: { task: cursorAfterSeedTask, goal: cursorAfterSeedTask },
+        }),
+      }),
+    );
+    const pullBody = await pullRes.json();
+    expect(pullBody.result.ok).toBe(true);
+
+    // CRITICAL: No id-only stub in records[]
+    const taskRecords: any[] = pullBody.result.records.task || [];
+    const idOnlyStub = taskRecords.find((r: any) => r.id === "task:10" && Object.keys(r).length === 1);
+    expect(idOnlyStub).toBeUndefined();
+
+    // FK clear SHOULD appear in merged[] as { id, goalId: null }
+    expect(pullBody.result.merged).toBeDefined();
+    expect(pullBody.result.merged.task).toBeDefined();
+    const fkDelta = pullBody.result.merged.task.find((r: any) => r.id === "task:10");
+    expect(fkDelta).toBeDefined();
+    expect(fkDelta.goalId).toBeNull(); // FK was cleared
+  });
+
+  it("TV-REL-CHANGELOG-NOSPURIOUS-001: relate does NOT record op=upsert with {id} stub in changelog", async () => {
+    const server = await createF1Server(db);
+
+    // Seed task and tag
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "task", version: 1, operation: "insert", clientId: "seed", mutationId: "m1",
+              id: "task:1", record: { label: "Buy milk", priority: 1, goalId: "goal:g1", isArchived: false, updatedAt: "2026-01-01" } },
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "m2",
+              id: "tag:1", record: { label: "urgent" } },
+          ],
+        }),
+      }),
+    );
+
+    // Push a relate mutation
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientA",
+          mutations: [
+            {
+              resource: "task", version: 1, operation: "relate",
+              id: "task:1", relations: { tags: [{ $ref: "tag:1", order: 1 }] },
+              clientId: "clientA", mutationId: "m-relate",
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Inspect changelog directly
+    const changes = await db.internal.findMany(
+      "__datafn_changes",
+      [{ field: "namespace", op: "eq", value: "datafn" }],
+      { orderBy: "server_seq" },
+    );
+
+    // There must be NO changelog entry for resource="task" with op="upsert" and only {id} in record
+    const spuriousEntry = changes.find((c: any) => {
+      if (c.resource !== "task" || c.op !== "upsert") return false;
+      try {
+        const rec = JSON.parse(c.record as string);
+        return rec && Object.keys(rec).length === 1 && rec.id === "task:1";
+      } catch { return false; }
+    });
+    expect(spuriousEntry).toBeUndefined();
+
+    // The join delta MUST be present
+    const joinChange = changes.find((c: any) => c.resource && c.resource.startsWith("join_"));
+    expect(joinChange).toBeDefined();
+  });
+
+  it("TV-REL-PRESERVE-FIELDS-001: other clients pulling after relate keep their full record intact", async () => {
+    // This is the core scenario from the issue: Client B's record should not be
+    // overwritten with just { id } after Client A performs a relate.
+    const server = await createF1Server(db);
+
+    // Seed task and tag
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "seed",
+          mutations: [
+            { resource: "task", version: 1, operation: "insert", clientId: "seed", mutationId: "m1",
+              id: "task:1", record: { label: "Buy milk", priority: 3, goalId: "goal:g1", isArchived: false, updatedAt: "2026-01-10" } },
+            { resource: "tag", version: 1, operation: "insert", clientId: "seed", mutationId: "m2",
+              id: "tag:urgent", record: { label: "urgent" } },
+          ],
+        }),
+      }),
+    );
+
+    // Client B clones — gets the full record
+    const cloneRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "clientB", cursors: { task: "0", tag: "0", join_task_tags_tag: "0" }, includeJoins: true }),
+      }),
+    );
+    const cloneBody = await cloneRes.json();
+    expect(cloneBody.result.ok).toBe(true);
+    const clientBCursorTask = cloneBody.result.cursors.task;
+    const clientBCursorTag = cloneBody.result.cursors.tag;
+    const clientBCursorJoin = cloneBody.result.cursors["join_task_tags_tag"] || "0";
+
+    // Client A relates task → tag (many-many)
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientA",
+          mutations: [
+            {
+              resource: "task", version: 1, operation: "relate",
+              id: "task:1", relations: { tags: [{ $ref: "tag:urgent", order: 1 }] },
+              clientId: "clientA", mutationId: "m-relate",
+            },
+          ],
+        }),
+      }),
+    );
+
+    // Client B pulls incremental changes
+    const pullRes = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "clientB",
+          cursors: { task: clientBCursorTask, tag: clientBCursorTag, join_task_tags_tag: clientBCursorJoin },
+          includeJoins: true,
+        }),
+      }),
+    );
+    const pullBody = await pullRes.json();
+    expect(pullBody.result.ok).toBe(true);
+
+    // The task must NOT be in records[] at all (since the primary resource didn't change)
+    const taskInRecords = (pullBody.result.records.task || []).find((r: any) => r.id === "task:1");
+    expect(taskInRecords).toBeUndefined(); // No task record in upsert bucket
+
+    // The task must NOT be in merged[] either (it's many-many — no FK on primary)
+    const taskInMerged = (pullBody.result.merged?.task || []).find((r: any) => r.id === "task:1");
+    expect(taskInMerged).toBeUndefined();
+
+    // The join row SHOULD appear in joins
+    expect(pullBody.result.joins).toBeDefined();
+    expect(pullBody.result.joins["join_task_tags_tag"].upsert.length).toBeGreaterThan(0);
+    expect(pullBody.result.joins["join_task_tags_tag"].upsert[0].from).toBe("task:1");
+    expect(pullBody.result.joins["join_task_tags_tag"].upsert[0].to).toBe("tag:urgent");
+  });
+
   it("RECON-JOINS: Reconcile includes join counts when requested", async () => {
     // Fixture F1 already has task-tag many-many relation
     const server = await createF1Server(db);
@@ -779,5 +1596,103 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
     expect(body.result.joinCounts).toBeDefined();
     // Join store should be empty initially (no relations created yet)
     expect(body.result.joinCounts["join_task_tags_tag"]).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TV-CLIENT-PULL-001 / TV-CLIENT-PULL-002: hasMore in canonical pull response
+// ---------------------------------------------------------------------------
+
+describe("hasMore field in canonical pull response (CLIENT-PULL-001)", () => {
+  async function createSimpleServer(db: any) {
+    const { memoryAdapter } = await import("@superfunctions/db/adapters");
+    const simpleSchema = {
+      resources: [
+        {
+          name: "task",
+          version: 1,
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    };
+    return await createDatafnServer({
+      schema: simpleSchema as any,
+      limits: { maxLimit: 500, maxPullLimit: 200 },
+      db,
+    });
+  }
+
+  async function pushMutations(server: any, count: number) {
+    const mutations = Array.from({ length: count }, (_, i) => ({
+      resource: "task",
+      version: 1,
+      operation: "insert",
+      clientId: "seeder",
+      mutationId: `m${i}`,
+      id: `task:${i}`,
+      record: { title: `Task ${i}` },
+    }));
+    await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "seeder", mutations }),
+      }),
+    );
+  }
+
+  it("TV-CLIENT-PULL-001: 150 changes with limit 100 → hasMore=true", async () => {
+    const { memoryAdapter } = await import("@superfunctions/db/adapters");
+    const db = memoryAdapter();
+    await db.initialize();
+    const server = await createSimpleServer(db);
+
+    await pushMutations(server, 150);
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          cursors: { task: "0" },
+          limit: 100,
+        }),
+      }),
+    );
+
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.ok).toBe(true);
+    expect(body.result.hasMore).toBe(true);
+    // Should return exactly 100 records
+    expect(body.result.records.task).toHaveLength(100);
+  });
+
+  it("TV-CLIENT-PULL-002: 50 changes with limit 100 → hasMore=false", async () => {
+    const { memoryAdapter } = await import("@superfunctions/db/adapters");
+    const db = memoryAdapter();
+    await db.initialize();
+    const server = await createSimpleServer(db);
+
+    await pushMutations(server, 50);
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/pull", {
+        method: "POST",
+        body: JSON.stringify({
+          clientId: "client:1",
+          cursors: { task: "0" },
+          limit: 100,
+        }),
+      }),
+    );
+
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.ok).toBe(true);
+    expect(body.result.hasMore).toBe(false);
+    // Should return all 50 records
+    expect(body.result.records.task).toHaveLength(50);
   });
 });

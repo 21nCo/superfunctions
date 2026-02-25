@@ -69,6 +69,75 @@ describe("TypeScript Codegen Tests", () => {
     expect(output).toContain("  task: DatafnTable<Task>;");
   });
 
+  it("TV-CLI-CODEGEN-001: Emits join table interface for many-many with metadata", () => {
+    const schemaWithJoinTable: DatafnSchema = {
+      resources: [
+        {
+          name: "todos",
+          version: 1,
+          fields: [{ name: "id", type: "string", required: true }],
+        },
+        {
+          name: "categories",
+          version: 1,
+          fields: [{ name: "id", type: "string", required: true }],
+        },
+      ],
+      relations: [
+        {
+          from: "todos",
+          to: "categories",
+          type: "many-many",
+          relation: "categories",
+          inverse: "todos",
+          joinTable: "todoCategories",
+          joinColumns: { from: "todoId", to: "categoryId" },
+          metadata: [{ name: "order", type: "number" }],
+        },
+      ],
+    };
+
+    const output = generateTypes(schemaWithJoinTable);
+
+    // Verify join table interface
+    expect(output).toContain("export interface TodoCategories {");
+    expect(output).toContain("  todoId: string;");
+    expect(output).toContain("  categoryId: string;");
+    expect(output).toContain("  order: number;");
+
+    // Verify added to Tables mapping
+    expect(output).toContain("  todoCategories: TodoCategories;");
+  });
+
+  it("Does not emit join table interface when no metadata", () => {
+    const schemaNoMeta: DatafnSchema = {
+      resources: [
+        {
+          name: "todos",
+          version: 1,
+          fields: [{ name: "id", type: "string", required: true }],
+        },
+        {
+          name: "tags",
+          version: 1,
+          fields: [{ name: "id", type: "string", required: true }],
+        },
+      ],
+      relations: [
+        {
+          from: "todos",
+          to: "tags",
+          type: "many-many",
+          relation: "tags",
+        },
+      ],
+    };
+
+    const output = generateTypes(schemaNoMeta);
+    expect(output).not.toContain("JoinTable");
+    expect(output).not.toContain("__datafn_join_");
+  });
+
   it("TV-CODEGEN-002: Invalid schema input is rejected deterministically", () => {
     try {
       generateTypes(invalidSchema);

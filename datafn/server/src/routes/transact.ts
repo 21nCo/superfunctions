@@ -67,6 +67,8 @@ export function createTransactHandler(
 
         // Determine step type (query or mutation)
         // Support both wrapped format ({ mutation: {...} }) and bare format ({ resource, operation, ... })
+        // For transact, only perform structural validation (not operation-name check) so that
+        // invalid operations surface as per-step errors rather than route-level rejections.
         let validationResult;
         if (step.mutation) {
             // Wrapped mutation
@@ -74,11 +76,26 @@ export function createTransactHandler(
         } else if (step.query) {
             // Wrapped query
             validationResult = validateQuery(step.query, schemaIndex, `steps[${i}].query`);
-        } else if (step.operation) {
-            // Bare mutation (has operation field)
-            validationResult = validateMutation(step, schemaIndex, `steps[${i}]`);
+        } else if (typeof step.resource === "string" && typeof step.id === "string") {
+            // Bare mutation (has id) — validate fully so unknown fields/resources are caught
+            // at the route level. Invalid operation *names* are allowed through so they
+            // surface as per-step DFQL_UNSUPPORTED rather than a whole-transact rejection.
+            if (typeof step.operation === "string") {
+              validationResult = validateMutation(step, schemaIndex, `steps[${i}]`);
+              // If the only problem is an unsupported operation name, let it through to
+              // execution where it returns a per-step error (TV-TRX-002).
+              if (
+                !validationResult.ok &&
+                validationResult.error.code === "DFQL_UNSUPPORTED" &&
+                validationResult.error.path.endsWith(".operation")
+              ) {
+                validationResult = { ok: true, result: undefined as any };
+              }
+            } else {
+              validationResult = validateQuery(step, schemaIndex, `steps[${i}]`);
+            }
         } else if (step.resource) {
-            // Bare query (has resource but no operation)
+            // Bare query (has resource but no id)
             validationResult = validateQuery(step, schemaIndex, `steps[${i}]`);
         } else {
             return errorResponse({
@@ -89,10 +106,11 @@ export function createTransactHandler(
         }
 
         if (!validationResult.ok) {
+            const { code, message, path } = validationResult.error as { code: string; message: string; path: string };
             return errorResponse({
-            code: validationResult.error.code,
-            message: validationResult.error.message,
-            details: { path: validationResult.error.path },
+            code: code as any,
+            message,
+            details: { path },
             });
         }
         }
@@ -109,8 +127,16 @@ export function createTransactHandler(
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
 
+        // Normalize bare steps to wrapped format before passing to executeTransaction.
+        // Bare mutations have `operation` field; bare queries have `resource` but no `operation`.
+        const normalizedSteps = body.steps.map((step: any) => {
+          if (step.mutation || step.query) return step; // already wrapped
+          if (typeof step.operation === "string") return { mutation: step };
+          return { query: step };
+        });
+
         const result = await executeTransaction(
-        body,
+        { ...body, steps: normalizedSteps },
         validatedSchema,
         db,
         idempotencyStore,

@@ -13,14 +13,17 @@ import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter, DatafnSyncConfig } from "../client.js";
 import type { EventBus } from "../events/bus.js";
 import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import { enumerateJoinStoreKeys, getJoinStoreKey } from "@datafn/core";
 import {
   applyCloneResult,
   applyPullResult,
+  setCursorMonotonically,
   GLOBAL_CURSOR_KEY,
   type CloneResult,
   type PullResult,
 } from "./apply.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
+import { buildEvent } from "../events/build.js";
 
 /**
  * Helper: Sleep for a given number of milliseconds (PHASE_08)
@@ -47,6 +50,11 @@ export class SyncEngine {
   private pushMaxRetries = 3;
   private pushInterval: number | undefined;
   private boundOnVisibilityChange: () => void;
+  private boundOnWindowFocus: () => void;
+  private boundOnOnline: () => void;
+  private boundOnOffline: () => void;
+  private isOnline = typeof navigator !== "undefined" ? (navigator.onLine ?? true) : true;
+  private pushPausedForOffline = false;
   private ws: WebSocket | null = null;
   private wsUrl: string | undefined;
   private hydrationPlan?: {
@@ -60,6 +68,8 @@ export class SyncEngine {
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private wsReconnectEnabled = true;
   private config?: DatafnSyncConfig;
+  private pushConsecutiveFailures = 0;
+  private pushIntervalBackoffActive = false;
 
   constructor(
     private storage: DatafnStorageAdapter,
@@ -76,6 +86,9 @@ export class SyncEngine {
     this.pushMaxRetries = config?.pushMaxRetries ?? 3;
     this.pushInterval = config?.pushInterval;
     this.boundOnVisibilityChange = this.onVisibilityChange.bind(this);
+    this.boundOnWindowFocus = this.onWindowFocus.bind(this);
+    this.boundOnOnline = this.onOnline.bind(this);
+    this.boundOnOffline = this.onOffline.bind(this);
     this.hydrationPlan = config?.hydration;
     this.plugins = plugins || [];
     this.getTimestamp = getTimestamp || (() => Date.now());
@@ -101,12 +114,19 @@ export class SyncEngine {
       this.timer = setInterval(() => this.processPush(), this.pushInterval);
     }
 
-    // 3. Register visibility listener
+    // 3. Register visibility listener, focus listener, and online/offline listeners
     if (typeof document !== "undefined" && document.addEventListener) {
       document.addEventListener(
         "visibilitychange",
         this.boundOnVisibilityChange,
       );
+    }
+    if (typeof window !== "undefined" && window.addEventListener) {
+      window.addEventListener("focus", this.boundOnWindowFocus);
+      // Read current connectivity state
+      this.isOnline = typeof navigator !== "undefined" ? (navigator.onLine ?? true) : true;
+      window.addEventListener("online", this.boundOnOnline);
+      window.addEventListener("offline", this.boundOnOffline);
     }
 
     // 4. Connect WebSocket
@@ -138,6 +158,11 @@ export class SyncEngine {
         this.boundOnVisibilityChange,
       );
     }
+    if (typeof window !== "undefined" && window.removeEventListener) {
+      window.removeEventListener("focus", this.boundOnWindowFocus);
+      window.removeEventListener("online", this.boundOnOnline);
+      window.removeEventListener("offline", this.boundOnOffline);
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -166,6 +191,13 @@ export class SyncEngine {
           // Get per-table cursor, default to "0" if not set
           const cursor = await this.storage.getCursor(res.name) || "0";
           cursors[res.name] = cursor;
+        }
+
+        // Add join store cursors for many-many relations
+        if (this.schema.relations) {
+          for (const joinStoreKey of enumerateJoinStoreKeys(this.schema.relations)) {
+            cursors[joinStoreKey] = await this.storage.getCursor(joinStoreKey) || "0";
+          }
         }
         
         // Send hello with current cursors
@@ -261,6 +293,56 @@ export class SyncEngine {
   }
 
   /**
+   * Window focus handler — triggers pull when user returns to the app window.
+   * Mirrors the Nucleus `onAppear` pattern (`<svelte:window on:focus={onAppear} />`).
+   * pullNow() has an in-flight guard so rapid focus events won't cause duplicate pulls.
+   */
+  private onWindowFocus() {
+    this.pullNow();
+  }
+
+  /**
+   * Online handler — emits connectivity_changed, resumes push loop, triggers immediate sync.
+   */
+  private onOnline() {
+    this.isOnline = true;
+    this.eventBus.emit({
+      type: "connectivity_changed",
+      timestampMs: this.getTimestamp(),
+      context: { isOnline: true },
+    });
+
+    // Resume push interval if it was paused for offline
+    if (this.pushPausedForOffline && this.pushInterval) {
+      this.pushPausedForOffline = false;
+      this.timer = setInterval(() => this.processPush(), this.pushInterval);
+    }
+
+    // Trigger immediate sync
+    this.pullNow();
+    setTimeout(() => this.processPush(), 0);
+  }
+
+  /**
+   * Offline handler — emits connectivity_changed and pauses the push interval.
+   */
+  private onOffline() {
+    this.isOnline = false;
+    this.eventBus.emit({
+      type: "connectivity_changed",
+      timestampMs: this.getTimestamp(),
+      context: { isOnline: false },
+    });
+
+    // Pause the regular push interval to save battery (skip backoff timer — it will expire on its own)
+    if (this.timer && this.pushInterval && !this.pushIntervalBackoffActive) {
+      clearInterval(this.timer);
+      this.timer = null;
+      this.pushPausedForOffline = true;
+    }
+  }
+
+  /**
    * Initialize sync: Clone if fresh, Pull if hydrated (SYNC-PULL-001)
    * Supports hydration plan: clone bootResources first, then backgroundResources (SYNC-002)
    */
@@ -292,19 +374,40 @@ export class SyncEngine {
 
   /**
    * Initialize with hydration plan (SYNC-002)
+   * Only clones resources that are not yet in "ready" state; pulls for the rest.
    */
   private async initializeWithHydrationPlan() {
     const { bootResources = [], backgroundResources = [] } = this.hydrationPlan!;
 
-    // Clone boot resources and wait for them to be ready
-    if (bootResources.length > 0) {
-      await this.cloneResources(bootResources);
+    // Partition boot resources into those needing clone vs already ready
+    const bootNeedingClone: string[] = [];
+    for (const table of bootResources) {
+      const state = await this.storage.getHydrationState(table);
+      if (state !== "ready") {
+        bootNeedingClone.push(table);
+      }
     }
 
-    // Clone background resources asynchronously
-    if (backgroundResources.length > 0) {
-      // Start background clone without blocking
-      this.cloneResourcesInBackground(backgroundResources);
+    if (bootNeedingClone.length > 0) {
+      await this.cloneResources(bootNeedingClone);
+    }
+
+    // If all boot resources were already ready, do a pull to catch up on missed changes
+    if (bootNeedingClone.length === 0 && bootResources.length > 0) {
+      await this.pullNow();
+    }
+
+    // Partition background resources the same way
+    const bgNeedingClone: string[] = [];
+    for (const table of backgroundResources) {
+      const state = await this.storage.getHydrationState(table);
+      if (state !== "ready") {
+        bgNeedingClone.push(table);
+      }
+    }
+
+    if (bgNeedingClone.length > 0) {
+      this.cloneResourcesInBackground(bgNeedingClone);
     }
   }
 
@@ -498,6 +601,13 @@ export class SyncEngine {
         cursors[res.name] = cursor;
       }
 
+      // Add join store cursors for many-many relations
+      if (this.schema.relations) {
+        for (const joinStoreKey of enumerateJoinStoreKeys(this.schema.relations)) {
+          cursors[joinStoreKey] = await this.storage.getCursor(joinStoreKey) || "0";
+        }
+      }
+
       // Use canonical per-table cursor pull if we have cursors
       if (Object.keys(cursors).length > 0) {
         await this.pullWithPerTableCursors(cursors);
@@ -528,7 +638,8 @@ export class SyncEngine {
 
   /**
    * Pull using per-table cursors (canonical protocol, PHASE_05)
-   * Implements HOOK-001 and EVT-003
+   * Implements catch-up loop (CLIENT-PULL-002, CLIENT-PULL-003, CLIENT-PULL-004)
+   * and HOOK-001/EVT-003 once across all iterations.
    */
   private async pullWithPerTableCursors(cursors: Record<string, string>) {
     try {
@@ -541,7 +652,7 @@ export class SyncEngine {
         includeJoins: true,
       };
 
-      // Run beforeSync hooks (fail-closed) (HOOK-001)
+      // Run beforeSync hooks once before the loop (CLIENT-PULL-004, HOOK-001)
       const transformedPayload = await runBeforeSync(
         this.plugins,
         this.schema,
@@ -549,50 +660,79 @@ export class SyncEngine {
         payload,
       );
 
-      const response: any = await this.remote.pull(transformedPayload);
+      // Catch-up loop (CLIENT-PULL-002, CLIENT-PULL-003)
+      const maxIterations = this.config?.maxPullIterations ?? 50;
+      let iterationCursors: Record<string, string> = { ...(transformedPayload as any).cursors };
+      let hasMore = true;
+      let iterations = 0;
+      let lastResult: any = null;
 
-      if (response.ok && response.result?.ok) {
-        const result = response.result;
-        
-        // Import apply function with proper types
-        const { applyPullResult } = await import("./apply.js");
-        await applyPullResult(this.storage, result);
+      while (hasMore && iterations < maxIterations) {
+        iterations++;
 
-        // Run afterSync hooks (fail-open) (HOOK-001)
-        await runAfterSync(
-          this.plugins,
-          this.schema,
-          "pull",
-          transformedPayload,
-          result,
+        const iterPayload = { ...(transformedPayload as object), cursors: iterationCursors };
+        const response: any = await this.remote.pull(iterPayload);
+
+        if (response.ok && response.result?.ok) {
+          lastResult = response.result;
+          await applyPullResult(this.storage, lastResult);
+
+          hasMore = lastResult.hasMore === true;
+          if (hasMore && lastResult.cursors) {
+            // Advance cursors for the next iteration (monotonic)
+            iterationCursors = { ...iterationCursors, ...lastResult.cursors };
+          }
+        } else {
+          throw new Error(response.error?.message || "Pull rejected by server");
+        }
+      }
+
+      // CLIENT-PULL-003: warn if max iterations reached while hasMore is still true
+      if (iterations >= maxIterations && hasMore) {
+        console.warn(
+          `[datafn] Pull catch-up reached max iterations (${maxIterations}), stopping. Will resume on next sync cycle.`,
         );
+      }
 
-        // Calculate cursor delta (difference) for event
-        const cursorDelta: Record<string, number> = {};
-        if (result.cursors) {
-          for (const [resource, newCursor] of Object.entries(result.cursors)) {
-            const oldCursor = cursors[resource] || "0";
-            const delta = parseInt(newCursor as string, 10) - parseInt(oldCursor, 10);
-            if (delta > 0) {
-              cursorDelta[resource] = delta;
-            }
+      if (!lastResult) {
+        return;
+      }
+
+      // Run afterSync hooks once after loop exits (CLIENT-PULL-004, HOOK-001)
+      await runAfterSync(
+        this.plugins,
+        this.schema,
+        "pull",
+        transformedPayload,
+        lastResult,
+      );
+
+      // Calculate aggregated cursor delta (initial cursors vs final cursors)
+      const cursorDelta: Record<string, number> = {};
+      if (lastResult.cursors) {
+        for (const [resource, newCursor] of Object.entries(lastResult.cursors)) {
+          const oldCursor = cursors[resource] || "0";
+          const delta =
+            parseInt(newCursor as string, 10) - parseInt(oldCursor, 10);
+          if (delta > 0) {
+            cursorDelta[resource] = delta;
           }
         }
-
-        // Emit sync_applied event (EVT-003)
-        this.eventBus.emit({
-          type: "sync_applied",
-          timestampMs: this.getTimestamp(),
-          context: {
-            phase: "pull",
-            cursors: result.cursors || {},
-            cursorDelta,
-            resources: result.records ? Object.keys(result.records).sort() : [],
-          },
-        });
-      } else {
-        throw new Error(response.error?.message || "Pull rejected by server");
       }
+
+      // Emit sync_applied once after all iterations (CLIENT-PULL-004, EVT-003)
+      this.eventBus.emit({
+        type: "sync_applied",
+        timestampMs: this.getTimestamp(),
+        context: {
+          phase: "pull",
+          cursors: lastResult.cursors || {},
+          cursorDelta,
+          resources: lastResult.records
+            ? Object.keys(lastResult.records).sort()
+            : [],
+        },
+      });
     } catch (err: any) {
       this.eventBus.emit({
         type: "sync_failed",
@@ -666,7 +806,7 @@ export class SyncEngine {
         for (const relation of this.schema.relations) {
           if (relation.type !== "many-many") continue;
 
-          const joinStoreKey = `join_${relation.from}_${relation.relation}_${relation.to}`;
+          const joinStoreKey = getJoinStoreKey(relation.from as string, relation.relation!, relation.to as string);
           const localJoinCount = await this.storage.countJoinRows(joinStoreKey);
           const serverJoinCount = serverJoinCounts[joinStoreKey] || 0;
 
@@ -741,10 +881,39 @@ export class SyncEngine {
   }
 
   /**
+   * Compute interval backoff delay when push keeps failing
+   */
+  private computePushIntervalBackoff(): number {
+    if (!this.pushInterval || this.pushConsecutiveFailures === 0) {
+      return this.pushInterval || 0;
+    }
+
+    const backoffConfig = {
+      baseMultiplier: this.config?.pushIntervalBackoff?.baseMultiplier ?? 2,
+      maxDelayMs: this.config?.pushIntervalBackoff?.maxDelayMs ?? 300000, // 5 minutes
+      jitterMs: this.config?.pushIntervalBackoff?.jitterMs ?? 1000,
+    };
+
+    // Exponential backoff: pushInterval * multiplier^consecutiveFailures
+    const exponentialDelay =
+      this.pushInterval *
+      Math.pow(backoffConfig.baseMultiplier, this.pushConsecutiveFailures);
+
+    // Add jitter
+    const jitter = Math.random() * backoffConfig.jitterMs;
+
+    // Cap at maxDelayMs
+    return Math.min(exponentialDelay + jitter, backoffConfig.maxDelayMs);
+  }
+
+  /**
    * Process pending changelog entries
    */
   async processPush() {
     if (this.inFlight) return;
+    // Fast-fail: skip push when browser reports offline — saves battery and avoids doomed requests.
+    // The existing retry-with-backoff logic remains authoritative for transport failures.
+    if (!this.isOnline) return;
     this.inFlight = true;
 
     try {
@@ -765,19 +934,56 @@ export class SyncEngine {
       const pushResult = await this.pushWithRetries(mutations);
 
       if (pushResult) {
+        // Success: reset consecutive failures
+        this.pushConsecutiveFailures = 0;
+
+        // If we were in backoff mode, re-establish the regular interval
+        if (this.pushIntervalBackoffActive && this.pushInterval) {
+          this.pushIntervalBackoffActive = false;
+          // Clear any pending backoff timer
+          if (this.timer) {
+            clearTimeout(this.timer);
+          }
+          // Re-establish the regular interval
+          this.timer = setInterval(() => this.processPush(), this.pushInterval);
+        }
+
         // 3. Ack on success
         await this.storage.changelogAck({ throughSeq });
 
-        // Trigger pull if server is ahead (SYNC-PULL-002)
+        // 3a. Advance per-table cursors from push response (FIX-B)
+        // This prevents the client from re-fetching its own changes on the next pull.
+        if (pushResult.cursors) {
+          for (const [resource, cursor] of Object.entries(pushResult.cursors)) {
+            await setCursorMonotonically(this.storage, resource, cursor);
+          }
+        }
+
+        // Trigger pull if foreign changes exist since last sync (SYNC-PULL-002)
         if (pushResult.cursor) {
           const stored =
             (await this.storage.getCursor(GLOBAL_CURSOR_KEY)) || "0";
-          const serverSeq = parseInt(pushResult.cursor, 10);
           const storedSeq = parseInt(stored, 10);
 
-          if (serverSeq > storedSeq) {
-            // Trigger pull asynchronously
-            setTimeout(() => this.pullNow(), 0);
+          if (pushResult.cursorBefore !== undefined) {
+            // cursorBefore = global seq before this push allocated any sequences.
+            // If cursorBefore == storedSeq, no other client wrote changes since our last
+            // pull — advance the global cursor locally and skip the redundant pull.
+            // If cursorBefore != storedSeq, foreign changes exist — pull to fetch them.
+            const beforeSeq = parseInt(pushResult.cursorBefore, 10);
+            if (beforeSeq === storedSeq) {
+              // No foreign changes — advance cursor locally (global) and skip pull
+              await setCursorMonotonically(this.storage, GLOBAL_CURSOR_KEY, pushResult.cursor);
+            } else {
+              // Foreign changes exist — pull to fetch them
+              setTimeout(() => this.pullNow(), 0);
+            }
+          } else {
+            // Legacy fallback: server did not return cursorBefore, use old comparison
+            const serverSeq = parseInt(pushResult.cursor, 10);
+            if (serverSeq > storedSeq) {
+              setTimeout(() => this.pullNow(), 0);
+            }
           }
         }
 
@@ -785,6 +991,26 @@ export class SyncEngine {
         if (pending.length === this.pushBatchSize) {
           // Schedule next batch immediately
           setTimeout(() => this.processPush(), 0);
+        }
+      } else {
+        // Failure: increment consecutive failures and apply interval backoff
+        this.pushConsecutiveFailures++;
+
+        if (this.pushInterval) {
+          // Clear the regular interval and switch to backoff mode
+          if (this.timer && !this.pushIntervalBackoffActive) {
+            clearInterval(this.timer);
+            this.timer = null;
+          }
+          this.pushIntervalBackoffActive = true;
+
+          // Compute backoff delay
+          const backoffDelay = this.computePushIntervalBackoff();
+
+          // Schedule next push with backoff delay
+          this.timer = setTimeout(() => {
+            this.processPush();
+          }, backoffDelay);
         }
       }
     } catch (err) {
@@ -801,7 +1027,7 @@ export class SyncEngine {
    */
   private async pushWithRetries(
     mutations: any[],
-  ): Promise<{ ok: boolean; cursor?: string } | null> {
+  ): Promise<{ ok: boolean; cursor?: string; cursorBefore?: string; cursors?: Record<string, string> } | null> {
     let attempt = 0;
     // Initial attempt (0) + retries
     const maxAttempts = 1 + this.pushMaxRetries;

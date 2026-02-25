@@ -80,7 +80,51 @@ export type DatafnRelationSchema = {
   }>;
   fkField?: string;
   pathField?: string;
+  joinTable?: string;
+  joinColumns?: { from: string; to: string };
 };
+
+/**
+ * Type-safe schema definition helper.
+ * Uses const generic to preserve literal field name types and constrain
+ * index entries to only declared field names within each resource.
+ */
+type DatafnFieldInput = {
+  readonly name: string;
+  readonly type: DatafnFieldSchema["type"];
+  readonly required: boolean;
+  readonly [k: string]: unknown;
+};
+
+type DatafnIndicesInput<FieldName extends string> =
+  | { readonly base?: readonly FieldName[]; readonly search?: readonly FieldName[]; readonly vector?: readonly FieldName[] }
+  | readonly FieldName[];
+
+type DatafnResourceBase = {
+  readonly name: string;
+  readonly version: number;
+  readonly idPrefix?: string;
+  readonly isRemoteOnly?: boolean;
+  readonly fields: readonly DatafnFieldInput[];
+  readonly indices?: DatafnIndicesInput<string>;
+  readonly permissions?: DatafnPermissionsPolicy;
+  readonly [k: string]: unknown;
+};
+
+type ValidateResources<R extends readonly DatafnResourceBase[]> = {
+  readonly [K in keyof R]: R[K] extends { readonly fields: readonly { readonly name: infer N extends string }[] }
+    ? Omit<R[K], "indices"> & { readonly indices?: DatafnIndicesInput<N> }
+    : R[K];
+};
+
+export function defineSchema<
+  const T extends {
+    readonly resources: readonly DatafnResourceBase[];
+    readonly relations?: readonly DatafnRelationSchema[] | DatafnRelationSchema[];
+  }
+>(schema: T & { readonly resources: ValidateResources<T["resources"]> }): T & DatafnSchema {
+  return schema as unknown as T & DatafnSchema;
+}
 
 /**
  * Event Types
@@ -92,6 +136,8 @@ export interface DatafnEvent {
     | "mutation_rejected"
     | "sync_applied"
     | "sync_failed"
+    | "sync_retry"
+    | "connectivity_changed"
     | "ws_connected"
     | "ws_disconnected";
   resource?: string;
@@ -129,6 +175,7 @@ export interface DatafnSignal<T> {
   readonly loading: boolean;
   readonly error: DatafnError | null;
   readonly refreshing: boolean;
+  readonly nextCursor: string | null | undefined;
   dispose(): void;
 }
 
