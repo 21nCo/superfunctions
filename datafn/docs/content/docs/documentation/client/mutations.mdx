@@ -1,0 +1,161 @@
+---
+title: "Mutations"
+description: "Create, update, and delete records."
+---
+
+## Mutation Operations
+
+DataFn supports four mutation operations: `insert`, `merge`, `replace`, and `delete`.
+
+### Insert
+
+Create a new record. The client auto-generates an ID using the resource's `idPrefix` if you omit `id`.
+
+```typescript
+const result = await client.table("todos").mutate({
+  operation: "insert",
+  record: {
+    title: "Buy groceries",
+    completed: false,
+  },
+});
+// result.ok: true
+// result.affectedIds: ["td:a1b2c3d4..."]
+```
+
+You can provide your own ID:
+
+```typescript
+await client.table("todos").mutate({
+  operation: "insert",
+  id: "td:my-custom-id",
+  record: {
+    title: "Custom ID todo",
+    completed: false,
+  },
+});
+```
+
+### Merge
+
+Partial upsert. Updates only the specified fields, leaving other fields unchanged. Creates the record if it does not exist.
+
+```typescript
+await client.table("todos").mutate({
+  operation: "merge",
+  id: "td:a1b2c3d4",
+  record: {
+    completed: true,
+  },
+});
+```
+
+### Replace
+
+Full replace. Overwrites the entire record. Fields not included in `record` are cleared.
+
+```typescript
+await client.table("todos").mutate({
+  operation: "replace",
+  id: "td:a1b2c3d4",
+  record: {
+    title: "Completely new content",
+    completed: false,
+    priority: 1,
+  },
+});
+```
+
+### Delete
+
+Remove a record by ID.
+
+```typescript
+await client.table("todos").mutate({
+  operation: "delete",
+  id: "td:a1b2c3d4",
+});
+```
+
+## Batch Mutations
+
+Pass an array of mutations to execute them in a single request.
+
+```typescript
+await client.table("todos").mutate([
+  { operation: "insert", record: { title: "First", completed: false } },
+  { operation: "insert", record: { title: "Second", completed: false } },
+  { operation: "delete", id: "td:old-item" },
+]);
+```
+
+## Context
+
+Attach arbitrary JSON-serializable metadata to a mutation. Context is propagated through events, making it available to subscribers.
+
+```typescript
+await client.table("todos").mutate({
+  operation: "merge",
+  id: "td:a1b2c3d4",
+  record: { completed: true },
+  context: {
+    completedBy: "user-123",
+    reason: "task finished",
+  },
+});
+```
+
+## Silent Mutations
+
+Set `silent: true` to suppress event emission. The mutation still executes, but no `mutation_applied` or `mutation_rejected` event is fired. Signals will not auto-refresh from silent mutations.
+
+```typescript
+await client.table("todos").mutate({
+  operation: "merge",
+  id: "td:a1b2c3d4",
+  record: { lastSeen: Date.now() },
+  silent: true,
+});
+```
+
+## System Mutations
+
+Mark a mutation as system-initiated with `system: true`. The flag is propagated in the emitted event payload, allowing subscribers to distinguish system operations from user actions.
+
+```typescript
+await client.table("todos").mutate({
+  operation: "merge",
+  id: "td:a1b2c3d4",
+  record: { syncedAt: new Date().toISOString() },
+  system: true,
+});
+```
+
+## Debounced Mutations
+
+For high-frequency updates (such as typing in a text field), use `debounceKey` and `debounceMs` to coalesce mutations. Only the last mutation within the debounce window is committed to the changelog and pushed.
+
+```typescript
+await client.table("todos").mutate({
+  operation: "merge",
+  id: "td:a1b2c3d4",
+  record: { title: "Buy gr" },
+  debounceKey: "todo-title-td:a1b2c3d4",
+  debounceMs: 1500,
+});
+```
+
+The local storage is updated immediately (optimistic), but the changelog entry and event emission are delayed until the debounce window elapses. Subsequent mutations with the same `debounceKey` reset the timer and coalesce the record fields.
+
+Use `client.flush()` or `client.flushAll()` to force immediate execution of pending debounced mutations:
+
+```typescript
+await client.flush("todo-title-td:a1b2c3d4");
+await client.flushAll();
+```
+
+## Event Emission
+
+On success, each mutation emits a `mutation_applied` event. On failure, a `mutation_rejected` event is emitted. Events include the `action` (operation name) and `fields` (sorted list of affected field names, excluding `id`).
+
+See the [Events](/docs/documentation/client/events) page for details on subscribing to these events.

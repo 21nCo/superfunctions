@@ -29,6 +29,36 @@ interface RelayEvent {
 }
 
 /**
+ * Known valid relay event type values (SEC-012)
+ */
+const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "mutation_applied",
+  "mutation_rejected",
+  "sync_applied",
+  "sync_failed",
+  "sync_retry",
+  "connectivity_changed",
+  "ws_connected",
+  "ws_disconnected",
+]);
+
+/**
+ * SEC-012: Runtime type guard for RelayEvent.
+ * Validates that incoming cross-tab message has expected shape before processing.
+ */
+function isValidRelayEvent(data: unknown): data is RelayEvent {
+  if (typeof data !== "object" || data === null) return false;
+  const d = data as Record<string, unknown>;
+  // Must have sourceTabId string
+  if (typeof d.sourceTabId !== "string") return false;
+  // Must have event object with a valid type
+  if (typeof d.event !== "object" || d.event === null) return false;
+  const event = d.event as Record<string, unknown>;
+  if (typeof event.type !== "string" || !KNOWN_EVENT_TYPES.has(event.type)) return false;
+  return true;
+}
+
+/**
  * Strip full record data from event, keeping only metadata for relay.
  */
 function sanitizeForRelay(event: DatafnEvent): RelayEvent["event"] {
@@ -61,7 +91,13 @@ export class CrossTabRelay {
     if (typeof BroadcastChannel !== "undefined") {
       this.channel = new BroadcastChannel(`datafn:${namespace}`);
       this.channel.onmessage = (messageEvent) => {
-        const relayEvent = messageEvent.data as RelayEvent;
+        // SEC-012: Validate message shape before casting to RelayEvent
+        const data = messageEvent.data;
+        if (!isValidRelayEvent(data)) {
+          // Silently discard invalid messages (rogue extension / XSS injection)
+          return;
+        }
+        const relayEvent = data as RelayEvent;
 
         // Echo prevention: ignore messages from this tab
         if (relayEvent.sourceTabId === this.tabId) return;

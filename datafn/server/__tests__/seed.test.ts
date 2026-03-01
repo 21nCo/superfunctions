@@ -5,6 +5,8 @@
 
 import { describe, it, expect } from "vitest";
 import { createDatafnServer } from "../src/server.js";
+import { memoryAdapter } from "@superfunctions/db/adapters";
+import type { AuthContext } from "@superfunctions/auth";
 
 // Default schema for testing
 const defaultSchema = {
@@ -19,7 +21,7 @@ const defaultSchema = {
 
 describe("@datafn/server seed endpoint", () => {
   it("TV-SEED-001: POST /datafn/seed accepts clientId and returns success", async () => {
-    const server = await createDatafnServer({ schema: defaultSchema });
+    const server = await createDatafnServer({ allowUnknownResources: true, schema: defaultSchema });
 
     const request = new Request("http://localhost/datafn/seed", {
       method: "POST",
@@ -38,7 +40,7 @@ describe("@datafn/server seed endpoint", () => {
   });
 
   it("TV-SEED-002: Missing/invalid clientId is rejected with DFQL_INVALID", async () => {
-    const server = await createDatafnServer({ schema: defaultSchema });
+    const server = await createDatafnServer({ allowUnknownResources: true, schema: defaultSchema });
 
     const request = new Request("http://localhost/datafn/seed", {
       method: "POST",
@@ -60,8 +62,45 @@ describe("@datafn/server seed endpoint", () => {
     });
   });
 
+  it("TV-SEC-033: Seed uses auth-derived namespace, not hardcoded 'datafn'", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+
+    const authContextProvider = {
+      getContext: (ctx: any): AuthContext => ({
+        userId: ctx?.parsedBody?.userId || "u1",
+      }),
+    };
+
+    const server = await createDatafnServer({ allowUnknownResources: true,
+      schema: defaultSchema,
+      db,
+      authContextProvider,
+      rowLevelNamespace: false, // Disable RLN to avoid pre-existing wrapWithRowLevelNamespace issue
+    });
+
+    const request = new Request("http://localhost/datafn/seed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "client:1", userId: "u1" }),
+    });
+
+    const response = await server.router.handle(request, {});
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.result.ok).toBe(true);
+
+    // Verify the seed record was stored with auth-derived namespace, not 'datafn'
+    // Query internal table to confirm namespace is "user:u1" not "datafn"
+    const seedRecord = await db.internal.findOne("__datafn_seed", [
+      { field: "namespace", op: "eq", value: "user:u1" },
+    ]);
+    expect(seedRecord).not.toBeNull();
+    expect(seedRecord?.namespace).toBe("user:u1");
+  });
+
   it("TV-SEED-002: clientId as non-string is rejected", async () => {
-    const server = await createDatafnServer({ schema: defaultSchema });
+    const server = await createDatafnServer({ allowUnknownResources: true, schema: defaultSchema });
 
     const request = new Request("http://localhost/datafn/seed", {
       method: "POST",
@@ -81,5 +120,37 @@ describe("@datafn/server seed endpoint", () => {
         details: { path: "clientId" },
       },
     });
+  });
+
+  it("SRV-013: seed returns 500 when DB write fails", async () => {
+    // Build a DB adapter that throws on internal.create (simulating a DB error)
+    const base = memoryAdapter();
+    const faultyDb = {
+      ...base,
+      internal: {
+        ...base.internal,
+        create: async () => {
+          throw new Error("DB write failed");
+        },
+      },
+    };
+
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: defaultSchema,
+      db: faultyDb as any,
+    });
+
+    const request = new Request("http://localhost/datafn/seed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "client:1" }),
+    });
+
+    const response = await server.router.handle(request, {});
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("INTERNAL");
   });
 });

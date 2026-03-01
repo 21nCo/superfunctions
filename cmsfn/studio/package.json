@@ -1,8 +1,7 @@
 {
   "name": "@cmsfn/studio",
   "version": "0.0.1",
-  "description": "CmsFn Studio — self-hosted CMS authoring UI (boot skeleton in this phase)",
-  "license": "MIT",
+  "description": "cmsfn Studio — self-hosted CMS authoring UI (boot skeleton in this phase)",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -17,6 +16,21 @@
   "files": [
     "dist"
   ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cmsfn/studio"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cmsFn",
+    "schemaVersion": 1,
+    "namespace": "cmsfn"
+  },
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
@@ -32,7 +46,8 @@
     "@cmsfn/core": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@contentfn/core": "*"
+    "@contentfn/core": "*",
+    "@cmsfn/server": "*"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

@@ -94,6 +94,40 @@ describe("evaluateFilter — $contains on array", () => {
   it("array does not contain", () => expect(evaluateFilter({ tags: ["a", "b"] }, { tags: { $contains: "c" } })).toBe(false));
 });
 
+describe("evaluateFilter — depth limit (CLI-009)", () => {
+  const record = { age: 30 };
+
+  /** Build a filter with n levels of $and wrapping a leaf `{ age: { $gt: 20 } }`. */
+  function nestFilter(depth: number): Record<string, unknown> {
+    let filter: Record<string, unknown> = { age: { $gt: 20 } };
+    for (let i = 0; i < depth; i++) {
+      filter = { $and: [filter] };
+    }
+    return filter;
+  }
+
+  it("nesting depth at MAX_FILTER_DEPTH (10 $and wrappers) is accepted", () => {
+    expect(() => evaluateFilter(record, nestFilter(10))).not.toThrow();
+    expect(evaluateFilter(record, nestFilter(10))).toBe(true);
+  });
+
+  it("nesting depth above MAX_FILTER_DEPTH (11 $and wrappers) throws DFQL_INVALID", () => {
+    let caught: any;
+    try {
+      evaluateFilter(record, nestFilter(11));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(caught?.code).toBe("DFQL_INVALID");
+    expect(caught?.message).toContain("depth");
+  });
+
+  it("a shallow filter (depth 1) is unaffected by the limit", () => {
+    expect(() => evaluateFilter(record, nestFilter(1))).not.toThrow();
+  });
+});
+
 describe("evaluateFilter — relation resolver", () => {
   const record = { id: "1", title: "Todo" };
   const resolveRelation = (_res: string, _id: string, rel: string) => {

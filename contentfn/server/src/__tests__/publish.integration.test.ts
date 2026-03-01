@@ -73,9 +73,9 @@ describe("PHASE_04 publish/unpublish + event emission", () => {
       const events = await db.findMany({
         model: CONTENTFN_TABLE_NAMES.events,
         where: [
-          { field: "dataset", operator: "eq", value: "prod" },
-          { field: "type", operator: "eq", value: "doc.published" },
-          { field: "docId", operator: "eq", value: "post-3" },
+          { field: "dataset", operator: "eq" as const, value: "prod" },
+          { field: "type", operator: "eq" as const, value: "doc.published" },
+          { field: "docId", operator: "eq" as const, value: "post-3" },
         ],
       });
 
@@ -153,9 +153,9 @@ describe("PHASE_04 publish/unpublish + event emission", () => {
       const events = await db.findMany({
         model: CONTENTFN_TABLE_NAMES.events,
         where: [
-          { field: "dataset", operator: "eq", value: "prod" },
-          { field: "type", operator: "eq", value: "doc.unpublished" },
-          { field: "docId", operator: "eq", value: "post-3" },
+          { field: "dataset", operator: "eq" as const, value: "prod" },
+          { field: "type", operator: "eq" as const, value: "doc.unpublished" },
+          { field: "docId", operator: "eq" as const, value: "post-3" },
         ],
       });
 

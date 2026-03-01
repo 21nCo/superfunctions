@@ -2,58 +2,23 @@
  * Relation mutation operations (relate, modifyRelation, unrelate)
  */
 
-import type { DatafnSchema, DatafnRelation } from "@datafn/core";
-import { getJoinStoreKey } from "@datafn/core";
+import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
+import { getJoinStoreKey, getJoinTableName, type NormalizedRelation, normalizeRelationPayload } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { DFQLMutation } from "./dfql.js";
 
-/**
- * Normalized relation payload
- */
-export interface NormalizedRelation {
-  toId: string;
-  metadata: Record<string, unknown>;
-}
+// NormalizedRelation and normalizeRelationPayload are imported from @datafn/core above.
+export type { NormalizedRelation };
+export { normalizeRelationPayload };
 
 /**
- * Normalize relation payload
- * String -> { toId, metadata: {} }
- * String[] -> [{ toId, metadata: {} }, ...]
- * Object -> { toId: $ref, metadata: ... }
- */
-export function normalizeRelationPayload(
-  payload: unknown,
-): NormalizedRelation[] {
-  if (typeof payload === "string") {
-    return [{ toId: payload, metadata: {} }];
-  }
-  if (Array.isArray(payload)) {
-    return payload.map((item) => {
-      if (typeof item === "string") {
-        return { toId: item, metadata: {} };
-      }
-      if (typeof item === "object" && item !== null) {
-        const { $ref, ...meta } = item as Record<string, unknown>;
-        return { toId: $ref as string, metadata: meta };
-      }
-      throw new Error("Invalid relation payload item");
-    });
-  }
-  if (typeof payload === "object" && payload !== null) {
-    const { $ref, ...meta } = payload as Record<string, unknown>;
-    return [{ toId: $ref as string, metadata: meta }];
-  }
-  return [];
-}
-
-/**
- * Find relation definition
+ * Find relation definition (forward-only — intentional for mutation executor).
  */
 function findRelation(
   schema: DatafnSchema,
   resource: string,
   relationName: string,
-): DatafnRelation | undefined {
+): DatafnRelationSchema | undefined {
   return schema.relations?.find(
     (r) => r.from === resource && r.relation === relationName,
   );
@@ -127,23 +92,27 @@ export async function executeRelate(
     } else if (relation.type === "one-many") {
       // Update FK on target records (to point to mutation.id)
       const fkField = relation.fkField || relation.inverse || `${relation.from}Id`; // Inverse side FK
-      // We need to know the FK field on the target table.
-      // Usually schema defines `inverse` or `foreignKey` on the `one-many` side?
-      // Actually `one-many` implies the OTHER side is `many-one`.
-      // The other side definition should exist.
-      // If not, we rely on `fkField` in THIS definition if present, or guess.
-      // Assuming standard: target table has `fromResourceId` field.
-
-      for (const item of items) {
-        await adapter.update({
+      // PER-004: Batch update when adapter supports it and there are multiple items
+      if (items.length > 1 && adapter.capabilities.operations.batch) {
+        const targetIds = items.map(i => i.toId);
+        await adapter.updateMany({
           model: relation.to,
-          where: [{ field: "id", operator: "eq", value: item.toId }],
+          where: [{ field: "id", operator: "in", value: targetIds }],
           data: { [fkField]: mutation.id },
           namespace,
         });
+      } else {
+        for (const item of items) {
+          await adapter.update({
+            model: relation.to,
+            where: [{ field: "id", operator: "eq", value: item.toId }],
+            data: { [fkField]: mutation.id },
+            namespace,
+          });
+        }
       }
     } else if (relation.type === "many-many") {
-      const tableName = relation.joinTable || `__datafn_join_${mutation.resource}_${relName}`;
+      const tableName = getJoinTableName(mutation.resource, relName, relation.joinTable);
       const fromCol = relation.joinColumns?.from || "from";
       const toCol = relation.joinColumns?.to || "to";
 
@@ -165,6 +134,7 @@ export async function executeRelate(
           },
           update: Object.keys(item.metadata).length > 0 ? item.metadata : {},
           namespace,
+          conflictTarget: "id",
         });
       }
     }
@@ -207,20 +177,49 @@ export async function executeModifyRelation(
     }
 
     const items = normalizeRelationPayload(payload);
-    const tableName = relation.joinTable || `__datafn_join_${mutation.resource}_${relName}`;
+    const tableName = getJoinTableName(mutation.resource, relName, relation.joinTable);
     const fromCol = relation.joinColumns?.from || "from";
     const toCol = relation.joinColumns?.to || "to";
 
     for (const item of items) {
-      const existing = await adapter.findOne({
-        model: tableName,
-        where: [
-          { field: fromCol, operator: "eq", value: mutation.id },
-          { field: toCol, operator: "eq", value: item.toId },
-        ],
-        namespace,
-      });
-      if (!existing) {
+      // DI-001: Atomic findOne + update to prevent TOCTOU race.
+      // Wrap in transaction when adapter supports it; otherwise execute sequentially.
+      const performModify = async (adp: typeof adapter): Promise<"ok" | "not_found"> => {
+        const existing = await adp.findOne({
+          model: tableName,
+          where: [
+            { field: fromCol, operator: "eq", value: mutation.id },
+            { field: toCol, operator: "eq", value: item.toId },
+          ],
+          namespace,
+        });
+        if (!existing) return "not_found";
+        await adp.update({
+          model: tableName,
+          where: [
+            { field: fromCol, operator: "eq", value: mutation.id },
+            { field: toCol, operator: "eq", value: item.toId },
+          ],
+          data: item.metadata,
+          namespace,
+        });
+        return "ok";
+      };
+
+      let itemResult: "ok" | "not_found";
+      // DI-001: capabilities.transactions.supported === false means explicitly no support (e.g. memoryAdapter).
+      // If capabilities are absent/incomplete (test mocks), fall back to duck-typing.
+      if ((adapter.capabilities?.transactions?.supported !== false) && typeof adapter.transaction === "function") {
+        let txOutcome: "ok" | "not_found" = "ok";
+        await adapter.transaction(async (txAdp: typeof adapter) => {
+          txOutcome = await performModify(txAdp as any);
+        });
+        itemResult = txOutcome;
+      } else {
+        itemResult = await performModify(adapter);
+      }
+
+      if (itemResult === "not_found") {
         return {
           ok: false,
           code: "NOT_FOUND",
@@ -228,15 +227,6 @@ export async function executeModifyRelation(
           path: `relations.${relName}`,
         };
       }
-      await adapter.update({
-        model: tableName,
-        where: [
-          { field: fromCol, operator: "eq", value: mutation.id },
-          { field: toCol, operator: "eq", value: item.toId },
-        ],
-        data: item.metadata,
-        namespace,
-      });
     }
   }
   return { ok: true, affectedIds: [mutation.id] };
@@ -438,28 +428,52 @@ export async function executeUnrelate(
       } else if (relation.type === "one-many") {
         // Clear FK on target
         const fkField = relation.fkField || relation.inverse || `${relation.from}Id`;
-        for (const item of items) {
-          await adapter.update({
+        // PER-004: Batch update when adapter supports it and there are multiple items
+        if (items.length > 1 && adapter.capabilities.operations.batch) {
+          const targetIds = items.map(i => i.toId);
+          await adapter.updateMany({
             model: relation.to,
-            where: [{ field: "id", operator: "eq", value: item.toId }],
+            where: [{ field: "id", operator: "in", value: targetIds }],
             data: { [fkField]: null },
             namespace,
           });
+        } else {
+          for (const item of items) {
+            await adapter.update({
+              model: relation.to,
+              where: [{ field: "id", operator: "eq", value: item.toId }],
+              data: { [fkField]: null },
+              namespace,
+            });
+          }
         }
       } else if (relation.type === "many-many") {
-        const tableName = relation.joinTable || `__datafn_join_${mutation.resource}_${relName}`;
+        const tableName = getJoinTableName(mutation.resource, relName, relation.joinTable);
         const fromCol = relation.joinColumns?.from || "from";
         const toCol = relation.joinColumns?.to || "to";
 
-        for (const item of items) {
-          await adapter.delete({
+        // PER-004: Batch delete when adapter supports it and there are multiple items
+        if (items.length > 1 && adapter.capabilities.operations.batch) {
+          const toIds = items.map(i => i.toId);
+          await adapter.deleteMany({
             model: tableName,
             where: [
               { field: fromCol, operator: "eq", value: mutation.id },
-              { field: toCol, operator: "eq", value: item.toId },
+              { field: toCol, operator: "in", value: toIds },
             ],
             namespace,
           });
+        } else {
+          for (const item of items) {
+            await adapter.delete({
+              model: tableName,
+              where: [
+                { field: fromCol, operator: "eq", value: mutation.id },
+                { field: toCol, operator: "eq", value: item.toId },
+              ],
+              namespace,
+            });
+          }
         }
       }
     }

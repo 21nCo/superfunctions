@@ -7,12 +7,20 @@ import { okResponse, errorResponse } from "../http/errors.js";
 import { getBodyFromContext } from "../http/json.js";
 import type { Adapter } from "@superfunctions/db";
 import { ensureInternalTable } from "../execution/internal-tables.js";
+import type { DatafnLogger } from "../logger.js";
 
 /**
  * Create seed route handler
+ * SEC-011: Accepts extractNamespace to derive namespace from auth context
  */
-export function createSeedHandler(db?: Adapter, namespace: string = "datafn") {
+export function createSeedHandler(
+  db?: Adapter,
+  extractNamespace?: (ctx: any) => Promise<string>,
+  logger?: DatafnLogger,
+) {
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
+    // SEC-011: Derive namespace from auth context, not hardcoded
+    const namespace = extractNamespace ? await extractNamespace(ctx) : "datafn";
     // Get body from context (pre-parsed by withAuth) or parse from request
     const parseResult = await getBodyFromContext(req, ctx);
     if (!parseResult.ok) {
@@ -64,8 +72,13 @@ export function createSeedHandler(db?: Adapter, namespace: string = "datafn") {
         }
         // If exists, seed is idempotent - just return success
       } catch (error) {
-        // Log but don't fail - seed persistence is best-effort
-        console.error("Failed to persist seed:", error);
+        // SRV-013: Propagate persistence failures instead of silently ignoring them
+        logger?.error("Failed to persist seed", { error: String(error), operation: "seed" });
+        return errorResponse({
+          code: "INTERNAL",
+          message: "Internal error",
+          details: { path: "$" },
+        }, 500);
       }
     }
 

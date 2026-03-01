@@ -175,7 +175,7 @@ export async function executeCfql(
 
   const rows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
-    where: [{ field: "dataset", operator: "eq", value: query.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: query.dataset }],
   });
 
   let docs = rows.map((r: { docJson: ContentfnDocument }) => r.docJson);

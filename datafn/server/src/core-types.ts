@@ -51,6 +51,10 @@ export interface ObservabilityConfig {
   onTiming?: (event: import("./middleware/timing.js").ExecutionTimingEvent) => void;
 }
 
+// Re-export for convenience — canonical definition lives in logger.ts
+export type { DatafnLogger } from "./logger.js";
+
+
 export type DatafnPlugin = {
   name: string;
   runsOn: Array<"client" | "server">;

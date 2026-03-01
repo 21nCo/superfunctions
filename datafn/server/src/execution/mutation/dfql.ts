@@ -81,13 +81,10 @@ export function buildReplaceRecord(
       result[key] = now;
       continue;
     }
-    // updatedBy - if we had context we'd set it. For now, preserve or allow override?
-    // "Update updatedBy (from context)" - implies we should set it if we have it.
-    // Since we don't, let's treat it as a normal field (can be overwritten or cleared).
-    // Actually, usually updatedBy is preserved if not provided?
-    // "Replace ... clears unspecified fields". So if not provided, it should be cleared/defaulted.
-    // BUT we want to preserve system fields.
-    // Let's assume updatedBy is managed by client for now if not in context.
+    // LOW-013: updatedBy is intentionally treated as a normal (clearable) field during replace.
+    // The caller should inject updatedBy into newRecord from auth context before calling
+    // buildReplaceRecord. If not provided, it is cleared to null ("replace" semantics).
+    // System fields that are always preserved: id, createdAt, createdBy, updatedAt (auto-set above).
 
     // Normal fields
     if (Object.prototype.hasOwnProperty.call(newRecord, key)) {

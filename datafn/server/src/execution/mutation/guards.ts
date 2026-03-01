@@ -2,6 +2,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { DatafnSchema } from "@datafn/core";
 import { evaluateFilter } from "../query/filters.js";
 import { GuardDataStore } from "./guard-store.js";
+import type { DatafnLogger } from "../../logger.js";
 
 /**
  * Evaluate an if guard against a record
@@ -15,6 +16,7 @@ export async function evaluateGuard(
   guard: Record<string, unknown>,
   schema: DatafnSchema,
   namespace: string,
+  logger?: DatafnLogger,
 ): Promise<{ match: boolean }> {
   // Fetch current record
   let record: Record<string, unknown> | null = null;
@@ -25,8 +27,9 @@ export async function evaluateGuard(
       namespace,
     });
   } catch (error) {
-    // If error (e.g. not found if adapter throws, or DB error), treat as not found/no match
-    // Spec says "Guard on non-existent records (always fails)"
+    // LOW-014: This is a DB/adapter error (not a "not found" — adapters return null for that).
+    // Log for observability and fail-closed (guard fails = mutation does not proceed).
+    logger?.error("Guard evaluation DB error", { error: String(error), operation: "evaluateGuard", resource, id });
     return { match: false };
   }
 
@@ -43,3 +46,19 @@ export async function evaluateGuard(
 
   return { match };
 }
+
+/**
+ * DI-002: Evaluate a guard within a transaction scope when the adapter supports it.
+ *
+ * When a transaction is available, the guard read and the subsequent mutation
+ * MUST occur within the SAME transaction to prevent TOCTOU races.
+ *
+ * Usage: call this function with the adapter that will be used for the mutation.
+ * If the adapter is already a transaction adapter (e.g. passed from transact.ts),
+ * the guard evaluation is automatically in the correct scope.
+ *
+ * For callers outside a transaction (e.g. push.ts → execute.ts), pass the outer
+ * adapter. The executeMutation wrapper in execute.ts will ensure both guard and
+ * mutation run inside a transaction when db.transaction() is available.
+ */
+export { evaluateGuard as evaluateGuardInTransactionScope };

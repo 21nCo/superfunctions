@@ -14,7 +14,18 @@ import { executePush } from "../execution/sync/push.js";
 import { executeReconcile } from "../execution/sync/reconcile.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 import { logRequest } from "../logging.js";
+import type { DatafnLogger } from "../logger.js";
 import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
+import { buildSchemaIndex, validatePushMutations } from "../validation/index.js";
+import { validateMutationAuthz } from "../validation/authz.js";
+import type { MutationValidationOpts } from "../validation/mutation.js";
+
+/**
+ * Options for push handler (VAL-001, VAL-006–009)
+ */
+export interface PushHandlerOpts extends MutationValidationOpts {
+  allowUnknownResources?: boolean;
+}
 
 /**
  * Create clone route handler
@@ -25,6 +36,7 @@ export function createCloneHandler(
   plugins: DatafnPlugin[] = [],
   extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
+  logger?: DatafnLogger,
 ) {
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
@@ -75,7 +87,7 @@ export function createCloneHandler(
         if (!result.ok) {
         return errorResponse(
             {
-            code: result.error!.code as any,
+            code: result.error!.code,
             message: result.error!.message,
             details: result.error!.details || { path: "$" },
             },
@@ -97,7 +109,7 @@ export function createCloneHandler(
         headers: { "Content-Type": "application/json" },
         });
     } catch (error) {
-        console.error("Clone failed:", error);
+        logger?.error("Clone failed", { error: String(error), operation: "clone" });
         return errorResponse({
             code: "INTERNAL",
             message: "Internal error",
@@ -110,7 +122,7 @@ export function createCloneHandler(
             operation: "clone",
             clientId: body?.clientId,
             duration_ms: Date.now() - startTime,
-        });
+        }, logger);
     }
   };
 }
@@ -126,6 +138,7 @@ export function createPullHandler(
   sequenceStore?: SequenceStore,
   maxPullLimit?: number,
   timingEmitter?: TimingEmitter | null,
+  logger?: DatafnLogger,
 ) {
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
@@ -199,7 +212,7 @@ export function createPullHandler(
         headers: { "Content-Type": "application/json" },
         });
     } catch (error) {
-        console.error("Pull failed:", error);
+        logger?.error("Pull failed", { error: String(error), operation: "pull" });
         return errorResponse({
             code: "INTERNAL",
             message: "Internal error",
@@ -212,7 +225,7 @@ export function createPullHandler(
             operation: "pull",
             clientId: body?.clientId,
             duration_ms: Date.now() - startTime,
-        });
+        }, logger);
     }
   };
 }
@@ -227,8 +240,10 @@ export function createPushHandler(
   plugins: DatafnPlugin[] = [],
   extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
-  onChange?: (seq: number) => void,
+  onChange?: (seq: number, namespace: string) => void,
   timingEmitter?: TimingEmitter | null,
+  handlerOpts?: PushHandlerOpts,
+  logger?: DatafnLogger,
 ) {
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
@@ -282,20 +297,38 @@ export function createPushHandler(
         );
         }
 
-        // Validate all mutations against schema
-        const { buildSchemaIndex, validatePushMutations } = await import("../validation/index.js");
-        const schemaIndex = buildSchemaIndex(validatedSchema);
-        const validationResult = validatePushMutations(payload.mutations, schemaIndex);
-        if (!validationResult.valid) {
-        const firstError = validationResult.errors[0];
-        return errorResponse(
+        // SEC-006: Enforce batch size limit
+        const maxBatchSize = 500; // TODO: wire from config in later phase
+        if (payload.mutations.length > maxBatchSize) {
+          return errorResponse(
             {
-            code: firstError.code as any,
-            message: firstError.message,
-            details: { path: firstError.path },
+              code: "DFQL_INVALID",
+              message: `Batch size ${payload.mutations.length} exceeds limit ${maxBatchSize}`,
+              details: { path: "mutations" },
             },
             400,
-        );
+          );
+        }
+
+        // Validate all mutations against schema
+        const schemaIndex = buildSchemaIndex(validatedSchema);
+        const validationResult = validatePushMutations(payload.mutations, schemaIndex, {
+          maxIdLength: handlerOpts?.maxIdLength,
+          debug: handlerOpts?.debug,
+        });
+        if (!validationResult.valid) {
+          const firstError = validationResult.errors[0];
+          // VAL-009: In production (debug: false), strip field/schema details from messages
+          const debug = handlerOpts?.debug ?? true;
+          const message = debug ? firstError.message : "Validation error";
+          return errorResponse(
+            {
+              code: firstError.code as any,
+              message,
+              details: { path: firstError.path },
+            },
+            400,
+          );
         }
 
         // After validation, check execution requirements
@@ -310,13 +343,15 @@ export function createPushHandler(
         );
         }
 
-        // PHASE_11: Enforce write permissions for each mutation in push
-        const { validateMutationAuthz } = await import("../validation/authz.js");
+        // PHASE_11: Enforce write permissions for each mutation in push (VAL-001: deny-by-default)
         const pushPayload = beforeHookResult.payload as any;
         if (pushPayload.mutations && Array.isArray(pushPayload.mutations)) {
           for (let i = 0; i < pushPayload.mutations.length; i++) {
             const mut = pushPayload.mutations[i];
-            const authzResult = validateMutationAuthz(mut, validatedSchema);
+            const authzResult = validateMutationAuthz(mut, validatedSchema, {
+              allowUnknownResources: handlerOpts?.allowUnknownResources,
+              debug: handlerOpts?.debug,
+            });
             if (!authzResult.ok) {
               return errorResponse({
                 code: authzResult.code,
@@ -372,7 +407,7 @@ export function createPushHandler(
         headers: { "Content-Type": "application/json" },
         });
     } catch (error) {
-        console.error("Push failed:", error);
+        logger?.error("Push failed", { error: String(error), operation: "push" });
         return errorResponse({
             code: "INTERNAL",
             message: "Internal error",
@@ -386,7 +421,7 @@ export function createPushHandler(
             clientId: body?.clientId,
             count: body?.mutations?.length,
             duration_ms: Date.now() - startTime,
-        });
+        }, logger);
     }
   };
 }
@@ -400,6 +435,7 @@ export function createReconcileHandler(
   plugins: DatafnPlugin[] = [],
   extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
+  logger?: DatafnLogger,
 ) {
   return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
     const startTime = Date.now();
@@ -450,7 +486,7 @@ export function createReconcileHandler(
         if (!result.ok) {
         return errorResponse(
             {
-            code: result.error!.code as any,
+            code: result.error!.code,
             message: result.error!.message,
             details: result.error!.details || { path: "$" },
             },
@@ -472,7 +508,7 @@ export function createReconcileHandler(
         headers: { "Content-Type": "application/json" },
         });
     } catch (error) {
-        console.error("Reconcile failed:", error);
+        logger?.error("Reconcile failed", { error: String(error), operation: "reconcile" });
         return errorResponse({
             code: "INTERNAL",
             message: "Internal error",
@@ -485,7 +521,7 @@ export function createReconcileHandler(
             operation: "reconcile",
             clientId: body?.clientId,
             duration_ms: Date.now() - startTime,
-        });
+        }, logger);
     }
   };
 }

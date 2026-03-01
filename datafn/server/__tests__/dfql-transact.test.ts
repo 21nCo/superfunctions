@@ -29,7 +29,7 @@ describe("DFQL Transactions", () => {
 
   beforeEach(async () => {
     adapter = memoryAdapter();
-    server = await createDatafnServer({
+    server = await createDatafnServer({ allowUnknownResources: true,
       db: adapter,
       schema,
     });

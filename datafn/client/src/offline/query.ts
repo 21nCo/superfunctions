@@ -8,6 +8,7 @@ import {
   parseSortTerms,
   sortRecords,
   type SchemaIndex,
+  normalizeFilterOps,
 } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { materializeSelect } from "./relations.js";
@@ -30,6 +31,8 @@ export async function executeLocalQuery(
   const resource = query.resource as string;
   let records: Record<string, unknown>[];
   let usedIndexedPath = false;
+  // CLI-012: tracks whether the index fetch fully satisfied all filter conditions
+  let filterFullySatisfied = false;
 
   // Planning step: detect index-aware routing opportunities (OFFQ-001)
   if (query.filters) {
@@ -42,6 +45,10 @@ export async function executeLocalQuery(
         const record = await storage.getRecord(resource, idFilter.eq as string);
         records = record ? [record] : [];
         usedIndexedPath = true;
+        // Filter fully satisfied only when id eq is the sole filter condition
+        if (Object.keys(filters).length === 1) {
+          filterFullySatisfied = true;
+        }
       }
     }
     
@@ -53,6 +60,8 @@ export async function executeLocalQuery(
         // findRecords will use index if available, else fall back to scan
         records = await storage.findRecords(resource, field, value);
         usedIndexedPath = true;
+        // detectSingleFieldEq guarantees exactly one key — fully satisfied
+        filterFullySatisfied = true;
       }
     }
   }
@@ -62,8 +71,8 @@ export async function executeLocalQuery(
     records = await storage.listRecords(resource);
   }
 
-  // Apply filters (if not fully satisfied by routing)
-  if (query.filters) {
+  // Apply filters only when not fully satisfied by the indexed path (CLI-012)
+  if (query.filters && !filterFullySatisfied) {
     const normalized = normalizeFilterOps(query.filters as Record<string, unknown>);
     records = records.filter((r) => applyFilter(r, normalized));
   }
@@ -143,33 +152,7 @@ function applyFilter(
   return true;
 }
 
-const OP_REMAP: Record<string, string> = {
-  eq: "$eq", ne: "$ne", gt: "$gt", gte: "$gte", lt: "$lt", lte: "$lte",
-  in: "$in", not_in: "$nin",
-  like: "$like", ilike: "$ilike", not_like: "$not_like", not_ilike: "$not_ilike",
-  is_null: "$is_null", is_not_null: "$is_not_null", is_empty: "$is_empty", is_not_empty: "$is_not_empty",
-  before: "$before", after: "$after", between: "$between", not_between: "$not_between",
-};
-
-/** Recursively remap non-$-prefixed operator names to core's $-prefixed form. */
-function normalizeFilterOps(filters: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(filters)) {
-    if ((key === "$and" || key === "$or") && Array.isArray(value)) {
-      out[key] = (value as Record<string, unknown>[]).map(normalizeFilterOps);
-    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const ops = value as Record<string, unknown>;
-      const normalized: Record<string, unknown> = {};
-      for (const [op, opVal] of Object.entries(ops)) {
-        normalized[OP_REMAP[op] ?? op] = opVal;
-      }
-      out[key] = normalized;
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
+// normalizeFilterOps is imported from @datafn/core above.
 
 /**
  * Detect if filters contain a single-field eq that could use an index.

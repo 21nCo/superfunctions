@@ -2,7 +2,6 @@
   "name": "@contentfn/core",
   "version": "0.0.1",
   "description": "Core types, validators, and utilities for ContentFn - schema, CFQL, patch, envelope",
-  "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -15,6 +14,25 @@
     }
   },
   "files": ["dist"],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "contentfn/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "contentFn",
+    "schemaVersion": 1,
+    "namespace": "contentfn"
+  },
+  "dependencies": {
+    "@superfunctions/db": "*",
+    "@superfunctions/http": "*"
+  },
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",

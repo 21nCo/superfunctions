@@ -1,0 +1,138 @@
+---
+title: "Getting Started"
+description: "Get up and running with DataFn in minutes."
+---
+
+## Overview
+
+DataFn is a full-stack data management framework for TypeScript applications. It provides:
+
+- **Type-safe schemas** -- define your data model once, get validation and type inference everywhere.
+- **Offline-first sync** -- local-first reads and writes with automatic server reconciliation.
+- **Reactive signals** -- subscribe to query results that update in real time.
+- **DFQL query language** -- filter, sort, paginate, and aggregate with a structured JSON query format.
+- **Multi-tenancy** -- row-level namespace isolation enabled by default.
+- **Plugin system** -- extend behavior with hooks on queries, mutations, and sync phases.
+
+DataFn is composed of three packages:
+
+| Package | Purpose |
+| --- | --- |
+| `@datafn/core` | Schema types, validation, DFQL utilities, shared constants |
+| `@datafn/client` | Browser/Node client with offline storage, sync engine, and reactive signals |
+| `@datafn/server` | HTTP server with query, mutation, transact, sync, and REST endpoints |
+
+## Installation
+
+```bash
+npm install @datafn/core @datafn/client @datafn/server
+```
+
+Install only the packages you need. `@datafn/core` is a peer dependency of both `@datafn/client` and `@datafn/server`.
+
+## Quick Start
+
+### 1. Define a Schema
+
+Use `defineSchema` from `@datafn/core` for full type safety. Index entries are constrained to declared field names at the type level.
+
+```typescript
+import { defineSchema } from "@datafn/core";
+
+const schema = defineSchema({
+  resources: [
+    {
+      name: "tasks",
+      version: 1,
+      idPrefix: "tsk",
+      fields: [
+        { name: "title", type: "string", required: true },
+        { name: "completed", type: "boolean", required: true, default: false },
+        { name: "dueDate", type: "date", required: false },
+        { name: "priority", type: "number", required: false, min: 1, max: 5 },
+      ],
+      indices: { base: ["title", "completed"] },
+    },
+  ],
+  relations: [],
+});
+```
+
+### 2. Create a Server
+
+`createDatafnServer` validates the schema at startup and returns a router you can mount on any HTTP framework.
+
+```typescript
+import { createDatafnServer } from "@datafn/server";
+import { createDrizzleAdapter } from "@superfunctions/db/drizzle";
+
+const server = await createDatafnServer({
+  schema,
+  db: createDrizzleAdapter(drizzleInstance),
+  rest: true, // enable REST endpoints
+});
+
+// Mount the router (example with Bun)
+Bun.serve({
+  port: 3000,
+  fetch: server.router.fetch,
+});
+```
+
+The server exposes endpoints at `/datafn/query`, `/datafn/mutation`, `/datafn/transact`, `/datafn/clone`, `/datafn/pull`, `/datafn/push`, and `/datafn/status`. When `rest: true` is set, it also generates RESTful CRUD routes for each resource.
+
+### 3. Create a Client
+
+The client connects to the server and provides offline-capable queries, mutations, and reactive signals.
+
+```typescript
+import { createDatafnClient, MemoryStorageAdapter } from "@datafn/client";
+
+const client = createDatafnClient({
+  schema,
+  sync: {
+    remote: "http://localhost:3000",
+    offlinability: true,
+    ws: true,
+  },
+  storage: () => new MemoryStorageAdapter(),
+});
+```
+
+### 4. Query and Mutate
+
+```typescript
+// Insert a task
+await client.mutation({
+  resource: "tasks",
+  action: "insert",
+  data: { title: "Ship v1", completed: false, priority: 1 },
+});
+
+// Query tasks
+const result = await client.query({
+  resource: "tasks",
+  filter: { completed: { $eq: false } },
+  sort: ["-priority"],
+  limit: 20,
+});
+
+// Reactive signal -- re-emits whenever the underlying data changes
+const signal = client.signal({
+  resource: "tasks",
+  filter: { completed: { $eq: false } },
+});
+
+signal.subscribe((tasks) => {
+  console.log("Active tasks:", tasks);
+});
+```
+
+## Next Steps
+
+- [Schema](/docs/documentation/concepts/schema) -- data model definition and validation.
+- [Resources](/docs/documentation/concepts/resources) -- resource configuration in detail.
+- [Fields](/docs/documentation/concepts/fields) -- field types and constraints.
+- [Relations](/docs/documentation/concepts/relations) -- defining relationships between resources.
+- [System Fields](/docs/documentation/concepts/system-fields) -- built-in fields managed by DataFn.
+- [Multi-Tenancy](/docs/documentation/concepts/multi-tenancy) -- row-level namespace isolation.

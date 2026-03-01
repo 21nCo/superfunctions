@@ -7,68 +7,10 @@ import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
 import { getJoinStoreKey } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 
-/**
- * Normalized relation payload item
- */
-export interface NormalizedRelation {
-  toId: string;
-  metadata: Record<string, unknown>;
-}
-
-/**
- * Normalize relation payload to consistent format
- * - String -> [{ toId, metadata: {} }]
- * - String[] -> [{ toId, metadata: {} }, ...]
- * - Object with $ref -> [{ toId: $ref, metadata: {...rest} }]
- * - Array of above -> flatten
- */
-export function normalizeRelationPayload(
-  payload: unknown,
-): NormalizedRelation[] {
-  if (typeof payload === "string") {
-    return [{ toId: payload, metadata: {} }];
-  }
-  if (Array.isArray(payload)) {
-    return payload.map((item) => {
-      if (typeof item === "string") {
-        return { toId: item, metadata: {} };
-      }
-      if (typeof item === "object" && item !== null) {
-        const { $ref, ...meta } = item as Record<string, unknown>;
-        if (!$ref || typeof $ref !== "string") {
-          throw new Error("Invalid relation payload item: missing or invalid $ref");
-        }
-        return { toId: $ref as string, metadata: meta };
-      }
-      throw new Error("Invalid relation payload item type");
-    });
-  }
-  if (typeof payload === "object" && payload !== null) {
-    const { $ref, ...meta } = payload as Record<string, unknown>;
-    if (!$ref || typeof $ref !== "string") {
-      throw new Error("Invalid relation payload: missing or invalid $ref");
-    }
-    return [{ toId: $ref as string, metadata: meta }];
-  }
-  throw new Error("Invalid relation payload: must be string, object with $ref, or array");
-}
-
-/**
- * Find relation definition in schema
- */
-export function findRelation(
-  schema: DatafnSchema,
-  resource: string,
-  relationName: string,
-): DatafnRelationSchema | null {
-  return (
-    schema.relations?.find(
-      (r) =>
-        (r.from === resource && r.relation === relationName) ||
-        (r.to === resource && r.inverse === relationName),
-    ) || null
-  );
-}
+// NormalizedRelation, normalizeRelationPayload, and findRelationBidirectional
+// are canonical in @datafn/core. Re-export for backward compatibility.
+export type { NormalizedRelation } from "@datafn/core";
+export { normalizeRelationPayload } from "@datafn/core";
 
 /**
  * Expand a relation for a record with sub-selection

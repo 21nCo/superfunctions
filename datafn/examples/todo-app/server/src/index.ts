@@ -16,6 +16,15 @@ async function main() {
     // In production, inspect ctx (headers / session) and restrict per action.
     authorize: async (_ctx: any, _action: any, _payload: any) => true,
 
+    // Sample auth context — hardcoded user + tenant so namespace scoping can be verified.
+    // Replace with real session/token extraction in production.
+    authContextProvider: {
+      getContext: (_ctx: any) => ({
+        userId: "user-001",
+        tenantId: "tenant-acme",
+      }),
+    },
+
     // Limits
     limits: {
       maxLimit: 200,

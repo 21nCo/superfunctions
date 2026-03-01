@@ -2,7 +2,6 @@
   "name": "@contentfn/server",
   "version": "0.0.1",
   "description": "ContentFn server - HTTP endpoints and storage",
-  "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -17,6 +16,21 @@
   "files": [
     "dist"
   ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "contentfn/server"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "contentFn",
+    "schemaVersion": 1,
+    "namespace": "contentfn"
+  },
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
@@ -36,7 +50,8 @@
   "sideEffects": false,
   "dependencies": {
     "@contentfn/core": "*",
-    "@superfunctions/db": "*"
+    "@superfunctions/db": "*",
+    "@superfunctions/http": "*"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

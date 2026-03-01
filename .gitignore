@@ -70,6 +70,8 @@ venv
 # AI tool configs
 .claude/
 .entire/
+.cursor/
+.gemini/
 
 # Python build artifacts
 *.egg-info/
@@ -77,3 +79,7 @@ venv
 # Sub-package lock files (keep root only)
 **/package-lock.json
 !package-lock.json
+.vercel
+
+.next/
+.source/

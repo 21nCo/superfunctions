@@ -73,7 +73,7 @@ export async function webhookList(
 
   const rows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.webhooks,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
 
   const webhooks = (rows as Array<{ webhookId: string; url: string; events: string[] }>).map((r) => ({
@@ -97,8 +97,8 @@ export async function webhookDelete(
   const row = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.webhooks,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "webhookId", operator: "eq", value: input.webhookId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "webhookId", operator: "eq" as const, value: input.webhookId },
     ],
   });
 
@@ -109,8 +109,8 @@ export async function webhookDelete(
   await config.db.deleteMany({
     model: CONTENTFN_TABLE_NAMES.webhooks,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "webhookId", operator: "eq", value: input.webhookId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "webhookId", operator: "eq" as const, value: input.webhookId },
     ],
   });
 

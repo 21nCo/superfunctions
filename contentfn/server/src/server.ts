@@ -143,9 +143,9 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
     const events = await config.db.findMany({
       model: "contentfn_events",
       where: [
-        { field: "dataset", operator: "eq", value: dataset },
-        { field: "type", operator: "eq", value: type },
-        { field: "docId", operator: "eq", value: docId },
+        { field: "dataset", operator: "eq" as const, value: dataset },
+        { field: "type", operator: "eq" as const, value: type },
+        { field: "docId", operator: "eq" as const, value: docId },
       ],
       orderBy: [{ field: "timestamp", direction: "desc" }],
     });

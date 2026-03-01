@@ -15,7 +15,15 @@ import {
 import { isSearchPlugin } from "../plugins/searchfn.js";
 import { buildSchemaIndex, validateQueryBody } from "../validation/index.js";
 import { logRequest } from "../logging.js";
+import type { DatafnLogger } from "../logger.js";
 import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
+import { validateQueryAuthz } from "../validation/authz.js";
+import { executeQuery } from "../execution/query/execute.js";
+import { DbDataStore } from "../execution/db-store.js";
+import { classifyExecutionError } from "../execution/errors.js";
+import { classifyQuery, extractPushableFilters } from "../execution/query/planner.js";
+import { executePushdownQuery, executePartialPushdownQuery } from "../execution/query/pushdown.js";
+import { executeSearchQuery } from "../execution/query/search.js";
 
 /**
  * Validate a single query object against the schema
@@ -763,6 +771,20 @@ function convertFiltersToWhere(
 /**
  * Create query validation + execution route handler
  */
+/**
+ * Options for query handler (VAL-001 through VAL-005, VAL-009)
+ */
+export interface QueryHandlerOpts {
+  maxSelectTokens?: number;
+  maxFilterKeysPerLevel?: number;
+  maxSortFields?: number;
+  maxAggregations?: number;
+  // SRV-003: limit number of queries in a batch request
+  maxBatchQueries?: number;
+  allowUnknownResources?: boolean;
+  debug?: boolean;
+}
+
 export function createQueryHandler(
   validatedSchema: DatafnSchema,
   maxLimit: number,
@@ -770,6 +792,8 @@ export function createQueryHandler(
   plugins: DatafnPlugin[] = [],
   extractNamespace: (ctx: any) => Promise<string>,
   timingEmitter?: TimingEmitter | null,
+  handlerOpts?: QueryHandlerOpts,
+  logger?: DatafnLogger,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -778,6 +802,8 @@ export function createQueryHandler(
       const startTime = Date.now();
       let resource: string | undefined;
       const timer = timingEmitter ? new ExecutionTimer() : null;
+      // SRV-006: Per-query durations (populated inside if(db) block)
+      const queryDurations: number[] = [];
 
       try {
         timer?.startPhase("validate");
@@ -813,22 +839,42 @@ export function createQueryHandler(
         const validationResult = validateQueryBody(transformedBody, schemaIndex, {
           maxLimit,
           hasSearchPlugin: hasSearchPlugin(plugins),
+          maxSelectTokens: handlerOpts?.maxSelectTokens,
+          maxFilterKeysPerLevel: handlerOpts?.maxFilterKeysPerLevel,
+          maxSortFields: handlerOpts?.maxSortFields,
+          maxAggregations: handlerOpts?.maxAggregations,
+          debug: handlerOpts?.debug,
         });
         if (!validationResult.ok) {
+          // VAL-009: In production (debug: false), strip field/schema details from messages
+          const debug = handlerOpts?.debug ?? true;
+          const message = debug ? validationResult.error.message : "Validation error";
           return errorResponse({
             code: validationResult.error.code,
-            message: validationResult.error.message,
+            message,
             details: { path: validationResult.error.path, ...(validationResult.error.details || {}) },
           });
         }
   
         const { isBatch, queries: transformedQueries } = validationResult.result;
-  
-        // PHASE_11: Enforce read permissions for each query
-        const { validateQueryAuthz } = await import("../validation/authz.js");
+
+        // SRV-003: Enforce maxBatchQueries limit
+        const maxBatchQueries = handlerOpts?.maxBatchQueries ?? 20;
+        if (isBatch && transformedQueries.length > maxBatchQueries) {
+          return errorResponse({
+            code: "LIMIT_EXCEEDED" as any,
+            message: `Batch query count exceeds limit: ${transformedQueries.length} (max ${maxBatchQueries})`,
+            details: { path: "$", max: maxBatchQueries },
+          });
+        }
+
+        // PHASE_11: Enforce read permissions for each query (VAL-001: deny-by-default)
         for (let i = 0; i < transformedQueries.length; i++) {
           const query = transformedQueries[i] as Record<string, unknown>;
-          const authzResult = validateQueryAuthz(query, validatedSchema);
+          const authzResult = validateQueryAuthz(query, validatedSchema, {
+            allowUnknownResources: handlerOpts?.allowUnknownResources,
+            debug: handlerOpts?.debug,
+          });
           if (!authzResult.ok) {
             return errorResponse({
               code: authzResult.code,
@@ -841,11 +887,7 @@ export function createQueryHandler(
         // Execute queries
         if (db) {
           // Phase 07+: Execute queries using proper query execution engine
-          const { executeQuery } = await import("../execution/query/execute.js");
-          const { DbDataStore } = await import("../execution/db-store.js");
-          const { classifyExecutionError } = await import("../execution/errors.js");
-          const { classifyQuery, extractPushableFilters } = await import("../execution/query/planner.js");
-          const { executePushdownQuery, executePartialPushdownQuery } = await import("../execution/query/pushdown.js");
+          // (imports moved to top-level static imports — PER-002)
   
           // Extract namespace from context
           const namespace = await extractNamespace(ctx);
@@ -853,6 +895,7 @@ export function createQueryHandler(
           timer?.startPhase("plan");
           const results = await Promise.all(
             transformedQueries.map(async (q) => {
+              const queryStart = Date.now();
               const query = q as Record<string, unknown>;
 
               // Phase 02/03: dispatch based on query strategy
@@ -906,13 +949,11 @@ export function createQueryHandler(
                 validatedSchema,
                 namespace,
                 preFilterWhere,
+                logger,
               );
   
               // Execute query using proper execution engine
               if (query.search) {
-                const { executeSearchQuery } = await import(
-                  "../execution/query/search.js"
-                );
                 const searchPlugin = plugins.find(isSearchPlugin);
                 // validation should ensure plugin exists if search is present
                 if (!searchPlugin) {
@@ -926,7 +967,9 @@ export function createQueryHandler(
                 );
               }
   
-              return executeQuery(query as any, validatedSchema, store);
+              const queryResult = executeQuery(query as any, validatedSchema, store);
+              queryDurations.push(Date.now() - queryStart); // SRV-006
+              return queryResult;
             }),
           );
   
@@ -961,7 +1004,7 @@ export function createQueryHandler(
           return okResponse(emptyResult);
         }
       } catch (error) {
-        console.error("Query execution failed:", error);
+        logger?.error("Query execution failed", { error: String(error), operation: "query" });
         // Determine if we should classify or just return INTERNAL
         // If we have classifyExecutionError available (needs import or move up)
         // For now, simple error response or try to import if needed.
@@ -979,6 +1022,8 @@ export function createQueryHandler(
               resource: resource,
               operation: "query",
               duration_ms: Date.now() - startTime,
-          });
+              // SRV-006: Include per-query timings when available
+              ...(queryDurations.length > 0 ? { queryDurations } : {}),
+          }, logger);
       }
     };}

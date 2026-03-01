@@ -22,7 +22,7 @@ describe("Namespace Isolation via authContextProvider", () => {
 
   it("uses default namespace when authContextProvider is not provided", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
     });
@@ -69,7 +69,7 @@ describe("Namespace Isolation via authContextProvider", () => {
       },
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       authContextProvider,
@@ -138,7 +138,7 @@ describe("Namespace Isolation via authContextProvider", () => {
       },
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       authContextProvider,
@@ -195,7 +195,7 @@ describe("Namespace Isolation via authContextProvider", () => {
     expect(body2.result.cursor).toBe("1"); // Independent namespace
   });
 
-  it("falls back to default namespace when getContext fails", async () => {
+  it("returns error when getContext throws (SRV-010: no silent fallback)", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const authContextProvider = {
       getContext: (): AuthContext => {
@@ -203,7 +203,7 @@ describe("Namespace Isolation via authContextProvider", () => {
       },
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       authContextProvider,
@@ -227,7 +227,11 @@ describe("Namespace Isolation via authContextProvider", () => {
     });
 
     const res = await server.router.handle(req);
-    expect(res.status).toBe(200); // Should not fail, falls back to default
+    // SRV-010: extractNamespace now throws on auth errors instead of falling back
+    // to "datafn" to prevent accidental cross-tenant data leaks.
+    expect(res.status).not.toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
   });
 
   it("falls back to default namespace when userId is missing", async () => {
@@ -238,7 +242,7 @@ describe("Namespace Isolation via authContextProvider", () => {
       }),
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       authContextProvider,

@@ -1,5 +1,5 @@
 {
-  "name": "@superfunctions/compfn",
+  "name": "compfn",
   "version": "0.1.0",
   "description": "Self-hosted compliance function: controls, frameworks, evidence, checks, audit-ready export",
   "type": "module",

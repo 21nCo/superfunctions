@@ -66,23 +66,23 @@ export type TimingEmitter = (event: ExecutionTimingEvent) => void;
 /**
  * Create a timing emitter from observability config.
  * Returns null if timing is disabled (no overhead incurred).
- * Custom onTiming errors are caught and logged via console.warn.
+ * Custom onTiming errors are caught and logged via the logger.
  */
 export function createTimingEmitter(config?: {
   timing?: boolean;
   onTiming?: TimingEmitter;
-}): TimingEmitter | null {
+}, logger?: import("../logger.js").DatafnLogger): TimingEmitter | null {
   if (!config?.timing) return null;
 
   const handler =
     config.onTiming ||
-    ((event: ExecutionTimingEvent) => console.debug("[datafn:timing]", event));
+    ((event: ExecutionTimingEvent) => logger?.debug("[datafn:timing]", event as unknown as Record<string, unknown>));
 
   return (event: ExecutionTimingEvent) => {
     try {
       handler(event);
     } catch (e) {
-      console.warn("Timing handler error:", e);
+      logger?.warn("Timing handler error", { error: String(e), operation: "timing" });
     }
   };
 }

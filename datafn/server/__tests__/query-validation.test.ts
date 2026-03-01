@@ -61,7 +61,7 @@ const fixtureF1Schema = {
 
 describe("/datafn/query validation", () => {
   it("TV-API-002: returns error envelope for invalid DFQL (non-object/array)", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -83,7 +83,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("TV-QUERY-002: unknown resource returns DFQL_UNKNOWN_RESOURCE", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -105,7 +105,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("TV-QUERY-002: unknown field in filters returns DFQL_UNKNOWN_FIELD", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -131,7 +131,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("TV-QUERY-002: unknown relation in select returns DFQL_UNKNOWN_RELATION", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -157,7 +157,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("returns empty data for valid query (non-aggregate)", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -182,7 +182,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("returns empty groups for valid query (aggregate)", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -193,7 +193,7 @@ describe("/datafn/query validation", () => {
       body: JSON.stringify({
         resource: "task",
         version: 1,
-        groupBy: ["status"],
+        groupBy: ["label"],
       }),
     });
 
@@ -206,7 +206,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("handles batch queries and returns array", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -232,7 +232,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("enforces limit against maxLimit", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -257,7 +257,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("fail-fast batch validation with error.details.index", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -281,7 +281,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("accepts sort with '-field' prefix (descending shorthand)", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -304,7 +304,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("accepts sort with mixed '-field' and 'field:asc' formats", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -327,7 +327,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("rejects sort with '-nonExistentField' prefix", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -351,7 +351,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("accepts cursor pagination with '-field' sort prefix as tie-breaker", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -375,7 +375,7 @@ describe("/datafn/query validation", () => {
   });
 
   it("validates relation expansions correctly", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 2 },
     });
@@ -410,7 +410,7 @@ describe("/datafn/query validation", () => {
 
 describe("authorization", () => {
   it("returns FORBIDDEN when authorization denies query", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       authorize: async () => false, // Always deny
     });
@@ -430,7 +430,7 @@ describe("authorization", () => {
   });
 
   it("allows query when authorization approves", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       authorize: async () => true, // Always allow
     });

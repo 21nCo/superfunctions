@@ -23,7 +23,7 @@ import {
   type PullResult,
 } from "./apply.js";
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
-import { buildEvent } from "../events/build.js";
+// CLI-008: buildEvent import removed (was unused)
 
 /**
  * Helper: Sleep for a given number of milliseconds (PHASE_08)
@@ -106,6 +106,9 @@ export class SyncEngine {
    * Start the sync loop (if interval is configured)
    */
   async start() {
+    // REL-005: Guard against duplicate push timers — if start() is called twice, skip
+    if (this.timer) return;
+
     // 1. Initial sync
     await this.initializeSync();
 
@@ -225,8 +228,11 @@ export class SyncEngine {
             const serverSeq = parseInt(msg.cursor, 10);
             const storedSeq = parseInt(stored, 10);
 
-            if (serverSeq > storedSeq) {
-              this.pullNow();
+          if (serverSeq > storedSeq) {
+              // REL-015: use .catch() to prevent unhandled promise rejection in WS message handler
+              this.pullNow().catch((err) =>
+                console.warn("[datafn] pullNow error in WS message handler:", err)
+              );
             }
           }
         } catch (e) {
@@ -499,9 +505,33 @@ export class SyncEngine {
    * Clone resources in the background (non-blocking)
    */
   private cloneResourcesInBackground(tables: string[]) {
-    // Schedule async clone without blocking
+    // REL-006: Schedule async clone with error handling
     setTimeout(async () => {
-      await this.cloneResources(tables);
+      try {
+        await this.cloneResources(tables);
+      } catch (error: any) {
+        this.eventBus.emit({
+          type: "sync_failed",
+          timestampMs: this.getTimestamp(),
+          context: {
+            phase: "clone",
+            operation: "background",
+            error: {
+              code: error.code || "INTERNAL",
+              message: error.message || "Background clone failed",
+            },
+            tables,
+          },
+        });
+        // Mark tables as failed, not stuck in hydrating
+        for (const table of tables) {
+          try {
+            await this.storage.setHydrationState(table, "failed");
+          } catch {
+            // Best-effort state update
+          }
+        }
+      }
     }, 0);
   }
 
@@ -806,17 +836,28 @@ export class SyncEngine {
         for (const relation of this.schema.relations) {
           if (relation.type !== "many-many") continue;
 
-          const joinStoreKey = getJoinStoreKey(relation.from as string, relation.relation!, relation.to as string);
-          const localJoinCount = await this.storage.countJoinRows(joinStoreKey);
-          const serverJoinCount = serverJoinCounts[joinStoreKey] || 0;
+          // DI-004: from/to may be string[] — enumerate all join store key combinations
+          const fromArr = Array.isArray(relation.from)
+            ? relation.from as string[]
+            : [relation.from as string];
+          const toArr = Array.isArray(relation.to)
+            ? relation.to as string[]
+            : [relation.to as string];
 
-          if (localJoinCount !== serverJoinCount) {
-            // Add both resources involved in this relation to rehydrate
-            if (!mismatchedResources.includes(relation.from)) {
-              mismatchedResources.push(relation.from);
-            }
-            if (!mismatchedResources.includes(relation.to)) {
-              mismatchedResources.push(relation.to);
+          for (const fromTable of fromArr) {
+            for (const toTable of toArr) {
+              const joinStoreKey = getJoinStoreKey(fromTable, relation.relation!, toTable);
+              const localJoinCount = await this.storage.countJoinRows(joinStoreKey);
+              const serverJoinCount = serverJoinCounts[joinStoreKey] || 0;
+
+              if (localJoinCount !== serverJoinCount) {
+                if (!mismatchedResources.includes(fromTable)) {
+                  mismatchedResources.push(fromTable);
+                }
+                if (!mismatchedResources.includes(toTable)) {
+                  mismatchedResources.push(toTable);
+                }
+              }
             }
           }
         }

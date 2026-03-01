@@ -256,22 +256,21 @@ async function executePullCanonical(
     cursors[resource] = request.cursors[resource]; // Start with original cursor
   }
 
-  // Fetch changes per resource with bounded limit (SYNC-001)
-  const allChanges: Array<{ resource: string; change: any }> = [];
-
-  for (const [resource, cursor] of Object.entries(request.cursors)) {
-    const sinceSeq = parseInt(cursor, 10);
-    // Fetch limit+1 so we can detect truncation without a separate COUNT query
-    const resourceChanges = await changeTracking.getChangesSince({
-      resource,
-      sinceSeq,
-      limit: limit + 1,
-    });
-
-    for (const change of resourceChanges) {
-      allChanges.push({ resource, change });
-    }
-  }
+  // EXE-021: Fetch per-resource changes in parallel instead of sequentially
+  const resourceEntries = Object.entries(request.cursors);
+  const allResourceChanges = await Promise.all(
+    resourceEntries.map(async ([resource, cursor]) => {
+      const sinceSeq = parseInt(cursor, 10);
+      // Fetch limit+1 so we can detect truncation without a separate COUNT query
+      const resourceChanges = await changeTracking.getChangesSince({
+        resource,
+        sinceSeq,
+        limit: limit + 1,
+      });
+      return resourceChanges.map((change) => ({ resource, change }));
+    }),
+  );
+  const allChanges: Array<{ resource: string; change: any }> = allResourceChanges.flat();
 
   // Sort all changes by serverSeq (deterministic ordering)
   allChanges.sort((a, b) => a.change.serverSeq - b.change.serverSeq);

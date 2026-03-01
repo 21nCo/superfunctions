@@ -11,7 +11,7 @@ describe("/datafn/status", () => {
     // Use a fake time for deterministic testing
     const fakeTime = 1737148800000;
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: {
         resources: [
           {
@@ -51,7 +51,7 @@ describe("/datafn/status", () => {
   });
 
   it("uses default limits when not configured", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: {
         resources: [{ name: "task", version: 1, fields: [] }],
       },
@@ -78,8 +78,8 @@ describe("/datafn/status", () => {
       ],
     };
 
-    const server1 = await createDatafnServer({ schema });
-    const server2 = await createDatafnServer({ schema });
+    const server1 = await createDatafnServer({ allowUnknownResources: true, schema });
+    const server2 = await createDatafnServer({ allowUnknownResources: true, schema });
 
     const req = new Request("http://localhost/datafn/status", {
       method: "GET",

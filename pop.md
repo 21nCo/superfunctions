@@ -60,28 +60,28 @@
 ## cifn
 [x] spec
 [x] ts code
-[ ] ts publish
+[x] ts publish (too similar issue)
 [ ] py code
 [ ] py publish
 
 ## compfn
 [x] spec
 [x] ts code
-[ ] ts publish
+[x] ts publish
 [ ] py code
 [ ] py publish
 
 ## contentfn
 [x] spec
 [x] ts code
-[ ] ts publish
+[x] ts publish (too similar issue)
 [ ] py code
 [ ] py publish
 
 ## cmsfn
 [x] spec
 [x] ts code
-[ ] ts publish
+[x] ts publish
 [ ] py code
 [ ] py publish
 
@@ -144,7 +144,7 @@
 
 ## logfn
 [x] ts code
-[ ] ts publish
+[-] ts publish
 [x] py code
 [x] py publish
 
@@ -168,7 +168,7 @@
 [x] py publish
 
 ## recfn
-[ ] spec
+[x] spec
 [ ] ts code
 [ ] ts publish
 [ ] py code

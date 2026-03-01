@@ -35,7 +35,7 @@ describe("TX-001: Atomic Transactions", () => {
     
     // Seed initial data if needed
     
-    server = await createDatafnServer({
+    server = await createDatafnServer({ allowUnknownResources: true,
       schema,
       db,
       limits: { maxTransactSteps: 5 }

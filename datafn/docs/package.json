@@ -1,0 +1,32 @@
+{
+  "name": "@datafn/docs",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@21n/fonts": "^1.0.1",
+    "fumadocs-core": "^15",
+    "fumadocs-mdx": "^11",
+    "fumadocs-ui": "^15",
+    "lightningcss": "^1.31.1",
+    "lucide-react": "^0.575.0",
+    "next": "^15.3.3",
+    "react": "^19",
+    "react-dom": "^19",
+    "styled-jsx": "^5.1.7"
+  },
+  "devDependencies": {
+    "@types/mdx": "^2",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10",
+    "postcss": "^8",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

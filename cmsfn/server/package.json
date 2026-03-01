@@ -1,8 +1,7 @@
 {
   "name": "@cmsfn/server",
   "version": "0.0.1",
-  "description": "CmsFn server API types and runtime (types-only in this phase)",
-  "license": "MIT",
+  "description": "cmsfn server API types and runtime (types-only in this phase)",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -17,6 +16,21 @@
   "files": [
     "dist"
   ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cmsfn/server"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cmsFn",
+    "schemaVersion": 1,
+    "namespace": "cmsfn"
+  },
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
@@ -30,7 +44,8 @@
   },
   "dependencies": {
     "@cmsfn/core": "*",
-    "@superfunctions/db": "*"
+    "@superfunctions/db": "*",
+    "@superfunctions/http": "*"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

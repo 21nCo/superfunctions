@@ -1,0 +1,199 @@
+---
+title: "Relations"
+description: "Define relationships between resources."
+---
+
+## DatafnRelationSchema
+
+Relations define how resources are connected. DataFn supports four relation types: `one-many`, `many-one`, `many-many`, and `htree` (hierarchical tree).
+
+```typescript
+type DatafnRelationSchema = {
+  from: string | string[];
+  to: string | string[];
+  type: "one-many" | "many-one" | "many-many" | "htree";
+  relation?: string;
+  inverse?: string;
+  cache?: boolean;
+  metadata?: Array<{
+    name: string;
+    type: "string" | "number" | "boolean" | "date" | "object" | "json";
+  }>;
+  fkField?: string;
+  pathField?: string;
+  joinTable?: string;
+  joinColumns?: { from: string; to: string };
+};
+```
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `from` | `string \| string[]` | Source resource name(s). |
+| `to` | `string \| string[]` | Target resource name(s). |
+| `type` | `string` | Relation cardinality. |
+| `relation` | `string` | Optional name for the forward relation. |
+| `inverse` | `string` | Optional name for the inverse relation. |
+| `cache` | `boolean` | When `true`, enables relation caching for performance. |
+| `metadata` | `Array` | Extra fields stored on the join record (many-many only). |
+| `fkField` | `string` | Foreign key field name override for one-many / many-one. |
+| `pathField` | `string` | Materialized path field for htree relations. |
+| `joinTable` | `string` | Explicit join table name for many-many relations. |
+| `joinColumns` | `{ from, to }` | Column name overrides for the join table. |
+
+## One-to-Many
+
+A single record in the `from` resource relates to multiple records in the `to` resource. The foreign key is stored on the `to` side.
+
+```typescript
+const schema = defineSchema({
+  resources: [
+    {
+      name: "authors",
+      version: 1,
+      fields: [
+        { name: "name", type: "string", required: true },
+      ],
+    },
+    {
+      name: "books",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: true },
+        { name: "authorId", type: "string", required: true },
+      ],
+      indices: { base: ["authorId"] },
+    },
+  ],
+  relations: [
+    {
+      from: "authors",
+      to: "books",
+      type: "one-many",
+      relation: "authorBooks",
+      fkField: "authorId",
+    },
+  ],
+});
+```
+
+## Many-to-One
+
+The inverse of one-to-many. Multiple records in the `from` resource point to a single record in the `to` resource.
+
+```typescript
+relations: [
+  {
+    from: "books",
+    to: "authors",
+    type: "many-one",
+    relation: "bookAuthor",
+    fkField: "authorId",
+  },
+]
+```
+
+## Many-to-Many
+
+Both sides can have multiple related records. DataFn uses a join table to store the associations. You can add `metadata` fields to the join record.
+
+```typescript
+const schema = defineSchema({
+  resources: [
+    {
+      name: "students",
+      version: 1,
+      fields: [
+        { name: "name", type: "string", required: true },
+      ],
+    },
+    {
+      name: "courses",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: true },
+      ],
+    },
+  ],
+  relations: [
+    {
+      from: "students",
+      to: "courses",
+      type: "many-many",
+      relation: "enrollments",
+      joinTable: "student_courses",
+      joinColumns: { from: "student_id", to: "course_id" },
+      metadata: [
+        { name: "enrolledAt", type: "date" },
+        { name: "grade", type: "string" },
+      ],
+    },
+  ],
+});
+```
+
+The `metadata` array defines additional columns on the join table. These fields are stored alongside the association and can be read when querying the relation.
+
+## Hierarchical Tree (htree)
+
+The `htree` type represents a self-referencing tree structure using materialized paths. This is useful for categories, folder structures, or organizational hierarchies.
+
+```typescript
+const schema = defineSchema({
+  resources: [
+    {
+      name: "categories",
+      version: 1,
+      fields: [
+        { name: "name", type: "string", required: true },
+        { name: "parentId", type: "string", required: false, nullable: true },
+        { name: "path", type: "string", required: false },
+      ],
+      indices: { base: ["parentId", "path"] },
+    },
+  ],
+  relations: [
+    {
+      from: "categories",
+      to: "categories",
+      type: "htree",
+      relation: "categoryTree",
+      fkField: "parentId",
+      pathField: "path",
+    },
+  ],
+});
+```
+
+The `pathField` stores the materialized path (e.g., `"root/parent/child"`), enabling efficient ancestor and descendant queries without recursive joins.
+
+## Relation Payload Normalization
+
+When writing relation data through mutations, DataFn accepts multiple input formats and normalizes them internally using `normalizeRelationPayload`.
+
+```typescript
+import { normalizeRelationPayload } from "@datafn/core";
+
+// String -- single reference
+normalizeRelationPayload("course_123");
+// => [{ toId: "course_123", metadata: {} }]
+
+// Array of strings -- multiple references
+normalizeRelationPayload(["course_123", "course_456"]);
+// => [{ toId: "course_123", metadata: {} }, { toId: "course_456", metadata: {} }]
+
+// Object with $ref -- single reference with metadata
+normalizeRelationPayload({ $ref: "course_123", grade: "A" });
+// => [{ toId: "course_123", metadata: { grade: "A" } }]
+
+// Array of objects -- multiple references with metadata
+normalizeRelationPayload([
+  { $ref: "course_123", grade: "A" },
+  { $ref: "course_456", grade: "B+" },
+]);
+// => [
+//   { toId: "course_123", metadata: { grade: "A" } },
+//   { toId: "course_456", metadata: { grade: "B+" } },
+// ]
+```
+
+The `$ref` property identifies the target record ID. Any additional properties on the object become metadata stored on the join record.

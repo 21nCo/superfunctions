@@ -37,7 +37,7 @@ export class LogFnLogsAdapter implements LogsAdapter {
   constructor(private config: { baseUrl: string; apiKey?: string; sink?: string }) {}
 
   async emitEvent(event: LogEvent): Promise<void> {
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (this.config.apiKey) {
@@ -61,7 +61,7 @@ export class LogFnLogsAdapter implements LogsAdapter {
   }
 
   async appendJobLogLines(runId: string, jobKey: string, lines: JobLogLine[]): Promise<void> {
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (this.config.apiKey) {
@@ -81,7 +81,7 @@ export class LogFnLogsAdapter implements LogsAdapter {
   }
 
   async readJobLogs(runId: string, jobKey: string): Promise<JobLogLine[]> {
-    const headers: HeadersInit = {};
+    const headers: Record<string, string> = {};
     if (this.config.apiKey) {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
@@ -99,7 +99,7 @@ export class LogFnLogsAdapter implements LogsAdapter {
       throw new Error(`LogFn readJobLogs failed: ${response.status} ${response.statusText}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as { lines?: JobLogLine[] };
     return result.lines ?? [];
   }
 }

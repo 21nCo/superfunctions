@@ -23,7 +23,7 @@ describe("Phase 8: Server Status & Auth", () => {
       const db = memoryAdapter();
       await db.initialize();
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         db,
       });
@@ -56,7 +56,7 @@ describe("Phase 8: Server Status & Auth", () => {
         },
       };
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         db: unhealthyDb as any,
       });
@@ -79,7 +79,7 @@ describe("Phase 8: Server Status & Auth", () => {
     it("passes parsed JSON body to authorize for POST endpoints", async () => {
       let capturedPayload: unknown = undefined;
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: async (_ctx, action, payload) => {
           capturedPayload = payload;
@@ -108,7 +108,7 @@ describe("Phase 8: Server Status & Auth", () => {
     it("passes null to authorize for GET endpoints", async () => {
       let capturedPayload: unknown = "NOT_SET";
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: async (_ctx, action, payload) => {
           capturedPayload = payload;
@@ -128,7 +128,7 @@ describe("Phase 8: Server Status & Auth", () => {
 
   describe("TV-AUTH-002: Authorization denial", () => {
     it("returns FORBIDDEN when authorize returns false", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: async () => false, // Deny all
       });

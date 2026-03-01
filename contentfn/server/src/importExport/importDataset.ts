@@ -36,7 +36,7 @@ export async function importDataset(
 
     const existingSchema = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.schema,
-      where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+      where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
     });
 
     if (existingSchema) {
@@ -48,7 +48,7 @@ export async function importDataset(
       }
       await config.db.update({
         model: CONTENTFN_TABLE_NAMES.schema,
-        where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+        where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
         data: {
           version: artifact.schema.version,
           schemaJson: artifact.schema.schemaJson,
@@ -75,16 +75,16 @@ export async function importDataset(
     const existing = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "id", operator: "eq", value: doc._id },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "id", operator: "eq" as const, value: doc._id },
       ],
     });
     if (existing) {
       await config.db.update({
         model: CONTENTFN_TABLE_NAMES.docsPublished,
         where: [
-          { field: "dataset", operator: "eq", value: input.dataset },
-          { field: "id", operator: "eq", value: doc._id },
+          { field: "dataset", operator: "eq" as const, value: input.dataset },
+          { field: "id", operator: "eq" as const, value: doc._id },
         ],
         data: {
           type: doc._type,
@@ -115,16 +115,16 @@ export async function importDataset(
     const existing = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "id", operator: "eq", value: doc._id },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "id", operator: "eq" as const, value: doc._id },
       ],
     });
     if (existing) {
       await config.db.update({
         model: CONTENTFN_TABLE_NAMES.docsDrafts,
         where: [
-          { field: "dataset", operator: "eq", value: input.dataset },
-          { field: "id", operator: "eq", value: doc._id },
+          { field: "dataset", operator: "eq" as const, value: input.dataset },
+          { field: "id", operator: "eq" as const, value: doc._id },
         ],
         data: {
           type: doc._type,
@@ -153,8 +153,8 @@ export async function importDataset(
     const existing = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.assets,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "assetId", operator: "eq", value: asset.assetId },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "assetId", operator: "eq" as const, value: asset.assetId },
       ],
     });
     if (!existing) {
@@ -179,9 +179,9 @@ export async function importDataset(
     const existing = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.revisions,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "docId", operator: "eq", value: rev.docId },
-        { field: "rev", operator: "eq", value: rev.rev },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "docId", operator: "eq" as const, value: rev.docId },
+        { field: "rev", operator: "eq" as const, value: rev.rev },
       ],
     });
     if (!existing) {

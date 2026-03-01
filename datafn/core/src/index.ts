@@ -9,6 +9,9 @@ export type {
   DatafnSignal,
   DatafnHookContext,
   DatafnPlugin,
+  DatafnLogger,
+  DatafnLimitsConfig,
+  DatafnWsConfig,
 } from "./types.js";
 
 // Re-export defineSchema helper
@@ -47,10 +50,25 @@ export {
   getRelationsFrom,
   getRelation,
   getRelationTarget,
+  findRelationBidirectional,
 } from "./schema-index.js";
 
-// Re-export filter evaluation
-export { type FilterEvalOptions, evaluateFilter } from "./filters.js";
+// Re-export filter evaluation + operator normalization
+export {
+  type FilterEvalOptions,
+  evaluateFilter,
+  OP_REMAP,
+  normalizeFilterOps,
+} from "./filters.js";
+
+// Re-export relation payload normalization
+export {
+  type NormalizedRelation,
+  normalizeRelationPayload,
+} from "./relations.js";
+
+// Re-export aggregation utilities
+export { calculateAggregation } from "./aggregate.js";
 
 // Re-export sort utilities
 export { type SortTerm, parseSortTerms, sortRecords } from "./sort.js";
@@ -65,6 +83,9 @@ export {
   coerceDateFieldsToEpoch,
   parseDateFieldsToDate,
 } from "./date.js";
+
+// Re-export validation primitives
+export { checkPrototypePollution, validateFieldValue } from "./validate.js";
 
 // Re-export plugin hook runner
 export {

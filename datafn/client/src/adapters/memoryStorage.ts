@@ -27,6 +27,8 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   private hydration = new Map<string, DatafnHydrationState>();
   private changelog: DatafnChangelogEntry[] = [];
   private changelogSeq = 1;
+  // PER-006: O(1) dedup index keyed by "clientId:mutationId"
+  private changelogIndex = new Map<string, DatafnChangelogEntry>();
   private validResources?: Set<string>;
 
   constructor(resources?: string[]) {
@@ -295,9 +297,9 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   ): Promise<DatafnChangelogEntry> {
     validateMutation(entry);
     // CLIENT-CHANGELOG-001: Deduplicate by (clientId, mutationId)
-    const existing = this.changelog.find(
-      (e) => e.clientId === entry.clientId && e.mutationId === entry.mutationId,
-    );
+    // PER-006: O(1) lookup via Map index instead of O(n) .find()
+    const dedupeKey = `${entry.clientId}:${entry.mutationId}`;
+    const existing = this.changelogIndex.get(dedupeKey);
     if (existing) {
       return existing;
     }
@@ -307,6 +309,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
       seq: this.changelogSeq++,
     };
     this.changelog.push(newEntry);
+    this.changelogIndex.set(dedupeKey, newEntry);
     return newEntry;
   }
 
@@ -318,7 +321,11 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
   }
 
   async changelogAck(options: { throughSeq: number }): Promise<void> {
-    // Remove acked entries
+    // Remove acked entries from both array and index
+    const removed = this.changelog.filter((e) => e.seq <= options.throughSeq);
+    for (const entry of removed) {
+      this.changelogIndex.delete(`${entry.clientId}:${entry.mutationId}`);
+    }
     this.changelog = this.changelog.filter((e) => e.seq > options.throughSeq);
   }
 
@@ -349,6 +356,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
     this.hydration.clear();
     this.changelog = [];
     this.changelogSeq = 1;
+    this.changelogIndex.clear();
     // Always recreate KV store (KV-001)
     this.records.set("kv", new Map());
   }

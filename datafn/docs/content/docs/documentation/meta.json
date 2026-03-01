@@ -1,0 +1,15 @@
+{
+  "title": "Documentation",
+  "root": true,
+  "pages": [
+    "index",
+    "concepts",
+    "client",
+    "server",
+    "sync",
+    "storage",
+    "plugins",
+    "database",
+    "advanced"
+  ]
+}

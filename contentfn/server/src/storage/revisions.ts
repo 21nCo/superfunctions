@@ -71,8 +71,8 @@ export async function listHistory(
   const limit = input.limit ?? 10;
   const docId = input.id.startsWith("drafts.") ? input.id.substring(7) : input.id;
 
-  const where: Array<{ field: string; operator: string; value: unknown }> = [
-    { field: "dataset", operator: "eq", value: input.dataset },
+  const where = [
+    { field: "dataset", operator: "eq" as const, value: input.dataset },
   ];
 
   const revisions = await config.db.findMany({
@@ -141,8 +141,8 @@ export async function restoreRevision(
   const revisions = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.revisions,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "rev", operator: "eq", value: input.rev },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "rev", operator: "eq" as const, value: input.rev },
     ],
   });
 
@@ -174,8 +174,8 @@ export async function restoreRevision(
   const existingDraft = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: draftId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: draftId },
     ],
   });
 
@@ -183,8 +183,8 @@ export async function restoreRevision(
     await config.db.update({
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "id", operator: "eq", value: draftId },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "id", operator: "eq" as const, value: draftId },
       ],
       data: {
         docJson: draftDoc,

@@ -1,0 +1,222 @@
+---
+title: "Core Types"
+description: "Type definitions exported by @datafn/core."
+---
+
+## DatafnSchema
+
+Top-level schema definition.
+
+```typescript
+type DatafnSchema = {
+  resources: DatafnResourceSchema[];
+  relations?: DatafnRelationSchema[];
+  multiTenant?: boolean; // default: true
+};
+```
+
+## DatafnResourceSchema
+
+A single resource (table) definition.
+
+```typescript
+type DatafnResourceSchema = {
+  name: string;
+  version: number;
+  idPrefix?: string;
+  isRemoteOnly?: boolean;
+  fields: DatafnFieldSchema[];
+  indices?:
+    | { base?: string[]; search?: string[]; vector?: string[] }
+    | string[];
+  permissions?: DatafnPermissionsPolicy;
+};
+```
+
+## DatafnFieldSchema
+
+A field within a resource.
+
+```typescript
+type DatafnFieldSchema = {
+  name: string;
+  type: "string" | "number" | "boolean" | "object" | "array" | "date" | "file" | "json";
+  required: boolean;
+  nullable?: boolean;
+  readonly?: boolean;
+  default?: unknown;
+  enum?: unknown[];
+  min?: number;
+  max?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  unique?: boolean | string;
+  encrypt?: boolean;
+  volatile?: boolean;
+};
+```
+
+## DatafnRelationSchema
+
+A relation between resources.
+
+```typescript
+type DatafnRelationSchema = {
+  from: string | string[];
+  to: string | string[];
+  type: "one-many" | "many-one" | "many-many" | "htree";
+  relation?: string;
+  inverse?: string;
+  cache?: boolean;
+  metadata?: Array<{
+    name: string;
+    type: "string" | "number" | "boolean" | "date" | "object" | "json";
+  }>;
+  fkField?: string;
+  pathField?: string;
+  joinTable?: string;
+  joinColumns?: { from: string; to: string };
+};
+```
+
+## DatafnEvent
+
+Event emitted by the client event bus.
+
+```typescript
+interface DatafnEvent {
+  type:
+    | "mutation_applied"
+    | "mutation_rejected"
+    | "sync_applied"
+    | "sync_failed"
+    | "sync_retry"
+    | "connectivity_changed"
+    | "ws_connected"
+    | "ws_disconnected";
+  resource?: string;
+  ids?: string[];
+  mutationId?: string;
+  clientId?: string;
+  timestampMs: number;
+  context?: unknown;
+  action?: string;
+  fields?: string[];
+  system?: boolean;
+  fromRemoteTab?: boolean;
+}
+```
+
+## DatafnEventFilter
+
+Filter for subscribing to specific events.
+
+```typescript
+type DatafnEventFilter = Partial<{
+  type: DatafnEvent["type"] | Array<DatafnEvent["type"]>;
+  resource: string | string[];
+  ids: string | string[];
+  mutationId: string | string[];
+  action: string | string[];
+  fields: string | string[];
+  contextKeys: string[];
+  context: Record<string, unknown>;
+}>;
+```
+
+## DatafnSignal\<T\>
+
+Reactive signal for query results.
+
+```typescript
+interface DatafnSignal<T> {
+  get(): T;
+  subscribe(handler: (value: T) => void): () => void;
+  readonly loading: boolean;
+  readonly error: DatafnError | null;
+  readonly refreshing: boolean;
+  readonly nextCursor: string | null | undefined;
+  dispose(): void;
+}
+```
+
+## DatafnPlugin
+
+Plugin interface for before/after hooks.
+
+```typescript
+interface DatafnPlugin {
+  name: string;
+  runsOn: Array<"client" | "server">;
+  beforeQuery?: (ctx: DatafnHookContext, q: unknown) => Promise<unknown> | unknown;
+  afterQuery?: (ctx: DatafnHookContext, q: unknown, result: unknown) => Promise<unknown> | unknown;
+  beforeMutation?: (ctx: DatafnHookContext, m: unknown | unknown[]) => Promise<unknown> | unknown;
+  afterMutation?: (ctx: DatafnHookContext, m: unknown | unknown[], result: unknown) => Promise<void> | void;
+  beforeSync?: (ctx: DatafnHookContext, phase: string, payload: unknown) => Promise<unknown> | unknown;
+  afterSync?: (ctx: DatafnHookContext, phase: string, payload: unknown, result: unknown) => Promise<void> | void;
+}
+```
+
+## DatafnLogger
+
+Pluggable logger interface.
+
+```typescript
+interface DatafnLogger {
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+  debug(message: string, context?: Record<string, unknown>): void;
+}
+```
+
+## DatafnLimitsConfig
+
+Server-side enforcement limits.
+
+```typescript
+type DatafnLimitsConfig = {
+  maxLimit?: number;
+  maxTransactSteps?: number;
+  maxPayloadBytes?: number;
+  maxPullLimit?: number;
+  maxBatchSize?: number;
+  maxCloneRecords?: number;
+  idempotencyTtlMs?: number;
+  idempotencyMaxEntries?: number;
+  maxSelectTokens?: number;
+  maxFilterKeysPerLevel?: number;
+  maxSortFields?: number;
+  maxAggregations?: number;
+  maxSearchQueryLength?: number;
+  maxLikePatternLength?: number;
+  maxIdLength?: number;
+  maxFilterDepth?: number;
+};
+```
+
+## DatafnWsConfig
+
+WebSocket connection and heartbeat configuration.
+
+```typescript
+type DatafnWsConfig = {
+  maxConnections?: number;
+  maxConnectionsPerNamespace?: number;
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
+};
+```
+
+## DatafnPermissionsPolicy
+
+Authorization policy for a resource.
+
+```typescript
+type DatafnPermissionsPolicy = {
+  read?: { fields: string[] };
+  write?: { fields: string[] };
+  ownerField?: string;
+};
+```

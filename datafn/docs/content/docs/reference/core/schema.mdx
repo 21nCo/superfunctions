@@ -1,0 +1,120 @@
+---
+title: "Schema Utilities"
+description: "Schema validation and indexing functions."
+---
+
+## defineSchema
+
+Type-safe schema builder that preserves literal types for field names and validates index entries against declared fields.
+
+```typescript
+function defineSchema<const T extends {
+  readonly resources: readonly DatafnResourceBase[];
+  readonly relations?: readonly DatafnRelationSchema[];
+  readonly multiTenant?: boolean;
+}>(schema: T): T & DatafnSchema;
+```
+
+```typescript
+const schema = defineSchema({
+  resources: [
+    {
+      name: "todos",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: true },
+      ],
+      indices: { base: ["title"] }, // type-checked against field names
+    },
+  ],
+});
+```
+
+## validateSchema
+
+Validates an unknown value as a DataFn schema. Returns a `DatafnEnvelope<DatafnSchema>`.
+
+```typescript
+function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema>;
+```
+
+Normalization applied on success:
+- `indices: string[]` is converted to `{ base: string[], search: [], vector: [] }`.
+- `relations` defaults to `[]` if absent.
+- `multiTenant` defaults to `true` unless explicitly `false`.
+
+Validation checks: resource structure, unique names, integer versions, unique field names, valid relation references, index field existence, and size limits (max 100 resources, max 200 fields per resource).
+
+## buildSchemaIndex
+
+Builds an indexed lookup structure from a validated schema for O(1) access to resources, fields, and relations.
+
+```typescript
+function buildSchemaIndex(schema: DatafnSchema): SchemaIndex;
+```
+
+### SchemaIndex
+
+```typescript
+interface SchemaIndex {
+  resourcesByName: Map<string, DatafnResourceSchema>;
+  fieldsByResource: Map<string, Map<string, DatafnFieldSchema>>;
+  relationsByResource: Map<string, DatafnRelationSchema[]>;
+  relationsFromResource: Map<string, DatafnRelationSchema[]>;
+}
+```
+
+- `resourcesByName` -- resource name to resource schema.
+- `fieldsByResource` -- resource name to field name to field schema.
+- `relationsByResource` -- all relations involving a resource (forward or inverse).
+- `relationsFromResource` -- relations where the resource is the `from` side.
+
+## Lookup Functions
+
+### getResource
+
+```typescript
+function getResource(index: SchemaIndex, name: string): DatafnResourceSchema | undefined;
+```
+
+### getField
+
+```typescript
+function getField(index: SchemaIndex, resource: string, field: string): DatafnFieldSchema | undefined;
+```
+
+### getRelationsFrom
+
+Returns all relations where the resource is the `from` side.
+
+```typescript
+function getRelationsFrom(index: SchemaIndex, resource: string): DatafnRelationSchema[];
+```
+
+### getRelation
+
+Finds a specific relation by resource and relation name.
+
+```typescript
+function getRelation(index: SchemaIndex, fromResource: string, relationName: string): DatafnRelationSchema | undefined;
+```
+
+### getRelationTarget
+
+Returns the target resource name from a relation.
+
+```typescript
+function getRelationTarget(relation: DatafnRelationSchema): string;
+```
+
+### findRelationBidirectional
+
+Finds a relation by name in either direction. Checks both `relation` (forward) and `inverse` (reverse) names.
+
+```typescript
+function findRelationBidirectional(
+  schema: DatafnSchema,
+  resource: string,
+  relationName: string,
+): DatafnRelationSchema | undefined;
+```

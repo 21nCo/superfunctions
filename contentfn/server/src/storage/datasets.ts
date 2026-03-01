@@ -22,8 +22,8 @@ export async function datasetExists(
   const row = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.datasets,
     where: [
-      { field: "name", operator: "eq", value: name },
-      { field: "deletedAt", operator: "eq", value: null },
+      { field: "name", operator: "eq" as const, value: name },
+      { field: "deletedAt", operator: "eq" as const, value: null },
     ],
   });
   return row != null;
@@ -44,7 +44,7 @@ export async function datasetCreate(
 
   const existing = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.datasets,
-    where: [{ field: "name", operator: "eq", value: name }],
+    where: [{ field: "name", operator: "eq" as const, value: name }],
   });
   if (existing) {
     return err("DATASET_ALREADY_EXISTS", "Dataset already exists", { dataset: name });
@@ -72,7 +72,7 @@ export async function datasetList(
 ): Promise<ContentfnEnvelope<{ datasets: string[] }>> {
   const rows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.datasets,
-    where: [{ field: "deletedAt", operator: "eq", value: null }],
+    where: [{ field: "deletedAt", operator: "eq" as const, value: null }],
     orderBy: [{ field: "name", direction: "asc" }],
   });
   const datasets = (rows as { name: string }[]).map((r) => r.name);
@@ -94,11 +94,11 @@ export async function datasetDelete(
 
   await config.db.deleteMany({
     model: CONTENTFN_TABLE_NAMES.datasets,
-    where: [{ field: "name", operator: "eq", value: name }],
+    where: [{ field: "name", operator: "eq" as const, value: name }],
   });
   await config.db.deleteMany({
     model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq", value: name }],
+    where: [{ field: "dataset", operator: "eq" as const, value: name }],
   });
   return ok({});
 }

@@ -32,6 +32,8 @@ export function generateDrizzleSchema(
     a.name.localeCompare(b.name),
   );
 
+  const isMultiTenant = schema.multiTenant !== false;
+
   for (const resource of resources) {
     const tableName = resource.name;
     const varName = sanitizeVarName(tableName);
@@ -41,7 +43,7 @@ export function generateDrizzleSchema(
     const fields = [...resource.fields].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
-    const hasIndices =
+    const hasBaseIndices =
       resource.indices &&
       typeof resource.indices === "object" &&
       !Array.isArray(resource.indices) &&
@@ -49,19 +51,32 @@ export function generateDrizzleSchema(
 
     lines.push(`export const ${varName} = ${tableConstructor}("${tableName}", {`);
 
+    // Add __ns column when multiTenant (alphabetical: __ns sorts before all alpha fields)
+    if (isMultiTenant) {
+      usedImports.add("text");
+      lines.push(`  __ns: text("__ns").notNull(),`);
+    }
+
     for (const field of fields) {
       const colDef = buildColumnDefinition(field, dialect, usedImports);
       lines.push(`  ${field.name}: ${colDef},`);
     }
 
-    if (hasIndices) {
-      const baseIndices = (resource.indices as { base?: string[] }).base!;
+    const needsIndexCallback = hasBaseIndices || isMultiTenant;
+
+    if (needsIndexCallback) {
       usedImports.add("index");
       lines.push(`}, (table) => [`);
-      for (const idxField of baseIndices) {
-        lines.push(
-          `  index("${tableName}_${camelToSnake(idxField)}_idx").on(table.${idxField}),`,
-        );
+      if (isMultiTenant) {
+        lines.push(`  index("idx_${tableName}___ns").on(table.__ns),`);
+      }
+      if (hasBaseIndices) {
+        const baseIndices = (resource.indices as { base?: string[] }).base!;
+        for (const idxField of baseIndices) {
+          lines.push(
+            `  index("${tableName}_${camelToSnake(idxField)}_idx").on(table.${idxField}),`,
+          );
+        }
       }
       lines.push(`]);`);
     } else {
@@ -90,7 +105,18 @@ export function generateDrizzleSchema(
 
     lines.push(`export const ${varName} = ${tableConstructor}("${jtName}", {`);
 
-    const joinFields: Array<{ name: string; def: string }> = [
+    const joinFields: Array<{ name: string; def: string }> = [];
+
+    // Add __ns column for join tables when multiTenant
+    if (isMultiTenant) {
+      usedImports.add("text");
+      joinFields.push({
+        name: "__ns",
+        def: `text("__ns").notNull()`,
+      });
+    }
+
+    joinFields.push(
       {
         name: fromCol,
         def: buildSimpleColumn(fromCol, "string", dialect, usedImports, true),
@@ -110,7 +136,7 @@ export function generateDrizzleSchema(
         name: toCol,
         def: buildSimpleColumn(toCol, "string", dialect, usedImports, true),
       },
-    ];
+    );
 
     if (rel.metadata) {
       for (const meta of rel.metadata) {
@@ -137,6 +163,10 @@ export function generateDrizzleSchema(
     const toSnake = camelToSnake(toCol);
     usedImports.add("uniqueIndex");
     lines.push(`}, (table) => [`);
+    if (isMultiTenant) {
+      usedImports.add("index");
+      lines.push(`  index("idx_${jtName}___ns").on(table.__ns),`);
+    }
     lines.push(
       `  uniqueIndex("${jtName}_${fromSnake}_${toSnake}_idx").on(table.${fromCol}, table.${toCol}),`,
     );
@@ -259,6 +289,7 @@ function getColumnType(
         };
       case "object":
       case "array":
+      case "json":
         return { call: `jsonb("${sqlName}")`, importName: "jsonb" };
       default:
         return { call: `text("${sqlName}")`, importName: "text" };
@@ -281,6 +312,7 @@ function getColumnType(
         };
       case "object":
       case "array":
+      case "json":
         return { call: `json("${sqlName}")`, importName: "json" };
       default:
         return { call: `text("${sqlName}")`, importName: "text" };
@@ -292,6 +324,7 @@ function getColumnType(
     case "file":
     case "object":
     case "array":
+    case "json":
       return { call: `text("${sqlName}")`, importName: "text" };
     case "number":
     case "boolean":

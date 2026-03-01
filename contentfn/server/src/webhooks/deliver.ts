@@ -51,7 +51,7 @@ export async function enqueueForEvent(
 ): Promise<void> {
   const webhookRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.webhooks,
-    where: [{ field: "dataset", operator: "eq", value: event.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: event.dataset }],
   });
 
   for (const row of webhookRows as Array<{
@@ -80,7 +80,7 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
   for (const entry of dueEntries) {
     const webhookRow = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.webhooks,
-      where: [{ field: "webhookId", operator: "eq", value: entry.webhookId }],
+      where: [{ field: "webhookId", operator: "eq" as const, value: entry.webhookId }],
     });
 
     if (!webhookRow) {
@@ -92,7 +92,7 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
 
     const eventRow = await config.db.findOne({
       model: CONTENTFN_TABLE_NAMES.events,
-      where: [{ field: "eventId", operator: "eq", value: entry.eventId }],
+      where: [{ field: "eventId", operator: "eq" as const, value: entry.eventId }],
     });
 
     if (!eventRow) {

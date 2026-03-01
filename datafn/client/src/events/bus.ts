@@ -62,7 +62,9 @@ export class EventBus {
    * Errors in handlers are isolated - a throwing handler will not prevent delivery to other handlers.
    */
   emit(event: DatafnEvent): void {
-    for (const subscription of this.subscriptions) {
+    // CLI-005: Copy before iteration so unsubscribes during emit don't skip/crash handlers
+    const subs = [...this.subscriptions];
+    for (const subscription of subs) {
       if (matchesFilter(event, subscription.filter)) {
         try {
           subscription.handler(event);

@@ -282,7 +282,7 @@ describe("DatafnServerConfig with secondary databases", () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const redis = createMockRedisAdapter();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       redis,
@@ -296,7 +296,7 @@ describe("DatafnServerConfig with secondary databases", () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const redis = createMockRedisAdapter();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       redis,
@@ -336,7 +336,7 @@ describe("DatafnServerConfig with secondary databases", () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const kv = createMockKVAdapter();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       kvStore: kv,
@@ -375,7 +375,7 @@ describe("DatafnServerConfig with secondary databases", () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const redis = createMockRedisAdapter();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       redis,
@@ -410,7 +410,7 @@ describe("DatafnServerConfig with secondary databases", () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const redis = createMockRedisAdapter();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       redis,
@@ -492,7 +492,7 @@ describe("DatafnServerConfig with secondary databases", () => {
       }),
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       redis,
@@ -564,7 +564,7 @@ describe("DatafnServerConfig with secondary databases", () => {
       return callCount;
     });
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       redis,

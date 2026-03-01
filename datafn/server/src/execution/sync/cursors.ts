@@ -12,29 +12,6 @@ export function validateCursor(cursor: unknown): cursor is string {
 }
 
 /**
- * Generate cursor for a table based on record count
- * For simple implementation, use record count as cursor
- */
-export function generateCursor(recordCount: number): string {
-  return String(recordCount);
-}
-
-/**
- * Generate cursors for all tables
- */
-export function generateCursors(
-  data: Record<string, unknown[]>
-): Record<string, string> {
-  const cursors: Record<string, string> = {};
-
-  for (const [tableName, records] of Object.entries(data)) {
-    cursors[tableName] = generateCursor(records.length);
-  }
-
-  return cursors;
-}
-
-/**
  * Parse cursor to number
  */
 export function parseCursor(cursor: string): number {

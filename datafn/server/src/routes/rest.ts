@@ -9,6 +9,33 @@ import { errorResponse } from "../http/errors.js";
 import { jsonResponse, getBodyFromContext } from "../http/json.js";
 import type { Route } from "@superfunctions/http";
 
+/**
+ * SEC-010: Sanitize a URL path segment against path traversal attacks.
+ * URL-decodes the segment and rejects if it contains '..', null bytes, or encoded '/'.
+ * Returns the decoded segment or throws an error object.
+ */
+function sanitizePathSegment(segment: string): { ok: true; value: string } | { ok: false } {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    return { ok: false };
+  }
+  // Reject null bytes
+  if (decoded.includes("\0")) return { ok: false };
+  // Reject path traversal
+  if (decoded === ".." || decoded.includes("/..") || decoded.includes("../")) return { ok: false };
+  // Reject decoded forward slash (encoded as %2F)
+  if (decoded.includes("/") && segment.toLowerCase().includes("%2f")) return { ok: false };
+  return { ok: true, value: decoded };
+}
+
+const PATH_TRAVERSAL_ERROR = {
+  code: "DFQL_INVALID" as const,
+  message: "Invalid path segment",
+  details: { path: "resource" },
+};
+
 // Use Record<string, any> or generic for execute callbacks
 type MutationExecutor = (m: unknown) => Promise<unknown>;
 type QueryExecutor = (q: unknown) => Promise<unknown>;
@@ -46,7 +73,14 @@ export function createRestRoutes<TContext>(
       handler: async (req) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
-        const resource = pathParts[3];
+        const rawResource = pathParts[3] ?? "";
+
+        // SEC-010: Sanitize path segment against traversal attacks
+        const sanitized = sanitizePathSegment(rawResource);
+        if (!sanitized.ok) {
+          return errorResponse(PATH_TRAVERSAL_ERROR, 400);
+        }
+        const resource = sanitized.value;
 
         try {
           validateResource(resource);
@@ -98,7 +132,14 @@ export function createRestRoutes<TContext>(
       handler: async (req, ctx?: { parsedBody?: unknown }) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
-        const resource = pathParts[3];
+        const rawResource = pathParts[3] ?? "";
+
+        // SEC-010: Sanitize path segment against traversal attacks
+        const sanitizedResource = sanitizePathSegment(rawResource);
+        if (!sanitizedResource.ok) {
+          return errorResponse(PATH_TRAVERSAL_ERROR, 400);
+        }
+        const resource = sanitizedResource.value;
 
         try {
           validateResource(resource);
@@ -165,8 +206,16 @@ export function createRestRoutes<TContext>(
       handler: async (req, ctx?: { parsedBody?: unknown }) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
-        const resource = pathParts[3];
-        const id = pathParts[4];
+        const rawResource = pathParts[3] ?? "";
+        const rawId = pathParts[4] ?? "";
+
+        // SEC-010: Sanitize path segments against traversal attacks
+        const sanitizedResource = sanitizePathSegment(rawResource);
+        if (!sanitizedResource.ok) return errorResponse(PATH_TRAVERSAL_ERROR, 400);
+        const sanitizedId = sanitizePathSegment(rawId);
+        if (!sanitizedId.ok) return errorResponse(PATH_TRAVERSAL_ERROR, 400);
+        const resource = sanitizedResource.value;
+        const id = sanitizedId.value;
 
         try {
           validateResource(resource);
@@ -231,8 +280,16 @@ export function createRestRoutes<TContext>(
       handler: async (req) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
-        const resource = pathParts[3];
-        const id = pathParts[4];
+        const rawResource = pathParts[3] ?? "";
+        const rawId = pathParts[4] ?? "";
+
+        // SEC-010: Sanitize path segments against traversal attacks
+        const sanitizedResource2 = sanitizePathSegment(rawResource);
+        if (!sanitizedResource2.ok) return errorResponse(PATH_TRAVERSAL_ERROR, 400);
+        const sanitizedId2 = sanitizePathSegment(rawId);
+        if (!sanitizedId2.ok) return errorResponse(PATH_TRAVERSAL_ERROR, 400);
+        const resource = sanitizedResource2.value;
+        const id = sanitizedId2.value;
 
         try {
           validateResource(resource);

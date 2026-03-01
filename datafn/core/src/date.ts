@@ -49,6 +49,10 @@ type FieldLike = Pick<DatafnFieldSchema, "name" | "type">;
 
 /**
  * Mutate record in place: convert date-typed fields to epoch milliseconds.
+ *
+ * LOW-024: This function intentionally mutates the record in-place and returns it
+ * (callers rely on the mutation side-effect, as verified by existing tests).
+ * If a non-mutating variant is needed, create a separate helper that copies first.
  */
 export function coerceDateFieldsToEpoch(
   record: Record<string, unknown>,
@@ -65,6 +69,10 @@ export function coerceDateFieldsToEpoch(
 
 /**
  * Mutate record in place: convert date-typed fields to Date objects.
+ *
+ * LOW-024: This function intentionally mutates the record in-place and returns it
+ * (callers rely on the mutation side-effect, as verified by existing tests).
+ * If a non-mutating variant is needed, create a separate helper that copies first.
  */
 export function parseDateFieldsToDate(
   record: Record<string, unknown>,

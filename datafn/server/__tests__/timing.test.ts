@@ -96,14 +96,14 @@ describe("createTimingEmitter", () => {
   });
 
   it("catches errors from custom onTiming handler", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
     const badHandler = () => {
       throw new Error("boom");
     };
     const emitter = createTimingEmitter({
       timing: true,
       onTiming: badHandler,
-    });
+    }, mockLogger);
 
     // Should not throw
     emitter!({
@@ -113,16 +113,15 @@ describe("createTimingEmitter", () => {
       timestamp: "",
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      "Timing handler error:",
-      expect.any(Error),
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      "Timing handler error",
+      expect.objectContaining({ error: expect.any(String) }),
     );
-    warnSpy.mockRestore();
   });
 
-  it("uses console.debug as default handler", () => {
-    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
-    const emitter = createTimingEmitter({ timing: true });
+  it("uses logger.debug as default handler", () => {
+    const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const emitter = createTimingEmitter({ timing: true }, mockLogger);
 
     emitter!({
       endpoint: "/test",
@@ -131,11 +130,10 @@ describe("createTimingEmitter", () => {
       timestamp: "",
     });
 
-    expect(debugSpy).toHaveBeenCalledWith(
+    expect(mockLogger.debug).toHaveBeenCalledWith(
       "[datafn:timing]",
       expect.objectContaining({ endpoint: "/test" }),
     );
-    debugSpy.mockRestore();
   });
 });
 
@@ -148,7 +146,7 @@ describe("Timing integration", () => {
 
     const handler = vi.fn();
     // No observability config at all
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
     });
@@ -170,7 +168,7 @@ describe("Timing integration", () => {
     await db.initialize();
 
     const events: ExecutionTimingEvent[] = [];
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       observability: {
@@ -206,7 +204,7 @@ describe("Timing integration", () => {
     await db.initialize();
 
     const events: ExecutionTimingEvent[] = [];
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       observability: {
@@ -244,7 +242,7 @@ describe("Timing integration", () => {
     await db.initialize();
 
     const events: ExecutionTimingEvent[] = [];
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       observability: {
@@ -280,7 +278,7 @@ describe("Timing integration", () => {
     await db.initialize();
 
     const events: ExecutionTimingEvent[] = [];
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       observability: {
@@ -324,7 +322,7 @@ describe("Timing integration", () => {
     await db.initialize();
 
     const handler = vi.fn();
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       observability: {

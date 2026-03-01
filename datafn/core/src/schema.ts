@@ -37,6 +37,14 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
     });
   }
 
+  // LOW-028: Enforce resource count limit
+  const MAX_RESOURCES = 100;
+  if (s.resources.length > MAX_RESOURCES) {
+    return err("SCHEMA_INVALID", `Invalid schema: too many resources (max ${MAX_RESOURCES})`, {
+      path: "resources",
+    });
+  }
+
   const resourceNames = new Set<string>();
   const normalizedResources: DatafnResourceSchema[] = [];
 
@@ -87,6 +95,16 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
         "SCHEMA_INVALID",
         "Invalid schema: resource.fields must be array",
         { path: "resources" }
+      );
+    }
+
+    // LOW-028: Enforce field count limit per resource
+    const MAX_FIELDS_PER_RESOURCE = 200;
+    if ((r.fields as unknown[]).length > MAX_FIELDS_PER_RESOURCE) {
+      return err(
+        "SCHEMA_INVALID",
+        `Invalid schema: resource "${r.name}" has too many fields (max ${MAX_FIELDS_PER_RESOURCE})`,
+        { path: `resources.${r.name}.fields` },
       );
     }
 
@@ -168,6 +186,30 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
       });
     }
     const r = rel as Record<string, unknown>;
+
+    // CLI-004: Validate that from/to reference declared resource names
+    const validateRelationRef = (ref: unknown, side: "from" | "to") => {
+      const refs = Array.isArray(ref) ? ref : (typeof ref === "string" ? [ref] : []);
+      for (const name of refs) {
+        if (typeof name === "string" && !resourceNames.has(name)) {
+          return err(
+            "SCHEMA_INVALID",
+            `Invalid schema: relation.${side} references unknown resource "${name}". Available: ${[...resourceNames].join(", ")}`,
+            { path: `relations.${side}` },
+          );
+        }
+      }
+      return null;
+    };
+    if (r.from !== undefined) {
+      const e = validateRelationRef(r.from, "from");
+      if (e) return e;
+    }
+    if (r.to !== undefined) {
+      const e = validateRelationRef(r.to, "to");
+      if (e) return e;
+    }
+
     if (r.joinTable !== undefined && typeof r.joinTable !== "string") {
       return err("SCHEMA_INVALID", "Invalid schema: relation.joinTable must be string", {
         path: "relations",
@@ -188,8 +230,13 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
     }
   }
 
+  // multiTenant defaults to true (namespace isolation is the safe default).
+  // Only explicitly setting `multiTenant: false` disables it.
+  const multiTenant = (s as any).multiTenant === false ? false : true;
+
   return ok({
     resources: normalizedResources,
     relations: relations as DatafnSchema["relations"],
+    multiTenant,
   });
 }

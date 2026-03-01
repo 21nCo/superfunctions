@@ -199,7 +199,7 @@ describe("Phase 06: Data Retention", () => {
       await seedChangesWithAge(db, "datafn", 5, 60);
 
       // Create server without retention config
-      const server = await createDatafnServer({ schema: testSchema, db });
+      const server = await createDatafnServer({ allowUnknownResources: true, schema: testSchema, db });
 
       // No pruning should have happened
       const changes = await db.internal.findMany("__datafn_changes", [
@@ -220,7 +220,7 @@ describe("Phase 06: Data Retention", () => {
       await seedChangesWithAge(db, "datafn", 10, 60);
       await seedIdempotencyWithAge(db, "datafn", 5, 30);
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         db,
         retention: {
@@ -255,7 +255,7 @@ describe("Phase 06: Data Retention", () => {
       db.internal.delete = async () => { throw new Error("delete failed"); };
 
       // Server should still be created without throwing
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         db,
         retention: {
@@ -287,7 +287,7 @@ describe("Phase 06: Data Retention", () => {
       const setIntervalSpy = vi.spyOn(global, "setInterval");
       const clearIntervalSpy = vi.spyOn(global, "clearInterval");
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         db,
         retention: {
@@ -318,7 +318,7 @@ describe("Phase 06: Data Retention", () => {
 
       const setIntervalSpy = vi.spyOn(global, "setInterval");
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         db,
         retention: {
@@ -345,7 +345,7 @@ describe("Phase 06: Data Retention", () => {
 
       const setIntervalSpy = vi.spyOn(global, "setInterval");
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         db,
         retention: {

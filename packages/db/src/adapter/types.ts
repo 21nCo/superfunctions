@@ -133,6 +133,8 @@ export interface UpsertParams {
   update: Record<string, any>;
   select?: string[];
   namespace?: string;
+  /** Explicit ON CONFLICT target column(s). When set, overrides columns derived from `where`. */
+  conflictTarget?: string | string[];
 }
 
 export interface CountParams {
@@ -237,6 +239,15 @@ export interface SchemaCreation {
 // Factory Types
 // ============================================================================
 
+export interface RowLevelNamespaceConfig {
+  /** Enable row-level namespace filtering. Default: false. */
+  enabled: boolean;
+  /** Column name for the discriminator. Default: "__ns". */
+  columnName?: string;
+  /** Whether namespace is mandatory on every CRUD call. Default: true. */
+  mandatory?: boolean;
+}
+
 export interface AdapterFactoryConfig {
   // Required
   adapterId: string;
@@ -279,6 +290,9 @@ export interface AdapterFactoryConfig {
   // Custom ID generation
   customIdGenerator?: () => string | number;
   disableIdGeneration?: boolean;
+
+  // Row-level namespace isolation
+  rowLevelNamespace?: RowLevelNamespaceConfig;
 
   // Debug logging
   debug?:

@@ -3,7 +3,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
-import { evaluateFilter as coreEvaluateFilter } from "@datafn/core";
+import { evaluateFilter as coreEvaluateFilter, calculateAggregation } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { expandRelation } from "./relations.js";
 
@@ -69,7 +69,7 @@ export async function executeAggregateQuery(
           // Simple field access for now.
           keyParts.push(String(record[field]));
       }
-      const groupKey = keyParts.join("::"); // Simple delimiter
+      const groupKey = JSON.stringify(keyParts); // Collision-safe key (DUP-10)
       
       if (!groups.has(groupKey)) {
           groups.set(groupKey, []);
@@ -81,38 +81,21 @@ export async function executeAggregateQuery(
   const results = [];
   const aggregations = query.aggregations as Record<string, Record<string, unknown>>;
   
-  for (const [key, rows] of groups.entries()) {
+  for (const [, rows] of groups.entries()) {
       const result: Record<string, unknown> = {};
       
-      // Set group keys
-      const keyValues = key.split("::");
-      groupBy.forEach((field, i) => {
-          result[field] = keyValues[i]; // Type casting?
-          // We stringified it. Original type lost.
-          // Better: use the values from the first row in the group.
+      // LOW-022: group key is JSON.stringify(keyParts) — splitting with "::" is not
+      // meaningful. Restore typed group-key values directly from the first row's fields.
+      groupBy.forEach((field) => {
           result[field] = rows[0][field];
       });
       
-      // Compute aggregations
+      // Compute aggregations using shared core implementation
       if (aggregations) {
           for (const [alias, def] of Object.entries(aggregations)) {
               const op = def.op as string;
               const field = def.field as string;
-              
-              if (op === "count") {
-                  result[alias] = rows.length;
-              } else if (op === "sum") {
-                  result[alias] = rows.reduce((sum, r) => sum + (Number(r[field]) || 0), 0);
-              } else if (op === "avg") {
-                  const sum = rows.reduce((sum, r) => sum + (Number(r[field]) || 0), 0);
-                  result[alias] = sum / rows.length;
-              } else if (op === "min") {
-                  const values = rows.map(r => Number(r[field])).filter(n => !isNaN(n));
-                  result[alias] = Math.min(...values);
-              } else if (op === "max") {
-                  const values = rows.map(r => Number(r[field])).filter(n => !isNaN(n));
-                  result[alias] = Math.max(...values);
-              }
+              result[alias] = calculateAggregation(op, field, rows);
           }
       }
       

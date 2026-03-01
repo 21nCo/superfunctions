@@ -1,0 +1,159 @@
+---
+title: "Multi-Tenancy"
+description: "Isolate data between tenants with row-level namespacing."
+---
+
+## Overview
+
+DataFn provides built-in multi-tenancy through row-level namespace isolation. When enabled (the default), every record is stamped with a namespace identifier, and all queries and mutations are automatically scoped to the current tenant's namespace.
+
+This ensures that tenants can never read or modify each other's data, even though all records are stored in the same database tables.
+
+## Enabling Multi-Tenancy
+
+Multi-tenancy is controlled by the `multiTenant` flag on the schema. It defaults to `true`.
+
+```typescript
+import { defineSchema } from "@datafn/core";
+
+// Multi-tenancy is ON by default
+const schema = defineSchema({
+  resources: [
+    {
+      name: "tasks",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: true },
+      ],
+    },
+  ],
+});
+
+// Explicitly disable for single-tenant deployments
+const singleTenantSchema = defineSchema({
+  multiTenant: false,
+  resources: [
+    {
+      name: "tasks",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: true },
+      ],
+    },
+  ],
+});
+```
+
+## How It Works
+
+### The __ns Column
+
+When multi-tenancy is active, the database adapter is wrapped with row-level namespace isolation. This wrapper:
+
+- **Reads**: Prepends a `WHERE __ns = :namespace` clause to every query.
+- **Writes**: Stamps the `__ns` column on every insert.
+- **Updates**: Strips `__ns` from update data (the namespace is immutable once set).
+- **Outputs**: Strips the `__ns` column from all returned records (transparent to application code).
+
+The `__ns` column is managed entirely by the framework. Your application code never needs to reference it directly.
+
+### Internal Operations
+
+Internal CRUD operations (system tables like change tracking and idempotency) bypass the namespace wrapper. This ensures that server-managed infrastructure data is not scoped to individual tenants.
+
+## authContextProvider
+
+The `authContextProvider` on the server configuration maps incoming requests to a namespace. It extracts user and tenant context to derive the namespace string.
+
+```typescript
+import { createDatafnServer } from "@datafn/server";
+
+const server = await createDatafnServer({
+  schema,
+  db: adapter,
+  authContextProvider: {
+    getContext: (ctx) => ({
+      userId: ctx.session.userId,
+      tenantId: ctx.session.tenantId,
+    }),
+  },
+});
+```
+
+### Namespace Format
+
+The namespace string is derived from the auth context:
+
+| Context | Namespace Format | Example |
+| --- | --- | --- |
+| `userId` only | `user:<userId>` | `user:123` |
+| `userId` + `tenantId` | `tenant:<tenantId>:user:<userId>` | `tenant:456:user:123` |
+| No auth context | `datafn` (default) | `datafn` |
+
+When no `authContextProvider` is configured, all operations use the default `"datafn"` namespace.
+
+## Configuration
+
+The `rowLevelNamespace` option on the server provides fine-grained control:
+
+```typescript
+const server = await createDatafnServer({
+  schema,
+  db: adapter,
+  authContextProvider: { getContext: (ctx) => ({ userId: ctx.userId }) },
+
+  // Auto-enabled when authContextProvider is present (default behavior)
+  // Equivalent to:
+  rowLevelNamespace: {
+    enabled: true,
+    columnName: "__ns",
+    mandatory: true,
+  },
+});
+```
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `true` | Enable or disable the namespace wrapper. |
+| `columnName` | `string` | `"__ns"` | Column name used for namespace isolation. |
+| `mandatory` | `boolean` | `true` | When `true`, throws `NamespaceRequiredError` if no namespace is provided. |
+
+### Disabling Row-Level Namespace
+
+Set `rowLevelNamespace: false` to disable the wrapper even when `authContextProvider` is present. This is useful if you want per-user auth context for sync isolation without per-query namespace filtering.
+
+```typescript
+const server = await createDatafnServer({
+  schema,
+  db: adapter,
+  authContextProvider: { getContext: (ctx) => ({ userId: ctx.userId }) },
+  rowLevelNamespace: false,
+});
+```
+
+## Auto-Wrapping Behavior
+
+The server applies namespace wrapping based on the adapter type and configuration:
+
+| Condition | Wrapping Applied |
+| --- | --- |
+| `multiTenant: false` on schema | No |
+| `rowLevelNamespace: false` on server | No |
+| SQL adapter with schema constraints | Yes (always, even without `authContextProvider`) |
+| In-memory adapter with `authContextProvider` | Yes |
+| In-memory adapter without `authContextProvider` | No |
+
+SQL adapters (like Drizzle) are always wrapped when multi-tenancy is active because the generated schema includes a `NOT NULL` constraint on the `__ns` column. In-memory adapters are only wrapped when an `authContextProvider` is present, since there is no schema constraint to enforce.
+
+## Transactions
+
+The namespace wrapper is applied to transaction child adapters as well. When you run operations inside a transaction, namespace isolation is preserved automatically.
+
+```typescript
+// Namespace isolation works inside transactions
+await client.transact([
+  { resource: "tasks", action: "insert", data: { title: "Task A" } },
+  { resource: "tasks", action: "insert", data: { title: "Task B" } },
+]);
+// Both records are stamped with the current user's namespace
+```

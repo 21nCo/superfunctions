@@ -36,7 +36,10 @@
     "userfn/*",
     "cifn/typescript/*",
     "compfn",
-    "cmsfn/*"
+    "cmsfn/*",
+    "recfn/*",
+    "recfn/platforms/*",
+    "recfn/adapters/*"
   ],
   "scripts": {
     "build": "turbo run build",

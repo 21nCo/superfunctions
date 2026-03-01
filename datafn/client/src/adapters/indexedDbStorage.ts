@@ -18,6 +18,8 @@ import {
 
 const DB_NAME = "datafn_client_db";
 const DB_VERSION = 2;
+/** CLI-013: Maximum IDB version before database recreation */
+const MAX_IDB_VERSION = 1000;
 
 function validateMutation(mutation: any): void {
   if (!mutation.clientId) throw new Error("Missing clientId in mutation");
@@ -357,13 +359,29 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
 
     if (missing.length === 0) return db;
 
-    // Close stale DB and reopen with bumped version to create missing stores
     const nextVersion = db.version + 1;
     db.close();
+
+    // CLI-013: If version exceeds max, recreate the database from scratch
+    if (nextVersion > MAX_IDB_VERSION) {
+      console.warn(
+        `[datafn] IndexedDB version ${nextVersion} exceeds MAX_IDB_VERSION (${MAX_IDB_VERSION}). Recreating database.`,
+      );
+      await new Promise<void>((resolve, reject) => {
+        const req = indexedDB.deleteDatabase(this.dbName);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+        req.onblocked = () => resolve(); // proceed even if blocked
+      });
+      return this.openDatabase(DB_VERSION);
+    }
+
     return this.openDatabase(nextVersion);
   }
 
   private validateTableName(table: string) {
+    // CLI-006: Skip validation for internal health-check probe keys
+    if (table === "__health_check__" || table.startsWith("__datafn_")) return;
     if (this.validResources && !this.validResources.has(table)) {
       throw new Error(`Unknown table: ${table}`);
     }

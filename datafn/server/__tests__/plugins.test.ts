@@ -109,7 +109,7 @@ async function makeRequest(
   body: unknown,
 ): Promise<any> {
   const db = memoryAdapter({ namespace: "datafn" });
-  const server = await createDatafnServer({
+  const server = await createDatafnServer({ allowUnknownResources: true,
     schema,
     db,
     plugins,
@@ -129,7 +129,7 @@ describe("Phase 10: Server Plugin Execution", () => {
     it("should inject isArchived: false filter and only return non-archived tasks", async () => {
       const db = memoryAdapter({ namespace: "datafn" });
       const plugins = [createAddFilterIsArchivedFalsePlugin()];
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
         plugins,
@@ -226,7 +226,7 @@ describe("Phase 10: Server Plugin Execution", () => {
     it("should delegate search to plugin and filter results", async () => {
       const db = memoryAdapter({ namespace: "datafn" });
       const plugins = [createSearchPlugin()];
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: dfqlSchema,
         db,
         plugins,

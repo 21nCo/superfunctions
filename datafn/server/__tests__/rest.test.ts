@@ -23,7 +23,7 @@ describe("REST Wrappers", () => {
   it("TV-REST-001: REST query/mutation deletion delegation", async () => {
     // 1. Setup server with REST enabled
     const db = memoryAdapter();
-    const { router } = await createDatafnServer({
+    const { router } = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       rest: true,
@@ -86,8 +86,69 @@ describe("REST Wrappers", () => {
     });
   });
 
+  describe("SEC-010: Path traversal protection", () => {
+    it("TV-SEC-031: encoded slash %2F in resource returns 400", async () => {
+      const { router } = await createDatafnServer({ allowUnknownResources: true,
+        schema: testSchema,
+        db: memoryAdapter(),
+        rest: true,
+      });
+
+      const res = await router.handle(
+        new Request("http://localhost/datafn/resources/users%2F..%2Fadmin", {
+          method: "GET",
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.ok).toBe(false);
+      expect(json.error.code).toBe("DFQL_INVALID");
+    });
+
+    it("TV-SEC-032: dot-dot in resource returns 400", async () => {
+      const { router } = await createDatafnServer({ allowUnknownResources: true,
+        schema: testSchema,
+        db: memoryAdapter(),
+        rest: true,
+      });
+
+      // Simulate a request where path parsing produces ".." segment
+      // We test directly via sanitizePathSegment by checking encoded variants
+      const res = await router.handle(
+        new Request("http://localhost/datafn/resources/task%2F..%2Fadmin", {
+          method: "GET",
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.ok).toBe(false);
+      expect(json.error.code).toBe("DFQL_INVALID");
+    });
+
+    it("SEC-010: null byte in resource returns 400", async () => {
+      const { router } = await createDatafnServer({ allowUnknownResources: true,
+        schema: testSchema,
+        db: memoryAdapter(),
+        rest: true,
+      });
+
+      const res = await router.handle(
+        new Request("http://localhost/datafn/resources/task%00evil", {
+          method: "GET",
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.ok).toBe(false);
+      expect(json.error.code).toBe("DFQL_INVALID");
+    });
+  });
+
   it("TV-REST-002: Unknown resource rejection", async () => {
-    const { router } = await createDatafnServer({
+    const { router } = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db: memoryAdapter(),
       rest: true,

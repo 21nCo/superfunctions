@@ -10,6 +10,11 @@
  * - Sorts object keys alphabetically
  * - Removes undefined values
  * - Preserves arrays, primitives, and null as-is
+ *
+ * LOW-023: undefined vs null semantics:
+ * - `null` is preserved as `null` (explicit absence of a value — serialisable to JSON)
+ * - `undefined` is stripped from the output (non-serialisable; treated as "not set")
+ * This mirrors JSON.stringify behavior and ensures stable cache keys across environments.
  */
 export function normalizeDfql(value: unknown): unknown {
   if (value === null || value === undefined) {

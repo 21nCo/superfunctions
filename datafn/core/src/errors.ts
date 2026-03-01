@@ -14,7 +14,9 @@ export type DatafnErrorCode =
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "CONFLICT"
-  | "INTERNAL";
+  | "INTERNAL"
+  /** LOW-026: Network/transport-layer errors (timeouts, connection refused, etc.) */
+  | "TRANSPORT_ERROR";
 
 export type DatafnError = {
   code: DatafnErrorCode;

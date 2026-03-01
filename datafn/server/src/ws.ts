@@ -2,68 +2,245 @@
  * WebSocket Handler for DataFn Sync
  *
  * Implements the server-side protocol for:
- * - Client registration (hello)
- * - Cursor notifications (push -> broadcast)
+ * - Client registration (hello) with namespace tracking
+ * - Cursor notifications (push -> broadcast) scoped to namespace
+ *
+ * SEC-001: Auth required via addClient authContext parameter
+ * SEC-002: Namespace is server-derived, never client-supplied
+ * SCA-005: Connection limits enforced at addClient time (close code 4503)
+ * SCA-006: Namespace-scoped Map<namespace, Set<client>> for O(1) broadcast
+ * REL-007: Native WS ping/pong heartbeat; dead connections closed automatically
  */
 
 export interface WebSocketClient {
   send(data: string): void;
-  // We assume the host server handles 'close' and calls removeClient
+  close?(code?: number, reason?: string): void;
+  /** Native WS ping frame (e.g. ws.ping() in the 'ws' library). */
+  ping?(): void;
+}
+
+/**
+ * Auth context passed during WS connection setup.
+ * Namespace is server-derived from the auth context provider.
+ */
+export interface WsAuthContext {
+  namespace: string;
+}
+
+/** WebSocket manager configuration (sourced from DatafnServerConfig.ws). */
+export interface WsManagerConfig {
+  /** Maximum total simultaneous WS connections. Default: 10,000 */
+  maxConnections?: number;
+  /** Maximum connections per namespace. Default: 100 */
+  maxConnectionsPerNamespace?: number;
+  /** Heartbeat ping interval in ms. Default: 30,000 */
+  heartbeatIntervalMs?: number;
+  /** Max time to wait for pong before closing dead connection. Default: 10,000 */
+  heartbeatTimeoutMs?: number;
 }
 
 type Message =
-  | { type: "hello"; clientId: string; cursor: string }
+  | { type: "hello"; clientId: string; cursor: string; namespace?: string }
   | { type: "cursor"; cursor: string };
 
-export class WebSocketManager {
-  private clients = new Set<WebSocketClient>();
+const DEFAULT_MAX_CONNECTIONS = 10_000;
+const DEFAULT_MAX_PER_NAMESPACE = 100;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 10_000;
 
+export class WebSocketManager {
   /**
-   * Handle new connection
+   * SCA-006: namespace → Set<client> for O(clients-in-namespace) broadcast.
    */
-  addClient(client: WebSocketClient) {
-    this.clients.add(client);
+  private namespaceClients = new Map<string, Set<WebSocketClient>>();
+  /**
+   * Reverse mapping: client → namespace for O(1) removeClient.
+   */
+  private clientNamespace = new Map<WebSocketClient, string>();
+  /** Clients that have been sent a ping and have not yet replied (REL-007). */
+  private pendingPong = new Set<WebSocketClient>();
+  /** Heartbeat interval handle. */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  private readonly maxConnections: number;
+  private readonly maxConnectionsPerNamespace: number;
+  private readonly heartbeatIntervalMs: number;
+  private readonly heartbeatTimeoutMs: number;
+  private readonly logger?: import("./logger.js").DatafnLogger;
+
+  constructor(config: WsManagerConfig = {}, logger?: import("./logger.js").DatafnLogger) {
+    this.logger = logger;
+    this.maxConnections = config.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
+    this.maxConnectionsPerNamespace =
+      config.maxConnectionsPerNamespace ?? DEFAULT_MAX_PER_NAMESPACE;
+    this.heartbeatIntervalMs =
+      config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.heartbeatTimeoutMs =
+      config.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
+    // Heartbeat is started lazily on first addClient() to avoid creating
+    // a setInterval when no clients ever connect.
+  }
+
+  private get totalCount(): number {
+    return this.clientNamespace.size;
+  }
+
+  private getNamespaceCount(namespace: string): number {
+    return this.namespaceClients.get(namespace)?.size ?? 0;
+  }
+
+  /** REL-007: Start heartbeat interval. Pings every client; closes those that don't pong. */
+  private startHeartbeat() {
+    const timeoutMs = this.heartbeatTimeoutMs;
+    this.heartbeatTimer = setInterval(() => {
+      for (const [client] of this.clientNamespace) {
+        if (typeof client.ping !== "function") continue;
+        this.pendingPong.add(client);
+        try {
+          client.ping();
+        } catch {
+          // Ping failed — treat as dead connection
+          this.removeClient(client);
+          client.close?.(1001, "Heartbeat ping failed");
+          continue;
+        }
+        // Per-client pong deadline
+        setTimeout(() => {
+          if (this.pendingPong.has(client)) {
+            this.removeClient(client);
+            client.close?.(1001, "Heartbeat timeout");
+          }
+        }, timeoutMs);
+      }
+    }, this.heartbeatIntervalMs);
+    // Allow process to exit naturally — heartbeat must not keep process alive
+    (this.heartbeatTimer as NodeJS.Timeout).unref?.();
   }
 
   /**
-   * Handle disconnection
+   * Add a client after successful authentication.
+   *
+   * SEC-001: caller must reject unauthenticated connections (WS close 4401) before calling.
+   * SEC-002: namespace comes from authContext, never from client messages.
+   * SCA-005: connection limits enforced; closes with code 4503 on rejection.
+   *
+   * @returns true if client was accepted, false if rejected due to limits.
+   */
+  addClient(client: WebSocketClient, authContext: WsAuthContext): boolean {
+    const { namespace } = authContext;
+
+    // SCA-005: Global connection limit
+    if (this.totalCount >= this.maxConnections) {
+      client.close?.(4503, "Connection limit reached");
+      return false;
+    }
+
+    // SCA-005: Per-namespace connection limit
+    if (this.getNamespaceCount(namespace) >= this.maxConnectionsPerNamespace) {
+      client.close?.(4503, "Namespace connection limit reached");
+      return false;
+    }
+
+    // SCA-006: Add to namespace-scoped set
+    let nsSet = this.namespaceClients.get(namespace);
+    if (!nsSet) {
+      nsSet = new Set();
+      this.namespaceClients.set(namespace, nsSet);
+    }
+    nsSet.add(client);
+    // SEC-002: Server-derived namespace locked in at connection time
+    this.clientNamespace.set(client, namespace);
+
+    // REL-007: Start heartbeat lazily on first connected client
+    if (this.heartbeatTimer === null) {
+      this.startHeartbeat();
+    }
+
+    return true;
+  }
+
+  /**
+   * Handle disconnection.
    */
   removeClient(client: WebSocketClient) {
-    this.clients.delete(client);
+    const namespace = this.clientNamespace.get(client);
+    if (namespace !== undefined) {
+      const nsSet = this.namespaceClients.get(namespace);
+      if (nsSet) {
+        nsSet.delete(client);
+        if (nsSet.size === 0) this.namespaceClients.delete(namespace);
+      }
+      this.clientNamespace.delete(client);
+    }
+    this.pendingPong.delete(client);
   }
 
   /**
-   * Handle incoming message
+   * Handle incoming message.
+   * SEC-002: client-supplied namespace in hello messages is ignored.
    */
   handleMessage(client: WebSocketClient, data: string) {
     try {
       const msg = JSON.parse(data) as Message;
       if (msg.type === "hello") {
-        // In a real implementation, we might store the client's cursor
-        // to filter notifications, but for minimal v1 broadcast is fine
-        // or simple echo if needed.
-        // Spec says: "Client sends hello... Server sends cursor...".
-        // Actually Spec says: "Server sends cursor message with a higher cursor triggers pull".
-        // It doesn't require immediate response to hello, but it's good practice.
-        // For now, just accepting it is enough.
+        // SEC-002: Namespace is already locked in from addClient — ignore msg.namespace
       }
-    } catch (e) {
+    } catch {
       // Ignore invalid JSON/messages
     }
   }
 
   /**
-   * Broadcast new cursor to all connected clients
+   * Called by the WS transport when a native pong frame is received from a client.
+   * REL-007: clears the pending-pong marker so the connection is not timed out.
    */
-  broadcastCursor(cursor: string) {
+  handlePong(client: WebSocketClient) {
+    this.pendingPong.delete(client);
+  }
+
+  /**
+   * Broadcast cursor update to all clients in the given namespace.
+   * SCA-006: O(clients-in-namespace) — only the namespace Set is iterated.
+   */
+  broadcastCursor(cursor: string, namespace: string) {
+    const nsSet = this.namespaceClients.get(namespace);
+    if (!nsSet || nsSet.size === 0) return;
     const msg = JSON.stringify({ type: "cursor", cursor });
-    for (const client of this.clients) {
+    for (const client of nsSet) {
       try {
         client.send(msg);
       } catch (e) {
-        console.error("Error sending to websocket client", e);
-        this.clients.delete(client);
+        this.logger?.error("Error sending to websocket client", { error: String(e), operation: "ws-broadcast" });
+        this.removeClient(client);
       }
+    }
+  }
+
+  /**
+   * Graceful shutdown: stop heartbeat and send WS close code 1001 (Going Away) to all clients.
+   * Called by DatafnServer.close().
+   */
+  close() {
+    this.destroy();
+    for (const [client] of this.clientNamespace) {
+      try {
+        client.close?.(1001, "Going Away");
+      } catch {
+        /* ignore — client may already be dead */
+      }
+    }
+    this.namespaceClients.clear();
+    this.clientNamespace.clear();
+    this.pendingPong.clear();
+  }
+
+  /**
+   * Stop the heartbeat interval without closing any clients.
+   */
+  destroy() {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 }

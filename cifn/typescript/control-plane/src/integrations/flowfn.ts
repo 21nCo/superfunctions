@@ -69,7 +69,7 @@ export class FlowFnQueueAdapter implements QueueAdapter {
       throw new Error(`FlowFn dequeue failed: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as { payload?: JobPayload };
     return data.payload ?? null;
   }
 
@@ -84,7 +84,7 @@ export class FlowFnQueueAdapter implements QueueAdapter {
       throw new Error(`FlowFn peek failed: ${response.status} ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as { payloads?: JobPayload[] };
     const payloads = data.payloads ?? [];
     
     for (const payload of payloads) {

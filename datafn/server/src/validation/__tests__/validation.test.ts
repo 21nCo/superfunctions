@@ -68,7 +68,7 @@ describe("Query Validation - VALID-001", () => {
     it("TV-VALID-RESOURCE-001: unknown resource returns DFQL_UNKNOWN_RESOURCE", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -94,7 +94,7 @@ describe("Query Validation - VALID-001", () => {
       const db = memoryAdapter();
       await db.initialize();
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -115,7 +115,7 @@ describe("Query Validation - VALID-001", () => {
     it("TV-VALID-FIELD-001: unknown field in select returns DFQL_UNKNOWN_FIELD", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -141,7 +141,7 @@ describe("Query Validation - VALID-001", () => {
     });
 
     it("unknown field in filters returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -167,7 +167,7 @@ describe("Query Validation - VALID-001", () => {
     });
 
     it("unknown field in sort returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -192,7 +192,7 @@ describe("Query Validation - VALID-001", () => {
     });
 
     it("unknown field in omit returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -220,7 +220,7 @@ describe("Query Validation - VALID-001", () => {
       const db = memoryAdapter();
       await db.initialize();
 
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -245,7 +245,7 @@ describe("Query Validation - VALID-001", () => {
     it("TV-VALID-RELATION-001: unknown relation in select returns DFQL_UNKNOWN_RELATION", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -273,7 +273,7 @@ describe("Query Validation - VALID-001", () => {
     it("accepts valid relation in select", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -301,7 +301,7 @@ describe("Mutation Validation - VALID-001", () => {
     it("TV-VALID-MUTATION-001: unknown resource returns DFQL_UNKNOWN_RESOURCE", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -333,7 +333,7 @@ describe("Mutation Validation - VALID-001", () => {
 
   describe("Field validation", () => {
     it("unknown field in mutation record returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -364,7 +364,7 @@ describe("Mutation Validation - VALID-001", () => {
     it("accepts valid fields in mutation record", async () => {
       const db = memoryAdapter();
       await db.initialize();
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -397,7 +397,7 @@ describe("Mutation Validation - VALID-001", () => {
 
   describe("Relation validation", () => {
     it("unknown relation in mutation returns DFQL_UNKNOWN_RELATION", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -429,7 +429,7 @@ describe("Mutation Validation - VALID-001", () => {
     });
 
     it("unknown metadata key in relation mutation returns DFQL_UNKNOWN_FIELD", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -469,7 +469,7 @@ describe("Mutation Validation - VALID-001", () => {
         data: { id: "tag:1", label: "Tag 1" },
         namespace: "datafn",
       });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
         db,
@@ -499,7 +499,7 @@ describe("Mutation Validation - VALID-001", () => {
 
   describe("Operation validation", () => {
     it("unsupported operation returns DFQL_UNSUPPORTED", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -527,7 +527,7 @@ describe("Mutation Validation - VALID-001", () => {
     });
 
     it("insert requires record", async () => {
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
       });
@@ -558,7 +558,7 @@ describe("Mutation Validation - VALID-001", () => {
 
 describe("Transact Validation - VALID-001", () => {
   it("validates mutation steps in transaction", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -590,7 +590,7 @@ describe("Transact Validation - VALID-001", () => {
   });
 
   it("validates query steps in transaction", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -617,7 +617,7 @@ describe("Transact Validation - VALID-001", () => {
   });
 
   it("validates unknown fields in transaction mutation step", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -651,7 +651,7 @@ describe("Transact Validation - VALID-001", () => {
 
 describe("Push Validation - VALID-001", () => {
   it("TV-VALID-PUSH-001: validates mutations in push request", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -683,8 +683,199 @@ describe("Push Validation - VALID-001", () => {
     expect(body.error.code).toBe("DFQL_UNKNOWN_RESOURCE");
   });
 
+  describe("SEC-013: Having clause deep validation", () => {
+    it("TV-SEC-035: having with unknown field returns DFQL_UNKNOWN_FIELD", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          groupBy: ["label"],
+          aggregations: { cnt: { op: "count", field: "*" } },
+          having: { nonexistent_field: { $gt: 5 } },
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
+    });
+
+    it("TV-SEC-036: having with aggregation alias is accepted", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          groupBy: ["label"],
+          aggregations: { cnt: { op: "count", field: "*" } },
+          having: { cnt: { $gt: 5 } },
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      // Should not return 400 for unknown field
+      expect(res.status).not.toBe(400);
+    });
+  });
+
+  describe("SEC-014: GroupBy field schema validation", () => {
+    it("TV-SEC-037: groupBy with unknown field returns DFQL_UNKNOWN_FIELD", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          groupBy: ["nonexistent_field"],
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
+    });
+
+    it("TV-SEC-038: groupBy with valid field is accepted", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          groupBy: ["label"],
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      // Should not fail with DFQL_UNKNOWN_FIELD
+      const body = await res.json();
+      expect(body.error?.code).not.toBe("DFQL_UNKNOWN_FIELD");
+    });
+  });
+
+  describe("SEC-015: LIKE pattern length cap", () => {
+    it("TV-SEC-039: $like pattern >200 chars returns DFQL_INVALID", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          filters: { label: { $like: "%" + "a".repeat(300) } },
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_INVALID");
+    });
+
+    it("SEC-015: $like pattern <=200 chars is accepted", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          filters: { label: { $like: "%" + "a".repeat(100) } },
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      // Should not fail with DFQL_INVALID due to pattern length
+      const body = await res.json();
+      expect(body.error?.code).not.toBe("DFQL_INVALID");
+    });
+  });
+
+  describe("SEC-016: Search query length cap", () => {
+    it("TV-SEC-040: search query >1000 chars returns DFQL_INVALID", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          search: { query: "a".repeat(1500), fields: ["label"] },
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_INVALID");
+    });
+
+    it("SEC-016: search query <=1000 chars passes length check", async () => {
+      const server = await createDatafnServer({ allowUnknownResources: true,
+        schema: fixtureF1Schema,
+        limits: { maxLimit: 100 },
+      });
+
+      const req = new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "task",
+          version: 1,
+          search: { query: "a".repeat(500), fields: ["label"] },
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      // Should not fail specifically due to search query length
+      const body = await res.json();
+      expect(body.error?.code).not.toBe("DFQL_INVALID");
+    });
+  });
+
   it("validates unknown fields in push mutations", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });
@@ -714,5 +905,107 @@ describe("Push Validation - VALID-001", () => {
     const body = await res.json();
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SRV-015: $or operator rejection
+// ---------------------------------------------------------------------------
+
+describe("SRV-015: $or operator rejected at validation time", () => {
+  it("TV-SRV-015-001: query with $or filter returns DFQL_UNSUPPORTED", async () => {
+    const server = await createDatafnServer({ allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        filters: {
+          $or: [
+            { label: { $eq: "a" } },
+            { label: { $eq: "b" } },
+          ],
+        },
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_UNSUPPORTED");
+    expect(body.error.message).toMatch(/\$or/);
+  });
+
+  it("TV-SRV-015-002: $and is still accepted", async () => {
+    const server = await createDatafnServer({ allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        filters: {
+          $and: [
+            { label: { $eq: "a" } },
+          ],
+        },
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    const body = await res.json();
+    // $and is supported — should not return DFQL_UNSUPPORTED
+    expect(body.error?.code).not.toBe("DFQL_UNSUPPORTED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SRV-003: maxBatchQueries limit
+// ---------------------------------------------------------------------------
+
+describe("SRV-003: maxBatchQueries batch size limit", () => {
+  it("TV-SRV-003-001: batch exceeding default limit (20) returns LIMIT_EXCEEDED", async () => {
+    const server = await createDatafnServer({ allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    const queries = Array.from({ length: 21 }, () => ({ resource: "task" }));
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(queries),
+    });
+
+    const res = await server.router.handle(req, {});
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("LIMIT_EXCEEDED");
+    expect(body.error.message).toMatch(/Batch query count exceeds limit/);
+  });
+
+  it("TV-SRV-003-002: batch at exactly default limit (20) is accepted", async () => {
+    const server = await createDatafnServer({ allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    const queries = Array.from({ length: 20 }, () => ({ resource: "task" }));
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(queries),
+    });
+
+    const res = await server.router.handle(req, {});
+    const body = await res.json();
+    expect(body.error?.code).not.toBe("LIMIT_EXCEEDED");
   });
 });

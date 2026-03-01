@@ -1,0 +1,12 @@
+{
+  "title": "Python",
+  "description": "Python SDK",
+  "root": true,
+  "pages": [
+    "index",
+    "setup",
+    "server",
+    "database",
+    "handlers"
+  ]
+}

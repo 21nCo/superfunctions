@@ -7,6 +7,8 @@ import type { DatafnError } from "./errors.js";
 export type DatafnSchema = {
   resources: DatafnResourceSchema[];
   relations?: DatafnRelationSchema[];
+  /** Defaults to true. Set to false to disable row-level namespace isolation (single-tenant mode). */
+  multiTenant?: boolean;
 };
 
 /**
@@ -51,7 +53,7 @@ export type DatafnResourceSchema = {
 
 export type DatafnFieldSchema = {
   name: string;
-  type: "string" | "number" | "boolean" | "object" | "array" | "date" | "file";
+  type: "string" | "number" | "boolean" | "object" | "array" | "date" | "file" | "json";
   required: boolean;
   nullable?: boolean;
   readonly?: boolean;
@@ -76,7 +78,7 @@ export type DatafnRelationSchema = {
   cache?: boolean;
   metadata?: Array<{
     name: string;
-    type: "string" | "number" | "boolean" | "date" | "object";
+    type: "string" | "number" | "boolean" | "date" | "object" | "json";
   }>;
   fkField?: string;
   pathField?: string;
@@ -121,6 +123,7 @@ export function defineSchema<
   const T extends {
     readonly resources: readonly DatafnResourceBase[];
     readonly relations?: readonly DatafnRelationSchema[] | DatafnRelationSchema[];
+    readonly multiTenant?: boolean;
   }
 >(schema: T & { readonly resources: ValidateResources<T["resources"]> }): T & DatafnSchema {
   return schema as unknown as T & DatafnSchema;
@@ -178,6 +181,48 @@ export interface DatafnSignal<T> {
   readonly nextCursor: string | null | undefined;
   dispose(): void;
 }
+
+/**
+ * Logger interface for structured, pluggable logging.
+ */
+export interface DatafnLogger {
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+  debug(message: string, context?: Record<string, unknown>): void;
+}
+
+/**
+ * Limits configuration for server-side enforcement.
+ */
+export type DatafnLimitsConfig = {
+  maxLimit?: number;
+  maxTransactSteps?: number;
+  maxPayloadBytes?: number;
+  maxPullLimit?: number;
+  maxBatchSize?: number;
+  maxCloneRecords?: number;
+  idempotencyTtlMs?: number;
+  idempotencyMaxEntries?: number;
+  maxSelectTokens?: number;
+  maxFilterKeysPerLevel?: number;
+  maxSortFields?: number;
+  maxAggregations?: number;
+  maxSearchQueryLength?: number;
+  maxLikePatternLength?: number;
+  maxIdLength?: number;
+  maxFilterDepth?: number;
+};
+
+/**
+ * WebSocket configuration for connection limits and heartbeat.
+ */
+export type DatafnWsConfig = {
+  maxConnections?: number;
+  maxConnectionsPerNamespace?: number;
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
+};
 
 /**
  * Plugin Types

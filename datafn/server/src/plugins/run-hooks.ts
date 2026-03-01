@@ -3,20 +3,17 @@
  * Delegates to shared @datafn/core hook runner with env: "server"
  */
 
-import type { DatafnPlugin, DatafnHookContext } from "@datafn/core";
+import type { DatafnPlugin, DatafnHookContext, HookError } from "@datafn/core";
 import { runBeforeHook, runAfterHook } from "@datafn/core";
+import type { DatafnLogger } from "../logger.js";
 
-export interface PluginError {
-  code: string;
-  message: string;
-  details?: Record<string, unknown>;
-}
+export type { HookError };
 
 export async function runBeforeQuery(
   query: unknown,
   ctx: { plugins: DatafnPlugin[]; schema: any },
   plugins: DatafnPlugin[],
-): Promise<{ ok: true; query: unknown } | { ok: false; error: PluginError }> {
+): Promise<{ ok: true; query: unknown } | { ok: false; error: HookError }> {
   const hookCtx: DatafnHookContext = { env: "server", schema: ctx.schema };
   const result = await runBeforeHook(plugins, "server", "beforeQuery", hookCtx, query);
   if (!result.ok) return { ok: false, error: result.error };
@@ -28,17 +25,31 @@ export async function runAfterQuery(
   result: unknown,
   ctx: { plugins: DatafnPlugin[]; schema: any },
   plugins: DatafnPlugin[],
+  logger?: DatafnLogger,
 ): Promise<unknown> {
+  // LOW-006: Capture return value from afterQuery hooks so plugins can transform/redact results.
+  // runAfterHook ignores return values; we implement the loop inline to capture them.
   const hookCtx: DatafnHookContext = { env: "server", schema: ctx.schema };
-  await runAfterHook(plugins, "server", "afterQuery", hookCtx, query, result);
-  return result;
+  let current = result;
+  const filtered = plugins.filter((p) => p.runsOn.includes("server"));
+  for (const plugin of filtered) {
+    const hook = plugin.afterQuery as ((ctx: DatafnHookContext, query: unknown, result: unknown) => Promise<unknown> | unknown) | undefined;
+    if (!hook) continue;
+    try {
+      const returned = await hook(hookCtx, query, current);
+      if (returned !== undefined) current = returned;
+    } catch (err) {
+      logger?.error("Plugin afterQuery error", { plugin: plugin.name, error: String(err), operation: "plugin" });
+    }
+  }
+  return current;
 }
 
 export async function runBeforeMutation(
   mutation: unknown,
   ctx: { plugins: DatafnPlugin[]; schema: any },
   plugins: DatafnPlugin[],
-): Promise<{ ok: true; mutation: unknown } | { ok: false; error: PluginError }> {
+): Promise<{ ok: true; mutation: unknown } | { ok: false; error: HookError }> {
   const hookCtx: DatafnHookContext = { env: "server", schema: ctx.schema };
   const result = await runBeforeHook(plugins, "server", "beforeMutation", hookCtx, mutation);
   if (!result.ok) return { ok: false, error: result.error };
@@ -60,7 +71,7 @@ export async function runBeforeSync(
   payload: unknown,
   ctx: { plugins: DatafnPlugin[]; schema: any },
   plugins: DatafnPlugin[],
-): Promise<{ ok: true; payload: unknown } | { ok: false; error: PluginError }> {
+): Promise<{ ok: true; payload: unknown } | { ok: false; error: HookError }> {
   const hookCtx: DatafnHookContext = { env: "server", schema: ctx.schema };
   const result = await runBeforeHook(plugins, "server", "beforeSync", hookCtx, payload, [phase]);
   if (!result.ok) return { ok: false, error: result.error };

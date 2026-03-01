@@ -45,18 +45,6 @@ export async function parseJsonBody(req: Request): Promise<ParseJsonResult> {
 }
 
 /**
- * Legacy function for backwards compatibility - throws on parse failure
- * @deprecated Use parseJsonBody which returns a result envelope
- */
-export async function parseJsonBodyOrThrow(req: Request): Promise<unknown> {
-  const result = await parseJsonBody(req);
-  if (!result.ok) {
-    throw new Error("Invalid JSON");
-  }
-  return result.data;
-}
-
-/**
  * Create a JSON Response with proper headers
  */
 export function jsonResponse(body: unknown, status: number = 200): Response {

@@ -1,5 +1,6 @@
 import { evaluateFilter } from "./filters.js";
 import { parseSortTerms } from "./sort.js";
+import { calculateAggregation } from "@datafn/core";
 import { applyLimitOffset, applyCursorAfter, computeNextCursor } from "./pagination.js";
 
 /**
@@ -7,10 +8,13 @@ import { applyLimitOffset, applyCursorAfter, computeNextCursor } from "./paginat
  */
 export function executeAggregateQuery(
   query: Record<string, unknown>,
-  records: any[],
-  schema: any,
-  store: any,
-): { groups: any[]; nextCursor: unknown | null } {
+  records: Record<string, unknown>[],
+  schema: { resources: Array<{ name: string; fields: Array<{ name: string }> }>; relations?: unknown[] },
+  store: { getRecord: (resource: string, id: string) => Record<string, unknown> | null | undefined },
+): { groups: Record<string, unknown>[]; nextCursor: unknown | null } {
+  // EXE-013: Cache resource schema lookup (called per record otherwise)
+  const resourceSchema = schema.resources.find((r) => r.name === query.resource);
+
   // 1. Filter
   let filtered = records;
 
@@ -28,7 +32,7 @@ export function executeAggregateQuery(
 
   // 2. Group
   const groupBy = query.groupBy as string[];
-  const groups = new Map<string, any[]>();
+  const groups = new Map<string, Record<string, unknown>[]>();
 
   for (const record of filtered) {
     const keyParts = groupBy.map((field) => {
@@ -39,10 +43,11 @@ export function executeAggregateQuery(
         schema,
         store,
         query.resource as string,
+        resourceSchema,
       );
       return String(val); // Composite key component
     });
-    const key = keyParts.join("||"); // Simple separator for map key
+    const key = JSON.stringify(keyParts); // Structured key avoids collision when values contain separator chars
 
     if (!groups.has(key)) {
       groups.set(key, []);
@@ -51,17 +56,14 @@ export function executeAggregateQuery(
   }
 
   // 3. Aggregate
-  const aggregations = (query.aggregations as Record<string, any>) || {};
-  let results: any[] = [];
+  const aggregations = (query.aggregations as Record<string, { op: string; field: string }>) || {};
+  let results: Record<string, unknown>[] = [];
 
-  for (const [key, groupRecords] of groups.entries()) {
-    const row: any = {};
+  for (const [, groupRecords] of groups.entries()) {
+    const row: Record<string, unknown> = {};
 
-    // Add group keys to row
-    const keyParts = key.split("||");
-    groupBy.forEach((field, idx) => {
-      // Re-resolve value from sample record to preserve type (mostly)
-      // or rely on stringified key if we only have scalar keys
+    // Add group keys to row — re-resolve from sample record to preserve types
+    groupBy.forEach((field) => {
       const sample = groupRecords[0];
       const val = resolveValue(
         sample,
@@ -69,21 +71,15 @@ export function executeAggregateQuery(
         schema,
         store,
         query.resource as string,
+        resourceSchema,
       );
       row[field] = val;
     });
 
     // Calculate aggregations
     for (const [alias, def] of Object.entries(aggregations)) {
-      const { op, field } = def;
-      row[alias] = calculateAggregation(
-        op,
-        field,
-        groupRecords,
-        schema,
-        store,
-        query.resource as string,
-      );
+      const { op, field } = def as { op: string; field: string };
+      row[alias] = calculateAggregation(op, field, groupRecords);
     }
 
     results.push(row);
@@ -94,10 +90,10 @@ export function executeAggregateQuery(
     results = results.filter((row) =>
       evaluateFilter(
         row,
-        query.having as any,
+        query.having as Record<string, unknown>,
         query.resource as string,
-        schema,
-        store,
+        schema as Parameters<typeof evaluateFilter>[3],
+        store as Parameters<typeof evaluateFilter>[4],
       ),
     );
   }
@@ -138,8 +134,9 @@ export function executeAggregateQuery(
   };
 }
 
-function orderGroupedResults(groups: any[], sortTerms: any[]): any[] {
-  return groups.sort((a, b) => {
+function orderGroupedResults(groups: Record<string, unknown>[], sortTerms: Array<{ field: string; direction: string }>): Record<string, unknown>[] {
+  // LOW-019: Use spread to avoid mutating the input array
+  return [...groups].sort((a, b) => {
     for (const term of sortTerms) {
       const field = term.field;
       const direction = term.direction === "asc" ? 1 : -1;
@@ -155,25 +152,24 @@ function orderGroupedResults(groups: any[], sortTerms: any[]): any[] {
 }
 
 function resolveValue(
-  record: any,
+  record: Record<string, unknown>,
   path: string,
-  schema: any,
-  store: any,
+  schema: { resources: Array<{ name: string; fields: Array<{ name: string }> }>; relations?: unknown[] },
+  store: { getRecord: (resource: string, id: string) => Record<string, unknown> | null | undefined },
   resourceName: string,
-): any {
+  precomputedResource?: { name: string; fields: Array<{ name: string }> }, // EXE-013: pre-computed to avoid per-record O(n) lookup
+): unknown {
   if (!path.includes(".")) {
     return record[path];
   }
 
   // Dot path resolution
   const parts = path.split(".");
-  
-  // Check if base is a field on current resource (Nested Object)
-  // We need to check schema to be sure, but if relation check fails, fallback to object property?
-  // Or check schema first.
-  const resource = schema.resources.find((r: any) => r.name === resourceName);
+
+  // EXE-013: Use pre-computed resource schema when available
+  const resource = precomputedResource ?? schema.resources.find((r) => r.name === resourceName);
   const baseName = parts[0];
-  const isField = resource?.fields.some((f: any) => f.name === baseName);
+  const isField = resource?.fields.some((f) => f.name === baseName);
   
   if (isField) {
       // Nested object traversal
@@ -185,14 +181,14 @@ function resolveValue(
       return current;
   }
 
-  let currentRecord = record;
+  let currentRecord: Record<string, unknown> = record;
   let currentResource = resourceName;
 
   for (let i = 0; i < parts.length - 1; i++) {
     const relName = parts[i];
     // Find relation
-    const rel = schema.relations?.find(
-      (r: any) =>
+    const rel = (schema.relations as Array<Record<string, unknown>> | undefined)?.find(
+      (r) =>
         (r.from === currentResource && r.relation === relName) ||
         (r.to === currentResource && r.inverse === relName),
     );
@@ -202,13 +198,13 @@ function resolveValue(
     const isForward = rel.from === currentResource;
 
     if (rel.type === "many-one" && isForward) {
-      const fk = (rel as any).fkField || (rel as any).foreignKey;
+      const fk = (rel.fkField || rel.foreignKey) as string;
       const targetId = currentRecord[fk];
       if (!targetId) return null;
-      const target = store.getRecord(rel.to, targetId);
+      const target = store.getRecord(rel.to as string, targetId as string);
       if (!target) return null;
       currentRecord = target;
-      currentResource = rel.to;
+      currentResource = rel.to as string;
     } else {
       return undefined; // Not supported
     }
@@ -218,46 +214,4 @@ function resolveValue(
   return currentRecord[lastField];
 }
 
-function calculateAggregation(
-  op: string,
-  field: string,
-  records: any[],
-  schema: any,
-  store: any,
-  resourceName: string,
-): any {
-  if (op === "count") {
-    return records.length;
-  }
-
-  const values = records
-    .map((r) => r[field])
-    .filter((v) => v !== null && v !== undefined);
-
-  if (values.length === 0) return null; // or 0? SQL says null for sum/avg/min/max of empty.
-
-  if (op === "sum") {
-    return values.reduce((a, b) => (Number(a) || 0) + (Number(b) || 0), 0);
-  }
-  if (op === "min") {
-    // string or number comparison
-    // assuming homogeneous
-    let min = values[0];
-    for (const v of values) {
-      if (v < min) min = v;
-    }
-    return min;
-  }
-  if (op === "max") {
-    let max = values[0];
-    for (const v of values) {
-      if (v > max) max = v;
-    }
-    return max;
-  }
-  if (op === "avg") {
-    const sum = values.reduce((a, b) => (Number(a) || 0) + (Number(b) || 0), 0);
-    return sum / values.length;
-  }
-  return null;
-}
+// calculateAggregation is imported from @datafn/core above.

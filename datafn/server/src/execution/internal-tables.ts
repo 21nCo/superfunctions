@@ -34,6 +34,13 @@ const SEED_COLUMNS: InternalColumnDef[] = [
   { name: "created_at", type: "text" },
 ];
 
+/**
+ * LOW-012: Internal table schemas — index specifications:
+ * - __datafn_meta: PK on (id). Used for namespace-scoped sequence tracking.
+ * - __datafn_changes: PK on (id). Index on (namespace, server_seq) for sync pull range queries.
+ * - __datafn_idempotency: PK on (id). Index on (namespace, client_id, mutation_id) for dedup lookups.
+ * - __datafn_seed: PK on (id). Index on (namespace, seed_id) for seed status lookups.
+ */
 export const INTERNAL_TABLE_SCHEMAS: Record<string, InternalColumnDef[]> = {
   __datafn_meta: META_COLUMNS,
   __datafn_changes: CHANGES_COLUMNS,

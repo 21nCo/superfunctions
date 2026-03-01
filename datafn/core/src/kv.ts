@@ -52,11 +52,15 @@ export function ensureBuiltinKv(schema: DatafnSchema): DatafnSchema {
       },
       {
         name: "value",
-        type: "object",
+        type: "json",
         required: false,
       },
     ],
     indices: ["id"],
+    permissions: {
+      read: { fields: ["id", "value"] },
+      write: { fields: ["id", "value"] },
+    },
   };
 
   return {

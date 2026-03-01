@@ -77,7 +77,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
   describe("TV-PLUG-SERVER-001: beforeQuery filter injection", () => {
     it("should inject isArchived: false and filter results", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: taskSchema,
         db,
         plugins: [createFilterPlugin()],
@@ -142,7 +142,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
   describe("TV-PLUG-SERVER-002: beforeMutation fail-closed", () => {
     it("should reject mutation when hook throws", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: taskSchema,
         db,
         plugins: [createForbiddenPlugin()],
@@ -182,7 +182,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
         ],
         relations: [],
       };
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema,
         db,
         plugins: [createSearchPlugin()],
@@ -253,7 +253,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
         ],
         relations: [],
       };
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema,
         db,
         plugins: [], // No searchfn plugin

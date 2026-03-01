@@ -1,0 +1,124 @@
+---
+title: "Tables"
+description: "Per-resource API handles for queries and mutations."
+---
+
+## Overview
+
+A `DatafnTable` is a per-resource handle that provides query, mutation, transaction, signal, and subscription methods. Every method automatically injects the `resource` name and `version` from your schema, so you never need to specify them manually.
+
+## Accessing a Table
+
+### table() Method
+
+```typescript
+const todos = client.table("todos");
+```
+
+### Property Accessor
+
+Table handles are also available as direct properties on the client, keyed by resource name:
+
+```typescript
+const todos = client.todos;
+```
+
+Both accessors return the same cached instance. Table handles have stable object identity -- calling `client.table("todos")` multiple times returns the same object.
+
+## DatafnTable Interface
+
+```typescript
+interface DatafnTable<S, Name, TRecord> {
+  /** Resource name from schema. */
+  name: Name;
+
+  /** Resource version from schema. */
+  version: number;
+
+  /** Execute a query scoped to this resource. */
+  query(q: DfqlQueryFragment): Promise<unknown>;
+
+  /** Execute one or more mutations scoped to this resource. */
+  mutate(m: DfqlMutationFragment | DfqlMutationFragment[]): Promise<unknown>;
+
+  /** Execute a transaction. */
+  transact(payload: DfqlTransact): Promise<unknown>;
+
+  /** Create a reactive signal for a query on this resource. */
+  signal(q: DfqlQueryFragment, options?: { disableOptimistic?: boolean }): DatafnSignal<unknown>;
+
+  /** Subscribe to events scoped to this resource. */
+  subscribe(handler: EventHandler, filter?: EventFilter): () => void;
+}
+```
+
+## Auto-Merging
+
+When you call methods on a table handle, the handle merges `resource` and `version` into your payload. You only provide the query or mutation fragment:
+
+```typescript
+// You write:
+await client.table("todos").query({
+  filters: { completed: { eq: false } },
+  limit: 10,
+});
+
+// The table handle sends:
+// {
+//   resource: "todos",
+//   version: 1,
+//   filters: { completed: { eq: false } },
+//   limit: 10,
+// }
+```
+
+The same applies to mutations:
+
+```typescript
+// You write:
+await client.table("todos").mutate({
+  operation: "insert",
+  record: { title: "New todo", completed: false },
+});
+
+// The table handle sends:
+// {
+//   resource: "todos",
+//   version: 1,
+//   operation: "insert",
+//   id: "td:generated-uuid",   <-- auto-generated from idPrefix
+//   record: { title: "New todo", completed: false },
+// }
+```
+
+## Auto-Generated IDs
+
+For `insert` operations, if no `id` is provided, the table handle generates one using the resource's `idPrefix` from the schema. The default generator uses `crypto.randomUUID()` prefixed with `{idPrefix}:`. You can supply a custom generator via the `generateId` config option.
+
+## Scoped Subscriptions
+
+When you call `subscribe()` on a table handle, the `resource` filter is automatically set to the table's resource name:
+
+```typescript
+// Only receives events for the "todos" resource
+const unsubscribe = client.table("todos").subscribe((event) => {
+  console.log("Todo event:", event.type, event.ids);
+});
+```
+
+You can provide additional filters that are merged with the resource scope:
+
+```typescript
+client.table("todos").subscribe(
+  (event) => { /* ... */ },
+  { type: "mutation_applied", action: "delete" },
+);
+```
+
+## Table Registry
+
+The client creates table handles from your schema at initialization time. The registry ensures:
+
+- **Object identity**: The same handle instance is returned for repeated lookups.
+- **Schema validation**: Requesting a table for an unknown resource name throws a `DFQL_UNKNOWN_RESOURCE` error.
+- **Version binding**: Each handle is bound to the resource version declared in your schema.

@@ -72,7 +72,8 @@ export function createStatusHandler(
         "dfql.seed",
       ],
       limits,
-      serverTimeMs: getServerTime(),
+      // SRV-008: Round to nearest minute to avoid fingerprinting via exact timestamps
+      serverTimeMs: Math.round(getServerTime() / 60000) * 60000,
     };
 
     return okResponse(result);

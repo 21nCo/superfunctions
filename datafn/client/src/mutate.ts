@@ -392,20 +392,9 @@ export async function executeMutation(
       return result;
     }
 
-    // CLIENT-EVENT-001: Emit mutation_rejected for thrown errors
-    if (!Array.isArray(mutationForRemote)) {
-      emitRejectionForError(
-        eventBus,
-        getTimestamp,
-        mutationForRemote as any,
-        err,
-      );
-    } else {
-      // For batch mutations, emit rejection for each
-      for (const mut of mutationForRemote as any[]) {
-        emitRejectionForError(eventBus, getTimestamp, mut, err);
-      }
-    }
+    // REL-012: Do NOT emit rejection here if we are about to attempt offline fallback.
+    // Rejection is emitted only when we know there is no fallback (else branch below)
+    // or when the offline fallback itself fails.
 
     // Check if we can failover to offline handling
     // OFF-001: Batch offline fallback
@@ -443,30 +432,59 @@ export async function executeMutation(
             getTimestamp(),
             authContext, // AUD-001: Pass authContext for changelog enrichment
           );
+          // REL-012: Emit applied here so only one event fires (no double-emit with final path)
+          emitMutationEvents(eventBus, getTimestamp, mutationToUse, result);
           fromOfflineFallback = true;
         }
       } catch (offlineErr) {
-        // If offline fallback also fails (e.g. storage error), throw the offline error
+        // REL-012: Offline fallback also failed — emit rejection now and rethrow
+        if (!Array.isArray(mutationForRemote)) {
+          emitRejectionForError(eventBus, getTimestamp, mutationForRemote as any, offlineErr);
+        } else {
+          for (const mut of mutationForRemote as any[]) {
+            emitRejectionForError(eventBus, getTimestamp, mut, offlineErr);
+          }
+        }
         throw offlineErr;
       }
     } else {
-      // No fallback possible, rethrow
+      // REL-012: No offline fallback possible — emit rejection now and rethrow
+      // CLIENT-EVENT-001: Emit mutation_rejected for thrown errors
+      if (!Array.isArray(mutationForRemote)) {
+        emitRejectionForError(
+          eventBus,
+          getTimestamp,
+          mutationForRemote as any,
+          err,
+        );
+      } else {
+        // For batch mutations, emit rejection for each
+        for (const mut of mutationForRemote as any[]) {
+          emitRejectionForError(eventBus, getTimestamp, mut, err);
+        }
+      }
       throw err;
     }
   }
 
   // Handle single mutation result
+  // REL-012: Skip final emit for offline fallback — events already emitted inside fallback
   if (!Array.isArray(m)) {
-    emitMutationEvents(eventBus, getTimestamp, m as any, result as any);
+    if (!fromOfflineFallback) {
+      emitMutationEvents(eventBus, getTimestamp, m as any, result as any);
+    }
     return result;
   }
 
   // Handle batch mutation results
+  // REL-012: Skip final emit for offline fallback — events already emitted inside fallback loop
   const mutations = m as any[];
   const results = result as any[];
 
-  for (let i = 0; i < mutations.length; i++) {
-    emitMutationEvents(eventBus, getTimestamp, mutations[i], results[i]);
+  if (!fromOfflineFallback) {
+    for (let i = 0; i < mutations.length; i++) {
+      emitMutationEvents(eventBus, getTimestamp, mutations[i], results[i]);
+    }
   }
 
   return results;

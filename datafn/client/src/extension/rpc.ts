@@ -14,6 +14,7 @@ export type DatafnRpcMethod =
   | "clone"
   | "pull"
   | "push"
+  | "reconcile"
   | "subscribe"
   | "unsubscribe";
 

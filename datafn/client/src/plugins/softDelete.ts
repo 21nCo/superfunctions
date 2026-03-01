@@ -24,6 +24,13 @@ export interface SoftDeleteConfig {
    * Default: "isDeleted"
    */
   isDeletedField?: string;
+
+  /**
+   * LOW-029: Optional timestamp factory. Defaults to `() => new Date()`.
+   * Override for testability (deterministic timestamps in tests) or to use
+   * a server-authoritative clock instead of the local device clock.
+   */
+  getTimestamp?: () => Date;
 }
 
 /**
@@ -36,6 +43,8 @@ export function createSoftDeletePlugin(config: SoftDeleteConfig): DatafnPlugin {
   const deletedAtField = config.deletedAtField ?? "deletedAt";
   const isDeletedField = config.isDeletedField ?? "isDeleted";
   const resourceSet = new Set(config.resources);
+  // LOW-029: Use configurable timestamp factory for testability
+  const getTimestamp = config.getTimestamp ?? (() => new Date());
 
   return {
     name: "soft-delete",
@@ -91,7 +100,7 @@ export function createSoftDeletePlugin(config: SoftDeleteConfig): DatafnPlugin {
       operation: "merge",
       record: {
         [isDeletedField]: true,
-        [deletedAtField]: new Date(),
+        [deletedAtField]: getTimestamp(),
       },
     };
   }

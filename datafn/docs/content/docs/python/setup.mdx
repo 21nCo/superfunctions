@@ -1,0 +1,76 @@
+---
+title: "Setup"
+description: "Install and configure the Python SDK."
+---
+
+## Installation
+
+Add `datafn` to your project dependencies:
+
+```bash
+pip install datafn
+```
+
+Or in `pyproject.toml`:
+
+```toml
+[project]
+dependencies = [
+    "datafn",
+]
+```
+
+## Basic Configuration
+
+Create a DataFn server using `create_datafn_server`:
+
+```python
+from datafn import create_datafn_server, DatafnServerConfig
+
+schema = {
+    "resources": [
+        {
+            "name": "todos",
+            "version": 1,
+            "idPrefix": "td",
+            "fields": [
+                {"name": "title", "type": "string", "required": True},
+                {"name": "completed", "type": "boolean", "required": True},
+            ],
+        }
+    ]
+}
+
+config = DatafnServerConfig(
+    schema=schema,
+    db=my_db_adapter,
+    authorize=my_authorize_fn,
+    limits={"maxLimit": 100},
+)
+
+server = create_datafn_server(config)
+```
+
+## DatafnServerConfig
+
+| Parameter | Type | Description |
+|---|---|---|
+| `schema` | `dict` | Required. DataFn schema definition with `resources` and optional `relations`. |
+| `db` | `Adapter` | Database adapter implementing the adapter protocol. |
+| `authorize` | `callable` | Async authorization callback `(ctx, action, payload) -> bool`. |
+| `limits` | `dict` | Optional limits: `maxLimit`, `maxTransactSteps`, `maxPayloadBytes`. |
+
+## Dict-Based Configuration
+
+You can also pass configuration as a plain dictionary:
+
+```python
+server = create_datafn_server({
+    "schema": schema,
+    "db": my_db_adapter,
+    "authorize": my_authorize_fn,
+    "limits": {"maxLimit": 50},
+})
+```
+
+Both forms are equivalent. The dict is internally converted to a `DatafnServerConfig` instance.

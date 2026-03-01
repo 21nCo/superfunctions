@@ -10,6 +10,7 @@
 import type { Adapter } from "@superfunctions/db";
 import type { RedisAdapter, KVStoreAdapter } from "@superfunctions/db";
 import { ensureInternalTable } from "../internal-tables.js";
+import type { DatafnLogger } from "../../logger.js";
 
 /**
  * Interface for sequence generation stores
@@ -110,7 +111,49 @@ export class KVSequenceStore implements SequenceStore {
 export class DatabaseSequenceStore implements SequenceStore {
   private ensured = false;
 
-  constructor(private db: Adapter) {}
+  constructor(private db: Adapter, private logger?: DatafnLogger) {}
+
+  /**
+   * DI-003: Ensure next_server_seq in meta is at least (minSeq + 1).
+   * Called by FallbackSequenceStore on Redis→DB failover to prevent duplicate sequences.
+   */
+  async ensureMinSeq(namespace: string, minSeq: number): Promise<void> {
+    if (!this.ensured) {
+      await ensureInternalTable(this.db, "__datafn_meta");
+      this.ensured = true;
+    }
+    try {
+      const meta = await this.db.internal.findOne("__datafn_meta", [
+        { field: "namespace", op: "eq", value: namespace },
+      ]);
+      const needed = minSeq + 1;
+      if (!meta) {
+        try {
+          await this.db.internal.create("__datafn_meta", {
+            id: `meta:${namespace}`,
+            namespace,
+            next_server_seq: needed,
+          });
+        } catch {
+          // Race: another process may have created it
+        }
+      } else {
+        const current = (meta.next_server_seq as number) || 1;
+        if (current < needed) {
+          await this.db.internal.update(
+            "__datafn_meta",
+            [{ field: "namespace", op: "eq", value: namespace }],
+            { next_server_seq: needed },
+          );
+        }
+      }
+    } catch (error) {
+      this.logger?.warn("Failed to ensureMinSeq during failover", {
+        error: String(error),
+        operation: "ensureMinSeq",
+      });
+    }
+  }
 
   async getNext(namespace: string): Promise<number> {
     return (await this.getNextN(namespace, 1))[0];
@@ -169,7 +212,11 @@ export class DatabaseSequenceStore implements SequenceStore {
         }
       } catch (error) {
         if (attempt === MAX_RETRIES - 1) {
-          console.error("Failed to get next serverSeq after max retries:", error);
+          this.logger?.error("Failed to get next serverSeq after max retries", {
+            error: String(error),
+            operation: "getNextN",
+            resource: "__datafn_meta",
+          });
           throw new Error("INTERNAL: Failed to allocate serverSeq after maximum retries");
         }
       }
@@ -194,23 +241,44 @@ export class DatabaseSequenceStore implements SequenceStore {
       }
       return ((meta.next_server_seq as number) || 1) - 1;
     } catch (error) {
-      console.error("Failed to get current serverSeq:", error);
+      this.logger?.error("Failed to get current serverSeq", {
+        error: String(error),
+        operation: "getCurrent",
+        resource: "__datafn_meta",
+      });
       return 0;
     }
   }
 }
 
 /**
- * Fallback sequence store that tries primary store first, falls back to database
+ * Fallback sequence store that tries primary store first, falls back to database.
+ * DI-003: Tracks the last known primary sequence per namespace so that on failover
+ * the DB store is synced to avoid duplicate sequences.
  */
 export class FallbackSequenceStore implements SequenceStore {
+  /** DI-003: Track last-issued seq per namespace from the primary store */
+  private lastKnownPrimarySeq = new Map<string, number>();
+
   constructor(
     private primary: SequenceStore,
     private fallback: SequenceStore,
+    private logger?: DatafnLogger,
   ) {}
 
   async getNext(namespace: string): Promise<number> {
     return (await this.getNextN(namespace, 1))[0];
+  }
+
+  /**
+   * DI-003: Sync the fallback (DB) store to start from at least lastKnownPrimarySeq+1.
+   * Prevents duplicate sequences after Redis→DB failover.
+   */
+  private async syncFallbackOnFailover(namespace: string): Promise<void> {
+    const lastKnown = this.lastKnownPrimarySeq.get(namespace);
+    if (lastKnown !== undefined && lastKnown > 0 && this.fallback instanceof DatabaseSequenceStore) {
+      await this.fallback.ensureMinSeq(namespace, lastKnown);
+    }
   }
 
   async getNextN(namespace: string, count: number): Promise<number[]> {
@@ -218,13 +286,25 @@ export class FallbackSequenceStore implements SequenceStore {
       if (this.primary.isHealthy) {
         const healthy = await this.primary.isHealthy();
         if (!healthy) {
-          console.warn("Primary sequence store unhealthy, using fallback");
+          this.logger?.warn("Primary sequence store unhealthy, using fallback", {
+            operation: "getNextN",
+          });
+          // DI-003: Sync DB store to last known primary seq before allocating
+          await this.syncFallbackOnFailover(namespace);
           return await this.fallback.getNextN(namespace, count);
         }
       }
-      return await this.primary.getNextN(namespace, count);
+      const seqs = await this.primary.getNextN(namespace, count);
+      // DI-003: Track the highest seq issued by the primary
+      this.lastKnownPrimarySeq.set(namespace, seqs[seqs.length - 1]);
+      return seqs;
     } catch (error) {
-      console.warn("Primary sequence store failed, using fallback:", error);
+      this.logger?.warn("Primary sequence store failed, using fallback", {
+        error: String(error),
+        operation: "getNextN",
+      });
+      // DI-003: Sync DB store to last known primary seq before allocating
+      await this.syncFallbackOnFailover(namespace);
       return await this.fallback.getNextN(namespace, count);
     }
   }
@@ -239,7 +319,10 @@ export class FallbackSequenceStore implements SequenceStore {
       }
       return await this.primary.getCurrent(namespace);
     } catch (error) {
-      console.warn("Primary sequence store failed for getCurrent, using fallback:", error);
+      this.logger?.warn("Primary sequence store failed for getCurrent, using fallback", {
+        error: String(error),
+        operation: "getCurrent",
+      });
       return await this.fallback.getCurrent(namespace);
     }
   }
@@ -272,28 +355,31 @@ export function createSequenceStore(config: {
   redis?: RedisAdapter;
   kvStore?: KVStoreAdapter;
   dbMapping?: DbMapping;
+  logger?: DatafnLogger;
 }): SequenceStore | undefined {
-  const { db, redis, kvStore, dbMapping } = config;
+  const { db, redis, kvStore, dbMapping, logger } = config;
   const mapping = dbMapping?.serverseq || "db";
 
   if (!db) {
     return undefined;
   }
 
-  const dbFallback = new DatabaseSequenceStore(db);
+  const dbFallback = new DatabaseSequenceStore(db, logger);
 
   if (mapping === "redis" && redis) {
     const primary = new RedisSequenceStore(redis);
-    return new FallbackSequenceStore(primary, dbFallback);
+    return new FallbackSequenceStore(primary, dbFallback, logger);
   }
 
   if (mapping === "kv" && kvStore) {
     if (!kvStore.incr) {
-      console.warn("KV store does not support incr(), falling back to database for serverSeq");
+      logger?.warn("KV store does not support incr(), falling back to database for serverSeq", {
+        operation: "createSequenceStore",
+      });
       return dbFallback;
     }
     const primary = new KVSequenceStore(kvStore);
-    return new FallbackSequenceStore(primary, dbFallback);
+    return new FallbackSequenceStore(primary, dbFallback, logger);
   }
 
   return dbFallback;

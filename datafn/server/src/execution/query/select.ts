@@ -402,9 +402,9 @@ function getRelationIds(
 
   if (relation.type === "one-many") {
     const recordId = record.id as string;
-    const allRecords = store.getRecords(relation.to as string);
     const fkField = relation.fkField || `${relation.inverse}Id`;
-    const relatedRecords = allRecords.filter((r) => r[fkField] === recordId);
+    // EXE-015: Use findRecords for O(m) targeted lookup instead of O(n) scan
+    const relatedRecords = store.findRecords(relation.to as string, fkField, recordId);
     const sorted = relatedRecords.sort((a, b) => {
       const aId = String(a.id || "");
       const bId = String(b.id || "");
@@ -457,9 +457,9 @@ function expandRelationToRecords(
 
   if (relation.type === "one-many") {
     const recordId = record.id as string;
-    const allRecords = store.getRecords(relation.to as string);
     const fkField = relation.fkField || `${relation.inverse}Id`;
-    const relatedRecords = allRecords.filter((r) => r[fkField] === recordId);
+    // EXE-015: Use findRecords for O(m) targeted lookup instead of O(n) scan
+    const relatedRecords = store.findRecords(relation.to as string, fkField, recordId);
     const sorted = relatedRecords.sort((a, b) => {
       const aId = String(a.id || "");
       const bId = String(b.id || "");
@@ -595,10 +595,9 @@ function expandRelation(
   // one-many: inverse of many-one
   if (relation.type === "one-many") {
     const recordId = record.id as string;
-    const allRecords = store.getRecords(relation.to as string);
     const fkField = relation.fkField || `${relation.inverse}Id`;
-
-    const relatedRecords = allRecords.filter((r) => r[fkField] === recordId);
+    // EXE-015: Use findRecords for O(m) targeted lookup instead of O(n) scan
+    const relatedRecords = store.findRecords(relation.to as string, fkField, recordId);
 
     // Sort by id for deterministic ordering
     const sorted = relatedRecords.sort((a, b) => {

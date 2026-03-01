@@ -1,0 +1,347 @@
+---
+title: "Routes"
+description: "HTTP endpoints provided by the DataFn server."
+---
+
+## Envelope Pattern
+
+All DataFn endpoints use a consistent response envelope:
+
+```typescript
+// Success
+{ ok: true, result: { /* endpoint-specific data */ } }
+
+// Error
+{ ok: false, error: { code: string, message: string, details: { path: string } } }
+```
+
+All POST endpoints accept `application/json` request bodies.
+
+---
+
+## GET /datafn/status
+
+Returns server metadata, capabilities, limits, and a schema hash for client-server schema agreement.
+
+**Response:**
+
+```typescript
+{
+  ok: true,
+  result: {
+    schemaHash: "sha256:abc123...",
+    capabilities: [
+      "dfql.query",
+      "dfql.mutation",
+      "dfql.transact",
+      "dfql.sync",
+      "dfql.seed"
+    ],
+    limits: {
+      maxLimit: 100,
+      maxTransactSteps: 100,
+      maxPayloadBytes: 5242880
+    },
+    serverTimeMs: 1709251200000
+  }
+}
+```
+
+The `serverTimeMs` value is rounded to the nearest minute to prevent server fingerprinting. Returns HTTP 500 if the database health check fails.
+
+---
+
+## POST /datafn/query
+
+Execute a DFQL query against a resource. Supports single queries or batch queries (array).
+
+**Request (single):**
+
+```typescript
+{
+  resource: "tasks",
+  version: 1,
+  select: ["id", "title", "status", "assignee.*"],
+  filters: { status: { $eq: "active" } },
+  sort: ["createdAt:desc", "id:asc"],
+  limit: 25,
+  offset: 0
+}
+```
+
+**Request (batch):**
+
+```typescript
+[
+  { resource: "tasks", version: 1, filters: { status: { $eq: "active" } } },
+  { resource: "users", version: 1, select: ["id", "name"] }
+]
+```
+
+**Response (single):**
+
+```typescript
+{
+  ok: true,
+  result: {
+    data: [{ id: "task_1", title: "Write docs", status: "active" }],
+    hasMore: false
+  }
+}
+```
+
+**Response (batch):**
+
+```typescript
+{
+  ok: true,
+  result: [
+    { data: [...], hasMore: false },
+    { data: [...], hasMore: false }
+  ]
+}
+```
+
+---
+
+## POST /datafn/mutation
+
+Execute a single DFQL mutation or a batch of mutations.
+
+**Request:**
+
+```typescript
+{
+  resource: "tasks",
+  version: 1,
+  operation: "merge",
+  id: "task_1",
+  clientId: "client_abc",
+  mutationId: "mut_001",
+  record: {
+    title: "Updated title",
+    status: "done"
+  }
+}
+```
+
+Valid operations: `insert`, `merge`, `replace`, `delete`, `relate`, `modifyRelation`, `unrelate`.
+
+**Response:**
+
+```typescript
+{
+  ok: true,
+  result: {
+    id: "task_1",
+    serverSeq: 42
+  }
+}
+```
+
+The `clientId` and `mutationId` fields enable idempotency. Replaying the same mutation returns the cached result.
+
+---
+
+## POST /datafn/transact
+
+Execute multiple query and mutation steps atomically.
+
+**Request:**
+
+```typescript
+{
+  steps: [
+    {
+      type: "mutation",
+      mutation: {
+        resource: "accounts",
+        version: 1,
+        operation: "merge",
+        id: "acc_1",
+        clientId: "c1",
+        mutationId: "m1",
+        record: { balance: 900 }
+      }
+    },
+    {
+      type: "mutation",
+      mutation: {
+        resource: "accounts",
+        version: 1,
+        operation: "merge",
+        id: "acc_2",
+        clientId: "c1",
+        mutationId: "m2",
+        record: { balance: 1100 }
+      }
+    }
+  ]
+}
+```
+
+**Response:**
+
+```typescript
+{
+  ok: true,
+  result: {
+    results: [
+      { id: "acc_1", serverSeq: 43 },
+      { id: "acc_2", serverSeq: 44 }
+    ]
+  }
+}
+```
+
+The number of steps is bounded by `limits.maxTransactSteps` (default: 100).
+
+---
+
+## POST /datafn/seed
+
+Initialize a dataset for a client. Idempotent -- repeated calls with the same namespace return success without side effects.
+
+**Request:**
+
+```typescript
+{
+  clientId: "client_abc"
+}
+```
+
+**Response:**
+
+```typescript
+{ ok: true, result: { ok: true } }
+```
+
+---
+
+## POST /datafn/clone
+
+Clone the full dataset for initial sync. Returns all records and the current server sequence number.
+
+**Request:**
+
+```typescript
+{
+  clientId: "client_abc"
+}
+```
+
+**Response:**
+
+```typescript
+{
+  ok: true,
+  result: {
+    data: {
+      tasks: [{ id: "task_1", title: "...", ... }],
+      users: [{ id: "user_1", name: "...", ... }]
+    },
+    serverSeq: 42
+  }
+}
+```
+
+---
+
+## POST /datafn/pull
+
+Pull changes since a given cursor. Returns incremental changes for the client to apply.
+
+**Request:**
+
+```typescript
+{
+  clientId: "client_abc",
+  cursor: "38"
+}
+```
+
+**Response:**
+
+```typescript
+{
+  ok: true,
+  result: {
+    changes: [
+      { resource: "tasks", id: "task_1", operation: "merge", record: { ... }, serverSeq: 39 },
+      { resource: "tasks", id: "task_2", operation: "delete", serverSeq: 40 }
+    ],
+    cursor: "40",
+    hasMore: false
+  }
+}
+```
+
+The number of changes returned per pull is bounded by `limits.maxPullLimit` (default: 1000). When `hasMore` is `true`, the client should pull again with the new cursor.
+
+---
+
+## POST /datafn/push
+
+Push local mutations from the client to the server. Mutations are validated, executed, and tracked for sync.
+
+**Request:**
+
+```typescript
+{
+  clientId: "client_abc",
+  mutations: [
+    {
+      resource: "tasks",
+      version: 1,
+      operation: "insert",
+      id: "task_3",
+      mutationId: "mut_003",
+      record: { title: "New task", status: "pending" }
+    }
+  ]
+}
+```
+
+**Response:**
+
+```typescript
+{
+  ok: true,
+  result: {
+    results: [{ id: "task_3", serverSeq: 43 }],
+    cursor: "43"
+  }
+}
+```
+
+After a successful push, connected WebSocket clients in the same namespace receive a cursor notification.
+
+---
+
+## POST /datafn/reconcile
+
+Reconcile client state with the server. Used to resolve conflicts after offline operations.
+
+**Request:**
+
+```typescript
+{
+  clientId: "client_abc",
+  clientState: {
+    tasks: [{ id: "task_1", version: 3 }]
+  }
+}
+```
+
+**Response:**
+
+```typescript
+{
+  ok: true,
+  result: {
+    resolved: [
+      { resource: "tasks", id: "task_1", record: { ... }, serverSeq: 42 }
+    ]
+  }
+}
+```

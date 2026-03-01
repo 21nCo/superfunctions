@@ -254,12 +254,13 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
         return typeof n === 'number' ? n : 0;
       },
 
-      async upsert<T = any>({ model, where, create, update, select }: UpsertParams): Promise<T> {
+      async upsert<T = any>({ model, where, create, update, select, conflictTarget }: UpsertParams): Promise<T> {
         const tbl = resolveTable(model);
         if (!where || where.length === 0) throw new Error('upsert requires a non-empty where clause targeting unique columns');
 
-        // Determine conflict target
-        let target: string | string[] | undefined = config.upsertKeys?.[model];
+        // Determine conflict target: explicit param > config > derived from where
+        let target: string | string[] | undefined =
+          conflictTarget ?? config.upsertKeys?.[model];
         if (!target) {
           // derive from where fields
           target = where.length === 1 ? where[0].field : where.map((w) => w.field);

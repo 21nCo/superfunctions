@@ -230,7 +230,7 @@ describe("Rate limiting integration", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       rateLimit: { enabled: false },
@@ -254,7 +254,7 @@ describe("Rate limiting integration", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
     });
@@ -276,7 +276,7 @@ describe("Rate limiting integration", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       rateLimit: {
@@ -340,7 +340,7 @@ describe("Rate limiting integration", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
       rateLimit: {
@@ -371,6 +371,45 @@ describe("Rate limiting integration", () => {
       }),
     );
     expect(res.status).toBe(429);
+
+    server.close();
+  });
+
+  it("SRV-009: 429 response includes Retry-After header with window duration", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+
+    const windowSeconds = 30;
+    const server = await createDatafnServer({ allowUnknownResources: true,
+      schema: testSchema,
+      db,
+      rateLimit: {
+        enabled: true,
+        maxRequests: 1,
+        windowSeconds,
+        keyExtractor: () => "shared-key",
+      },
+    });
+
+    // First request passes
+    await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({ resource: "task" }),
+      }),
+    );
+
+    // Second request is rate-limited
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({ resource: "task" }),
+      }),
+    );
+
+    expect(res.status).toBe(429);
+    // SRV-009: Retry-After header should be present with the window duration in seconds
+    expect(res.headers.get("Retry-After")).toBe(String(windowSeconds));
 
     server.close();
   });

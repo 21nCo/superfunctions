@@ -3,8 +3,10 @@
  * Converts execution errors to deterministic DatafnError objects
  */
 
+import type { DatafnErrorCode } from "@datafn/core";
+
 export interface DatafnError {
-  code: string;
+  code: DatafnErrorCode;
   message: string;
   details: { path: string; [key: string]: unknown };
 }
@@ -13,6 +15,11 @@ export interface DatafnError {
  * Classify an execution error into a deterministic DatafnError
  */
 export function classifyExecutionError(error: unknown): DatafnError {
+  // EXE-005: Check DatafnExecutionError first — has machine-readable code, no message matching needed
+  if (error instanceof DatafnExecutionError) {
+    return error.toDatafnError();
+  }
+
   // If it's already a DatafnError-shaped object, return it
   if (
     error &&
@@ -145,7 +152,7 @@ export function classifyExecutionError(error: unknown): DatafnError {
  * Create a DFQL validation error
  */
 export function createDfqlError(
-  code: string,
+  code: DatafnErrorCode,
   message: string,
   path: string = "$",
   extra?: Record<string, unknown>,
@@ -179,10 +186,10 @@ export function isValidationError(error: unknown): boolean {
  * Throw a classified error
  */
 export class DatafnExecutionError extends Error {
-  code: string;
+  code: DatafnErrorCode;
   details: { path: string; [key: string]: unknown };
 
-  constructor(code: string, message: string, path: string = "$", extra?: Record<string, unknown>) {
+  constructor(code: DatafnErrorCode, message: string, path: string = "$", extra?: Record<string, unknown>) {
     super(message);
     this.name = "DatafnExecutionError";
     this.code = code;

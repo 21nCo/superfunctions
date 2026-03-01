@@ -1,5 +1,5 @@
 {
-  "name": "cifn-runner",
+  "name": "@cifn/runner",
   "version": "0.0.1",
   "description": "CiFn runner - executes CI/CD pipeline jobs",
   "main": "dist/index.js",
@@ -14,9 +14,21 @@
   },
   "author": "21n",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cifn/typescript/runner"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cifn",
+    "schemaVersion": 1,
+    "namespace": "cifn"
+  },
   "dependencies": {
-    "@testfn/core": "file:../../../../testfn/typescript",
-    "cifn": "file:../control-plane",
+    "@cifn/control-plane": "file:../control-plane",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

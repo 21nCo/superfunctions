@@ -12,8 +12,26 @@ import {
   getRelationTarget,
   getRelation,
 } from "./schema.js";
-import { parseSelectToken } from "@datafn/core";
+import { parseSelectToken, checkPrototypePollution } from "@datafn/core";
 import { validateFilterDepth, validateRelationDepth } from "./depth.js";
+
+/**
+ * Limits for query validation caps (SEC-015, SEC-016, VAL-002 through VAL-005)
+ */
+export interface QueryValidationLimits {
+  maxLikePatternLength?: number;
+  maxSearchQueryLength?: number;
+  /** VAL-002: Max select tokens (default 50) */
+  maxSelectTokens?: number;
+  /** VAL-003: Max filter keys per nesting level (default 20) */
+  maxFilterKeysPerLevel?: number;
+  /** VAL-004: Max sort fields (default 10) */
+  maxSortFields?: number;
+  /** VAL-005: Max aggregation count (default 20) */
+  maxAggregations?: number;
+  /** VAL-009: Debug mode - when false, messages are generic */
+  debug?: boolean;
+}
 
 /**
  * Validate a single query against the schema
@@ -22,6 +40,7 @@ export function validateQuery(
   query: unknown,
   index: SchemaIndex,
   basePath: string = "$",
+  limits?: QueryValidationLimits,
 ): ValidationResult<void> {
   if (typeof query !== "object" || query === null || Array.isArray(query)) {
     return vErr("DFQL_INVALID", "Invalid DFQL: expected object or array", basePath);
@@ -49,6 +68,16 @@ export function validateQuery(
         // Validate select tokens
 
         if (q.select && Array.isArray(q.select)) {
+
+          // VAL-002: Select token count limit
+          const maxSelectTokens = limits?.maxSelectTokens ?? 50;
+          if (q.select.length > maxSelectTokens) {
+            return vErr(
+              "DFQL_INVALID",
+              `Select exceeds limit: ${q.select.length} tokens (max ${maxSelectTokens})`,
+              "select",
+            );
+          }
 
           for (const token of q.select) {
 
@@ -167,6 +196,8 @@ export function validateQuery(
 
             index,
 
+            limits,
+
           );
 
           if (!filterResult.ok) {
@@ -178,8 +209,17 @@ export function validateQuery(
         }
 
       
-    // Validate sort
+  // Validate sort
   if (q.sort && Array.isArray(q.sort)) {
+    // VAL-004: Sort field count limit
+    const maxSortFields = limits?.maxSortFields ?? 10;
+    if (q.sort.length > maxSortFields) {
+      return vErr(
+        "DFQL_INVALID",
+        `Sort fields exceed limit: ${q.sort.length} (max ${maxSortFields})`,
+        "sort",
+      );
+    }
     for (let i = 0; i < q.sort.length; i++) {
       const sortItem = q.sort[i];
       if (typeof sortItem !== "string") continue;
@@ -204,24 +244,54 @@ export function validateQuery(
 
   // Validate groupBy
   if (q.groupBy) {
-    const groupByResult = validateGroupBy(q, fieldNames);
+    const groupByResult = validateGroupBy(q, fieldNames, relationNames);
     if (!groupByResult.ok) {
       return groupByResult;
     }
   }
 
+  // Collect aggregation aliases for having validation (SEC-013)
+  const aggregationAliases = new Set<string>();
+  if (q.aggregations && typeof q.aggregations === "object" && !Array.isArray(q.aggregations)) {
+    for (const alias of Object.keys(q.aggregations as Record<string, unknown>)) {
+      aggregationAliases.add(alias);
+    }
+  }
+
   // Validate aggregations
   if (q.aggregations) {
+    // VAL-005: Aggregation count limit
+    if (typeof q.aggregations === "object" && q.aggregations !== null && !Array.isArray(q.aggregations)) {
+      const maxAggregations = limits?.maxAggregations ?? 20;
+      const aggCount = Object.keys(q.aggregations as Record<string, unknown>).length;
+      if (aggCount > maxAggregations) {
+        return vErr(
+          "DFQL_INVALID",
+          `Aggregations exceed limit: ${aggCount} (max ${maxAggregations})`,
+          "aggregations",
+        );
+      }
+    }
     const aggResult = validateAggregations(q.aggregations, fieldNames);
     if (!aggResult.ok) {
       return aggResult;
     }
   }
 
-  // Validate having
+  // Validate having (SEC-013: deep validation with schema fields + aggregation aliases)
   if (q.having) {
     if (typeof q.having !== "object" || Array.isArray(q.having)) {
       return vErr("DFQL_INVALID", "Invalid DFQL: having must be object", "having");
+    }
+    const havingResult = validateHaving(
+      q.having as Record<string, unknown>,
+      resourceName,
+      index,
+      aggregationAliases,
+      limits,
+    );
+    if (!havingResult.ok) {
+      return havingResult;
     }
   }
 
@@ -234,6 +304,12 @@ export function validateQuery(
 
     if (typeof search.query !== "string") {
       return vErr("DFQL_INVALID", "Search query must be string", "search.query");
+    }
+
+    // SEC-016: Search query length cap
+    const maxSearchQueryLength = limits?.maxSearchQueryLength ?? 1000;
+    if (search.query.length > maxSearchQueryLength) {
+      return vErr("DFQL_INVALID", `Search query exceeds maximum length (${maxSearchQueryLength})`, "search.query");
     }
 
     if (search.type && !["fullText", "semantic"].includes(search.type as string)) {
@@ -382,6 +458,7 @@ function validateCursor(
 function validateGroupBy(
   q: Record<string, unknown>,
   fieldNames: Set<string>,
+  relationNames: Set<string>,
 ): ValidationResult<void> {
   if (!Array.isArray(q.groupBy)) {
     return vErr("DFQL_INVALID", "Invalid DFQL: groupBy must be an array", "groupBy");
@@ -393,6 +470,19 @@ function validateGroupBy(
       return vErr(
         "DFQL_INVALID",
         "Invalid DFQL: groupBy element must be string",
+        `groupBy[${i}]`,
+      );
+    }
+    // SEC-014: Validate groupBy fields against schema.
+    // For plain fields: must exist in schema (fields or system fields).
+    // For dot-paths (e.g. "profile.city", "cat.type"): validate only the base
+    // segment, which may be a field or a relation (for relation traversals).
+    const baseSegment = field.includes(".") ? field.split(".")[0] : field;
+    const isDotPath = field.includes(".");
+    if (!fieldNames.has(isDotPath ? baseSegment : field) && !relationNames.has(baseSegment)) {
+      return vErr(
+        "DFQL_UNKNOWN_FIELD",
+        `Unknown field: groupBy[${i}]`,
         `groupBy[${i}]`,
       );
     }
@@ -469,18 +559,38 @@ function validateAggregations(
 }
 
 /**
- * Recursively validate filters against schema
+ * SEC-013: Validate having clause against schema fields + aggregation aliases.
+ * Reuses filter validation logic but extends valid field set with aggregation aliases.
  */
-export function validateFilters(
+export function validateHaving(
+  having: Record<string, unknown>,
+  resourceName: string,
+  index: SchemaIndex,
+  aggregationAliases: Set<string>,
+  limits?: QueryValidationLimits,
+): ValidationResult<void> {
+  // Build an augmented field set: schema fields + aggregation aliases
+  const fieldNames = index.fieldsByResource.get(resourceName);
+  if (!fieldNames) {
+    return vErr("DFQL_UNKNOWN_RESOURCE", `Unknown resource: ${resourceName}`, "having");
+  }
+
+  const augmentedFields = new Set([...fieldNames, ...aggregationAliases]);
+
+  // Use filter validation but with augmented field set for having clause
+  return validateHavingClause(having, resourceName, index, augmentedFields, limits);
+}
+
+/**
+ * Internal having clause validation (against augmented field set)
+ */
+function validateHavingClause(
   filters: Record<string, unknown>,
   resourceName: string,
   index: SchemaIndex,
+  augmentedFields: Set<string>,
+  limits?: QueryValidationLimits,
 ): ValidationResult<void> {
-  const fieldNames = index.fieldsByResource.get(resourceName);
-  if (!fieldNames) {
-    return vErr("DFQL_UNKNOWN_RESOURCE", `Unknown resource: ${resourceName}`, "$");
-  }
-
   for (const key of Object.keys(filters)) {
     // Logical operators
     if (key === "$and" || key === "$or") {
@@ -488,12 +598,84 @@ export function validateFilters(
       if (Array.isArray(value)) {
         for (const item of value) {
           if (item && typeof item === "object") {
-            const err = validateFilters(item as Record<string, unknown>, resourceName, index);
+            const err = validateHavingClause(item as Record<string, unknown>, resourceName, index, augmentedFields, limits);
             if (!err.ok) return err;
           }
         }
       }
       continue;
+    }
+
+    // Field must be in augmented set (schema fields + aggregation aliases)
+    if (!augmentedFields.has(key)) {
+      return vErr("DFQL_UNKNOWN_FIELD", `Unknown field in having: ${key}`, `having.${key}`);
+    }
+
+    // Validate operators on the value
+    const value = filters[key];
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const opResult = validateFilterOperators(value as Record<string, unknown>, key, limits);
+      if (!opResult.ok) return opResult;
+    }
+  }
+
+  return vOk(undefined);
+}
+
+/**
+ * Recursively validate filters against schema
+ */
+export function validateFilters(
+  filters: Record<string, unknown>,
+  resourceName: string,
+  index: SchemaIndex,
+  limits?: QueryValidationLimits,
+): ValidationResult<void> {
+  // SEC-008: Prototype pollution check on filter objects
+  const pollutionCheck = checkPrototypePollution(filters);
+  if (!pollutionCheck.ok) {
+    return vErr("DFQL_INVALID", `Disallowed key: ${pollutionCheck.key}`, "filters");
+  }
+
+  // VAL-003: Filter key count limit per nesting level
+  const maxFilterKeysPerLevel = limits?.maxFilterKeysPerLevel ?? 20;
+  const keyCount = Object.keys(filters).length;
+  if (keyCount > maxFilterKeysPerLevel) {
+    return vErr(
+      "DFQL_INVALID",
+      `Filter keys exceed limit: ${keyCount} (max ${maxFilterKeysPerLevel})`,
+      "filters",
+    );
+  }
+
+  const fieldNames = index.fieldsByResource.get(resourceName);
+  if (!fieldNames) {
+    return vErr("DFQL_UNKNOWN_RESOURCE", `Unknown resource: ${resourceName}`, "$");
+  }
+
+  for (const key of Object.keys(filters)) {
+    // Logical operators
+    if (key === "$and") {
+      const value = filters[key];
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item && typeof item === "object") {
+          const err = validateFilters(item as Record<string, unknown>, resourceName, index, limits);
+            if (!err.ok) return err;
+          }
+        }
+      }
+      continue;
+    }
+
+    // SRV-015: $or is evaluated in-memory but silently dropped by pushdown queries.
+    // Reject at validation time to give callers a clear error.
+    if (key === "$or") {
+      return vErr(
+        "DFQL_UNSUPPORTED",
+        "Unsupported DFQL feature: filters.$or",
+        "filters",
+      );
     }
 
     // Dot-path: "goal.label" or "profile.city"
@@ -574,7 +756,7 @@ export function validateFilters(
 
         const subFilter = ops[opKey];
         if (subFilter && typeof subFilter === "object") {
-          const subErr = validateFilters(subFilter as Record<string, unknown>, targetRes, index);
+        const subErr = validateFilters(subFilter as Record<string, unknown>, targetRes, index, limits);
           if (!subErr.ok) return subErr;
         }
       }
@@ -589,51 +771,11 @@ export function validateFilters(
     // Field value validation (operators)
     const value = filters[key];
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const opResult = validateFilterOperators(value as Record<string, unknown>, key);
+      const opResult = validateFilterOperators(value as Record<string, unknown>, key, limits);
       if (!opResult.ok) {
         return opResult;
       }
     }
-  }
-
-  return vOk(undefined);
-}
-
-/**
- * Validate dot-path in filters
- */
-function validateDotPath(
-  key: string,
-  resourceName: string,
-  index: SchemaIndex,
-): ValidationResult<void> {
-  const parts = key.split(".");
-  let currentRes = resourceName;
-
-  for (let i = 0; i < parts.length - 1; i++) {
-    const relName = parts[i];
-    const rel = getRelation(index, currentRes, relName);
-
-    if (!rel) {
-      return vErr("DFQL_UNKNOWN_FIELD", `Unknown path segment: ${relName}`, `filters.${key}`);
-    }
-
-    const target = getRelationTarget(index, currentRes, relName);
-    if (!target) {
-      return vErr("DFQL_UNKNOWN_FIELD", `Unknown path segment: ${relName}`, `filters.${key}`);
-    }
-    currentRes = target;
-  }
-
-  const lastField = parts[parts.length - 1];
-  const targetFields = index.fieldsByResource.get(currentRes);
-
-  if (!targetFields?.has(lastField)) {
-    return vErr(
-      "DFQL_UNKNOWN_FIELD",
-      `Unknown field: ${lastField} on ${currentRes}`,
-      `filters.${key}`,
-    );
   }
 
   return vOk(undefined);
@@ -645,6 +787,7 @@ function validateDotPath(
 function validateFilterOperators(
   ops: Record<string, unknown>,
   fieldKey: string,
+  limits?: QueryValidationLimits,
 ): ValidationResult<void> {
   const validOps = [
     "eq", "$eq",
@@ -670,6 +813,8 @@ function validateFilterOperators(
     "$any", "$all", "$none",
   ];
 
+  const maxLikePatternLength = limits?.maxLikePatternLength ?? 200;
+
   for (const opKey of Object.keys(ops)) {
     if (!validOps.includes(opKey)) {
       return vErr(
@@ -677,6 +822,17 @@ function validateFilterOperators(
         `Unsupported DFQL feature: filters.${fieldKey}.${opKey}`,
         `filters.${fieldKey}.${opKey}`,
       );
+    }
+    // SEC-015: LIKE/ILIKE pattern length cap
+    if (opKey === "$like" || opKey === "$ilike" || opKey === "like" || opKey === "ilike") {
+      const patternValue = ops[opKey];
+      if (typeof patternValue === "string" && patternValue.length > maxLikePatternLength) {
+        return vErr(
+          "DFQL_INVALID",
+          `LIKE pattern exceeds maximum length (${maxLikePatternLength})`,
+          `filters.${fieldKey}.${opKey}`,
+        );
+      }
     }
   }
 
@@ -689,7 +845,22 @@ function validateFilterOperators(
 export function validateQueryBody(
   body: unknown,
   index: SchemaIndex,
-  opts: { maxLimit: number; hasSearchPlugin: boolean },
+  opts: {
+    maxLimit: number;
+    hasSearchPlugin: boolean;
+    maxLikePatternLength?: number;
+    maxSearchQueryLength?: number;
+    /** VAL-002 */
+    maxSelectTokens?: number;
+    /** VAL-003 */
+    maxFilterKeysPerLevel?: number;
+    /** VAL-004 */
+    maxSortFields?: number;
+    /** VAL-005 */
+    maxAggregations?: number;
+    /** VAL-009 */
+    debug?: boolean;
+  },
 ): ValidationResult<{ isBatch: boolean; queries: Record<string, unknown>[] }> {
   if (typeof body !== "object" || body === null) {
     return vErr("DFQL_INVALID", "Invalid DFQL: expected object or array", "$");
@@ -708,6 +879,17 @@ export function validateQueryBody(
 
     const query = q as Record<string, unknown>;
 
+    // SEC-016: Check search query length BEFORE plugin check (security cap always applies)
+    if (query.search && typeof query.search === "object" && query.search !== null) {
+      const searchObj = query.search as Record<string, unknown>;
+      if (typeof searchObj.query === "string") {
+        const maxSearchQueryLength = opts.maxSearchQueryLength ?? 1000;
+        if (searchObj.query.length > maxSearchQueryLength) {
+          return vErr("DFQL_INVALID", `Search query exceeds maximum length (${maxSearchQueryLength})`, "search.query");
+        }
+      }
+    }
+
     // Check for search operation - require searchfn plugin
     if (query.search && !opts.hasSearchPlugin) {
       return vErr("DFQL_UNSUPPORTED", "DFQL search requires searchfn plugin", "search");
@@ -719,7 +901,16 @@ export function validateQueryBody(
     }
 
     // Validate query against schema
-    const result = validateQuery(query, index, isBatch ? `$[${i}]` : "$");
+    const queryLimits: QueryValidationLimits = {
+      maxLikePatternLength: opts.maxLikePatternLength,
+      maxSearchQueryLength: opts.maxSearchQueryLength,
+      maxSelectTokens: opts.maxSelectTokens,
+      maxFilterKeysPerLevel: opts.maxFilterKeysPerLevel,
+      maxSortFields: opts.maxSortFields,
+      maxAggregations: opts.maxAggregations,
+      debug: opts.debug,
+    };
+    const result = validateQuery(query, index, isBatch ? `$[${i}]` : "$", queryLimits);
     if (!result.ok) {
       // Add index to error for batch operations
       if (isBatch) {

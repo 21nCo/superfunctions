@@ -53,25 +53,48 @@ export function computeNextCursor(
 
   return null;
 }
+/**
+ * LOW-016: Binary search to efficiently find the first record strictly after `cursor`.
+ * Since records are already sorted by `sortTerms`, the predicate isAfterCursor is
+ * monotonically non-decreasing: once true, all subsequent records are also true.
+ * Time complexity: O(log n) vs the previous O(n) linear scan.
+ */
+function findFirstAfterCursor(
+  records: Record<string, unknown>[],
+  cursor: Record<string, unknown>,
+  sortTerms: SortTerm[],
+): number {
+  let lo = 0;
+  let hi = records.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (isAfterCursor(records[mid], cursor, sortTerms)) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+
 export function applyCursorAfter(
   records: Record<string, unknown>[],
   cursor: Record<string, unknown>,
   sortTerms: SortTerm[]
 ): Record<string, unknown>[] {
-  // Find the position after the cursor
-  const result: Record<string, unknown>[] = [];
-
-  for (const record of records) {
-    if (isAfterCursor(record, cursor, sortTerms)) {
-      result.push(record);
-    }
-  }
-
-  return result;
+  const startIdx = findFirstAfterCursor(records, cursor, sortTerms);
+  return records.slice(startIdx);
 }
 
 /**
- * Check if a record is strictly after the cursor based on sort terms
+ * Check if a record is strictly after the cursor based on sort terms.
+ *
+ * LOW-017: Null/undefined ordering:
+ * - null/undefined record value sorts BEFORE any non-null cursor value (cmp = -1)
+ *   so a null record field is "before" any cursor that has a value for that field.
+ * - null/undefined cursor value sorts AFTER any non-null record value (cmp = 1)
+ *   so a non-null record value is "after" a null cursor position.
+ * This matches SQL NULL FIRST (ASC) / NULL LAST (DESC) defaults for most engines.
  */
 function isAfterCursor(
   record: Record<string, unknown>,
@@ -89,8 +112,10 @@ function isAfterCursor(
     // Compare values
     let cmp = 0;
     if (recordVal === null || recordVal === undefined) {
+      // Null record value sorts before any non-null cursor value
       cmp = -1;
     } else if (cursorVal === null || cursorVal === undefined) {
+      // Non-null record value sorts after null cursor position
       cmp = 1;
     } else if (typeof recordVal === "string" && typeof cursorVal === "string") {
       cmp = recordVal.localeCompare(cursorVal);

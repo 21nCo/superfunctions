@@ -11,17 +11,33 @@ export interface MemoryStoreData {
 
 export class MemoryStore implements DataStore {
   private data: MemoryStoreData;
+  // SRV-014: Cache sorted key arrays; invalidated on every write to that resource
+  private sortedKeysCaches: Map<string, string[]> = new Map();
+  // EXE-002: Map-based join store for O(1) setJoinRow; outer key = relationKey
+  private joinStore: Map<string, Map<string, JoinRow>> = new Map();
 
   constructor(data: MemoryStoreData) {
     this.data = data;
+    // Initialise joinStore from any pre-existing data.joins
+    for (const [key, rows] of Object.entries(data.joins)) {
+      const rowMap = new Map<string, JoinRow>();
+      for (const row of rows) {
+        rowMap.set(`${row.from}:${row.to}`, row);
+      }
+      this.joinStore.set(key, rowMap);
+    }
   }
 
   getRecords(resource: string): Record<string, unknown>[] {
     const table = this.data.records[resource];
     if (!table) return [];
 
-    // Return records sorted by id for deterministic ordering
-    const ids = Object.keys(table).sort();
+    // SRV-014: Use cached sorted keys; rebuild only after a write
+    let ids = this.sortedKeysCaches.get(resource);
+    if (!ids) {
+      ids = Object.keys(table).sort();
+      this.sortedKeysCaches.set(resource, ids);
+    }
     return ids.map((id) => table[id]);
   }
 
@@ -32,7 +48,18 @@ export class MemoryStore implements DataStore {
   }
 
   getJoinRows(relationKey: string): JoinRow[] {
+    const rowMap = this.joinStore.get(relationKey);
+    if (rowMap) return Array.from(rowMap.values());
     return this.data.joins[relationKey] ?? [];
+  }
+
+  /**
+   * PER-005: Targeted lookup — find records where record[field] === value.
+   */
+  findRecords(resource: string, field: string, value: unknown): Record<string, unknown>[] {
+    const table = this.data.records[resource];
+    if (!table) return [];
+    return Object.values(table).filter(r => r[field] === value);
   }
 
   /**
@@ -47,6 +74,8 @@ export class MemoryStore implements DataStore {
       this.data.records[resource] = {};
     }
     this.data.records[resource][id] = record;
+    // SRV-014: Invalidate sorted key cache on write
+    this.sortedKeysCaches.delete(resource);
   }
 
   /**
@@ -55,11 +84,14 @@ export class MemoryStore implements DataStore {
   deleteRecord(resource: string, id: string): void {
     if (this.data.records[resource]) {
       delete this.data.records[resource][id];
+      // SRV-014: Invalidate sorted key cache on write
+      this.sortedKeysCaches.delete(resource);
     }
   }
 
   /**
    * Set/insert a join row
+   * EXE-002: O(1) via Map index instead of O(n) findIndex
    */
   setJoinRow(
     relationKey: string,
@@ -67,24 +99,15 @@ export class MemoryStore implements DataStore {
     to: string,
     metadata: Record<string, unknown>
   ): void {
-    if (!this.data.joins[relationKey]) {
-      this.data.joins[relationKey] = [];
+    if (!this.joinStore.has(relationKey)) {
+      this.joinStore.set(relationKey, new Map());
     }
-
-    // Check if join row already exists
-    const existingIndex = this.data.joins[relationKey].findIndex(
-      (j) => j.from === from && j.to === to
-    );
-
+    const rowMap = this.joinStore.get(relationKey)!;
+    const compositeKey = `${from}:${to}`;
     const joinRow: JoinRow = { from, to, ...metadata };
-
-    if (existingIndex >= 0) {
-      // Update existing
-      this.data.joins[relationKey][existingIndex] = joinRow;
-    } else {
-      // Insert new
-      this.data.joins[relationKey].push(joinRow);
-    }
+    rowMap.set(compositeKey, joinRow);
+    // Keep data.joins in sync for snapshot/fromSnapshot round-trip
+    this.data.joins[relationKey] = Array.from(rowMap.values());
   }
 
   /**
@@ -96,31 +119,31 @@ export class MemoryStore implements DataStore {
     to: string,
     metadata: Record<string, unknown>
   ): void {
-    if (!this.data.joins[relationKey]) {
-      return;
-    }
-
-    const joinRow = this.data.joins[relationKey].find(
-      (j) => j.from === from && j.to === to
-    );
-
-    if (joinRow) {
-      // Update metadata
-      Object.assign(joinRow, metadata);
+    const rowMap = this.joinStore.get(relationKey);
+    if (!rowMap) return;
+    const compositeKey = `${from}:${to}`;
+    const existing = rowMap.get(compositeKey);
+    if (existing) {
+      Object.assign(existing, metadata);
+      // Sync to data.joins
+      this.data.joins[relationKey] = Array.from(rowMap.values());
     }
   }
 
   /**
    * Delete a join row
+   * EXE-002: O(1) via Map deletion; also keeps data.joins in sync
    */
   deleteJoinRow(relationKey: string, from: string, to: string): void {
-    if (!this.data.joins[relationKey]) {
-      return;
+    const rowMap = this.joinStore.get(relationKey);
+    if (rowMap) {
+      rowMap.delete(`${from}:${to}`);
+      this.data.joins[relationKey] = Array.from(rowMap.values());
+    } else if (this.data.joins[relationKey]) {
+      this.data.joins[relationKey] = this.data.joins[relationKey].filter(
+        (j) => !(j.from === from && j.to === to)
+      );
     }
-
-    this.data.joins[relationKey] = this.data.joins[relationKey].filter(
-      (j) => !(j.from === from && j.to === to)
-    );
   }
 
   /**
@@ -129,8 +152,8 @@ export class MemoryStore implements DataStore {
   snapshot(): MemoryStoreData {
     // Deep clone the data
     return {
-      records: JSON.parse(JSON.stringify(this.data.records)),
-      joins: JSON.parse(JSON.stringify(this.data.joins)),
+      records: structuredClone(this.data.records),
+      joins: structuredClone(this.data.joins),
     };
   }
 
@@ -139,8 +162,8 @@ export class MemoryStore implements DataStore {
    */
   static fromSnapshot(snapshot: MemoryStoreData): MemoryStore {
     return new MemoryStore({
-      records: JSON.parse(JSON.stringify(snapshot.records)),
-      joins: JSON.parse(JSON.stringify(snapshot.joins)),
+      records: structuredClone(snapshot.records),
+      joins: structuredClone(snapshot.joins),
     });
   }
 
@@ -148,8 +171,8 @@ export class MemoryStore implements DataStore {
    * Commit a snapshot to this store
    */
   commitSnapshot(snapshot: MemoryStoreData): void {
-    this.data.records = JSON.parse(JSON.stringify(snapshot.records));
-    this.data.joins = JSON.parse(JSON.stringify(snapshot.joins));
+    this.data.records = structuredClone(snapshot.records);
+    this.data.joins = structuredClone(snapshot.joins);
   }
 
   /**

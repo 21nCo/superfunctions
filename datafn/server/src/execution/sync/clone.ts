@@ -25,6 +25,8 @@ export interface CloneResult {
   cursors: Record<string, string>;
   joins?: Record<string, Array<Record<string, unknown>>>;
   next?: Record<string, string | null>;
+  /** SCA-002: true when auto-pagination was triggered because total > maxCloneRecords */
+  paginated?: boolean;
   error?: {
     code: string;
     message: string;
@@ -41,6 +43,7 @@ export async function executeClone(
   db: Adapter,
   namespace: string,
   sequenceStore?: SequenceStore,
+  maxCloneRecords: number = 10_000,
 ): Promise<CloneResult> {
   // Validate clientId
   if (!request.clientId || typeof request.clientId !== "string") {
@@ -123,7 +126,7 @@ export async function executeClone(
     try {
       // Build where clause for afterId pagination
       const where = afterId
-        ? [{ field: "id", operator: ">", value: afterId }]
+        ? [{ field: "id", operator: "gt", value: afterId }]
         : [];
 
       const records = await db.findMany({
@@ -169,28 +172,94 @@ export async function executeClone(
       }
     }
   } else {
-    // Non-paginated: get all records for each table, sorted by id
+    // SCA-002: Count total records first to decide if auto-pagination is needed
+    let totalCount = 0;
+    const tableCounts: Record<string, number> = {};
     for (const tableName of tablesToClone) {
       try {
-        const records = await db.findMany({
-          model: tableName,
-          where: [],
-          orderBy: [{ field: "id", direction: "asc" }],
-          namespace,
-        });
-
-        data[tableName] = records;
-
-        // Get latest serverSeq for this table as cursor
-        const latestSeq = await changeTracking.getLatestServerSeq({
-          resource: tableName,
-        });
-        cursors[tableName] = String(latestSeq);
-      } catch (error) {
-        // On adapter error, return empty data for this table
-        data[tableName] = [];
-        cursors[tableName] = "0";
+        if (typeof db.count === "function") {
+          tableCounts[tableName] = await db.count({ model: tableName, where: [], namespace });
+        } else {
+          const recs = await db.findMany({ model: tableName, where: [], namespace });
+          tableCounts[tableName] = recs.length;
+        }
+        totalCount += tableCounts[tableName];
+      } catch {
+        tableCounts[tableName] = 0;
       }
+    }
+
+    let paginated = false;
+
+    if (totalCount > maxCloneRecords) {
+      // SCA-002: Auto-paginate — return first maxCloneRecords records across tables
+      paginated = true;
+      let remaining = maxCloneRecords;
+
+      for (const tableName of tablesToClone) {
+        try {
+          if (remaining <= 0) {
+            data[tableName] = [];
+            next[tableName] = tableCounts[tableName] > 0 ? null : null;
+          } else {
+            const records = await db.findMany({
+              model: tableName,
+              where: [],
+              orderBy: [{ field: "id", direction: "asc" }],
+              limit: remaining,
+              namespace,
+            });
+            data[tableName] = records;
+            remaining -= records.length;
+
+            // Set next cursor if more records exist
+            if (records.length < tableCounts[tableName]) {
+              const lastRecord = records[records.length - 1];
+              next[tableName] = lastRecord?.id as string ?? null;
+            } else {
+              next[tableName] = null;
+            }
+          }
+
+          const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
+          cursors[tableName] = String(latestSeq);
+        } catch {
+          data[tableName] = [];
+          cursors[tableName] = "0";
+        }
+      }
+    } else {
+      // Non-paginated: get all records for each table, sorted by id
+      for (const tableName of tablesToClone) {
+        try {
+          const records = await db.findMany({
+            model: tableName,
+            where: [],
+            orderBy: [{ field: "id", direction: "asc" }],
+            namespace,
+          });
+
+          data[tableName] = records;
+
+          const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
+          cursors[tableName] = String(latestSeq);
+        } catch {
+          data[tableName] = [];
+          cursors[tableName] = "0";
+        }
+      }
+    }
+
+    // Set paginated flag on result if needed (handled below in return)
+    if (paginated) {
+      return {
+        ok: true,
+        data,
+        cursors,
+        joins,
+        next: Object.keys(next).length > 0 ? next : undefined,
+        paginated: true,
+      };
     }
   }
 

@@ -4,12 +4,14 @@ import type { DFQLQuery, QueryResult, AggregateResult } from "./dfql.js";
 import { executeQuery } from "./execute.js";
 import type { SearchFnPlugin } from "../../plugins/searchfn.js";
 import { DatafnExecutionError } from "../errors.js";
+import type { DatafnLogger } from "../../logger.js";
 
 export async function executeSearchQuery(
   query: DFQLQuery,
   schema: DatafnSchema,
   store: DataStore,
   searchPlugin: SearchFnPlugin,
+  logger?: DatafnLogger,
 ): Promise<QueryResult | AggregateResult> {
   if (!query.search) {
     throw new DatafnExecutionError(
@@ -30,7 +32,21 @@ export async function executeSearchQuery(
   // 2. Merge filters
   // Implicit: (Original Filters) AND (id IN candidates)
   // Note: if candidates is empty, id IN [] should return 0 results.
-  const candidateFilter = { id: { in: candidates } };
+  // EXE-017: Cap IN clause to prevent unbounded queries
+  const MAX_SEARCH_CANDIDATES = 1000;
+  const cappedCandidates =
+    candidates.length > MAX_SEARCH_CANDIDATES
+      ? (() => {
+          logger?.warn("Search returned too many candidates, capping result set", {
+            operation: "executeSearchQuery",
+            resource: query.resource,
+            candidateCount: candidates.length,
+            maxCandidates: MAX_SEARCH_CANDIDATES,
+          });
+          return candidates.slice(0, MAX_SEARCH_CANDIDATES);
+        })()
+      : candidates;
+  const candidateFilter = { id: { in: cappedCandidates } };
 
   let mergedFilters: Record<string, unknown> = candidateFilter;
 

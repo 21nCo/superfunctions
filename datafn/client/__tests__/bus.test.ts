@@ -247,3 +247,80 @@ describe("EventBus error isolation (BUS-001)", () => {
     expect(errorHandler).not.toHaveBeenCalled();
   });
 });
+
+describe("EventBus — unsubscribe safety during emit (CLI-005)", () => {
+  const makeEvent = (): DatafnEvent => ({
+    type: "mutation_applied",
+    resource: "task",
+    ids: ["task:1"],
+    mutationId: "m-1",
+    action: "merge",
+    timestampMs: Date.now(),
+  });
+
+  it("handler that unsubscribes itself does not prevent subsequent handlers from firing", () => {
+    const bus = new EventBus();
+    const order: string[] = [];
+    let unsubA: () => void;
+
+    // Subscribe A, which unsubscribes itself during the first call
+    unsubA = bus.subscribe(() => {
+      order.push("A");
+      unsubA();
+    });
+    bus.subscribe(() => order.push("B"));
+    bus.subscribe(() => order.push("C"));
+
+    bus.emit(makeEvent());
+    // All three fire on the first emit (snapshot taken before iteration)
+    expect(order).toEqual(["A", "B", "C"]);
+
+    // A was unsubscribed; only B and C fire on second emit
+    order.length = 0;
+    bus.emit(makeEvent());
+    expect(order).toEqual(["B", "C"]);
+  });
+
+  it("handler that unsubscribes a later handler still delivers to that handler in the current emit", () => {
+    const bus = new EventBus();
+    const called: string[] = [];
+    let unsubB: () => void;
+
+    bus.subscribe(() => {
+      called.push("A");
+      unsubB(); // Unsubscribes B during A's execution
+    });
+    unsubB = bus.subscribe(() => called.push("B"));
+    bus.subscribe(() => called.push("C"));
+
+    bus.emit(makeEvent());
+    // All three fire on first emit (snapshot taken before A could unsubscribe B)
+    expect(called).toEqual(["A", "B", "C"]);
+
+    // B is now unsubscribed; second emit skips B
+    called.length = 0;
+    bus.emit(makeEvent());
+    expect(called).toEqual(["A", "C"]);
+  });
+
+  it("subscriptions added during emit are not called in the current emit", () => {
+    const bus = new EventBus();
+    const called: string[] = [];
+
+    bus.subscribe(() => {
+      called.push("A");
+      // Add a new handler during emit
+      bus.subscribe(() => called.push("late"));
+    });
+    bus.subscribe(() => called.push("B"));
+
+    bus.emit(makeEvent());
+    // "late" was added after the snapshot — not called this emit
+    expect(called).toEqual(["A", "B"]);
+
+    // "late" is now registered; fires on next emit
+    called.length = 0;
+    bus.emit(makeEvent());
+    expect(called).toContain("late");
+  });
+});

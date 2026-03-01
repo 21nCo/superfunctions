@@ -24,7 +24,7 @@ describe("DB-backed Idempotency", () => {
     await sharedDb.initialize();
 
     // First server instance
-    const server1 = await createDatafnServer({
+    const server1 = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db: sharedDb,
     });
@@ -50,7 +50,7 @@ describe("DB-backed Idempotency", () => {
     expect(body1.result.deduped).toBe(false);
 
     // "Restart" server (new instance, same adapter)
-    const server2 = await createDatafnServer({
+    const server2 = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db: sharedDb,
     });
@@ -81,7 +81,7 @@ describe("DB-backed Idempotency", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
     });

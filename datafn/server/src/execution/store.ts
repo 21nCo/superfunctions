@@ -24,4 +24,10 @@ export interface DataStore {
    * Relation name format: "from.relation" (e.g., "task.tags")
    */
   getJoinRows(relationKey: string): JoinRow[];
+
+  /**
+   * PER-005: Targeted lookup — find records where record[field] === value.
+   * More efficient than getRecords() + filter for relation filter evaluation.
+   */
+  findRecords(resource: string, field: string, value: unknown): Record<string, unknown>[];
 }

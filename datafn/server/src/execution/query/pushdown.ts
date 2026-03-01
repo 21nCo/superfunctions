@@ -10,6 +10,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import { SYSTEM_FIELDS } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { DFQLQuery, QueryResult } from "./dfql.js";
 import { convertDfqlFilters, convertDfqlSort } from "./planner.js";
@@ -156,11 +157,13 @@ async function pushdownCore(
     );
   }
 
-  // 3. Push limit/offset to adapter only for non-cursor queries ------------
+  // 3. Push limit/offset to adapter
+  //    EXE-016: Also pass limit for cursor queries to avoid unbounded full-table fetches
   const pushdownLimit =
-    !hasCursor && query.limit != null
+    query.limit != null
       ? query.limit + 1 // +1 to detect next page
       : undefined;
+  // Offset only applies to non-cursor queries (cursor handles position)
   const pushdownOffset = !hasCursor ? query.offset : undefined;
 
   // 4. Fetch from adapter -------------------------------------------------
@@ -250,15 +253,8 @@ function projectFieldsPushdown(
   const resourceSchema = schema.resources.find((r) => r.name === resource);
   if (!resourceSchema) return { id: record.id };
 
-  // All valid base field names (schema fields + system fields)
-  const baseFields = new Set<string>([
-    "id",
-    "createdAt",
-    "updatedAt",
-    "createdBy",
-    "updatedBy",
-    "isArchived",
-  ]);
+  // LOW-018: Use shared SYSTEM_FIELDS constant from core instead of hardcoding
+  const baseFields = new Set<string>(SYSTEM_FIELDS);
   for (const f of resourceSchema.fields) baseFields.add(f.name);
 
   let result: Record<string, unknown>;

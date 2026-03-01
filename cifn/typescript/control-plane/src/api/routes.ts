@@ -178,12 +178,13 @@ export function createApp(options: CreateAppOptions = {}) {
       const jobSpec = resolvedSpec.jobs[jobKey];
       const mergedEnv = { ...(resolvedSpec.env ?? {}), ...(jobSpec.env ?? {}) };
       
+      const githubPayload = trigger.payload?.github as { ref?: string; repository?: string; sha?: string } | undefined;
       const context = {
         secrets: secFn,
         github: {
-          ref: trigger.payload?.github?.ref ?? run.pipelineRef?.ref ?? '',
-          repository: trigger.payload?.github?.repository ?? run.pipelineRef?.repo ?? '',
-          sha: trigger.payload?.github?.sha ?? '',
+          ref: githubPayload?.ref ?? run.pipelineRef?.ref ?? '',
+          repository: githubPayload?.repository ?? run.pipelineRef?.repo ?? '',
+          sha: githubPayload?.sha ?? '',
           event_name: trigger.type as string,
         },
       };
@@ -400,7 +401,7 @@ export function createApp(options: CreateAppOptions = {}) {
         pipelineResolver: options.pipelineResolver,
         secFn,
       });
-      return c.json(result.body, result.status);
+      return c.json(result.body, result.status as any);
   });
 
   return { app, store: runStore, queue };

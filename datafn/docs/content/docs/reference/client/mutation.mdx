@@ -1,0 +1,32 @@
+---
+title: "Mutation Execution"
+description: "Client mutation execution internals."
+---
+
+## Overview
+
+When you call `client.todos.insert(...)`, `client.todos.merge(...)`, or `client.todos.delete(...)`, the client executes a mutation pipeline with idempotency, offline support, and event emission.
+
+## Execution Flow
+
+1. **Generate mutationId** -- a unique mutation ID is generated for idempotency tracking.
+
+2. **Outbound date codec** -- date-typed fields in the mutation data are converted to epoch milliseconds using the schema field definitions.
+
+3. **beforeMutation hooks** -- all client-side plugins with `beforeMutation` are called. If any hook rejects, the mutation fails immediately (fail-closed).
+
+4. **Offline or remote execution**:
+   - **Online** -- the mutation is sent to the remote server. The response envelope is unwrapped.
+   - **Offline (offlinability enabled)** -- the mutation is appended to the local changelog via `storage.changelogAppend()`. The local storage is updated optimistically.
+
+5. **Unwrap** -- the response envelope is checked. On error, a `mutation_rejected` event is emitted.
+
+6. **Emit event** -- a `mutation_applied` event is emitted with the resource name, affected IDs, action, and fields.
+
+7. **afterMutation hooks** -- all client-side plugins with `afterMutation` are called. Errors are logged but do not fail the mutation (fail-open).
+
+## DebouncerMap Integration
+
+Mutations support debouncing for high-frequency operations (e.g., typing in a text field). When a `debounce` option is provided, the mutation is batched with other mutations to the same record and flushed after the debounce interval.
+
+The debouncer groups mutations by resource and record ID. When the debounce timer fires, the accumulated changes are merged into a single `merge` mutation and executed.

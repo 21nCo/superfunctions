@@ -1,0 +1,83 @@
+---
+title: "Route Handlers"
+description: "Server route handler internals."
+---
+
+## Overview
+
+Each route handler follows a common pattern: parse request, validate, authorize, execute, and return an envelope response. Authorization and JSON parsing are handled by the `withAuth` wrapper before the handler is called.
+
+## Query Handler
+
+`POST /datafn/query`
+
+1. **Classify** -- determine the query type (simple find, aggregate, search, relation expansion).
+2. **Validate** -- check resource exists, validate select tokens, filter keys, sort fields against schema and limits.
+3. **Pushdown** -- if a database adapter is available, push the query to the database with optimized SQL generation.
+4. **Execute** -- run the query against the data store (DB or memory).
+5. **Materialize** -- apply select projection, date field conversion, and relation expansion.
+6. **Hooks** -- run `afterQuery` plugins, which may transform/redact results.
+
+## Mutation Handler
+
+`POST /datafn/mutation`
+
+1. **Validate** -- check resource, action (insert/merge/delete), field names, types, and constraints.
+2. **Idempotency** -- if a `mutationId` is provided and was previously applied, return the cached result.
+3. **Execute** -- run the mutation against the data store within the namespace context.
+4. **Change tracking** -- record the change with a monotonic sequence number for sync.
+5. **Hooks** -- run `beforeMutation` (fail-closed) and `afterMutation` (fail-open) plugins.
+
+## Transact Handler
+
+`POST /datafn/transact`
+
+1. **Validate** -- check step count against `maxTransactSteps` limit.
+2. **Transaction scope** -- open a database transaction via the adapter.
+3. **Step execution** -- execute each step sequentially within the transaction. Steps can be queries or mutations.
+4. **Commit or rollback** -- commit on success, rollback on any step failure.
+5. **Return** -- envelope with results from all steps, or the first error.
+
+## Sync: Clone Handler
+
+`POST /datafn/clone`
+
+1. Read `resource` and optional `cursor` from the request.
+2. Query all records for the resource (paginated via cursor).
+3. Include current server sequence number.
+4. Return records and next cursor (null if complete).
+
+## Sync: Pull Handler
+
+`POST /datafn/pull`
+
+1. Read `cursor` (server sequence number) from the request.
+2. Query the change tracking table for changes after the cursor.
+3. Limit results to `maxPullLimit`.
+4. Return changes and the new cursor.
+
+## Sync: Push Handler
+
+`POST /datafn/push`
+
+1. Validate each mutation in the batch.
+2. Check idempotency for each mutation.
+3. Execute mutations within a transaction.
+4. Record changes with sequence numbers.
+5. Broadcast cursor update via WebSocket to namespace clients.
+
+## Sync: Reconcile Handler
+
+`POST /datafn/reconcile`
+
+1. Client sends resource record counts.
+2. Server compares against actual counts.
+3. Returns a list of resources that need re-cloning (count mismatch).
+
+## Seed Handler
+
+`POST /datafn/seed`
+
+1. Accepts an array of `{ resource, records }` objects.
+2. Upserts all records for each resource within the namespace.
+3. Returns success envelope.

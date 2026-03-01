@@ -244,6 +244,74 @@ describe("CrossTabRelay", () => {
     });
   });
 
+  describe("SEC-012: Message Validation", () => {
+    it("TV-SEC-034: invalid message (missing type) → no crash, no processing", async () => {
+      const eventBus = new EventBus();
+      const relay = new CrossTabRelay("test-namespace", eventBus);
+
+      const receivedEvents: DatafnEvent[] = [];
+      eventBus.subscribe((event) => {
+        receivedEvents.push(event);
+      });
+
+      // Simulate receiving a malicious/invalid message directly on the channel
+      const channel = (relay as any).channel;
+      if (channel?.onmessage) {
+        // Malicious message: plain object with no type
+        channel.onmessage({ data: { malicious: true } } as MessageEvent);
+        // Invalid message: null
+        channel.onmessage({ data: null } as MessageEvent);
+        // Invalid message: string
+        channel.onmessage({ data: "inject" } as MessageEvent);
+        // Invalid message: has sourceTabId but no event
+        channel.onmessage({ data: { sourceTabId: "x", event: null } } as MessageEvent);
+        // Invalid message: valid sourceTabId but event.type is unknown
+        channel.onmessage({ data: { sourceTabId: "x", event: { type: "UNKNOWN_TYPE" } } } as MessageEvent);
+      }
+
+      // Wait a tick
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // None of the invalid messages should have been processed
+      expect(receivedEvents).toHaveLength(0);
+
+      relay.close();
+    });
+
+    it("SEC-012: valid message with known type IS processed", async () => {
+      const eventBusA = new EventBus();
+      const eventBusB = new EventBus();
+
+      const relayA = new CrossTabRelay("test-ns", eventBusA);
+      const relayB = new CrossTabRelay("test-ns", eventBusB);
+
+      const receivedEvents: DatafnEvent[] = [];
+      eventBusB.subscribe((event) => {
+        if ((event as any).fromRemoteTab) receivedEvents.push(event);
+      });
+
+      // Broadcast a valid event from tab A
+      const validEvent: DatafnEvent = {
+        type: "sync_applied",
+        resource: "task",
+        ids: ["task:1"],
+        timestampMs: Date.now(),
+        mutationId: "m-1",
+        clientId: "client-a",
+      };
+
+      relayA.broadcast(validEvent);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Valid message should be processed
+      expect(receivedEvents).toHaveLength(1);
+      expect(receivedEvents[0].type).toBe("sync_applied");
+
+      relayA.close();
+      relayB.close();
+    });
+  });
+
   describe("Graceful Degradation", () => {
     it("gracefully degrades when BroadcastChannel unavailable", () => {
       // Remove BroadcastChannel

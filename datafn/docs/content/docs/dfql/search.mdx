@@ -1,0 +1,130 @@
+---
+title: "Search"
+description: "Full-text search in queries."
+---
+
+DFQL queries support full-text search through the `search` field. Search narrows the candidate set before filters, sorting, and pagination are applied.
+
+## Search Index Configuration
+
+Full-text search requires a search index on the resource. Configure this in your schema using the `indices.search` array:
+
+```typescript
+import { defineSchema } from "@datafn/core";
+
+const schema = defineSchema({
+  resources: [
+    {
+      name: "articles",
+      version: 1,
+      fields: [
+        { name: "title", type: "string", required: true },
+        { name: "body", type: "string", required: false },
+        { name: "tags", type: "array", required: false },
+      ],
+      indices: {
+        search: ["title", "body"],
+      },
+    },
+  ],
+});
+```
+
+Only fields listed in `indices.search` are included in the search index.
+
+## Basic Search
+
+Pass a `search` object in the query with a `query` string:
+
+```typescript
+const query: DfqlQuery = {
+  resource: "articles",
+  version: 1,
+  search: {
+    query: "typescript generics",
+  },
+};
+```
+
+## Search Options
+
+The search block supports additional options:
+
+```typescript
+{
+  resource: "articles",
+  version: 1,
+  search: {
+    query: "typescript generics",
+    type: "text",           // Search type: "text" (default) or "vector"
+    fields: ["title"],      // Restrict search to specific indexed fields
+    topK: 50,               // Maximum candidates to return from the search index
+  },
+}
+```
+
+| Field | Description | Default |
+|---|---|---|
+| `query` | The search query string | _(required)_ |
+| `type` | Search type | `"text"` |
+| `fields` | Subset of indexed fields to search | All indexed fields |
+| `topK` | Maximum number of candidate IDs from the index | Implementation-defined |
+
+## How Search Executes
+
+Search queries execute in two phases:
+
+1. **Candidate selection.** The search plugin (server-side SearchFn or client-side miniSearch) runs the query against the search index and returns a set of candidate record IDs.
+
+2. **Filter and paginate.** The candidate IDs are merged with any additional `filters` using `$and`, and the resulting set is passed through the standard query pipeline (filter, sort, paginate, select).
+
+This means search results respect all other query parameters. You can combine search with filters, sorting, and pagination:
+
+```typescript
+{
+  resource: "articles",
+  version: 1,
+  search: { query: "react hooks" },
+  filters: {
+    publishedAt: { $is_not_null: true },
+    category: "tutorials",
+  },
+  sort: ["-publishedAt"],
+  limit: 10,
+}
+```
+
+## Server-Side Search
+
+On the server, search is powered by the SearchFn plugin integration. The plugin's `selectCandidates` method is called with the search parameters and returns an array of matching record IDs.
+
+The server caps search candidates at 1000 by default to prevent unbounded queries. If the search index returns more candidates, the result set is truncated and a warning is logged.
+
+## Client-Side Search
+
+On the client, search is available through the `clientSearch` plugin, which uses miniSearch for in-memory full-text indexing. The client search plugin supports:
+
+- Tokenization of indexed fields
+- Phrase queries
+- Fuzzy matching
+- Prefix matching
+
+The client search index is built and maintained automatically as records are synced to local storage.
+
+## Combining Search with Aggregation
+
+Search can be combined with aggregation queries:
+
+```typescript
+{
+  resource: "articles",
+  version: 1,
+  search: { query: "typescript" },
+  groupBy: ["category"],
+  aggregations: {
+    count: { op: "count", field: "id" },
+  },
+}
+```
+
+The search phase narrows the candidate set first, then grouping and aggregation are applied to the matching records.

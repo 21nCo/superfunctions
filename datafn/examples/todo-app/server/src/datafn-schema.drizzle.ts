@@ -3,20 +3,26 @@
 import { bigint, boolean, index, jsonb, numeric, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const categories = pgTable("categories", {
+  __ns: text("__ns").notNull(),
   color: text("color").notNull().default("#646cff"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   id: text("id").primaryKey(),
   name: text("name").notNull(),
 }, (table) => [
+  index("idx_categories___ns").on(table.__ns),
   index("categories_name_idx").on(table.name),
 ]);
 
 export const kv = pgTable("kv", {
+  __ns: text("__ns").notNull(),
   id: text("id").primaryKey(),
   value: jsonb("value"),
-});
+}, (table) => [
+  index("idx_kv___ns").on(table.__ns),
+]);
 
 export const todos = pgTable("todos", {
+  __ns: text("__ns").notNull(),
   completed: boolean("completed").notNull().default(false),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   id: text("id").primaryKey(),
@@ -24,15 +30,18 @@ export const todos = pgTable("todos", {
   text: text("text").notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 }, (table) => [
+  index("idx_todos___ns").on(table.__ns),
   index("todos_completed_idx").on(table.completed),
   index("todos_created_at_idx").on(table.createdAt),
 ]);
 
 export const __datafn_join_todos_tags = pgTable("__datafn_join_todos_tags", {
+  __ns: text("__ns").notNull(),
   from: text("from").notNull(),
   id: text("id").primaryKey(),
   to: text("to").notNull(),
 }, (table) => [
+  index("idx___datafn_join_todos_tags___ns").on(table.__ns),
   uniqueIndex("__datafn_join_todos_tags_from_to_idx").on(table.from, table.to),
 ]);
 

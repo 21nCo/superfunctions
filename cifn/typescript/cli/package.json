@@ -1,8 +1,23 @@
 {
-  "name": "cifn-cli",
+  "name": "@cifn/cli",
   "version": "0.0.1",
   "description": "CLI for CiFn",
   "type": "module",
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cifn/typescript/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cifn",
+    "schemaVersion": 1,
+    "namespace": "cifn"
+  },
   "bin": {
     "cifn": "./dist/index.js"
   },
@@ -12,6 +27,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cifn/control-plane": "file:../control-plane",
     "commander": "^11.0.0",
     "js-yaml": "^4.1.0"
   },

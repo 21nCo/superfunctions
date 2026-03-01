@@ -68,7 +68,7 @@ export class FileFnArtifactsAdapter implements ArtifactsAdapter {
     formData.append('namespace', namespace);
     formData.append('key', key);
 
-    const headers: HeadersInit = {};
+    const headers: Record<string, string> = {};
     if (this.config.apiKey) {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
@@ -83,12 +83,12 @@ export class FileFnArtifactsAdapter implements ArtifactsAdapter {
       throw new Error(`FileFn upload failed: ${response.status} ${response.statusText}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as { fileId: string };
     return result.fileId;
   }
 
   async download(fileId: string): Promise<Buffer | null> {
-    const headers: HeadersInit = {};
+    const headers: Record<string, string> = {};
     if (this.config.apiKey) {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
@@ -124,7 +124,7 @@ export class FileFnArtifactsAdapter implements ArtifactsAdapter {
   }
 
   async getSignedUrl(fileId: string, expiresIn: number = 3600): Promise<string | null> {
-    const headers: HeadersInit = {};
+    const headers: Record<string, string> = {};
     if (this.config.apiKey) {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
@@ -141,7 +141,7 @@ export class FileFnArtifactsAdapter implements ArtifactsAdapter {
       throw new Error(`FileFn getSignedUrl failed: ${response.status} ${response.statusText}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as { url?: string };
     return result.url ?? null;
   }
 }

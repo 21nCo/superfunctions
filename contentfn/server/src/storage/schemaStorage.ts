@@ -29,7 +29,7 @@ export async function schemaGet(
 
   const row = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
   if (!row) {
     return err("SCHEMA_NOT_FOUND", "Schema not found for dataset", { dataset: input.dataset });
@@ -61,7 +61,7 @@ export async function schemaUpsert(
 
   const existing = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
 
   const now = nowISO();
@@ -97,7 +97,7 @@ export async function schemaUpsert(
 
   await config.db.update({
     model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
     data: {
       version: schema.version,
       schemaJson: schema,

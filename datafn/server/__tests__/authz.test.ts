@@ -150,6 +150,190 @@ describe("Server Authorization (AUTH-001)", () => {
   });
 });
 
+describe("SEC-009: Relation Authz Enforcement", () => {
+  const schemaWithRelation = {
+    resources: [
+      {
+        name: "task",
+        version: 1,
+        fields: [
+          { name: "title", type: "string" as const, required: false },
+          { name: "assigneeId", type: "string" as const, required: false },
+        ],
+        permissions: {
+          read: { fields: ["id", "title", "assigneeId"] },
+          write: { fields: ["title"] }, // "assignee" relation NOT in write fields
+        },
+      },
+    ],
+  };
+
+  it("TV-SEC-029: relate blocked when relation not in write.fields", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    const server = await createDatafnServer({ schema: schemaWithRelation, db });
+
+    const req = new Request("http://localhost/datafn/push", {
+      method: "POST",
+      body: JSON.stringify({
+        clientId: "client:1",
+        mutations: [
+          {
+            resource: "task",
+            version: 1,
+            operation: "relate",
+            id: "task:1",
+            relation: "assignee",
+            clientId: "client:1",
+            mutationId: "m-1",
+          },
+        ],
+      }),
+    });
+
+    const res = await server.router.handle(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("FORBIDDEN");
+  });
+
+  it("TV-SEC-030: relate allowed when relation in write.fields", async () => {
+    const schemaWithRelationAllowed = {
+      resources: [
+        {
+          name: "task",
+          version: 1,
+          fields: [
+            { name: "title", type: "string" as const, required: false },
+            { name: "assigneeId", type: "string" as const, required: false },
+          ],
+          permissions: {
+            read: { fields: ["id", "title", "assigneeId"] },
+            write: { fields: ["title", "assignee"] }, // "assignee" IS in write fields
+          },
+        },
+      ],
+    };
+
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    const server = await createDatafnServer({ schema: schemaWithRelationAllowed, db });
+
+    const req = new Request("http://localhost/datafn/push", {
+      method: "POST",
+      body: JSON.stringify({
+        clientId: "client:1",
+        mutations: [
+          {
+            resource: "task",
+            version: 1,
+            operation: "relate",
+            id: "task:1",
+            relation: "assignee",
+            clientId: "client:1",
+            mutationId: "m-1",
+          },
+        ],
+      }),
+    });
+
+    const res = await server.router.handle(req);
+    // Should not return FORBIDDEN (may be another error if relation not configured, but not 403)
+    expect(res.status).not.toBe(403);
+  });
+});
+
+describe("Built-in KV resource authz (deny-by-default)", () => {
+  // Schema with NO allowUnknownResources — exercises deny-by-default path
+  const schemaWithNoKv = {
+    resources: [
+      {
+        name: "node",
+        version: 1,
+        fields: [
+          { name: "label", type: "string" as const, required: false },
+        ],
+        // No permissions — this resource should be FORBIDDEN
+      },
+    ],
+  };
+
+  it("KV push succeeds without allowUnknownResources (built-in has permissions)", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    const server = await createDatafnServer({ schema: schemaWithNoKv, db });
+
+    const req = new Request("http://localhost/datafn/push", {
+      method: "POST",
+      body: JSON.stringify({
+        clientId: "client:1",
+        mutations: [
+          {
+            resource: "kv",
+            version: 1,
+            operation: "insert",
+            id: "kv:mykey",
+            clientId: "client:1",
+            mutationId: "m-kv-1",
+            record: { value: { hello: "world" } },
+          },
+        ],
+      }),
+    });
+
+    const res = await server.router.handle(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("KV query succeeds without allowUnknownResources", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    const server = await createDatafnServer({ schema: schemaWithNoKv, db });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      body: JSON.stringify({
+        resource: "kv",
+        version: 1,
+        select: ["id", "value"],
+      }),
+    });
+
+    const res = await server.router.handle(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it("User-defined resource without permissions still returns 403", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    const server = await createDatafnServer({ schema: schemaWithNoKv, db });
+
+    const req = new Request("http://localhost/datafn/push", {
+      method: "POST",
+      body: JSON.stringify({
+        clientId: "client:1",
+        mutations: [
+          {
+            resource: "node",
+            version: 1,
+            operation: "insert",
+            id: "node:1",
+            clientId: "client:1",
+            mutationId: "m-1",
+            record: { label: "test" },
+          },
+        ],
+      }),
+    });
+
+    const res = await server.router.handle(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("FORBIDDEN");
+  });
+});
+
 describe("Namespace Isolation (AUTH-002)", () => {
   const testSchema = {
     resources: [
@@ -157,6 +341,10 @@ describe("Namespace Isolation (AUTH-002)", () => {
         name: "task",
         version: 1,
         fields: [{ name: "title", type: "string" as const, required: true }],
+        permissions: {
+          read: { fields: ["id", "title"] },
+          write: { fields: ["title"] },
+        },
       },
     ],
   };

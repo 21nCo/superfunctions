@@ -49,7 +49,7 @@ describe("DFQL Htree (Phase 13)", () => {
       joins: {},
     });
 
-    server = await createDatafnServer({
+    server = await createDatafnServer({ allowUnknownResources: true,
       db: adapter,
       schema,
     });

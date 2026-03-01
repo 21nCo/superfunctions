@@ -4,17 +4,7 @@
  * normalizes non-$-prefixed operator names before delegating to core.
  */
 
-import { evaluateFilter as coreEvaluateFilter } from "@datafn/core";
-
-/** Map non-$-prefixed operator names to core's $-prefixed equivalents. */
-const OP_REMAP: Record<string, string> = {
-  eq: "$eq", ne: "$ne", gt: "$gt", gte: "$gte", lt: "$lt", lte: "$lte",
-  like: "$like", ilike: "$ilike", not_like: "$not_like", not_ilike: "$not_ilike",
-  in: "$in", not_in: "$nin",
-  is_null: "$is_null", is_not_null: "$is_not_null",
-  is_empty: "$is_empty", is_not_empty: "$is_not_empty",
-  before: "$before", after: "$after", between: "$between", not_between: "$not_between",
-};
+import { evaluateFilter as coreEvaluateFilter, OP_REMAP, findRelationBidirectional } from "@datafn/core";
 
 function normalizeOps(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
@@ -89,12 +79,16 @@ export function evaluateFilter(
 }
 
 function findRelation(schema: any, resourceName: string, relationName: string) {
-  return schema.relations?.find(
-    (r: any) =>
-      (r.from === resourceName && r.relation === relationName) ||
-      (r.to === resourceName && r.inverse === relationName) ||
-      (r.from === resourceName && r.inverse === relationName),
-  );
+  if (!schema.relations) return null;
+  // EXE-012: Prefer forward (direct) matches to avoid ambiguity when both
+  // forward and inverse relations share the same name
+  for (const rel of schema.relations) {
+    if (rel.from === resourceName && rel.relation === relationName) {
+      return rel;
+    }
+  }
+  // Fall back to bidirectional search (handles inverse relations)
+  return findRelationBidirectional(schema, resourceName, relationName);
 }
 
 function getRelatedRecords(
@@ -113,15 +107,15 @@ function getRelatedRecords(
       const target = store.getRecord(rel.to, targetId as string);
       return target ? [target] : [];
     } else {
-      const allTargets = store.getRecords(rel.from);
+      // PER-005: Targeted lookup instead of getRecords() full scan
       const fk = rel.fkField || rel.foreignKey;
-      return allTargets.filter((r: any) => r[fk] === record.id);
+      return store.findRecords(rel.from, fk, record.id);
     }
   } else if (rel.type === "one-many") {
     if (isForward) {
-      const allTargets = store.getRecords(rel.to);
+      // PER-005: Targeted lookup instead of getRecords() full scan
       const fk = rel.fkField || rel.foreignKey;
-      return allTargets.filter((r: any) => r[fk] === record.id);
+      return store.findRecords(rel.to, fk, record.id);
     } else {
       const fk = rel.fkField || rel.foreignKey;
       const targetId = record[fk];

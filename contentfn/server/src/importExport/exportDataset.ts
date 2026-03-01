@@ -27,7 +27,7 @@ export async function exportDataset(
 
   const schemaRow = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
 
   let schemaRecord: ContentfnExportArtifact["schema"] = null;
@@ -42,7 +42,7 @@ export async function exportDataset(
 
   const publishedRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
   const publishedDocs = (publishedRows as Array<{ docJson: ContentfnDocument; id: string }>)
     .map((r) => r.docJson)
@@ -50,7 +50,7 @@ export async function exportDataset(
 
   const draftRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
   const draftDocs = (draftRows as Array<{ docJson: ContentfnDocument; id: string }>)
     .map((r) => r.docJson)
@@ -58,7 +58,7 @@ export async function exportDataset(
 
   const assetRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.assets,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
   const assets: AssetMetadataRecord[] = (assetRows as Array<{
     assetId: string;
@@ -84,7 +84,7 @@ export async function exportDataset(
 
   const revisionRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.revisions,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
   });
   const revisions: RevisionRecord[] = (revisionRows as Array<{
     docId: string;

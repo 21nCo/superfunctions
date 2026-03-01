@@ -15,6 +15,10 @@
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ensureInternalTable } from "../internal-tables.js";
+import type { DatafnLogger } from "../../logger.js";
+
+/** REL-010: Sleep helper for CAS backoff */
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /**
  * Change entry representing a mutation effect
@@ -52,10 +56,20 @@ export class ChangeTrackingService {
 
   constructor(
     private db: Adapter,
-    private namespace: string = "datafn",
+    readonly namespace: string = "datafn",
     private sequenceStore?: SequenceStore,
-    private onChange?: (seq: number) => void,
+    private onChange?: (seq: number, namespace: string) => void,
+    private logger?: DatafnLogger,
   ) {}
+
+  /**
+   * REL-011: Create a new ChangeTrackingService with a different db adapter.
+   * Used to run change tracking within a transaction (pass tx db here).
+   * The namespace and sequenceStore are inherited from the original instance.
+   */
+  withDb(txDb: Adapter): ChangeTrackingService {
+    return new ChangeTrackingService(txDb, this.namespace, this.sequenceStore, this.onChange, this.logger);
+  }
 
   /**
    * Get and increment serverSeq atomically
@@ -97,6 +111,10 @@ export class ChangeTrackingService {
     const MAX_RETRIES = 10;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // REL-010: Exponential backoff between CAS retries (skip delay on first attempt)
+      if (attempt > 0) {
+        await sleep(10 * Math.pow(2, attempt - 1));
+      }
       try {
         const meta = await this.db.internal.findOne("__datafn_meta", [
           { field: "namespace", op: "eq", value: this.namespace },
@@ -127,6 +145,7 @@ export class ChangeTrackingService {
             );
 
             if (affected === 0) {
+              // REL-010: CAS failed due to contention — backoff applied on next iteration
               continue;
             }
 
@@ -137,10 +156,11 @@ export class ChangeTrackingService {
         }
       } catch (error) {
         if (attempt === MAX_RETRIES - 1) {
-          console.error(
-            "Failed to get next serverSeq after max retries:",
-            error,
-          );
+          this.logger?.error("Failed to get next serverSeq after max retries", {
+            error: String(error),
+            operation: "getNextServerSeqBatchFromDb",
+            resource: "__datafn_meta",
+          });
           throw new Error(
             "INTERNAL: Failed to allocate serverSeq after maximum retries",
           );
@@ -172,6 +192,8 @@ export class ChangeTrackingService {
       this.changesEnsured = true;
     }
 
+    // EXE-018: Sequential to preserve error-stops-further-writes semantics;
+    // onChange callbacks are batched after all writes succeed.
     for (const params of entries) {
       await this.db.internal.create("__datafn_changes", {
         id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
@@ -183,9 +205,12 @@ export class ChangeTrackingService {
         record: params.record ? JSON.stringify(params.record) : null,
         created_at: new Date().toISOString(),
       });
+    }
 
-      if (this.onChange) {
-        this.onChange(params.serverSeq);
+    // Fire onChange callbacks after all writes succeed
+    if (this.onChange) {
+      for (const params of entries) {
+        this.onChange(params.serverSeq, this.namespace);
       }
     }
   }
@@ -200,7 +225,10 @@ export class ChangeTrackingService {
       try {
         return await this.sequenceStore.getCurrent(this.namespace);
       } catch (error) {
-        console.warn("Sequence store getCurrent failed, falling back to database:", error);
+        this.logger?.warn("Sequence store getCurrent failed, falling back to database", {
+          error: String(error),
+          operation: "getCurrentServerSeq",
+        });
       }
     }
 
@@ -220,8 +248,13 @@ export class ChangeTrackingService {
       }
       return ((meta.next_server_seq as number) || 1) - 1;
     } catch (error) {
-      console.error("Failed to get current serverSeq:", error);
-      return 0;
+      // EXE-019: Throw instead of returning 0 (returning 0 would silently mis-sync clients)
+      this.logger?.error("Failed to get current serverSeq", {
+        error: String(error),
+        operation: "getCurrentServerSeq",
+        resource: "__datafn_meta",
+      });
+      throw error;
     }
   }
 
@@ -257,8 +290,13 @@ export class ChangeTrackingService {
         record: change.record ? JSON.parse(change.record as string) : null,
       }));
     } catch (error) {
-      console.error("Failed to get global changes:", error);
-      return [];
+      // Propagate error — returning empty would make client believe it's fully synced
+      this.logger?.error("Failed to get global changes", {
+        error: String(error),
+        operation: "getGlobalChanges",
+        resource: "__datafn_changes",
+      });
+      throw error;
     }
   }
 
@@ -301,8 +339,13 @@ export class ChangeTrackingService {
         record: change.record ? JSON.parse(change.record as string) : null,
       }));
     } catch (error) {
-      console.error("Failed to get changes since:", error);
-      return [];
+      // Propagate error instead of returning empty (which would imply "no changes")
+      this.logger?.error("Failed to get changes since", {
+        error: String(error),
+        operation: "getChangesSince",
+        resource: params.resource,
+      });
+      throw error;
     }
   }
 
@@ -344,7 +387,11 @@ export class ChangeTrackingService {
 
       return (changes[0]?.server_seq as number) ?? 0;
     } catch (error) {
-      console.error("Failed to get latest serverSeq:", error);
+      this.logger?.error("Failed to get latest serverSeq", {
+        error: String(error),
+        operation: "getLatestServerSeq",
+        resource: params.resource,
+      });
       return 0;
     }
   }

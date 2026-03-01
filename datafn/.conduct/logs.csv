@@ -99,3 +99,20 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-02-25T22:00:00Z,claude-opus-4-6,VS Code (Claude Code Extension),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-25-k9x4m7r3-issue.md
 2026-02-25T23:15:00Z,claude-opus-4-6,VS Code (Claude Code Extension),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-25-r7x4m9k3-issue.md
 2026-02-25T16:00:00Z,claude-opus-4-6,VS Code (Claude Code Extension),execute-issue,claude-opus-4-6,,datafn/.conduct/issue-completions/2026-02-25-r7x4m9k3-completion.md
+2026-02-26T07:05:00Z,Claude Opus 4.6 (1M context),CLI,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-02-26-k7m9x4r2-completion.md
+2026-02-26T09:25:00Z,auto,Warp,spec,Oz,,datafn/.conduct/specs/2026-02-26-new-k7r4m9x2-spec
+2026-02-26T19:08:00Z,claude 4.6 sonnet (max),Warp,execute-issue,Oz,investigate+implement+verify,datafn/.conduct/issue-completions/2026-02-26-9eab36d4-completion.md
+2026-02-27T08:00:00Z,claude-opus-4-6,VS Code (Claude Code Extension),document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-27-k4m7x9r3-issue.md
+2026-02-27T12:02:00Z,Claude Opus 4.6,VS Code (Claude Code Extension),execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-02-27-k9m4x7r3-completion.md
+2026-02-27T07:04:29Z,auto,Warp,document-issue,Oz,,datafn/.conduct/issues/2026-02-27-r7m4k9x3-issue.md
+2026-02-27T12:42:00Z,claude-opus-4-6,Warp,execute-issue,Oz,,datafn/.conduct/issue-completions/2026-02-27-r7m4k9x3-completion.md
+2026-02-27T18:00:00Z,claude-opus-4-6[1m],Claude Code (Warp),spec,claude-opus-4-6,,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec
+2026-02-27T07:45:00Z,Claude Opus 4.6,VS Code,document-issue,claude-opus-4-6,,datafn/.conduct/issues/2026-02-27-x8k3m9v7-issue.md
+2026-02-27T15:50:00Z,claude-4.6-sonnet-medium-thinking,Cursor,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-02-27-x8k3m9v7-completion.md
+2026-02-28T18:50:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute,claude-opus-4-6,PHASE_13,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_13-2026-02-28-q3x7m9k4-report.md
+2026-02-28T12:00:00Z,claude-opus-4-6,VS Code (Claude Code Extension),audit,claude-opus-4-6,,datafn/.conduct/audits/2026-02-28-k7m4x9r3-full-audit.md
+2026-03-01T00:00:00Z,claude-4.6-opus,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-01-k7v3m9x4-issue.md
+2026-03-01T12:59:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-03-01-r7k4m9x3-completion.md
+2026-03-01T01:00:00Z,claude-4.6-opus,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-01-r4m7k9x3-issue.md
+2026-03-01T07:58:00Z,claude-opus-4-6,Cursor,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-03-01-v4k9m7x3-completion.md
+2026-03-01T02:00:00Z,claude-4.6-opus,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-01-m4k7x9v2-issue.md

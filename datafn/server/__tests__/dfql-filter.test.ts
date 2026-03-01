@@ -77,7 +77,7 @@ describe("DFQL Filters (Phase 12)", () => {
     // In query-execution.test.ts, it imports memoryAdapter.
     // It calls `adapter = memoryAdapter()`.
 
-    server = await createDatafnServer({
+    server = await createDatafnServer({ allowUnknownResources: true,
       db: adapter,
       schema,
     });

@@ -551,6 +551,9 @@ async function pushBatchWithRetry(
       };
     } catch (err) {
       if (isTransportError(err) && attempts <= maxRetries) {
+        // CLI-010: Exponential backoff between retries
+        const backoffMs = 1000 * Math.pow(2, attempts - 1);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
         continue;
       }
       throw err;

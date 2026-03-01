@@ -1,0 +1,77 @@
+---
+title: "Transport"
+description: "HTTP transport and remote adapter reference."
+---
+
+## DefaultHttpTransport
+
+The built-in HTTP transport implements `DatafnRemoteAdapter` and handles communication with a DataFn server over HTTP.
+
+When you provide `sync.remote` in the client config, the default transport is created automatically. You can also inject a custom adapter via `sync.remoteAdapter`.
+
+## DatafnRemoteAdapter
+
+```typescript
+interface DatafnRemoteAdapter {
+  query(q: unknown): Promise<unknown>;
+  mutation(m: unknown): Promise<unknown>;
+  transact(t: unknown): Promise<unknown>;
+  seed(payload: unknown): Promise<unknown>;
+  clone(payload: unknown): Promise<unknown>;
+  pull(payload: unknown): Promise<unknown>;
+  push(payload: unknown): Promise<unknown>;
+}
+```
+
+Each method posts JSON to the corresponding server endpoint and returns the response envelope.
+
+## Endpoint Mapping
+
+| Method | HTTP Endpoint |
+|---|---|
+| `query` | `POST /datafn/query` |
+| `mutation` | `POST /datafn/mutation` |
+| `transact` | `POST /datafn/transact` |
+| `seed` | `POST /datafn/seed` |
+| `clone` | `POST /datafn/clone` |
+| `pull` | `POST /datafn/pull` |
+| `push` | `POST /datafn/push` |
+
+## Timeout Handling
+
+The default transport uses `AbortController` with a configurable timeout. If a request exceeds the timeout, it is aborted and a `TRANSPORT_ERROR` envelope is returned.
+
+## Error Wrapping
+
+Network errors (connection refused, DNS failure, etc.) are caught and wrapped in a `TRANSPORT_ERROR` envelope rather than throwing:
+
+```typescript
+{
+  ok: false,
+  error: {
+    code: "TRANSPORT_ERROR",
+    message: "Network request failed: ...",
+    details: { path: "$" }
+  }
+}
+```
+
+## Extension Transport
+
+For browser extensions, `createExtensionTransport` creates a remote adapter that proxies calls over a message bus (e.g., `browser.runtime.sendMessage`).
+
+```typescript
+import { createExtensionTransport } from "@datafn/client/extension";
+
+const adapter = createExtensionTransport(messageBus, {
+  timeout: 30000, // per-request timeout in ms
+});
+
+const client = createDatafnClient({
+  schema,
+  clientId: "ext-client",
+  sync: { remoteAdapter: adapter },
+});
+```
+
+The extension transport uses an RPC protocol with request/response correlation by ID. Pending requests that do not receive a response within the timeout are rejected with a `TIMEOUT` error.

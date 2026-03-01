@@ -2,7 +2,6 @@
   "name": "@contentfn/cli",
   "version": "0.0.1",
   "description": "ContentFn CLI - schema validation/upsert, dataset export/import, document operations",
-  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,6 +9,21 @@
     "contentfn": "./dist/index.js"
   },
   "files": ["dist"],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "contentfn/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "contentFn",
+    "schemaVersion": 1,
+    "namespace": "contentfn"
+  },
   "scripts": {
     "build": "tsup",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",

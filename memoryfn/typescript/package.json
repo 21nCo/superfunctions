@@ -46,7 +46,7 @@
   },
   "peerDependencies": {
     "@superfunctions/auth": "*",
-    "watchfn": "*",
+    "@watchfn/core": "*",
     "secfn": "*"
   },
   "devDependencies": {

@@ -214,7 +214,7 @@ describe("PHASE_09 webhooks subsystem", () => {
 
       const queueRows = await db.findMany({
         model: "contentfn_webhook_queue",
-        where: [{ field: "status", operator: "eq", value: "pending" }],
+        where: [{ field: "status", operator: "eq" as const, value: "pending" }],
       });
 
       expect(queueRows.length).toBe(1);

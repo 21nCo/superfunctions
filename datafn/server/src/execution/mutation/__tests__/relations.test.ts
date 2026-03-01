@@ -82,7 +82,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       namespace: "datafn"
     });
 
-    server = await createDatafnServer({
+    server = await createDatafnServer({ allowUnknownResources: true,
       schema,
       db,
     });

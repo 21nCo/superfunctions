@@ -10,11 +10,7 @@
 import type { DatafnSchema } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { createClientError } from "../errors.js";
-import { getJoinStoreKey } from "@datafn/core";
-import {
-  normalizeRelationPayload,
-  findRelation,
-} from "./relations.js";
+import { getJoinStoreKey, normalizeRelationPayload, findRelationBidirectional } from "@datafn/core";
 
 /**
  * Handle a mutation when remote is unavailable.
@@ -121,7 +117,7 @@ async function validateRelationMutation(
   if (!relations) return;
 
   for (const [relationName, payload] of Object.entries(relations)) {
-    const relation = findRelation(schema, resource, relationName);
+    const relation = findRelationBidirectional(schema, resource, relationName);
     if (!relation) {
       throw createClientError(
         "DFQL_UNKNOWN_RELATION",
@@ -203,7 +199,7 @@ async function applyRelate(
   if (!relations) return;
 
   for (const [relationName, payload] of Object.entries(relations)) {
-    const relation = findRelation(schema, resource, relationName);
+    const relation = findRelationBidirectional(schema, resource, relationName);
     if (!relation) continue; // Already validated
 
     const items = normalizeRelationPayload(payload);
@@ -301,7 +297,7 @@ async function applyModifyRelation(
   if (!relations) return;
 
   for (const [relationName, payload] of Object.entries(relations)) {
-    const relation = findRelation(schema, resource, relationName);
+    const relation = findRelationBidirectional(schema, resource, relationName);
     if (!relation) continue; // Already validated
 
     const items = normalizeRelationPayload(payload);
@@ -350,7 +346,7 @@ async function applyUnrelate(
   if (!relations) return;
 
   for (const [relationName, payload] of Object.entries(relations)) {
-    const relation = findRelation(schema, resource, relationName);
+    const relation = findRelationBidirectional(schema, resource, relationName);
     if (!relation) continue; // Already validated
 
     const items = normalizeRelationPayload(payload);

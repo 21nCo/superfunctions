@@ -10,6 +10,7 @@ import { getJoinStoreKey, getJoinTableName } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { SequenceStore } from "./sequence-store.js";
+import type { DatafnLogger } from "../../logger.js";
 
 export interface ReconcileRequest {
   clientId: string;
@@ -38,6 +39,7 @@ export async function executeReconcile(
   db: Adapter,
   namespace: string,
   sequenceStore?: SequenceStore,
+  logger?: DatafnLogger,
 ): Promise<ReconcileResult> {
   // Validate clientId
   if (!request.clientId || typeof request.clientId !== "string") {
@@ -94,14 +96,26 @@ export async function executeReconcile(
     }
 
     try {
-      // Count records deterministically
-      const records = await db.findMany({
-        model: resourceName,
-        where: [],
-        namespace,
-      });
-
-      counts[resourceName] = records.length;
+      // SCA-001: Use db.count() instead of loading all records
+      if (typeof db.count === "function") {
+        counts[resourceName] = await db.count({
+          model: resourceName,
+          where: [],
+          namespace,
+        });
+      } else {
+        // Fallback for adapters without count support
+        logger?.warn("Adapter lacks count() — falling back to findMany", {
+          operation: "reconcile",
+          resource: resourceName,
+        });
+        const records = await db.findMany({
+          model: resourceName,
+          where: [],
+          namespace,
+        });
+        counts[resourceName] = records.length;
+      }
     } catch (error) {
       // On adapter error, return 0 count
       counts[resourceName] = 0;
@@ -129,15 +143,21 @@ export async function executeReconcile(
       const joinTableName = getJoinTableName(relation.from as string, relation.relation!, relation.joinTable);
 
       try {
-        // Count join rows using the actual DB table name
-        const joinRecords = await db.findMany({
-          model: joinTableName,
-          where: [],
-          namespace,
-        });
-
-        // Return count under the logical client store key
-        joinCounts[joinStoreKey] = joinRecords.length;
+        // SCA-001: Use db.count() for join rows too
+        if (typeof db.count === "function") {
+          joinCounts[joinStoreKey] = await db.count({
+            model: joinTableName,
+            where: [],
+            namespace,
+          });
+        } else {
+          const joinRecords = await db.findMany({
+            model: joinTableName,
+            where: [],
+            namespace,
+          });
+          joinCounts[joinStoreKey] = joinRecords.length;
+        }
       } catch (error) {
         // Join table might not exist or be queryable; count as 0
         joinCounts[joinStoreKey] = 0;

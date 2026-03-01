@@ -118,7 +118,7 @@ describe("Phase 04: Bounded Sync Pull", () => {
   describe("SYNC-002/003: Server-enforced pull limit", () => {
     it("TV-SYNC-BOUND-003: Pull canonical with large client limit gets capped by server maxPullLimit", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
         limits: { maxPullLimit: 20 },
@@ -174,7 +174,7 @@ describe("Phase 04: Bounded Sync Pull", () => {
 
     it("Pull canonical without maxPullLimit config uses default 1000", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
         // No maxPullLimit set — default 1000
@@ -223,7 +223,7 @@ describe("Phase 04: Bounded Sync Pull", () => {
 
     it("TV-SYNC-BOUND-003b: Pull canonical enforces per-resource limit too", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
         limits: { maxPullLimit: 10 },

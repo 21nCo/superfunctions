@@ -50,6 +50,24 @@ export interface KvApiDeps {
 export function createKvApi(deps: KvApiDeps): DatafnKvApi {
   const { storage, kvTable, eventBus, clientId, debouncerMap } = deps;
 
+  // CLI-007: Per-key serialization for merge to prevent read-modify-write races.
+  // Concurrent merges on the same key are chained so they execute sequentially.
+  const mergeLocks = new Map<string, Promise<unknown>>();
+  function withMergeLock<T>(
+    key: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const prev = mergeLocks.get(key) ?? Promise.resolve();
+    const next = prev.then(fn, (_) => fn()); // run fn even if prev failed
+    const cleanup = next.then(
+      () => { if (mergeLocks.get(key) === next) mergeLocks.delete(key); },
+      () => { if (mergeLocks.get(key) === next) mergeLocks.delete(key); },
+    );
+    void cleanup;
+    mergeLocks.set(key, next);
+    return next;
+  }
+
   return {
     async get<T = unknown>(key: string): Promise<T | null> {
       if (typeof key !== "string") {
@@ -105,11 +123,11 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
       const id = kvId(key);
 
       const executeMutation = async () => {
-        // Use replace operation for deterministic set semantics
+        // Use merge operation for upsert semantics (create-or-update)
         const result = (await kvTable.mutate({
           resource: KV_RESOURCE_NAME,
           version: 1,
-          operation: "replace",
+          operation: "merge",
           id,
           record: { value },
           clientId,
@@ -136,7 +154,7 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
             debounceKey,
             {
               resource: KV_RESOURCE_NAME,
-              operation: "replace",
+              operation: "merge",
               id,
               record: { value },
               clientId,
@@ -299,8 +317,8 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
           return { ok: true as const, key };
         }
 
-        // Without debounce, execute immediately
-        return await executeMutation();
+        // Without debounce, execute immediately with per-key lock (CLI-007)
+        return await withMergeLock(key, executeMutation);
       } catch (error) {
         return { ok: false as const, error };
       }

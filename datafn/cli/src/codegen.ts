@@ -131,6 +131,8 @@ function mapFieldType(type: string): string {
       return "number"; // timestamp
     case "file":
       return "string"; // url or id
+    case "json":
+      return "unknown";
     default:
       return "unknown";
   }

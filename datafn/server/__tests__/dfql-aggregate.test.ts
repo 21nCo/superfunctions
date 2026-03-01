@@ -42,7 +42,7 @@ describe("DFQL Aggregations (Phase 15)", () => {
 
   beforeEach(async () => {
     adapter = memoryAdapter();
-    server = await createDatafnServer({
+    server = await createDatafnServer({ allowUnknownResources: true,
       db: adapter,
       schema,
     });

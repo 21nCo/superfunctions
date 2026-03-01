@@ -1,4 +1,4 @@
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore } from "../execution/idempotency.js";
 import type { SequenceStore } from "../execution/sync/sequence-store.js";
@@ -6,18 +6,31 @@ import { getBodyFromContext } from "../http/json.js";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { executeTransaction } from "../execution/transact.js";
 import { buildSchemaIndex, validateMutation, validateQuery } from "../validation/index.js";
+import { validateQueryAuthz, validateMutationAuthz, type AuthzOptions } from "../validation/authz.js";
 import { logRequest } from "../logging.js";
+import type { DatafnLogger } from "../logger.js";
+
+/**
+ * Options for transact handler
+ */
+export interface TransactHandlerOpts {
+  allowUnknownResources?: boolean;
+  debug?: boolean;
+}
 
 /**
  * Create transaction route handler
  */
 export function createTransactHandler(
   validatedSchema: DatafnSchema,
-  db?: Adapter, // Use Adapter instead of MemoryStore
-  idempotencyStore?: IdempotencyStore,
-  limits?: { maxTransactSteps?: number },
+  db: Adapter | undefined,
+  idempotencyStore: IdempotencyStore | undefined,
+  limits: { maxTransactSteps?: number } | undefined,
   extractNamespace: (ctx: any) => Promise<string>,
-  sequenceStore?: SequenceStore,
+  sequenceStore: SequenceStore | undefined,
+  plugins: DatafnPlugin[] = [],
+  handlerOpts?: TransactHandlerOpts,
+  logger?: DatafnLogger,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -115,6 +128,39 @@ export function createTransactHandler(
         }
         }
 
+        // SEC-004: Per-step authz validation (VAL-001: deny-by-default)
+        const authzOpts: AuthzOptions = {
+          allowUnknownResources: handlerOpts?.allowUnknownResources,
+          debug: handlerOpts?.debug,
+        };
+        for (let i = 0; i < body.steps.length; i++) {
+          const step = body.steps[i];
+          const isMutation = !!(step.mutation || (typeof step.operation === "string"));
+
+          let authzResult;
+          if (isMutation) {
+            authzResult = validateMutationAuthz(
+              (step.mutation || step) as Record<string, unknown>,
+              validatedSchema,
+              authzOpts,
+            );
+          } else {
+            authzResult = validateQueryAuthz(
+              (step.query || step) as Record<string, unknown>,
+              validatedSchema,
+              authzOpts,
+            );
+          }
+
+          if (!authzResult.ok) {
+            return errorResponse({
+              code: authzResult.code,
+              message: authzResult.message,
+              details: { path: `steps[${i}].${authzResult.path}` },
+            }, 403);
+          }
+        }
+
         // After validation, check execution requirements
         if (!db || !idempotencyStore) {
         return errorResponse({
@@ -143,12 +189,13 @@ export function createTransactHandler(
         limits,
         namespace,
         sequenceStore,
+        plugins,
         );
 
         if (!result.ok && result.error) {
             // Top-level error (e.g. limit exceeded if checked inside executor too)
             return errorResponse({
-                code: result.error.code as any,
+                code: result.error.code,
                 message: result.error.message,
                 details: result.error.details,
             });
@@ -157,7 +204,7 @@ export function createTransactHandler(
         // Success (200 OK), result contains { ok: true/false, results: [...] }
         return okResponse(result.result);
     } catch (error) {
-        console.error("Transaction execution failed:", error);
+        logger?.error("Transaction execution failed", { error: String(error), operation: "transact" });
         return errorResponse({
             code: "INTERNAL",
             message: "Internal error",
@@ -170,7 +217,7 @@ export function createTransactHandler(
             operation: "transact",
             steps: body?.steps?.length,
             duration_ms: Date.now() - startTime,
-        });
+        }, logger);
     }
   };
 }

@@ -34,6 +34,7 @@ describe("validateSchema", () => {
           },
         ],
         relations: [],
+        multiTenant: true,
       });
     }
   });
@@ -141,6 +142,79 @@ describe("validateSchema", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.relations).toEqual([]);
+    }
+  });
+});
+
+describe("validateSchema — relation from/to resource validation (CLI-004)", () => {
+  it("rejects relation.from referencing an unknown resource", () => {
+    const input = {
+      resources: [{ name: "task", version: 1, fields: [] }],
+      relations: [{ type: "one-many", from: "nonexistent", to: "task" }],
+    };
+    const result = validateSchema(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("SCHEMA_INVALID");
+      expect(result.error.message).toContain("nonexistent");
+      expect(result.error.details.path).toBe("relations.from");
+    }
+  });
+
+  it("rejects relation.to referencing an unknown resource", () => {
+    const input = {
+      resources: [{ name: "task", version: 1, fields: [] }],
+      relations: [{ type: "one-many", from: "task", to: "nonexistent" }],
+    };
+    const result = validateSchema(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("SCHEMA_INVALID");
+      expect(result.error.message).toContain("nonexistent");
+      expect(result.error.details.path).toBe("relations.to");
+    }
+  });
+
+  it("accepts relation where both from and to reference valid resources", () => {
+    const input = {
+      resources: [
+        { name: "task", version: 1, fields: [] },
+        { name: "tag", version: 1, fields: [] },
+      ],
+      relations: [{ type: "many-many", from: "task", to: "tag", relation: "tags" }],
+    };
+    const result = validateSchema(input);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects relation.from array that contains an unknown resource", () => {
+    const input = {
+      resources: [{ name: "task", version: 1, fields: [] }],
+      relations: [
+        { type: "many-many", from: ["task", "ghost"], to: "task", relation: "rel" },
+      ],
+    };
+    const result = validateSchema(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("ghost");
+      expect(result.error.details.path).toBe("relations.from");
+    }
+  });
+
+  it("includes list of available resources in the error message", () => {
+    const input = {
+      resources: [
+        { name: "task", version: 1, fields: [] },
+        { name: "comment", version: 1, fields: [] },
+      ],
+      relations: [{ type: "one-many", from: "task", to: "missing" }],
+    };
+    const result = validateSchema(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // Error message should mention at least one of the valid resource names
+      expect(result.error.message).toMatch(/task|comment/);
     }
   });
 });

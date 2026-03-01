@@ -48,7 +48,11 @@ export class DebouncerMap {
     const existing = this.pending.get(key);
     if (existing) {
       clearTimeout(existing.timer);
-      
+
+      // REL-004: Resolve the old caller's Promise before replacing.
+      // Data was merged into the new mutation, so the original caller's mutation is not lost.
+      existing.resolve();
+
       // Merge the new mutation's record fields into the existing mutation's record
       if (mutation.record && existing.mutation.record) {
         existing.mutation.record = {
@@ -58,7 +62,7 @@ export class DebouncerMap {
       } else if (mutation.record) {
         existing.mutation.record = mutation.record;
       }
-      
+
       // Update other mutation fields that might have changed
       // (keep existing mutationId, but update other fields)
       existing.mutation = {

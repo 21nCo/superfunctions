@@ -8,6 +8,8 @@
 
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { DataStore, JoinRow } from "./store.js";
+import { getJoinTableName } from "@datafn/core";
+import type { DatafnLogger } from "../logger.js";
 
 export class DbDataStore implements DataStore {
   private recordsCache: Map<string, Record<string, unknown>[]> = new Map();
@@ -191,7 +193,7 @@ export class DbDataStore implements DataStore {
           }
         } else if (rel.type === "many-many") {
           const relationKey = `${rel.from}.${rel.relation}`;
-          const tableName = `__datafn_join_${rel.from}_${rel.relation}`;
+          const tableName = getJoinTableName(rel.from as string, rel.relation, rel.joinTable);
 
           let joinRows: Record<string, unknown>[] = [];
           try {
@@ -294,7 +296,7 @@ export class DbDataStore implements DataStore {
         const toCol2 = (rel2 as any).joinColumns?.to ?? "to";
 
         if (rel2.type === "many-many" && isF2) {
-          const tableName2 = `__datafn_join_${rel2.from}_${rel2.relation}`;
+          const tableName2 = getJoinTableName(rel2.from as string, rel2.relation, rel2.joinTable);
           const relationKey2 = `${rel2.from}.${rel2.relation}`;
           let joinRows2: Record<string, unknown>[] = [];
           try {
@@ -380,7 +382,8 @@ export class DbDataStore implements DataStore {
     relation?: { joinTable?: string; joinColumns?: { from: string; to: string }; metadata?: Array<{ name: string; type: string }> },
   ): Promise<void> {
     try {
-      const tableName = relation?.joinTable || `__datafn_join_${relationKey.replace(".", "_")}`;
+      const [joinFrom, joinRel] = relationKey.split(".");
+      const tableName = getJoinTableName(joinFrom, joinRel, relation?.joinTable);
       const fromCol = relation?.joinColumns?.from || "from";
       const toCol = relation?.joinColumns?.to || "to";
 
@@ -416,6 +419,16 @@ export class DbDataStore implements DataStore {
   }
 
   /**
+   * PER-005: Targeted lookup — find all cached records where record[field] === value.
+   * Avoids loading and scanning the full table via getRecords() in relation filter evaluation.
+   */
+  findRecords(resource: string, field: string, value: unknown): Record<string, unknown>[] {
+    const records = this.recordsCache.get(resource);
+    if (!records) return [];
+    return records.filter(r => r[field] === value);
+  }
+
+  /**
    * Helper to create a store for a single query.
    * Discovers and pre-loads all necessary resources from select tokens.
    *
@@ -432,6 +445,7 @@ export class DbDataStore implements DataStore {
     schema: any,
     namespace: string = "datafn",
     preFilterWhere?: WhereClause[],
+    logger?: DatafnLogger,
   ): Promise<DbDataStore> {
     const resourcesToLoad = new Set<string>([query.resource]);
     const relationsToLoad = new Set<string>();
@@ -502,104 +516,89 @@ export class DbDataStore implements DataStore {
       }
     }
 
-    // Discover related resources from filters
-    if (query.filters && typeof query.filters === "object") {
-      const traverseFilter = (filter: Record<string, unknown>) => {
-        for (const [key, value] of Object.entries(filter)) {
-          // Handle logical operators
-          if (key === "$and" || key === "$or") {
-            if (Array.isArray(value)) {
-              value.forEach((subFilter) => {
-                if (typeof subFilter === "object" && subFilter !== null) {
-                  traverseFilter(subFilter as Record<string, unknown>);
-                }
-              });
-            }
-            continue;
-          }
-
-          // Handle dot-path: "goal.label"
-          if (key.includes(".")) {
-            const parts = key.split(".");
-            // Traverse relations path
-            let currentResource = query.resource;
-            for (let i = 0; i < parts.length - 1; i++) {
-              const relName = parts[i];
-              const rel = schema.relations?.find(
-                (r: any) =>
-                  (r.from === currentResource && r.relation === relName) ||
-                  (r.to === currentResource && r.inverse === relName),
-              );
-
-              if (rel) {
-                const targetResource =
-                  rel.from === currentResource
-                    ? (rel.to as string)
-                    : (rel.from as string);
-
-                // Add to load set
-                resourcesToLoad.add(targetResource);
-                if (rel.from !== currentResource) {
-                  resourcesToLoad.add(rel.from as string);
-                }
-
-                if (rel.type === "many-many") {
-                  const relationKey =
-                    rel.from === currentResource
-                      ? `${rel.from}.${rel.relation}`
-                      : `${rel.from}.${rel.relation}`; // Always use canonical relation key
-                  // Actually canonical key is always FromResource.RelationName
-                  // If we are traversing inverse, we might need the forward relation key?
-                  // Yes, database adapter expects keys like "task.tags".
-                  relationsToLoad.add(`${rel.from}.${rel.relation}`);
-                }
-
-                currentResource = targetResource;
+    // EXE-001: Shared traversal helper used by both filters and having discovery
+    const traverseFilterFields = (filter: Record<string, unknown>, contextResource: string) => {
+      for (const [key, value] of Object.entries(filter)) {
+        // Handle logical operators
+        if (key === "$and" || key === "$or") {
+          if (Array.isArray(value)) {
+            value.forEach((subFilter) => {
+              if (typeof subFilter === "object" && subFilter !== null) {
+                traverseFilterFields(subFilter as Record<string, unknown>, contextResource);
               }
-            }
-            continue;
+            });
           }
+          continue;
+        }
 
-          // Handle relation quantifiers: tags: { $any: ... }
-          // Check if 'key' is a relation
-          const rel = schema.relations?.find(
-            (r: any) =>
-              (r.from === query.resource && r.relation === key) ||
-              (r.to === query.resource && r.inverse === key),
-          );
+        // Handle dot-path: "goal.label"
+        if (key.includes(".")) {
+          const parts = key.split(".");
+          let currentResource = contextResource;
+          for (let i = 0; i < parts.length - 1; i++) {
+            const relName = parts[i];
+            const rel = schema.relations?.find(
+              (r: any) =>
+                (r.from === currentResource && r.relation === relName) ||
+                (r.to === currentResource && r.inverse === relName),
+            );
 
-          if (rel && typeof value === "object" && value !== null) {
-            // It is a relation, check for quantifiers in value
-            const ops = value as Record<string, unknown>;
-            if (ops.$any || ops.$all || ops.$none) {
+            if (rel) {
               const targetResource =
-                rel.from === query.resource
+                rel.from === currentResource
                   ? (rel.to as string)
                   : (rel.from as string);
 
               resourcesToLoad.add(targetResource);
-              if (rel.from !== query.resource) {
+              if (rel.from !== currentResource) {
                 resourcesToLoad.add(rel.from as string);
               }
-
               if (rel.type === "many-many") {
                 relationsToLoad.add(`${rel.from}.${rel.relation}`);
               }
-
-              // Recursively traverse the nested filter in quantifier
-              // The value of $any is the nested filter
-              if (ops.$any && typeof ops.$any === "object")
-                traverseFilter(ops.$any as Record<string, unknown>);
-              if (ops.$all && typeof ops.$all === "object")
-                traverseFilter(ops.$all as Record<string, unknown>);
-              if (ops.$none && typeof ops.$none === "object")
-                traverseFilter(ops.$none as Record<string, unknown>);
+              currentResource = targetResource;
             }
           }
+          continue;
         }
-      };
 
-      traverseFilter(query.filters as Record<string, unknown>);
+        // Handle relation quantifiers: tags: { $any: ... }
+        const rel = schema.relations?.find(
+          (r: any) =>
+            (r.from === contextResource && r.relation === key) ||
+            (r.to === contextResource && r.inverse === key),
+        );
+
+        if (rel && typeof value === "object" && value !== null) {
+          const ops = value as Record<string, unknown>;
+          if (ops.$any || ops.$all || ops.$none) {
+            const targetResource =
+              rel.from === contextResource
+                ? (rel.to as string)
+                : (rel.from as string);
+
+            resourcesToLoad.add(targetResource);
+            if (rel.from !== contextResource) {
+              resourcesToLoad.add(rel.from as string);
+            }
+            if (rel.type === "many-many") {
+              relationsToLoad.add(`${rel.from}.${rel.relation}`);
+            }
+
+            if (ops.$any && typeof ops.$any === "object")
+              traverseFilterFields(ops.$any as Record<string, unknown>, targetResource);
+            if (ops.$all && typeof ops.$all === "object")
+              traverseFilterFields(ops.$all as Record<string, unknown>, targetResource);
+            if (ops.$none && typeof ops.$none === "object")
+              traverseFilterFields(ops.$none as Record<string, unknown>, targetResource);
+          }
+        }
+      }
+    };
+
+    // Discover related resources from filters
+    if (query.filters && typeof query.filters === "object") {
+      traverseFilterFields(query.filters as Record<string, unknown>, query.resource);
     }
 
     // Phase 15: Discover related resources from groupBy
@@ -639,86 +638,10 @@ export class DbDataStore implements DataStore {
     }
 
     // Phase 15: Discover related resources from having
-    // Re-use traverseFilter logic for having?
-    // having structure matches filter structure roughly.
-    // However, having can reference aliases which are not in schema.
-    // traverseFilter ignores keys that are not relations/paths.
-    // So it is safe to run on having.
+    // EXE-001: Reuse the shared traverseFilterFields helper (defined above)
     if (query.having && typeof query.having === "object") {
-      // We need access to traverseFilter. It was defined inside the filters block.
-      // We should move traverseFilter definition up or duplicate logic.
-      // Duplicating logic is safer to avoid scope issues or refactoring large block.
-      // Actually, we can just define traverseFilter outside the if block.
-      // But I cannot easily move the definition without replacing the whole method.
-      // I will just duplicate the traversal for `having` for now, or define a helper variable if I can access it.
-      // `traverseFilter` is scoped to `if (query.filters)`.
-      // So I cannot access it here.
-      // I will COPY the logic for `having`. It's cleaner than refactoring the whole function.
-
-      const traverseHaving = (filter: Record<string, unknown>) => {
-        for (const [key, value] of Object.entries(filter)) {
-          if (key === "$and" || key === "$or") {
-            if (Array.isArray(value)) {
-              value.forEach((sub) => {
-                if (typeof sub === "object" && sub !== null)
-                  traverseHaving(sub as any);
-              });
-            }
-            continue;
-          }
-          if (key.includes(".")) {
-            // Same logic as filters path traversal
-            const parts = key.split(".");
-            let currentResource = query.resource;
-            for (let i = 0; i < parts.length - 1; i++) {
-              const relName = parts[i];
-              const rel = schema.relations?.find(
-                (r: any) =>
-                  (r.from === currentResource && r.relation === relName) ||
-                  (r.to === currentResource && r.inverse === relName),
-              );
-              if (rel) {
-                const targetResource =
-                  rel.from === currentResource
-                    ? (rel.to as string)
-                    : (rel.from as string);
-                resourcesToLoad.add(targetResource);
-                if (rel.from !== currentResource)
-                  resourcesToLoad.add(rel.from as string);
-                if (rel.type === "many-many")
-                  relationsToLoad.add(`${rel.from}.${rel.relation}`);
-                currentResource = targetResource;
-              }
-            }
-          }
-          // Relations as keys (quantifiers) - rare in having but possible
-          const rel = schema.relations?.find(
-            (r: any) =>
-              (r.from === query.resource && r.relation === key) ||
-              (r.to === query.resource && r.inverse === key),
-          );
-          if (rel && typeof value === "object" && value !== null) {
-            const ops = value as Record<string, unknown>;
-            if (ops.$any || ops.$all || ops.$none) {
-              const targetResource =
-                rel.from === query.resource
-                  ? (rel.to as string)
-                  : (rel.from as string);
-              resourcesToLoad.add(targetResource);
-              if (rel.from !== query.resource)
-                resourcesToLoad.add(rel.from as string);
-              if (rel.type === "many-many")
-                relationsToLoad.add(`${rel.from}.${rel.relation}`);
-              if (ops.$any) traverseHaving(ops.$any as any);
-              if (ops.$all) traverseHaving(ops.$all as any);
-              if (ops.$none) traverseHaving(ops.$none as any);
-            }
-          }
-        }
-      };
-      traverseHaving(query.having as Record<string, unknown>);
+      traverseFilterFields(query.having as Record<string, unknown>, query.resource);
     }
-
     // === Targeted secondary loading (INMEM-001, INMEM-002, INMEM-003, INMEM-004) ===
 
     const store = new DbDataStore();
@@ -762,9 +685,7 @@ export class DbDataStore implements DataStore {
         (r: any) => r.from === fromResource && r.relation === relName,
       );
 
-      const tableName =
-        (rel as any)?.joinTable ||
-        `__datafn_join_${fromResource}_${relName}`;
+      const tableName = getJoinTableName(fromResource, relName, (rel as any)?.joinTable);
       const fromCol = (rel as any)?.joinColumns?.from || "from";
       const toCol = (rel as any)?.joinColumns?.to || "to";
 
@@ -839,20 +760,14 @@ export class DbDataStore implements DataStore {
       );
 
       if (!rel) {
-        // INMEM-004: no relation path found → fall back to full load with warning
-        console.warn(
-          `[datafn] Falling back to full secondary load for resource: ${secondaryResource}`,
-        );
-        try {
-          const records = await db.findMany({
-            model: secondaryResource,
-            where: [],
-            namespace,
-          });
-          store.recordsCache.set(secondaryResource, records);
-        } catch {
-          store.recordsCache.set(secondaryResource, []);
-        }
+        // EXE-022: No direct relation path found for this secondary resource.
+        // This can happen with nested select tokens (e.g. tasks.tags.*).
+        // Fall back to empty rather than full table scan (correctness over coverage).
+        logger?.warn("No direct relation found for secondary resource; skipping load", {
+          operation: "forQuery",
+          resource: secondaryResource,
+        });
+        store.recordsCache.set(secondaryResource, []);
         continue;
       }
 
@@ -925,9 +840,10 @@ export class DbDataStore implements DataStore {
           }
         } else {
           // INMEM-004: unhandled relation type → fall back to full load with warning
-          console.warn(
-            `[datafn] Falling back to full secondary load for resource: ${secondaryResource}`,
-          );
+          logger?.warn("Falling back to full secondary load for unhandled relation type", {
+            operation: "forQuery",
+            resource: secondaryResource,
+          });
           records = await db.findMany({
             model: secondaryResource,
             where: [],

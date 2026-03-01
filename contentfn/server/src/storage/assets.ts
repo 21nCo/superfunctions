@@ -133,8 +133,8 @@ export async function assetGet(
   const row = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.assets,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "assetId", operator: "eq", value: input.assetId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "assetId", operator: "eq" as const, value: input.assetId },
     ],
   });
 
@@ -202,7 +202,7 @@ export async function assetList(
 
   const rows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.assets,
-    where: [{ field: "dataset", operator: "eq", value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
     orderBy: [
       { field: "createdAt", direction: "desc" },
       { field: "assetId", direction: "asc" },

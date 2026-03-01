@@ -11,9 +11,9 @@ export type DatafnClientError = {
 };
 
 /**
- * Create a DataFnClientError and throw it
+ * Build and throw a DatafnClientError.
  */
-export function createClientError(
+export function throwClientError(
   code: DatafnClientError["code"],
   message: string,
   details: { path: string; [key: string]: unknown },
@@ -25,6 +25,11 @@ export function createClientError(
   };
   throw error;
 }
+
+/**
+ * @deprecated Use `throwClientError` instead. This alias will be removed in the next major version.
+ */
+export const createClientError: typeof throwClientError = throwClientError;
 /**
  * Check if an error is a transport/retriable error.
  * Returns true for network errors, timeouts, or explicit TRANSPORT_ERROR code.

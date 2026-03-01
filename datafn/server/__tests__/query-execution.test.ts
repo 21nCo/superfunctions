@@ -16,7 +16,7 @@ describe("/datafn/query execution", () => {
     const db = memoryAdapter();
     await seedFixture(db, fixtureF1Data);
 
-    return await createDatafnServer({
+    return await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       db,
@@ -224,7 +224,7 @@ describe("/datafn/query execution", () => {
   });
 
   it("Phase 01 compatibility: Returns empty results when no store provided", async () => {
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
     });

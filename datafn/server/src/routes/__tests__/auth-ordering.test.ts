@@ -33,7 +33,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
     it("should return DFQL_INVALID for invalid JSON on POST /datafn/query", async () => {
       // Create server with auth that always denies
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -60,7 +60,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should return DFQL_INVALID for invalid JSON on POST /datafn/mutation", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -82,7 +82,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should return DFQL_INVALID for invalid JSON on POST /datafn/transact", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -103,7 +103,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should return DFQL_INVALID for empty body on POST endpoints", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -126,7 +126,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
   describe("TV-AUTH-INV-JSON-003: Valid JSON denied by auth returns FORBIDDEN", () => {
     it("should return FORBIDDEN when auth denies valid JSON", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -162,7 +162,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should call authorize with parsed payload, not null", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -200,7 +200,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
   describe("TV-AUTH-INV-JSON-001: Valid JSON with auth executes normally", () => {
     it("should execute handler when auth allows valid JSON", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(true);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -230,7 +230,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
   describe("GET /datafn/status calls authorize with null payload", () => {
     it("should call authorize with null payload for GET /datafn/status", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(true);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -252,7 +252,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should return FORBIDDEN for GET /datafn/status when auth denies", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -277,7 +277,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
   describe("All sync endpoints handle invalid JSON correctly", () => {
     it("should return DFQL_INVALID for invalid JSON on POST /datafn/clone", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -298,7 +298,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should return DFQL_INVALID for invalid JSON on POST /datafn/pull", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -319,7 +319,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should return DFQL_INVALID for invalid JSON on POST /datafn/push", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });
@@ -340,7 +340,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
 
     it("should return DFQL_INVALID for invalid JSON on POST /datafn/seed", async () => {
       const authorizeFn = vi.fn().mockResolvedValue(false);
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: testSchema,
         authorize: authorizeFn,
       });

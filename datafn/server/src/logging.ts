@@ -3,6 +3,7 @@
  */
 
 import type { DatafnSchema } from "@datafn/core";
+import type { DatafnLogger } from "./logger.js";
 
 export function redactSensitiveFields(
   record: Record<string, unknown>,
@@ -13,13 +14,19 @@ export function redactSensitiveFields(
   if (!resource) return record;
 
   const redacted = { ...record };
-  
-  // Identify sensitive fields (encrypt: true)
-  // Assuming schema fields have 'encrypt' property or similar metadata.
-  // The spec says "fields marked encrypt: true".
-  
+
+  // SRV-002: Redact fields marked encrypt:true AND fields with sensitive names
+  const SENSITIVE_NAMES = new Set([
+    "password", "token", "secret", "authorization", "cookie",
+    "apikey", "api_key", "accesstoken", "access_token",
+    "refreshtoken", "refresh_token", "privatekey", "private_key",
+  ]);
+
   for (const field of resource.fields) {
-    if ((field as any).encrypt === true) {
+    if (
+      (field as any).encrypt === true ||
+      SENSITIVE_NAMES.has(field.name.toLowerCase())
+    ) {
       if (redacted[field.name] !== undefined) {
         redacted[field.name] = "[REDACTED]";
       }
@@ -40,7 +47,17 @@ export interface RequestLogMetadata {
   [key: string]: unknown;
 }
 
-export function logRequest(metadata: RequestLogMetadata) {
-  // Structured logging to stdout
-  console.log(JSON.stringify(metadata));
+/**
+ * Log a structured request record.
+ *
+ * LOG-002: Uses DatafnLogger when provided, falling back to console.
+ * LOW-009: When using DatafnLogger, context is passed as structured data
+ * instead of being serialized eagerly.
+ */
+export function logRequest(metadata: RequestLogMetadata, logger?: DatafnLogger) {
+  if (logger) {
+    logger.info("request", metadata as Record<string, unknown>);
+  } else {
+    console.log(JSON.stringify(metadata));
+  }
 }

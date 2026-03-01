@@ -1,0 +1,17 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-27T18:00:00Z,claude-opus-4-6[1m],Claude Code (Warp),spec,claude-opus-4-6,,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec
+2026-02-27T17:26:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute,claude code,PHASE_00,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_00-2026-02-27-r7k4m2x9-report.md
+2026-02-27T21:28:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute,claude code,PHASE_01,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_01-2026-02-27-k9m7x4r2-report.md
+2026-02-27T21:57:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute,claude code,PHASE_02,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_02-2026-02-27-m4k7x9r3-report.md
+2026-02-27T23:48:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute,claude code,PHASE_03,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_03-2026-02-27-r9k4m7x2-report.md
+2026-02-28T11:50:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute,claude code,PHASE_04,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_04-2026-02-28-k7m9x4r2-report.md
+2026-02-28T07:04:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_05,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_05-2026-02-28-p5x9m3k7-report.md
+2026-02-28T08:31:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_06,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_06-2026-02-28-m3k7x9r2-report.md
+2026-02-28T09:16:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_07,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_07-2026-02-28-p9k3m7x4-report.md
+2026-02-28T15:26:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_08,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_08-2026-02-28-d8m4k9x3-report.md
+2026-02-28T16:30:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_09,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_09-2026-02-28-v9m4k7p2-report.md
+2026-02-28T17:13:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_10,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_10-2026-02-28-r3x7m9k4-report.md
+2026-02-28T17:55:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_11,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_11-2026-02-28-n8x2k7p5-report.md
+2026-02-28T18:15:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_12,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_12-2026-02-28-w7k4m9x2-report.md
+2026-02-28T18:50:00Z,claude-opus-4-6[1m],Claude Code (Warp),execute,claude-opus-4-6,PHASE_13,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_13-2026-02-28-q3x7m9k4-report.md
+2026-02-28T19:27:00Z,claude 4.6 sonnet (max),Warp,execute,Oz,PHASE_14,datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_14-2026-02-28-t9k4m7x3-report.md

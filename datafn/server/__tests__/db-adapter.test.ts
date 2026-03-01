@@ -23,7 +23,7 @@ describe("DB Adapter Integration", () => {
     const db = memoryAdapter();
     await db.initialize();
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
     });
@@ -75,7 +75,7 @@ describe("DB Adapter Integration", () => {
 
   it("TV-DB-MISSING-001: Query without DB returns empty result (Phase 01 compatibility)", async () => {
     // Server without DB
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       // no db
     });
@@ -98,7 +98,7 @@ describe("DB Adapter Integration", () => {
 
   it("TV-DB-002: Mutation without DB returns INTERNAL error", async () => {
     // Create server WITHOUT db
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
     });
 

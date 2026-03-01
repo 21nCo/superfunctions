@@ -13,7 +13,7 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
 
   // Helper to create server with fixture F1
   async function createF1Server(db: any) {
-    return await createDatafnServer({
+    return await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
       limits: { maxLimit: 100 },
       db,
@@ -325,7 +325,7 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
       ],
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: relSchema,
       limits: { maxLimit: 100 },
       db,
@@ -457,7 +457,7 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
       ],
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: relSchema,
       limits: { maxLimit: 100 },
       db,
@@ -782,7 +782,7 @@ describe("/datafn/sync endpoints (Phase 04)", () => {
       ],
     };
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: schemaWithRemoteOnly as any,
       limits: { maxLimit: 100 },
       db,
@@ -1615,7 +1615,7 @@ describe("hasMore field in canonical pull response (CLIENT-PULL-001)", () => {
         },
       ],
     };
-    return await createDatafnServer({
+    return await createDatafnServer({ allowUnknownResources: true,
       schema: simpleSchema as any,
       limits: { maxLimit: 500, maxPullLimit: 200 },
       db,
@@ -1694,5 +1694,340 @@ describe("hasMore field in canonical pull response (CLIENT-PULL-001)", () => {
     expect(body.result.hasMore).toBe(false);
     // Should return all 50 records
     expect(body.result.records.task).toHaveLength(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TST-003: Transaction Rollback Assertions
+// Previously "commented out" — now unconditional per TST-003 requirement.
+// ---------------------------------------------------------------------------
+
+import { executeTransaction } from "../src/execution/transact.js";
+import { vi } from "vitest";
+
+function makeIdempotencyStore() {
+  const store = new Map<string, any>();
+  return {
+    get: vi.fn(async (clientId: string, mutationId: string) =>
+      store.get(`${clientId}:${mutationId}`) ?? null,
+    ),
+    set: vi.fn(async (clientId: string, mutationId: string, result: any) => {
+      store.set(`${clientId}:${mutationId}`, result);
+    }),
+  };
+}
+
+const taskSchema = {
+  resources: [
+    {
+      name: "task",
+      version: 1,
+      fields: [
+        { name: "title", type: "string" as const, required: true },
+        { name: "status", type: "string" as const, required: false },
+      ],
+    },
+  ],
+};
+
+describe("TST-003: Transaction rollback assertions (unconditional)", () => {
+  it("TV-REL-005: failed step causes all prior results to be annotated rolledBack: true", async () => {
+    const db = memoryAdapter();
+    let insertCount = 0;
+    const originalCreate = db.create.bind(db);
+    (db as any).transaction = async (fn: any) => {
+      const txDb = new Proxy(db, {
+        get(target, prop) {
+          if (prop === "create") {
+            return async (params: any) => {
+              insertCount++;
+              if (insertCount === 3) throw new Error("constraint violation");
+              return originalCreate(params);
+            };
+          }
+          return (target as any)[prop];
+        },
+      });
+      await fn(txDb);
+    };
+
+    const idempotencyStore = makeIdempotencyStore();
+    const result = await executeTransaction(
+      {
+        atomic: true,
+        steps: [
+          { mutation: { resource: "task", operation: "insert", id: "task:1", record: { title: "A" } } as any },
+          { mutation: { resource: "task", operation: "insert", id: "task:2", record: { title: "B" } } as any },
+          { mutation: { resource: "task", operation: "insert", id: "task:3", record: { title: "C" } } as any },
+        ],
+      },
+      taskSchema as any,
+      db,
+      idempotencyStore,
+      undefined,
+      "default",
+      undefined,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.result?.ok).toBe(false);
+    expect(result.result?.error?.code).toBe("TRANSACTION_ROLLED_BACK");
+
+    const results = result.result!.results;
+
+    // Unconditional assertions — previously "commented out" per TST-003:
+    expect(results[0].ok).toBe(false);
+    expect(results[0].rolledBack).toBe(true);  // was: // expect(results[0].rolledBack).toBe(true)
+    expect(results[0].result).toBeDefined();
+
+    expect(results[1].ok).toBe(false);
+    expect(results[1].rolledBack).toBe(true);  // was: // expect(results[1].rolledBack).toBe(true)
+
+    expect(results[2].ok).toBe(false);
+    expect(results[2].rolledBack).toBeUndefined();
+  });
+
+  it("TV-REL-005b: rolled-back task is NOT persisted (taskNew is null)", async () => {
+    const db = memoryAdapter();
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: taskSchema as any,
+      db,
+    });
+
+    let insertCount = 0;
+    const originalCreate = db.create.bind(db);
+    const originalDelete = db.delete.bind(db);
+    (db as any).transaction = async (fn: any) => {
+      // Simulate a real transactional DB: track inserts so we can undo them on failure
+      const insertedRecords: Array<{ model: string; id: string; namespace: string }> = [];
+      const txDb = new Proxy(db, {
+        get(target, prop) {
+          if (prop === "create") {
+            return async (params: any) => {
+              insertCount++;
+              if (insertCount === 2) throw new Error("step 1 fails");
+              const result = await originalCreate(params);
+              insertedRecords.push({
+                model: params.model,
+                id: params.data.id,
+                namespace: params.namespace || "default",
+              });
+              return result;
+            };
+          }
+          return (target as any)[prop];
+        },
+      });
+      try {
+        await fn(txDb);
+      } catch {
+        // Simulate rollback: undo inserts in reverse order
+        for (const rec of insertedRecords.reverse()) {
+          await originalDelete({
+            model: rec.model,
+            where: [{ field: "id", operator: "eq" as const, value: rec.id }],
+            namespace: rec.namespace,
+          });
+        }
+      }
+    };
+
+    const idempotencyStore = makeIdempotencyStore();
+    await executeTransaction(
+      {
+        atomic: true,
+        steps: [
+          { mutation: { resource: "task", operation: "insert", id: "task:rb1", record: { title: "Should not persist" } } as any },
+          { mutation: { resource: "task", operation: "insert", id: "task:rb2", record: { title: "Fails" } } as any },
+        ],
+      },
+      taskSchema as any,
+      db,
+      idempotencyStore,
+      undefined,
+      "default",
+      undefined,
+    );
+
+    // Query for the rolled-back task — must not exist
+    const queryRes = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resource: "task", filters: { id: { $eq: "task:rb1" } } }),
+      }),
+    );
+    const queryBody = await queryRes.json();
+    expect(queryBody.ok).toBe(true);
+
+    const taskNew = queryBody.result?.data?.find((r: any) => r.id === "task:rb1") ?? null;
+    expect(taskNew).toBeNull();  // TST-003: previously "// expect(taskNew).toBeNull()"
+  });
+
+  it("TV-REL-006: successful transaction has no rolledBack annotation", async () => {
+    const db = memoryAdapter();
+    (db as any).transaction = async (fn: any) => { await fn(db); };
+
+    const idempotencyStore = makeIdempotencyStore();
+    const result = await executeTransaction(
+      {
+        atomic: true,
+        steps: [
+          { mutation: { resource: "task", operation: "insert", id: "task:ok1", record: { title: "A" } } as any },
+          { mutation: { resource: "task", operation: "insert", id: "task:ok2", record: { title: "B" } } as any },
+        ],
+      },
+      taskSchema as any,
+      db,
+      idempotencyStore,
+      undefined,
+      "default",
+      undefined,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.result?.ok).toBe(true);
+
+    // Unconditional: no rolledBack on any result
+    for (const r of result.result!.results) {
+      expect(r.rolledBack).toBeUndefined();
+      expect(r.ok).toBe(true);
+    }
+  });
+
+  it("rolledBack annotation includes original ok: true result for debugging", async () => {
+    const db = memoryAdapter();
+    let insertCount = 0;
+    const originalCreate = db.create.bind(db);
+    (db as any).transaction = async (fn: any) => {
+      const txDb = new Proxy(db, {
+        get(target, prop) {
+          if (prop === "create") {
+            return async (params: any) => {
+              insertCount++;
+              if (insertCount === 2) throw new Error("fail");
+              return originalCreate(params);
+            };
+          }
+          return (target as any)[prop];
+        },
+      });
+      await fn(txDb);
+    };
+
+    const idempotencyStore = makeIdempotencyStore();
+    const result = await executeTransaction(
+      {
+        atomic: true,
+        steps: [
+          { mutation: { resource: "task", operation: "insert", id: "task:rba", record: { title: "Will rollback" } } as any },
+          { mutation: { resource: "task", operation: "insert", id: "task:rbb", record: { title: "Fails" } } as any },
+        ],
+      },
+      taskSchema as any,
+      db,
+      idempotencyStore,
+      undefined,
+      "default",
+      undefined,
+    );
+
+    const results = result.result!.results;
+    expect(results[0].rolledBack).toBe(true);
+    expect(results[0].result?.ok).toBe(true); // original result preserved
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TST-005 (partial): Concurrent push tests
+// ---------------------------------------------------------------------------
+
+describe("TST-005 (sync): Concurrent push produces correct ordering", () => {
+  it("two clients pushing concurrently both succeed with all records persisted", async () => {
+    const db = memoryAdapter();
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: taskSchema as any,
+      db,
+    });
+
+    const makePushReq = (clientId: string, mutations: any[]) =>
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, mutations: mutations.map((m) => ({ ...m, clientId })) }),
+      });
+
+    const [res1, res2] = await Promise.all([
+      server.router.handle(
+        makePushReq("c1", [
+          { resource: "task", operation: "insert", id: "task:cc1", mutationId: "mm1", record: { title: "C1" } },
+          { resource: "task", operation: "insert", id: "task:cc2", mutationId: "mm2", record: { title: "C1-2" } },
+        ]),
+      ),
+      server.router.handle(
+        makePushReq("c2", [
+          { resource: "task", operation: "insert", id: "task:cc3", mutationId: "mm3", record: { title: "C2" } },
+          { resource: "task", operation: "insert", id: "task:cc4", mutationId: "mm4", record: { title: "C2-2" } },
+        ]),
+      ),
+    ]);
+
+    const body1 = await res1.json();
+    const body2 = await res2.json();
+
+    expect(body1.ok).toBe(true);
+    expect(body2.ok).toBe(true);
+
+    // Verify all 4 tasks persisted
+    const queryRes = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resource: "task" }),
+      }),
+    );
+    const queryBody = await queryRes.json();
+    expect(queryBody.ok).toBe(true);
+    expect(queryBody.result.data).toHaveLength(4);
+  });
+
+  it("idempotent mutations pushed twice are deduplicated (no duplicate records)", async () => {
+    const db = memoryAdapter();
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: taskSchema as any,
+      db,
+    });
+
+    const mutation = {
+      resource: "task",
+      operation: "insert",
+      id: "task:idem-cc",
+      mutationId: "idempotent-cc1",
+      record: { title: "Idempotent" },
+    };
+
+    const makePushReq = (clientId: string) =>
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, mutations: [{ ...mutation, clientId }] }),
+      });
+
+    await server.router.handle(makePushReq("c1"));
+    await server.router.handle(makePushReq("c1")); // duplicate
+
+    const queryRes = await server.router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resource: "task", filters: { id: { $eq: "task:idem-cc" } } }),
+      }),
+    );
+    const queryBody = await queryRes.json();
+    expect(queryBody.ok).toBe(true);
+    expect(queryBody.result.data).toHaveLength(1); // exactly 1 — deduped
   });
 });

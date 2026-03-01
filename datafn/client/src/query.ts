@@ -41,16 +41,28 @@ export async function executeQuery<T = unknown>(
   if (!storage) {
     const response = await remote.query(transformedQuery);
     let result = unwrapRemoteSuccess<T | T[]>(response);
-    
-    // Apply inbound date codec (CODEC-001)
-    if (schema && !Array.isArray(transformedQuery)) {
+
+    if (schema && Array.isArray(transformedQuery)) {
+      // REL-013: Apply inbound date codec per-query for batch queries (no-storage path)
+      if (Array.isArray(result)) {
+        result = (result as any[]).map((queryResult, i) => {
+          const query = (transformedQuery as any[])[i] as Record<string, unknown>;
+          const resource = query?.resource as string;
+          if (resource) {
+            return parseQueryResultDates(schema, resource, queryResult);
+          }
+          return queryResult;
+        }) as any;
+      }
+    } else if (schema && !Array.isArray(transformedQuery)) {
+      // Apply inbound date codec (CODEC-001)
       const query = transformedQuery as Record<string, unknown>;
       const resource = query.resource as string;
       if (resource) {
         result = parseQueryResultDates(schema, resource, result) as T | T[];
       }
     }
-    
+
     // Run afterQuery hooks (fail-open)
     return schema
       ? (runAfterQuery(plugins, schema, transformedQuery, result) as Promise<
@@ -59,16 +71,23 @@ export async function executeQuery<T = unknown>(
       : result;
   }
 
-  // For batch queries, always use remote fallback (simplification for Phase 20)
+  // For batch queries, always use remote fallback
   if (Array.isArray(transformedQuery)) {
     const response = await remote.query(transformedQuery);
     let result = unwrapRemoteSuccess<T | T[]>(response);
-    
-    // Apply inbound date codec for batch queries (CODEC-001)
-    // Note: Batch queries return array of results, each potentially needing codec
-    // For now, skip codec on batch queries (they would need per-query resource tracking)
-    // This is acceptable as batch queries are not primary path for Nucleus
-    
+
+    // REL-013: Apply inbound date codec per-query in batch path
+    if (schema && Array.isArray(result)) {
+      result = (result as any[]).map((queryResult, i) => {
+        const query = (transformedQuery as any[])[i] as Record<string, unknown>;
+        const resource = query?.resource as string;
+        if (resource) {
+          return parseQueryResultDates(schema, resource, queryResult);
+        }
+        return queryResult;
+      }) as any;
+    }
+
     return schema
       ? (runAfterQuery(plugins, schema, transformedQuery, result) as Promise<
           T | T[]

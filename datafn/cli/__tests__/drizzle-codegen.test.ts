@@ -6,6 +6,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-PG-001: Generate Drizzle Schema - Postgres Full Types", () => {
     it("should generate correct Postgres schema with all field types", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "task",
@@ -54,6 +55,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-MY-001: Generate Drizzle Schema - MySQL", () => {
     it("should generate correct MySQL schema", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "item",
@@ -89,6 +91,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-SL-001: Generate Drizzle Schema - SQLite", () => {
     it("should generate correct SQLite schema", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "item",
@@ -124,6 +127,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-MOD-001: Field Modifiers", () => {
     it("should apply required, unique, and default modifiers correctly", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "user",
@@ -155,6 +159,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-IDX-001: Index Generation", () => {
     it("should generate indices from indices.base", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "event",
@@ -185,6 +190,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-JOIN-001: Join Table Generation - Many-Many", () => {
     it("should generate join table for many-many relations", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "todos",
@@ -227,6 +233,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-JOIN-002: Join Table with Metadata and Custom Names", () => {
     it("should generate join table with metadata and custom names", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "users",
@@ -272,6 +279,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-COL-001: Column Name Convention", () => {
     it("should convert camelCase to snake_case for column names", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "profile",
@@ -309,6 +317,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-IMP-001: Import Tree-Shaking", () => {
     it("should only import used column types", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "note",
@@ -336,6 +345,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-DET-001: Deterministic Output", () => {
     it("should produce deterministic output with sorted resources and fields", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "zebra",
@@ -378,8 +388,9 @@ describe("Drizzle Schema Codegen", () => {
   });
 
   describe("Edge Cases", () => {
-    it("should handle resources without indices", () => {
+    it("should handle resources without indices (single-tenant)", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "simple",
@@ -397,6 +408,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("should handle many-many relations without metadata", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "a",
@@ -424,6 +436,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("should generate uniqueIndex only on (from, to) even when metadata columns exist", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "students",
@@ -459,6 +472,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("should handle one-many and many-one relations (no join tables)", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "parent",
@@ -484,6 +498,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("should sanitize variable names with hyphens", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "my-resource",
@@ -504,6 +519,7 @@ describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-KV-001: Built-in KV Table Generation", () => {
     it("should include the built-in kv table for postgres even when schema has no explicit kv resource", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "task",
@@ -528,6 +544,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("should include the built-in kv table for mysql", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "item",
@@ -551,6 +568,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("should include the built-in kv table for sqlite with text value column", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "item",
@@ -574,6 +592,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("should not duplicate kv table if schema already defines it", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "kv",
@@ -595,6 +614,7 @@ describe("Drizzle Schema Codegen", () => {
 
     it("kv table should appear in sorted position within the schema export", () => {
       const schema = {
+        multiTenant: false,
         resources: [
           {
             name: "todos",
@@ -761,6 +781,271 @@ describe("Drizzle Schema Codegen", () => {
 
       const result = validateSchema(schema);
       expect(result.ok).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // multiTenant codegen (SCH-001, SCH-002, SCH-003, SCH-004)
+  // =========================================================================
+
+  describe("TV-SCH-002: multiTenant __ns column generation", () => {
+    it("should add __ns column to resource tables when multiTenant: true", () => {
+      const schema = {
+        multiTenant: true,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "title", type: "string", required: true },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "postgres");
+
+      // __ns column present
+      expect(result).toContain('__ns: text("__ns").notNull(),');
+      // __ns sorts before alpha fields (underscore < alpha)
+      const taskBlock = result.split('pgTable("task"')[1];
+      const nsPos = taskBlock.indexOf("__ns:");
+      const idPos = taskBlock.indexOf("id:");
+      expect(nsPos).toBeLessThan(idPos);
+    });
+
+    it("should add __ns by default when multiTenant is not set (defaults to true)", () => {
+      const schema = {
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "title", type: "string", required: true },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "postgres");
+      expect(result).toContain('__ns: text("__ns").notNull(),');
+      expect(result).toContain('index("idx_task___ns").on(table.__ns)');
+    });
+
+    it("should NOT add __ns when multiTenant is explicitly false", () => {
+      const schema = {
+        multiTenant: false,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "title", type: "string", required: true },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "postgres");
+      expect(result).not.toContain("__ns");
+    });
+  });
+
+  describe("TV-SCH-003: multiTenant __ns index generation", () => {
+    it("should add index on __ns for every resource table", () => {
+      const schema = {
+        multiTenant: true,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+            ],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "postgres");
+
+      expect(result).toContain('index("idx_task___ns").on(table.__ns)');
+      expect(result).toContain("import { index,");
+    });
+
+    it("should compose __ns index with existing base indices", () => {
+      const schema = {
+        multiTenant: true,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [
+              { name: "id", type: "string", required: true },
+              { name: "status", type: "string", required: false },
+            ],
+            indices: { base: ["status"] },
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "postgres");
+
+      // Both indices present
+      expect(result).toContain('index("idx_task___ns").on(table.__ns)');
+      expect(result).toContain('index("task_status_idx").on(table.status)');
+    });
+  });
+
+  describe("TV-SCH-004: multiTenant __ns on join tables", () => {
+    it("should add __ns column and index to join tables when multiTenant: true", () => {
+      const schema = {
+        multiTenant: true,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "id", type: "string", required: true }],
+          },
+          {
+            name: "tag",
+            version: 1,
+            fields: [{ name: "id", type: "string", required: true }],
+          },
+        ],
+        relations: [
+          { from: "task", to: "tag", type: "many-many", relation: "tags" },
+        ],
+      };
+
+      const result = generateDrizzleSchema(schema, "postgres");
+
+      // Join table has __ns column
+      const joinBlock = result.split('pgTable("__datafn_join_task_tags"')[1];
+      expect(joinBlock).toContain('__ns: text("__ns").notNull()');
+
+      // Join table has __ns index
+      expect(result).toContain('index("idx___datafn_join_task_tags___ns").on(table.__ns)');
+    });
+
+    it("should NOT add __ns to join tables when multiTenant is explicitly false", () => {
+      const schema = {
+        multiTenant: false,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "id", type: "string", required: true }],
+          },
+          {
+            name: "tag",
+            version: 1,
+            fields: [{ name: "id", type: "string", required: true }],
+          },
+        ],
+        relations: [
+          { from: "task", to: "tag", type: "many-many", relation: "tags" },
+        ],
+      };
+
+      const result = generateDrizzleSchema(schema, "postgres");
+      expect(result).not.toContain("__ns");
+    });
+  });
+
+  describe("TV-SCH-001: multiTenant schema flag accepted", () => {
+    it("defineSchema accepts multiTenant: true", () => {
+      const { defineSchema } = require("@datafn/core");
+      const schema = defineSchema({
+        multiTenant: true,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "title", type: "string", required: true }],
+          },
+        ],
+      });
+      expect(schema.multiTenant).toBe(true);
+    });
+  });
+
+  describe("TV-SCH-006: validateSchema accepts multiTenant", () => {
+    it("returns multiTenant: true in validated output", () => {
+      const result = validateSchema({
+        multiTenant: true,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "title", type: "string", required: true }],
+          },
+        ],
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.result.multiTenant).toBe(true);
+      }
+    });
+
+    it("defaults multiTenant to true when not set", () => {
+      const result = validateSchema({
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "title", type: "string", required: true }],
+          },
+        ],
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.result.multiTenant).toBe(true);
+      }
+    });
+
+    it("returns multiTenant: false when explicitly set to false", () => {
+      const result = validateSchema({
+        multiTenant: false,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "title", type: "string", required: true }],
+          },
+        ],
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.result.multiTenant).toBe(false);
+      }
+    });
+  });
+
+  describe("multiTenant codegen: SQLite dialect", () => {
+    it("should generate __ns with text type for SQLite", () => {
+      const schema = {
+        multiTenant: true,
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "id", type: "string", required: true }],
+          },
+        ],
+        relations: [],
+      };
+
+      const result = generateDrizzleSchema(schema, "sqlite");
+      expect(result).toContain('__ns: text("__ns").notNull()');
+      expect(result).toContain('index("idx_task___ns")');
     });
   });
 });

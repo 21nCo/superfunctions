@@ -37,5 +37,15 @@ id, desc, status, completedAt, completionDoc
 2026-02-25-k7m9x4r8-issue,QuerySignal notifies subscribers before clearing inFlight flag — loading stuck at true,1,2026-02-25T17:26:00Z,2026-02-25-k7m9x4r8-completion
 2026-02-25-r4k7m9x3-issue,IndexedDbStorageAdapter validResources missing join store keys — pull and push crash with Unknown table,1,2026-02-25T18:30:00Z,2026-02-25-r4k7m9x3-completion
 2026-02-25-m7k4x9r3-issue,Drizzle upsert fails with "No values to set" on many-many relate push with empty update,1,2026-02-25T21:36:00Z,2026-02-25-m7k4x9r3-completion
-2026-02-25-k9x4m7r3-issue,Drizzle codegen omits UNIQUE(from/to) constraint on join tables — ON CONFLICT upsert fails on PostgreSQL,0,,
+2026-02-25-k9x4m7r3-issue,Drizzle codegen omits UNIQUE(from/to) constraint on join tables — ON CONFLICT upsert fails on PostgreSQL,1,,
 2026-02-25-r7x4m9k3-issue,Unrelate mutation does not propagate to other clients — composite ID separator mismatch between change tracking and pull parsing,1,2026-02-25T16:00:00Z,2026-02-25-r7x4m9k3-completion
+2026-02-26-289dbdab-full-audit,Fix all findings from 2026-02-26 full production-readiness audit (6 new + 6 previously reported),1,2026-02-26T07:05:00Z,2026-02-26-k7m9x4r2-completion
+2026-02-26-new-k7r4m9x2-spec,Row-level namespace isolation for datafn data tables via __ns discriminator column in @superfunctions/db,1,2026-02-26T18:22:30Z,
+2026-02-26-9eab36d4-duplication-audit,Resolve all 15 DUP issues from full duplication audit — centralize shared logic in @datafn/core,1,2026-02-26T19:08:00Z,2026-02-26-9eab36d4-completion
+2026-02-27-k4m7x9r3-issue,multiTenant defaults to false — namespace column (__ns) requires explicit opt-in instead of being the default,1,2026-02-27T12:02:00Z,2026-02-27-k9m4x7r3-completion
+2026-02-27-r7m4k9x3-issue, Server fails on push (__ns null) and concurrent pull (ensureTable race), 1, 2026-02-27T12:42:00Z, 2026-02-27-r7m4k9x3-completion
+2026-02-27-audit-fix-v7k3m9x4-spec, Fix all 157 findings from x3cjj10g production-readiness audit using recommended decision approaches, 1, 2026-02-28T19:27:00Z, datafn/.conduct/specs/2026-02-27-audit-fix-v7k3m9x4-spec/phase-reports/PHASE_14-2026-02-28-t9k4m7x3-report.md
+2026-02-27-x8k3m9v7-issue, Namespace-polluted upsert conflict target breaks join tables and KV persistence, 1, 2026-02-27T15:50:00Z, 2026-02-27-x8k3m9v7-completion
+2026-03-01-k7v3m9x4-issue, KV value field schema type object rejects primitive values — kv.set(key string) fails with 400, 1, 2026-03-01T12:59:00Z, 2026-03-01-r7k4m9x3-completion
+2026-03-01-r4m7k9x3-issue, Built-in KV resource has no permissions policy — blocked by deny-by-default authz, 1, 2026-03-01T07:58:00Z, 2026-03-01-v4k9m7x3-completion
+2026-03-01-m4k7x9v2-issue, Push upsert missing conflictTarget id — namespace wrapper corrupts ON CONFLICT target, 0, , 

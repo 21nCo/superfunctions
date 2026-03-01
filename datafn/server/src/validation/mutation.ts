@@ -12,6 +12,17 @@ import {
   validateRelationName,
   getRelation,
 } from "./schema.js";
+import { checkPrototypePollution, validateFieldValue } from "@datafn/core";
+
+/**
+ * Options for mutation validation (VAL-006 through VAL-009)
+ */
+export interface MutationValidationOpts {
+  /** VAL-006: Max ID field length (default 255) */
+  maxIdLength?: number;
+  /** VAL-009: Debug mode - when false, messages are generic */
+  debug?: boolean;
+}
 
 /**
  * Valid mutation operations
@@ -38,6 +49,7 @@ export function validateMutation(
   mutation: unknown,
   index: SchemaIndex,
   basePath: string = "$",
+  opts?: MutationValidationOpts,
 ): ValidationResult<void> {
   // Must be object
   if (typeof mutation !== "object" || mutation === null || Array.isArray(mutation)) {
@@ -45,6 +57,12 @@ export function validateMutation(
   }
 
   const m = mutation as Record<string, unknown>;
+
+  // SEC-008: Prototype pollution check on the entire mutation object
+  const pollutionCheck = checkPrototypePollution(m);
+  if (!pollutionCheck.ok) {
+    return vErr("DFQL_INVALID", `Disallowed key: ${pollutionCheck.key}`, basePath);
+  }
 
   // Validate resource exists
   if (typeof m.resource !== "string") {
@@ -72,6 +90,50 @@ export function validateMutation(
   // Validate id (required for all operations)
   if (typeof m.id !== "string") {
     return vErr("DFQL_INVALID", "Invalid DFQL: id must be string", `${basePath}.id`);
+  }
+
+  // VAL-006: ID length limit
+  const maxIdLength = opts?.maxIdLength ?? 255;
+  if (m.id.length > maxIdLength) {
+    return vErr(
+      "DFQL_INVALID",
+      `ID exceeds maximum length (${maxIdLength})`,
+      `${basePath}.id`,
+    );
+  }
+
+  // VAL-007: clientId validation
+  if (m.clientId !== undefined) {
+    if (typeof m.clientId !== "string" || m.clientId.length === 0) {
+      return vErr("DFQL_INVALID", "Invalid DFQL: clientId must be a non-empty string", `${basePath}.clientId`);
+    }
+    if (m.clientId.length > 255) {
+      return vErr("DFQL_INVALID", "clientId exceeds maximum length (255)", `${basePath}.clientId`);
+    }
+  }
+
+  // VAL-007: mutationId validation
+  if (m.mutationId !== undefined) {
+    if (typeof m.mutationId !== "string" || m.mutationId.length === 0) {
+      return vErr("DFQL_INVALID", "Invalid DFQL: mutationId must be a non-empty string", `${basePath}.mutationId`);
+    }
+    if (m.mutationId.length > 255) {
+      return vErr("DFQL_INVALID", "mutationId exceeds maximum length (255)", `${basePath}.mutationId`);
+    }
+  }
+
+  // VAL-008: version field validation (accept numeric string for compat)
+  if (m.version !== undefined) {
+    const versionNum =
+      typeof m.version === "string" ? Number(m.version) : m.version;
+    if (
+      (typeof m.version !== "number" && typeof m.version !== "string") ||
+      isNaN(versionNum as number) ||
+      !Number.isInteger(versionNum) ||
+      (versionNum as number) <= 0
+    ) {
+      return vErr("DFQL_INVALID", "Invalid DFQL: version must be a positive integer", `${basePath}.version`);
+    }
   }
 
   // Validate id prefix if defined in schema
@@ -108,6 +170,23 @@ export function validateMutation(
     );
     if (!recordResult.ok) {
       return recordResult;
+    }
+
+    // SEC-005: Validate field value types against schema
+    const record = m.record as Record<string, unknown>;
+    for (const [fieldName, value] of Object.entries(record)) {
+      if (fieldName === "id") continue; // id is always a string, validated elsewhere
+      const fieldDef = resource.fields.find((f) => f.name === fieldName);
+      if (!fieldDef) continue; // Unknown fields handled by validateRecordKeys
+      if (value === undefined) continue; // undefined means not provided
+      const typeResult = validateFieldValue(fieldDef.type, value, fieldDef.nullable ?? false);
+      if (!typeResult.ok) {
+        return vErr(
+          "DFQL_INVALID",
+          `Field '${fieldName}' expects ${fieldDef.type}, got ${typeResult.error!.split("got ")[1] || "invalid"}`,
+          `${basePath}.record.${fieldName}`,
+        );
+      }
     }
 
     // Check required fields for insert/replace
@@ -210,6 +289,7 @@ export function validateMutation(
 export function validateMutationBody(
   body: unknown,
   index: SchemaIndex,
+  opts?: MutationValidationOpts,
 ): ValidationResult<{ isBatch: boolean; mutations: Record<string, unknown>[] }> {
   if (typeof body !== "object" || body === null) {
     return vErr("DFQL_INVALID", "Invalid DFQL: expected object or array", "$");
@@ -220,7 +300,7 @@ export function validateMutationBody(
 
   for (let i = 0; i < mutations.length; i++) {
     const path = isBatch ? `$[${i}]` : "$";
-    const result = validateMutation(mutations[i], index, path);
+    const result = validateMutation(mutations[i], index, path, opts);
     if (!result.ok) {
       // Add index to error for batch operations
       if (isBatch) {
@@ -249,12 +329,13 @@ export function validateMutationBody(
 export function validatePushMutations(
   mutations: unknown[],
   index: SchemaIndex,
+  opts?: MutationValidationOpts,
 ): { valid: boolean; errors: ValidationError[] } {
   const errors: ValidationError[] = [];
 
   for (let i = 0; i < mutations.length; i++) {
     const mutation = mutations[i];
-    const result = validateMutation(mutation, index, `mutations[${i}]`);
+    const result = validateMutation(mutation, index, `mutations[${i}]`, opts);
     if (!result.ok) {
       errors.push(result.error);
     }

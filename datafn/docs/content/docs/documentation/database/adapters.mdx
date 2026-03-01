@@ -1,0 +1,159 @@
+---
+title: Database Adapters
+description: Connect DataFn to your database.
+---
+
+DataFn uses the `@superfunctions/db` adapter system to interface with databases on the server. The adapter provides a uniform API for CRUD operations, transactions, and schema management across different database backends.
+
+## Adapter Interface
+
+```typescript
+interface Adapter {
+  // Metadata
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly capabilities: AdapterCapabilities;
+
+  // Core CRUD
+  create<T>(params: CreateParams): Promise<T>;
+  findOne<T>(params: FindOneParams): Promise<T | null>;
+  findMany<T>(params: FindManyParams): Promise<T[]>;
+  update<T>(params: UpdateParams): Promise<T>;
+  delete(params: DeleteParams): Promise<void>;
+
+  // Batch operations
+  createMany<T>(params: CreateManyParams): Promise<T[]>;
+  updateMany(params: UpdateManyParams): Promise<number>;
+  deleteMany(params: DeleteManyParams): Promise<number>;
+
+  // Advanced
+  upsert<T>(params: UpsertParams): Promise<T>;
+  count(params: CountParams): Promise<number>;
+
+  // Transactions
+  transaction<R>(callback: (trx: TransactionAdapter) => Promise<R>): Promise<R>;
+
+  // Lifecycle
+  initialize(): Promise<void>;
+  isHealthy(): Promise<HealthStatus>;
+  close(): Promise<void>;
+
+  // Schema
+  getSchemaVersion(namespace: string): Promise<number>;
+  setSchemaVersion(namespace: string, version: number): Promise<void>;
+  validateSchema(schema: TableSchema): Promise<ValidationResult>;
+
+  // Internal CRUD (bypasses ORM schema resolution)
+  readonly internal: InternalCrud;
+}
+```
+
+## Namespace Support
+
+All CRUD operations accept an optional `namespace` parameter for row-level isolation. When row-level namespacing is enabled, the adapter automatically filters queries by a discriminator column (default: `__ns`):
+
+```typescript
+// These two queries are equivalent when namespace is configured
+await adapter.findMany({ model: "todos", where: [], namespace: "tenant-1" });
+// Internally: SELECT * FROM todos WHERE __ns = 'tenant-1'
+```
+
+Namespace is always server-derived. The client never supplies the namespace directly.
+
+## Operation Parameters
+
+### Create
+
+```typescript
+await adapter.create({
+  model: "todos",
+  data: { id: "t1", title: "Buy milk" },
+  namespace: "tenant-1",
+});
+```
+
+### Find
+
+```typescript
+const todo = await adapter.findOne({
+  model: "todos",
+  where: [{ field: "id", operator: "eq", value: "t1" }],
+  namespace: "tenant-1",
+});
+
+const todos = await adapter.findMany({
+  model: "todos",
+  where: [{ field: "status", operator: "eq", value: "active" }],
+  orderBy: [{ field: "createdAt", direction: "desc" }],
+  limit: 50,
+  namespace: "tenant-1",
+});
+```
+
+### Update and Delete
+
+```typescript
+await adapter.update({
+  model: "todos",
+  where: [{ field: "id", operator: "eq", value: "t1" }],
+  data: { status: "done" },
+  namespace: "tenant-1",
+});
+
+await adapter.delete({
+  model: "todos",
+  where: [{ field: "id", operator: "eq", value: "t1" }],
+  namespace: "tenant-1",
+});
+```
+
+## Where Clause Operators
+
+| Operator | Description |
+|----------|-------------|
+| `eq` | Equal to |
+| `ne` | Not equal to |
+| `gt` | Greater than |
+| `gte` | Greater than or equal to |
+| `lt` | Less than |
+| `lte` | Less than or equal to |
+| `in` | In array |
+| `not_in` | Not in array |
+| `contains` | String contains |
+| `starts_with` | String starts with |
+| `ends_with` | String ends with |
+
+## Internal Tables
+
+DataFn uses several internal tables managed via the `adapter.internal` API:
+
+| Table | Purpose |
+|-------|---------|
+| `__datafn_meta` | Stores `next_server_seq` per namespace |
+| `__datafn_changes` | Change log entries for incremental sync |
+| `__datafn_idempotency` | Mutation deduplication records |
+| `__datafn_seed` | Seed tracking metadata |
+
+Internal tables are created automatically on first use via `CREATE TABLE IF NOT EXISTS`.
+
+## Available Adapters
+
+| Adapter | Package | Databases |
+|---------|---------|-----------|
+| [Drizzle](/docs/documentation/database/drizzle) | `@superfunctions/db` | PostgreSQL, MySQL, SQLite |
+| Memory | `@superfunctions/db` | In-memory (testing) |
+
+## Row-Level Namespace Configuration
+
+```typescript
+const adapter = createDrizzleAdapter({
+  db: drizzleInstance,
+  dialect: "postgres",
+  rowLevelNamespace: {
+    enabled: true,
+    columnName: "__ns",    // Default
+    mandatory: true,       // Default
+  },
+});
+```

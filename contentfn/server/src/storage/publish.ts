@@ -31,8 +31,8 @@ export async function docPublish(
   const draftRow = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: draftId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: draftId },
     ],
   });
 
@@ -63,8 +63,8 @@ export async function docPublish(
   const existingPublished = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: publishedId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: publishedId },
     ],
   });
 
@@ -72,8 +72,8 @@ export async function docPublish(
     await config.db.deleteMany({
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "id", operator: "eq", value: publishedId },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "id", operator: "eq" as const, value: publishedId },
       ],
     });
   }
@@ -135,8 +135,8 @@ export async function docUnpublish(
   const publishedRow = await config.db.findOne({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: publishedId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: publishedId },
     ],
   });
 
@@ -153,8 +153,8 @@ export async function docUnpublish(
   await config.db.deleteMany({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: publishedId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: publishedId },
     ],
   });
 

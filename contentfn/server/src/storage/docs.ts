@@ -197,8 +197,8 @@ export async function docCreate(
   const existing = await config.db.findOne({
     model: table,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: docId },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: docId },
     ],
   });
 
@@ -281,8 +281,8 @@ export async function docGet(
   const row = await config.db.findOne({
     model: table,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: input.id },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: input.id },
     ],
   });
 
@@ -320,8 +320,8 @@ export async function docDelete(
     await config.db.deleteMany({
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "id", operator: "eq", value: input.id },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "id", operator: "eq" as const, value: input.id },
       ],
     });
     // Draft doc uses "drafts." prefix
@@ -329,8 +329,8 @@ export async function docDelete(
     await config.db.deleteMany({
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "id", operator: "eq", value: draftId },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "id", operator: "eq" as const, value: draftId },
       ],
     });
   } else {
@@ -338,8 +338,8 @@ export async function docDelete(
     await config.db.deleteMany({
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
-        { field: "dataset", operator: "eq", value: input.dataset },
-        { field: "id", operator: "eq", value: input.id },
+        { field: "dataset", operator: "eq" as const, value: input.dataset },
+        { field: "id", operator: "eq" as const, value: input.id },
       ],
     });
   }
@@ -379,8 +379,8 @@ export async function docPatch(
   const row = await config.db.findOne({
     model: table,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: input.id },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: input.id },
     ],
   });
 
@@ -421,8 +421,8 @@ export async function docPatch(
   await config.db.deleteMany({
     model: table,
     where: [
-      { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "id", operator: "eq", value: input.id },
+      { field: "dataset", operator: "eq" as const, value: input.dataset },
+      { field: "id", operator: "eq" as const, value: input.id },
     ],
   });
 

@@ -40,7 +40,7 @@ function buildWhereClause(
 }
 
 export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): InternalCrud {
-  const ensuredTables = new Set<string>();
+  const ensurePromises = new Map<string, Promise<void>>();
 
   const TABLE_NAME_RE = /^__datafn_[a-z0-9_]+$/;
 
@@ -76,17 +76,24 @@ export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): Int
         throw new Error(`ensureTable: table name must start with "__datafn_": "${name}"`);
       }
 
-      if (ensuredTables.has(name)) return;
+      // Use a promise-based lock to prevent concurrent DDL for the same table.
+      // Without this, concurrent calls pass the guard before any completes,
+      // causing PostgreSQL pg_type duplicate key errors on CREATE TABLE IF NOT EXISTS.
+      if (ensurePromises.has(name)) return ensurePromises.get(name);
 
-      const colDefs = columns.map((col) => {
-        const sqlType = col.type === 'text' ? 'TEXT' : 'INTEGER';
-        const pk = col.primaryKey ? ' PRIMARY KEY' : '';
-        return `${col.name} ${sqlType}${pk}`;
-      });
+      const promise = (async () => {
+        const colDefs = columns.map((col) => {
+          const sqlType = col.type === 'text' ? 'TEXT' : 'INTEGER';
+          const pk = col.primaryKey ? ' PRIMARY KEY' : '';
+          return `${col.name} ${sqlType}${pk}`;
+        });
 
-      const ddl = `CREATE TABLE IF NOT EXISTS ${name} (${colDefs.join(', ')})`;
-      await executeRaw(drizzleSql.raw(ddl));
-      ensuredTables.add(name);
+        const ddl = `CREATE TABLE IF NOT EXISTS ${name} (${colDefs.join(', ')})`;
+        await executeRaw(drizzleSql.raw(ddl));
+      })();
+
+      ensurePromises.set(name, promise);
+      return promise;
     },
 
     async create(

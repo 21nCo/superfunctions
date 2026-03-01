@@ -48,7 +48,7 @@ async function createPushdownServer() {
   for (const task of SEED_TASKS) {
     await db.create({ model: "task", data: task, namespace: "datafn" });
   }
-  const server = await createDatafnServer({
+  const server = await createDatafnServer({ allowUnknownResources: true,
     schema: PUSHDOWN_SCHEMA,
     limits: { maxLimit: 100 },
     db,
@@ -373,7 +373,7 @@ async function createTaskTagServer() {
   await db.create({ model: "__datafn_join_task_tags", data: { id: "jr2", from: "t2", to: "tag-b" }, namespace: "datafn" });
   await db.create({ model: "__datafn_join_task_tags", data: { id: "jr3", from: "t3", to: "tag-c" }, namespace: "datafn" });
 
-  const server = await createDatafnServer({
+  const server = await createDatafnServer({ allowUnknownResources: true,
     schema: TASK_TAG_SCHEMA,
     limits: { maxLimit: 100 },
     db,
@@ -395,7 +395,7 @@ async function createTaskCategoryServer() {
   await db.create({ model: "category", data: { id: "c2", name: "Beta"  }, namespace: "datafn" });
   await db.create({ model: "category", data: { id: "c3", name: "Gamma" }, namespace: "datafn" });
 
-  const server = await createDatafnServer({
+  const server = await createDatafnServer({ allowUnknownResources: true,
     schema: TASK_CATEGORY_SCHEMA,
     limits: { maxLimit: 100 },
     db,
@@ -514,7 +514,7 @@ describe("IN_MEMORY pre-filter optimisation", () => {
     await db.create({ model: "__datafn_join_task_tags", data: { id: "jr2", from: "t2", to: "tag-b" }, namespace: "datafn" });
     await db.create({ model: "__datafn_join_task_tags", data: { id: "jr3", from: "t3", to: "tag-a" }, namespace: "datafn" });
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: TASK_TAG_SCHEMA,
       limits: { maxLimit: 100 },
       db,
@@ -604,7 +604,7 @@ async function createProjectTaskServer() {
   await db.create({ model: "task", data: { id: "task-3", title: "T3", projectId: "p2" }, namespace: "datafn" });
   await db.create({ model: "task", data: { id: "task-4", title: "T4", projectId: "p3" }, namespace: "datafn" });
 
-  const server = await createDatafnServer({
+  const server = await createDatafnServer({ allowUnknownResources: true,
     schema: PROJECT_TASK_SCHEMA,
     limits: { maxLimit: 100 },
     db,
@@ -779,7 +779,7 @@ describe("IN_MEMORY targeted secondary loading", () => {
     await db.create({ model: "tag",  data: { id: "tag-b", label: "review"  }, namespace: "datafn" });
     await db.create({ model: "__datafn_join_task_tags", data: { id: "jr1", from: "t1", to: "tag-a" }, namespace: "datafn" });
 
-    const server = await createDatafnServer({
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: TASK_TAG_SCHEMA,
       limits: { maxLimit: 100 },
       db,
@@ -842,13 +842,20 @@ describe("IN_MEMORY targeted secondary loading", () => {
     await db.create({ model: "mystery", data: { id: "m1", data: "secret" },                  namespace: "datafn" });
     await db.create({ model: "mystery", data: { id: "m2", data: "other"  },                  namespace: "datafn" });
 
-    const server = await createDatafnServer({
+    const warnLogs: string[] = [];
+    const mockLogger = {
+      info: () => {},
+      warn: (msg: string) => warnLogs.push(msg),
+      error: () => {},
+      debug: () => {},
+    };
+
+    const server = await createDatafnServer({ allowUnknownResources: true,
       schema: unknownRelSchema,
       limits: { maxLimit: 100 },
       db,
+      logger: mockLogger,
     });
-
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const res = await server.router.handle(
       queryReq({
@@ -867,11 +874,9 @@ describe("IN_MEMORY targeted secondary loading", () => {
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
 
-    // Warning must have been emitted
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[datafn] Falling back to full secondary load for resource: mystery"),
+    // Warning must have been emitted via logger
+    expect(warnLogs).toContain(
+      "Falling back to full secondary load for unhandled relation type",
     );
-
-    warnSpy.mockRestore();
   });
 });

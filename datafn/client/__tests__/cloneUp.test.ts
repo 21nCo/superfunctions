@@ -1525,3 +1525,113 @@ describe("cloneUp — Phase 05: Observability events", () => {
     pushSpy.mockRestore();
   });
 });
+
+describe("cloneUp — pushBatchWithRetry exponential backoff (CLI-010)", () => {
+  it("retries twice on transport errors with exponential backoff and succeeds on third attempt", async () => {
+    vi.useFakeTimers();
+
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("tasks", { id: "tasks:t1", title: "Backoff task" });
+
+    const transportErr = {
+      code: "TRANSPORT_ERROR",
+      message: "network error",
+      details: { path: "sync.push" },
+    };
+
+    const pushSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "push")
+      .mockRejectedValueOnce(transportErr) // attempt 1: waits 1000ms
+      .mockRejectedValueOnce(transportErr) // attempt 2: waits 2000ms
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          ok: true,
+          applied: ["cloneup:rec:tasks:tasks:t1:abc"],
+          errors: [],
+          cursor: "5",
+        },
+      });
+
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          {
+            name: "tasks",
+            version: 1,
+            fields: [{ name: "title", type: "string" as const, required: true }],
+          },
+        ],
+        relations: [],
+      },
+      sync: { remote: "http://example.com", pushMaxRetries: 3 },
+      clientId: "client:device-1",
+      storage,
+    });
+
+    // Start cloneUp without awaiting; advance all fake timers to skip backoff delays
+    const resultPromise = client.sync.cloneUp({ pullAfter: false });
+    await vi.runAllTimersAsync();
+
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(true);
+    expect(result.cursor).toBe("5");
+    // 2 transport failures + 1 success = 3 total push calls
+    expect(pushSpy).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+    pushSpy.mockRestore();
+  });
+
+  it("throws after exhausting maxRetries with correct attempt count", async () => {
+    vi.useFakeTimers();
+
+    const storage = new MockStorageAdapter();
+    storage.cursors.set("__global_cursor__", "0");
+    await storage.upsertRecord("tasks", { id: "tasks:t1", title: "Fail task" });
+
+    const transportErr = {
+      code: "TRANSPORT_ERROR",
+      message: "persistent network failure",
+      details: { path: "sync.push" },
+    };
+
+    // Always fail
+    const pushSpy = vi
+      .spyOn(DefaultHttpTransport.prototype, "push")
+      .mockRejectedValue(transportErr);
+
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          {
+            name: "tasks",
+            version: 1,
+            fields: [{ name: "title", type: "string" as const, required: true }],
+          },
+        ],
+        relations: [],
+      },
+      // maxRetries: 2 means attempts 1,2 retry (2 <= 2), attempt 3 throws (3 > 2)
+      sync: { remote: "http://example.com", pushMaxRetries: 2 },
+      clientId: "client:device-1",
+      storage,
+    });
+
+    const resultPromise = client.sync.cloneUp({ pullAfter: false });
+    // Attach catch handler immediately to prevent unhandled-rejection warning before
+    // vi.runAllTimersAsync() fires the backoff timers that settle the promise.
+    resultPromise.catch(() => {});
+
+    await vi.runAllTimersAsync();
+
+    await expect(resultPromise).rejects.toMatchObject({ code: "TRANSPORT_ERROR" });
+    // 1 initial + 2 retries = 3 total push calls (maxRetries=2)
+    expect(pushSpy).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+    pushSpy.mockRestore();
+  });
+});

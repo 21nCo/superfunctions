@@ -43,7 +43,7 @@ export async function fetchDueEntries(
   const rows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.webhookQueue,
     where: [
-      { field: "status", operator: "eq", value: "pending" },
+      { field: "status", operator: "eq" as const, value: "pending" },
     ],
   });
 
@@ -58,8 +58,8 @@ export async function markDelivered(
   await config.db.deleteMany({
     model: CONTENTFN_TABLE_NAMES.webhookQueue,
     where: [
-      { field: "eventId", operator: "eq", value: eventId },
-      { field: "webhookId", operator: "eq", value: webhookId },
+      { field: "eventId", operator: "eq" as const, value: eventId },
+      { field: "webhookId", operator: "eq" as const, value: webhookId },
     ],
   });
   await config.db.create({
@@ -96,8 +96,8 @@ export async function markFailed(
   await config.db.deleteMany({
     model: CONTENTFN_TABLE_NAMES.webhookQueue,
     where: [
-      { field: "eventId", operator: "eq", value: eventId },
-      { field: "webhookId", operator: "eq", value: webhookId },
+      { field: "eventId", operator: "eq" as const, value: eventId },
+      { field: "webhookId", operator: "eq" as const, value: webhookId },
     ],
   });
   await config.db.create({

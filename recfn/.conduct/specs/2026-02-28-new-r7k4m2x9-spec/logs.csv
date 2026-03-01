@@ -1,0 +1,9 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-02-28T14:00:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec
+2026-02-28T19:01:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_00,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_00-2026-02-28-f3k9m2x7-report.md
+2026-02-28T19:23:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_01,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_01-2026-02-28-q8w3n5v2-report.md
+2026-03-01T12:02:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_02,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_02-2026-03-01-k4p7m9x3-report.md
+2026-03-01T07:34:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_03,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_03-2026-03-01-r5t2w8q4-report.md
+2026-03-01T07:51:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_04,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_04-2026-03-01-m7n3v6k8-report.md
+2026-03-01T08:09:00Z,claude-sonnet-4-20250514,Amp CLI,execute,unknown-agent,PHASE_05,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_05-2026-03-01-j8x4w2p6-report.md
+2026-03-01T13:46:00Z,unknown,CLI,execute,unknown-agent,PHASE_06,recfn/.conduct/specs/2026-02-28-new-r7k4m2x9-spec/phase-reports/PHASE_06-2026-03-01-ws00abc12-report.md

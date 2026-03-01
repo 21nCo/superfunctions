@@ -22,26 +22,27 @@ export class DbIdempotencyStore implements IdempotencyStore {
     clientId: string,
     mutationId: string,
   ): Promise<MutationResult | null> {
+    // EXE-007: DB errors propagate; only swallow JSON parse errors (SyntaxError)
+    if (!this.ensured) {
+      await ensureInternalTable(this.db, "__datafn_idempotency");
+      this.ensured = true;
+    }
+
+    const record = await this.db.internal.findOne("__datafn_idempotency", [
+      { field: "namespace", op: "eq", value: this.namespace },
+      { field: "client_id", op: "eq", value: clientId },
+      { field: "mutation_id", op: "eq", value: mutationId },
+    ]);
+
+    if (!record) {
+      return null;
+    }
+
+    // Only catch JSON parse errors; DB errors propagated above
     try {
-      if (!this.ensured) {
-        await ensureInternalTable(this.db, "__datafn_idempotency");
-        this.ensured = true;
-      }
-
-      const record = await this.db.internal.findOne("__datafn_idempotency", [
-        { field: "namespace", op: "eq", value: this.namespace },
-        { field: "client_id", op: "eq", value: clientId },
-        { field: "mutation_id", op: "eq", value: mutationId },
-      ]);
-
-      if (!record) {
-        return null;
-      }
-
-      // Parse stored JSON result
       return JSON.parse(record.result as string);
-    } catch (error) {
-      // On error, treat as cache miss
+    } catch {
+      // Malformed JSON in stored result — treat as cache miss
       return null;
     }
   }

@@ -8,7 +8,6 @@ import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
-import { buildSchemaIndex, validatePushMutations } from "../../validation/index.js";
 import {
   executeRelate,
   executeModifyRelation,
@@ -16,10 +15,31 @@ import {
   extractJoinDeltas,
   extractRelationFkDeltas,
 } from "../mutation/relations.js";
+import type { DatafnLogger } from "../../logger.js";
 
 export interface PushRequest {
   clientId: string;
   mutations: Array<Record<string, unknown>>;
+}
+
+/**
+ * REL-002: Retry recordChange with exponential backoff (50ms, 100ms).
+ * On final failure, throws so the mutation is treated as failed.
+ */
+async function recordChangeWithRetry(
+  changeTracking: ChangeTrackingService,
+  params: Parameters<ChangeTrackingService["recordChange"]>[0],
+  maxRetries = 2,
+): Promise<void> {
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      await changeTracking.recordChange(params);
+      return;
+    } catch (e) {
+      if (i === maxRetries) throw e;
+      await new Promise(r => setTimeout(r, 50 * (i + 1))); // 50ms, 100ms
+    }
+  }
 }
 
 export interface PushResult {
@@ -40,13 +60,14 @@ function applyDateCoercion(
   schema: DatafnSchema,
   resource: string,
   data: Record<string, unknown>,
+  logger?: DatafnLogger,
 ): Record<string, unknown> {
   const resourceDef = schema.resources.find((r) => r.name === resource);
   if (!resourceDef || !resourceDef.fields) {
-    console.warn(
-      `applyDateCoercion: resource "${resource}" not found in schema — skipping date coercion. ` +
-        `Known resources: ${schema.resources.map((r) => r.name).join(", ")}`,
-    );
+    logger?.warn("Resource not found in schema — skipping date coercion", {
+      operation: "applyDateCoercion",
+      resource,
+    });
     return data;
   }
   return coerceDateFieldsToEpoch({ ...data }, resourceDef.fields);
@@ -62,7 +83,8 @@ export async function executePush(
   idempotencyStore: IdempotencyStore,
   namespace: string,
   sequenceStore?: SequenceStore,
-  onChange?: (seq: number) => void,
+  onChange?: (seq: number, namespace: string) => void,
+  logger?: DatafnLogger,
 ): Promise<PushResult> {
   // Validate clientId at request level - this is a critical error
   if (!request.clientId || typeof request.clientId !== "string") {
@@ -102,23 +124,6 @@ export async function executePush(
     }
   }
 
-  // Schema-bounded validation of all mutations before execution
-  const schemaIndex = buildSchemaIndex(schema);
-  const validationResult = validatePushMutations(request.mutations, schemaIndex);
-  if (!validationResult.valid) {
-    return {
-      ok: false,
-      applied: [],
-      errors: validationResult.errors.map((err) => ({
-        mutationId: "",
-        code: err.code,
-        message: err.message,
-        path: err.path,
-      })),
-      cursor: "0",
-    };
-  }
-
   const applied: string[] = [];
   const errors: Array<{
     mutationId: string;
@@ -136,7 +141,20 @@ export async function executePush(
   // Track per-resource max serverSeq so the client can advance per-table cursors (FIX-B)
   const resourceSeqs: Record<string, number> = {};
 
-  // Process each mutation
+  // Pending change entries for a mutation that executed successfully
+  type PendingChange = {
+    resource: string;
+    id: string;
+    op: "insert" | "merge" | "replace" | "upsert" | "delete";
+    record: Record<string, unknown> | null;
+  };
+  type MutationWork = { mut: any; changes: PendingChange[] };
+
+  // ---- Phase 1: Execute mutations, collect pending changes (no seq allocation) ----
+  const pendingWork: MutationWork[] = [];
+  // Local dedup: track mutations processed in this batch (clientId:mutationId → ok)
+  const batchLocalSeen = new Map<string, boolean>();
+
   for (const mutation of request.mutations) {
     const mut = mutation as any;
 
@@ -151,14 +169,22 @@ export async function executePush(
       continue;
     }
 
-    // Check idempotency
+    const batchKey = `${mut.clientId}:${mut.mutationId}`;
+
+    // Intra-batch dedup: if we've already processed this mutationId in this batch
+    if (batchLocalSeen.has(batchKey)) {
+      if (batchLocalSeen.get(batchKey)) {
+        applied.push(mut.mutationId);
+      }
+      continue;
+    }
+
+    // Cross-batch dedup: check idempotency store
     const cached = await idempotencyStore.get(mut.clientId, mut.mutationId);
     if (cached) {
-      // Already applied
       if (cached.ok) {
         applied.push(mut.mutationId);
       } else {
-        // Return cached error
         if (cached.errors && cached.errors.length > 0) {
           errors.push({
             mutationId: mut.mutationId,
@@ -168,6 +194,7 @@ export async function executePush(
           });
         }
       }
+      batchLocalSeen.set(batchKey, cached.ok);
       continue;
     }
 
@@ -184,6 +211,7 @@ export async function executePush(
               schema,
               mut.resource,
               mut.record || {},
+              logger,
             );
             await db.create({
               model: mut.resource,
@@ -205,6 +233,7 @@ export async function executePush(
               schema,
               mut.resource,
               mut.record || {},
+              logger,
             );
 
             await db.upsert({
@@ -216,10 +245,12 @@ export async function executePush(
             });
             opResult = { ok: true };
           } catch (innerError) {
-            console.error(
-              `Push operation failed [${mut.operation}] for resource "${mut.resource}", id "${mut.id}":`,
-              innerError
-            );
+            logger?.error("Push operation failed", {
+              error: String(innerError),
+              operation: mut.operation,
+              resource: mut.resource,
+              id: mut.id,
+            });
             opResult = {
               ok: false,
               code: "INTERNAL",
@@ -295,10 +326,12 @@ export async function executePush(
           };
       }
     } catch (error) {
-      console.error(
-        `Push operation failed [${mut.operation}] for resource "${mut.resource}", id "${mut.id}":`,
-        error
-      );
+      logger?.error("Push operation failed", {
+        error: String(error),
+        operation: mut.operation,
+        resource: mut.resource,
+        id: mut.id,
+      });
       opResult = {
         ok: false,
         code: "INTERNAL",
@@ -307,85 +340,128 @@ export async function executePush(
       };
     }
 
-    // Store result and update lists
     if (opResult.ok) {
-      applied.push(mut.mutationId);
+      // Collect change entries WITHOUT allocating sequences yet (PER-001)
+      const isRelationMutation =
+        mut.operation === "relate" ||
+        mut.operation === "modifyRelation" ||
+        mut.operation === "unrelate";
 
-      // Record change tracking (FIX-REL-001)
-      try {
-        const isRelationMutation =
-          mut.operation === "relate" ||
-          mut.operation === "modifyRelation" ||
-          mut.operation === "unrelate";
-
-        if (isRelationMutation) {
-          // Relation mutations must NOT record a primary resource upsert with only
-          // { id } — that would overwrite full records on other clients.
-          // Instead: record targeted FK merge deltas (many-one/one-many) and join
-          // deltas (many-many). For many-many, join deltas alone are sufficient.
-
-          // FK merge deltas for many-one and one-many relations
-          const fkDeltas = extractRelationFkDeltas(mut, schema);
-          for (const delta of fkDeltas) {
-            const fkSeq = await changeTracking.getNextServerSeq();
-            latestSeq = Math.max(latestSeq, fkSeq);
-            resourceSeqs[delta.resource] = Math.max(resourceSeqs[delta.resource] || 0, fkSeq);
-            await changeTracking.recordChange({
-              serverSeq: fkSeq,
-              resource: delta.resource,
-              id: delta.id,
-              op: delta.op,
-              record: delta.record,
-            });
-          }
-
-          // Join deltas for many-many relations
-          const joinDeltas = extractJoinDeltas(mut, schema);
-          for (const delta of joinDeltas) {
-            const joinSeq = await changeTracking.getNextServerSeq();
-            latestSeq = Math.max(latestSeq, joinSeq);
-            resourceSeqs[delta.resource] = Math.max(resourceSeqs[delta.resource] || 0, joinSeq);
-            await changeTracking.recordChange({
-              serverSeq: joinSeq,
-              resource: delta.resource,
-              id: delta.id,
-              op: delta.op,
-              record: delta.record,
-            });
-          }
-        } else {
-          // Regular mutations (insert/merge/replace/delete): record primary resource change
-          const serverSeq = await changeTracking.getNextServerSeq();
-          latestSeq = Math.max(latestSeq, serverSeq);
-          resourceSeqs[mut.resource] = Math.max(resourceSeqs[mut.resource] || 0, serverSeq);
-
-          // Coerce date fields in the change record
-          const changeRecord =
-            mut.operation === "delete"
-              ? null
-              : {
-                  id: mut.id,
-                  ...applyDateCoercion(schema, mut.resource, mut.record || {}),
-                };
-
-          const changeOp =
-            mut.operation === "delete" ? "delete" :
-            mut.operation === "insert" ? "insert" :
-            mut.operation === "merge" ? "merge" :
-            "replace"; // only remaining op is "replace"
-
-          await changeTracking.recordChange({
-            serverSeq,
-            resource: mut.resource,
-            id: mut.id,
-            op: changeOp,
-            record: changeRecord,
+      const changes: PendingChange[] = [];
+      if (isRelationMutation) {
+        // Relation mutations: FK deltas and join deltas
+        const fkDeltas = extractRelationFkDeltas(mut, schema);
+        for (const delta of fkDeltas) {
+          changes.push({
+            resource: delta.resource,
+            id: delta.id,
+            op: delta.op,
+            record: delta.record,
           });
         }
-      } catch (error) {
-        console.error("Change tracking failed in push:", error);
+        const joinDeltas = extractJoinDeltas(mut, schema);
+        for (const delta of joinDeltas) {
+          changes.push({
+            resource: delta.resource,
+            id: delta.id,
+            op: delta.op as "upsert" | "delete",
+            record: delta.record,
+          });
+        }
+      } else {
+        // Regular mutations: single change entry
+        const changeRecord =
+          mut.operation === "delete"
+            ? null
+            : {
+                id: mut.id,
+                ...applyDateCoercion(schema, mut.resource, mut.record || {}, logger),
+              };
+        const changeOp =
+          mut.operation === "delete" ? "delete" :
+          mut.operation === "insert" ? "insert" :
+          mut.operation === "merge" ? "merge" :
+          "replace"; // only remaining op is "replace"
+        changes.push({
+          resource: mut.resource,
+          id: mut.id,
+          op: changeOp as "insert" | "merge" | "replace" | "delete",
+          record: changeRecord,
+        });
       }
+      pendingWork.push({ mut, changes });
+      batchLocalSeen.set(batchKey, true);
+    } else {
+      // Execution failed — store immediately in idempotency (enables intra-batch dedup)
+      errors.push({
+        mutationId: mut.mutationId,
+        code: opResult.code,
+        message: opResult.message,
+        path: opResult.path,
+      });
+      const failResult: MutationResult = {
+        ok: false,
+        mutationId: mut.mutationId,
+        affectedIds: [],
+        errors: [{ ...opResult, retryable: false }],
+        deduped: false,
+      };
+      await idempotencyStore.set(mut.clientId, mut.mutationId, failResult);
+      batchLocalSeen.set(batchKey, false);
+    }
+  }
 
+  // ---- Phase 2: Batch allocate all serverSeqs in ONE call (PER-001) ----
+  const totalSeqs = pendingWork.reduce((sum, w) => sum + w.changes.length, 0);
+  const seqBatch: number[] = totalSeqs > 0
+    ? await changeTracking.getNextServerSeqBatch(totalSeqs)
+    : [];
+
+  // ---- Phase 3: Record changes and finalize idempotency results ----
+  let seqIdx = 0;
+  for (const { mut, changes } of pendingWork) {
+    // REL-002: Record change tracking with retry — failure propagates as mutation error
+    let changeTrackingFailed = false;
+    try {
+      for (const change of changes) {
+        const seq = seqBatch[seqIdx++];
+        latestSeq = Math.max(latestSeq, seq);
+        resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
+        // Individual entry retry (REL-002)
+        await recordChangeWithRetry(changeTracking, {
+          serverSeq: seq,
+          resource: change.resource,
+          id: change.id,
+          op: change.op,
+          record: change.record,
+        });
+      }
+    } catch (error) {
+      logger?.error("Change tracking failed in push after retries", {
+        error: String(error),
+        operation: "push.changeTracking",
+      });
+      changeTrackingFailed = true;
+    }
+
+    if (changeTrackingFailed) {
+      // REL-002: Mutation goes to errors, not applied
+      errors.push({
+        mutationId: mut.mutationId,
+        code: "INTERNAL",
+        message: "Change tracking failed",
+        path: "$",
+      });
+      const result: MutationResult = {
+        ok: false,
+        mutationId: mut.mutationId,
+        affectedIds: [],
+        errors: [{ ok: false, code: "INTERNAL", message: "Change tracking failed", path: "$", retryable: true }],
+        deduped: false,
+      };
+      await idempotencyStore.set(mut.clientId, mut.mutationId, result);
+    } else {
+      applied.push(mut.mutationId);
       const result: MutationResult = {
         ok: true,
         mutationId: mut.mutationId,
@@ -394,25 +470,10 @@ export async function executePush(
         deduped: false,
       };
       await idempotencyStore.set(mut.clientId, mut.mutationId, result);
-    } else {
-      errors.push({
-        mutationId: mut.mutationId,
-        code: opResult.code,
-        message: opResult.message,
-        path: opResult.path,
-      });
-      const result: MutationResult = {
-        ok: false,
-        mutationId: mut.mutationId,
-        affectedIds: [],
-        errors: [{ ...opResult, retryable: false }],
-        deduped: false,
-      };
-      await idempotencyStore.set(mut.clientId, mut.mutationId, result);
     }
   }
 
-  // Retrieve latest cursor if not updated during loop (e.g. deduped or empty)
+  // Retrieve latest cursor if not updated during loop (e.g. all deduped or empty)
   if (latestSeq === 0) {
     latestSeq = await changeTracking.getCurrentServerSeq();
   }

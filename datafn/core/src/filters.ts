@@ -1,5 +1,35 @@
 import type { DatafnError } from "./errors.js";
 
+/** Map non-$-prefixed operator names to core's $-prefixed equivalents. */
+export const OP_REMAP: Record<string, string> = {
+  eq: "$eq", ne: "$ne", gt: "$gt", gte: "$gte", lt: "$lt", lte: "$lte",
+  in: "$in", not_in: "$nin",
+  like: "$like", ilike: "$ilike", not_like: "$not_like", not_ilike: "$not_ilike",
+  is_null: "$is_null", is_not_null: "$is_not_null",
+  is_empty: "$is_empty", is_not_empty: "$is_not_empty",
+  before: "$before", after: "$after", between: "$between", not_between: "$not_between",
+};
+
+/** Recursively remap non-$-prefixed operator names to core's $-prefixed form. */
+export function normalizeFilterOps(filters: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if ((key === "$and" || key === "$or") && Array.isArray(value)) {
+      out[key] = (value as Record<string, unknown>[]).map(normalizeFilterOps);
+    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const ops = value as Record<string, unknown>;
+      const normalized: Record<string, unknown> = {};
+      for (const [op, opVal] of Object.entries(ops)) {
+        normalized[OP_REMAP[op] ?? op] = opVal;
+      }
+      out[key] = normalized;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 export interface FilterEvalOptions {
   resolveRelation?: (resource: string, recordId: string, relationName: string) => Record<string, unknown>[];
   resource?: string;
@@ -153,6 +183,9 @@ function evaluateOperators(fieldValue: unknown, ops: Record<string, unknown>): b
   return true;
 }
 
+/** CLI-009: Maximum allowed nesting depth for evaluateFilter recursion. */
+const MAX_FILTER_DEPTH = 10;
+
 /**
  * Evaluate a DFQL filter against a single record.
  * Supports: $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin, $contains, $startsWith, $endsWith,
@@ -164,12 +197,18 @@ export function evaluateFilter(
   record: Record<string, unknown>,
   filters: Record<string, unknown>,
   opts?: FilterEvalOptions,
+  _depth = 0,
 ): boolean {
+  // CLI-009: Guard against malicious deeply-nested filters
+  if (_depth > MAX_FILTER_DEPTH) {
+    dfqlError("DFQL_INVALID", `Filter nesting depth exceeds maximum of ${MAX_FILTER_DEPTH}`);
+  }
+
   for (const [key, value] of Object.entries(filters)) {
     if (key === "$and") {
       if (!Array.isArray(value)) dfqlError("DFQL_INVALID", "$and must be array");
       for (const sub of value as Record<string, unknown>[]) {
-        if (!evaluateFilter(record, sub, opts)) return false;
+        if (!evaluateFilter(record, sub, opts, _depth + 1)) return false;
       }
       continue;
     }
@@ -178,7 +217,7 @@ export function evaluateFilter(
       if (!Array.isArray(value)) dfqlError("DFQL_INVALID", "$or must be array");
       let matched = false;
       for (const sub of value as Record<string, unknown>[]) {
-        if (evaluateFilter(record, sub, opts)) { matched = true; break; }
+        if (evaluateFilter(record, sub, opts, _depth + 1)) { matched = true; break; }
       }
       if (!matched) return false;
       continue;

@@ -1,5 +1,5 @@
 {
-  "id": "f37e3997-093c-45cb-aef3-b3e9b8418f0e",
+  "id": "fd954c90-d470-47ae-97d0-54fae5e10172",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -8,6 +8,12 @@
       "name": "__datafn_join_todos_tags",
       "schema": "",
       "columns": {
+        "__ns": {
+          "name": "__ns",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "from": {
           "name": "from",
           "type": "text",
@@ -27,7 +33,44 @@
           "notNull": true
         }
       },
-      "indexes": {},
+      "indexes": {
+        "idx___datafn_join_todos_tags___ns": {
+          "name": "idx___datafn_join_todos_tags___ns",
+          "columns": [
+            {
+              "expression": "__ns",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "__datafn_join_todos_tags_from_to_idx": {
+          "name": "__datafn_join_todos_tags_from_to_idx",
+          "columns": [
+            {
+              "expression": "from",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "to",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -38,6 +81,12 @@
       "name": "categories",
       "schema": "",
       "columns": {
+        "__ns": {
+          "name": "__ns",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "color": {
           "name": "color",
           "type": "text",
@@ -65,6 +114,21 @@
         }
       },
       "indexes": {
+        "idx_categories___ns": {
+          "name": "idx_categories___ns",
+          "columns": [
+            {
+              "expression": "__ns",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "categories_name_idx": {
           "name": "categories_name_idx",
           "columns": [
@@ -87,10 +151,62 @@
       "policies": {},
       "checkConstraints": {}
     },
+    "public.kv": {
+      "name": "kv",
+      "schema": "",
+      "columns": {
+        "__ns": {
+          "name": "__ns",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "idx_kv___ns": {
+          "name": "idx_kv___ns",
+          "columns": [
+            {
+              "expression": "__ns",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {}
+    },
     "public.todos": {
       "name": "todos",
       "schema": "",
       "columns": {
+        "__ns": {
+          "name": "__ns",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "completed": {
           "name": "completed",
           "type": "boolean",
@@ -131,6 +247,21 @@
         }
       },
       "indexes": {
+        "idx_todos___ns": {
+          "name": "idx_todos___ns",
+          "columns": [
+            {
+              "expression": "__ns",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "todos_completed_idx": {
           "name": "todos_completed_idx",
           "columns": [

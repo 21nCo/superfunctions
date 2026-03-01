@@ -33,8 +33,8 @@ async function fetchDocument(
   const rows = await db.findMany({
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
-      { field: "dataset", operator: "eq", value: dataset },
-      { field: "id", operator: "eq", value: docId },
+      { field: "dataset", operator: "eq" as const, value: dataset },
+      { field: "id", operator: "eq" as const, value: docId },
     ],
   });
 

@@ -95,3 +95,19 @@ export function getRelation(
 export function getRelationTarget(relation: DatafnRelationSchema): string {
   return Array.isArray(relation.to) ? relation.to[0] : relation.to;
 }
+
+/**
+ * Find a relation by name in either direction (forward or inverse).
+ * Checks both `relation === relationName` (from side) and `inverse === relationName` (to side).
+ */
+export function findRelationBidirectional(
+  schema: DatafnSchema,
+  resource: string,
+  relationName: string,
+): DatafnRelationSchema | undefined {
+  return schema.relations?.find(
+    (r) =>
+      (r.from === resource && r.relation === relationName) ||
+      (r.to === resource && r.inverse === relationName),
+  );
+}

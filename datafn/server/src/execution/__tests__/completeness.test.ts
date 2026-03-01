@@ -26,7 +26,7 @@ describe("Phase 15 Completeness", () => {
 
   beforeEach(async () => {
     db = memoryAdapter({ namespace: "datafn" });
-    server = await createDatafnServer({
+    server = await createDatafnServer({ allowUnknownResources: true,
       schema,
       db,
       limits: { maxPayloadBytes: 1024 * 1024, maxLimit: 100 },
@@ -185,9 +185,23 @@ describe("Phase 15 Completeness", () => {
 
   describe("OBS-001: Log Redaction", () => {
     it("should redact sensitive fields in mutation logs", async () => {
-      const consoleSpy = vi.spyOn(console, "log"); // Spy on stdout used by logRequest
-      
-      await server.router.handle(
+      // LOG-001: Use a custom logger to capture structured log output
+      const logEntries: Array<{ msg: string; ctx: Record<string, unknown> }> = [];
+      const customLogger = {
+        info: (msg: string, ctx?: Record<string, unknown>) => logEntries.push({ msg, ctx: ctx ?? {} }),
+        warn: () => {},
+        error: () => {},
+        debug: () => {},
+      };
+      const logServer = await createDatafnServer({
+        allowUnknownResources: true,
+        schema,
+        db,
+        limits: { maxPayloadBytes: 1024 * 1024, maxLimit: 100 },
+        logger: customLogger,
+      });
+
+      await logServer.router.handle(
         new Request("http://localhost/datafn/mutation", {
           method: "POST",
           body: JSON.stringify({
@@ -202,20 +216,15 @@ describe("Phase 15 Completeness", () => {
         })
       );
 
-      expect(consoleSpy).toHaveBeenCalled();
-      const logCall = consoleSpy.mock.calls.find(call => {
-          try {
-              const obj = JSON.parse(call[0]);
-              return obj.mutationId === "m-redact";
-          } catch { return false; }
-      });
-      
+      const logCall = logEntries.find(e => e.ctx?.mutationId === "m-redact");
       expect(logCall).toBeDefined();
-      const logObj = JSON.parse(logCall![0]);
-      expect(logObj.record.username).toBe("dave");
-      expect(logObj.record.email).toBe("[REDACTED]");
-      
-      consoleSpy.mockRestore();
+      // SRV-004: mutation record data is NOT logged (privacy improvement)
+      expect(logCall!.ctx.record).toBeUndefined();
+      // Verify other metadata is still present
+      expect(logCall!.ctx.resource).toBe("users");
+      expect(logCall!.ctx.mutationId).toBe("m-redact");
+
+      await logServer.close();
     });
   });
 

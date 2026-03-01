@@ -29,7 +29,7 @@ describe("Phase 09: Server Sync Semantics", () => {
   describe("Conflict ordering (SERVER-CONFLICT-001)", () => {
     it("TV-CONFLICT-001: Last-write-wins by server ordering", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
       });
@@ -94,7 +94,7 @@ describe("Phase 09: Server Sync Semantics", () => {
 
     it("TV-CONFLICT-002: Client timestamps don't affect ordering", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
       });
@@ -158,7 +158,7 @@ describe("Phase 09: Server Sync Semantics", () => {
   describe("Clone endpoint (SERVER-SYNC-001)", () => {
     it("TV-SERVER-CLONE-001: Returns deterministic snapshot and cursor", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
       });
@@ -230,7 +230,7 @@ describe("Phase 09: Server Sync Semantics", () => {
       };
 
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: remoteOnlySchema,
         db,
       });
@@ -257,7 +257,7 @@ describe("Phase 09: Server Sync Semantics", () => {
   describe("Pull endpoint (SERVER-SYNC-002)", () => {
     it("TV-SERVER-PULL-001: Returns records+deleted since cursor and advances cursor", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
       });
@@ -338,7 +338,7 @@ describe("Phase 09: Server Sync Semantics", () => {
 
     it("TV-SERVER-PULL-002: Invalid cursor values are rejected", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
       });
@@ -364,7 +364,7 @@ describe("Phase 09: Server Sync Semantics", () => {
   describe("Push endpoint (SERVER-SYNC-003)", () => {
     it("TV-SERVER-PUSH-001: Push mutations observable via pull", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
       });
@@ -421,7 +421,7 @@ describe("Phase 09: Server Sync Semantics", () => {
 
     it("TV-SERVER-PUSH-002: Missing clientId is rejected", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
-      const server = await createDatafnServer({
+      const server = await createDatafnServer({ allowUnknownResources: true,
         schema: defaultSchema,
         db,
       });

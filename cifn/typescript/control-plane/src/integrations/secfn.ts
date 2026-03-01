@@ -37,7 +37,7 @@ export class SecFnSecretsAdapter implements SecretsAdapter {
 
   async getSecret(key: string): Promise<string | null> {
     const path = this.config.vaultPath ?? 'cifn';
-    const headers: HeadersInit = {};
+    const headers: Record<string, string> = {};
     if (this.config.apiKey) {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
@@ -54,13 +54,13 @@ export class SecFnSecretsAdapter implements SecretsAdapter {
       throw new Error(`SecFn getSecret failed: ${response.status} ${response.statusText}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as { value?: string };
     return result.value ?? null;
   }
 
   async setSecret(key: string, value: string): Promise<void> {
     const path = this.config.vaultPath ?? 'cifn';
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
     if (this.config.apiKey) {
@@ -80,7 +80,7 @@ export class SecFnSecretsAdapter implements SecretsAdapter {
 
   async listKeys(): Promise<string[]> {
     const path = this.config.vaultPath ?? 'cifn';
-    const headers: HeadersInit = {};
+    const headers: Record<string, string> = {};
     if (this.config.apiKey) {
       headers['Authorization'] = `Bearer ${this.config.apiKey}`;
     }
@@ -93,7 +93,7 @@ export class SecFnSecretsAdapter implements SecretsAdapter {
       throw new Error(`SecFn listKeys failed: ${response.status} ${response.statusText}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as { keys?: string[] };
     return result.keys ?? [];
   }
 

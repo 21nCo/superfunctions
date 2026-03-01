@@ -18,7 +18,17 @@ import { runBeforeMutation, runAfterMutation } from "../plugins/run-hooks.js";
 import { executeMutation } from "../execution/mutation/execute.js";
 import { buildSchemaIndex, validateMutationBody } from "../validation/index.js";
 import { logRequest, redactSensitiveFields } from "../logging.js";
+import type { DatafnLogger } from "../logger.js";
 import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
+import type { MutationValidationOpts } from "../validation/mutation.js";
+import type { AuthzOptions } from "../validation/authz.js";
+
+/**
+ * Options for mutation handler (VAL-001, VAL-006–009)
+ */
+export interface MutationHandlerOpts extends MutationValidationOpts {
+  allowUnknownResources?: boolean;
+}
 
 /**
  * Create mutation route handler
@@ -31,6 +41,8 @@ export function createMutationHandler(
   extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
   timingEmitter?: TimingEmitter | null,
+  handlerOpts?: MutationHandlerOpts,
+  logger?: DatafnLogger,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -64,22 +76,31 @@ export function createMutationHandler(
         const transformedBody = beforeHookResult.mutation;
 
         // PHASE_01: Validate mutations against schema BEFORE checking execution requirements
-        const validationResult = validateMutationBody(transformedBody, schemaIndex);
-        if (!validationResult.ok) {
-        return errorResponse({
-            code: validationResult.error.code,
-            message: validationResult.error.message,
-            details: { path: validationResult.error.path },
+        const validationResult = validateMutationBody(transformedBody, schemaIndex, {
+          maxIdLength: handlerOpts?.maxIdLength,
+          debug: handlerOpts?.debug,
         });
+        if (!validationResult.ok) {
+          // VAL-009: In production (debug: false), strip field/schema details from messages
+          const debug = handlerOpts?.debug ?? true;
+          const message = debug ? validationResult.error.message : "Validation error";
+          return errorResponse({
+            code: validationResult.error.code,
+            message,
+            details: { path: validationResult.error.path },
+          });
         }
 
         const { isBatch, mutations: transformedMutations } = validationResult.result;
 
-        // PHASE_11: Enforce write permissions for each mutation
+        // PHASE_11: Enforce write permissions for each mutation (VAL-001: deny-by-default)
         const { validateMutationAuthz } = await import("../validation/authz.js");
         for (let i = 0; i < transformedMutations.length; i++) {
           const mut = transformedMutations[i] as Record<string, unknown>;
-          const authzResult = validateMutationAuthz(mut, validatedSchema);
+          const authzResult = validateMutationAuthz(mut, validatedSchema, {
+            allowUnknownResources: handlerOpts?.allowUnknownResources,
+            debug: handlerOpts?.debug,
+          });
           if (!authzResult.ok) {
             return errorResponse({
               code: authzResult.code,
@@ -165,7 +186,7 @@ export function createMutationHandler(
 
         return okResponse(finalResult);
     } catch (error) {
-        console.error("Mutation execution failed:", error);
+        logger?.error("Mutation execution failed", { error: String(error), operation: "mutation" });
         return errorResponse({
             code: "INTERNAL",
             message: "Internal error",
@@ -176,11 +197,7 @@ export function createMutationHandler(
         if (body && typeof body === "object" && !Array.isArray(body)) {
             // Single mutation
             const m = body as any;
-            let record = m.record;
-            if (record && m.resource) {
-                record = redactSensitiveFields(record, m.resource, validatedSchema);
-            }
-            
+            // SRV-004: Do not include mutation record data in logs (privacy/security)
             logRequest({
                 timestamp: new Date().toISOString(),
                 endpoint: "/datafn/mutation",
@@ -189,8 +206,7 @@ export function createMutationHandler(
                 resource: m.resource,
                 operation: m.operation,
                 duration_ms: Date.now() - startTime,
-                record,
-            });
+            }, logger);
         } else if (Array.isArray(body)) {
             // Batch
             logRequest({
@@ -199,7 +215,7 @@ export function createMutationHandler(
                 operation: "batch",
                 count: body.length,
                 duration_ms: Date.now() - startTime,
-            });
+            }, logger);
         }
     }
   };

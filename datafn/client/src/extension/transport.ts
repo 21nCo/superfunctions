@@ -10,7 +10,8 @@ import type {
   DatafnRpcResponse,
   DatafnRpcMethod,
 } from "./rpc.js";
-import { createClientError } from "../errors.js";
+// createClientError is available for non-timeout errors
+// Timeout uses plain object rejection to avoid throw-in-setTimeout issues
 
 /**
  * Interface for the message bus (compatible with browser.runtime.sendMessage or similar)
@@ -30,9 +31,16 @@ export interface ExtensionRemoteAdapter extends DatafnRemoteAdapter {
 /**
  * Creates a remote adapter that proxies calls over a message bus using canonical RPC envelopes.
  */
+export interface ExtensionTransportOptions {
+  /** Per-request timeout in ms. Default: 30000 (30s). */
+  timeout?: number;
+}
+
 export function createExtensionTransport(
   bus: MessageBus,
+  options: ExtensionTransportOptions = {},
 ): ExtensionRemoteAdapter {
+  const requestTimeout = options.timeout ?? 30_000;
   // Promise map for pending requests: id -> { resolve, reject }
   const pending = new Map<
     string,
@@ -49,7 +57,7 @@ export function createExtensionTransport(
     return `req-${idCounter}`;
   };
 
-  // Send RPC request and wait for envelope response
+  // SCA-003: Send RPC request with per-request timeout
   const request = async (
     method: DatafnRpcMethod,
     payload: unknown,
@@ -58,7 +66,24 @@ export function createExtensionTransport(
     const rpcRequest: DatafnRpcRequest = { id, method, payload };
 
     return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+      // SCA-003: Set timeout that rejects and cleans up pending map
+      const timer = setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          reject({ code: "TIMEOUT", message: `RPC request timed out after ${requestTimeout}ms` });
+        }
+      }, requestTimeout);
+
+      pending.set(id, {
+        resolve: (val: unknown) => {
+          clearTimeout(timer);
+          resolve(val);
+        },
+        reject: (err: unknown) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
       bus.postMessage(rpcRequest);
     });
   };

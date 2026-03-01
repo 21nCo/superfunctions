@@ -2,7 +2,7 @@
  * Transaction execution logic
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "./idempotency.js";
 import type { DFQLMutation } from "./mutation/dfql.js";
@@ -11,6 +11,7 @@ import { executeMutation } from "./mutation/execute.js";
 import { executeQuery } from "./query/execute.js";
 import { DbDataStore } from "./db-store.js";
 import { ChangeTrackingService } from "./sync/change-tracking.js";
+import type { DatafnLogger } from "../logger.js";
 
 export interface TransactStep {
   query?: any;
@@ -22,6 +23,10 @@ export interface TransactResult {
   result?: {
     ok: boolean;
     results: Array<any>;
+    error?: {
+      code: string;
+      message: string;
+    };
   };
   error?: {
     code: string;
@@ -38,25 +43,17 @@ export async function executeTransaction(
   schema: DatafnSchema,
   db: Adapter,
   idempotencyStore: IdempotencyStore,
-  limits?: { maxTransactSteps?: number },
+  limits: { maxTransactSteps?: number } | undefined,
   namespace: string,
-  sequenceStore?: SequenceStore,
+  sequenceStore: SequenceStore | undefined,
+  plugins: DatafnPlugin[] = [],
+  logger?: DatafnLogger,
 ): Promise<TransactResult> {
   const steps = request.steps;
   const isAtomic = request.atomic !== false; // Default true
 
-  // Enforce step limits
-  const maxSteps = limits?.maxTransactSteps ?? 100;
-  if (steps.length > maxSteps) {
-    return {
-      ok: false,
-      error: {
-        code: "LIMIT_EXCEEDED",
-        message: "Transaction exceeds maximum steps",
-        details: { path: "steps", max: maxSteps },
-      },
-    };
-  }
+  // SRV-012: Step limit check moved to route handler; skip duplicate check here
+  // (createTransactHandler validates before calling executeTransaction)
 
   const results: Array<any> = [];
   const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
@@ -77,6 +74,8 @@ export async function executeTransaction(
         stepDb,
         idempotencyStore,
         changeTracking,
+        plugins,
+        namespace,
       );
       // Expose the first error as a top-level `.error` property so that
       // transact callers can access result.results[i].error.code directly
@@ -94,46 +93,102 @@ export async function executeTransaction(
   };
 
   if (isAtomic && typeof (db as any).transaction === "function") {
-    // Atomic execution with DB transaction support
+    // REL-001: Atomic execution with DB transaction support
     try {
       await (db as any).transaction(async (tx: Adapter) => {
-        for (const step of steps) {
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
           const result = await executeStep(step, tx);
           results.push(result);
 
           if (step.mutation) {
             const mutRes = result as MutationResult;
             if (!mutRes.ok) {
-              // Rollback by throwing
-              throw new Error("TRANSACTION_FAILED");
+              // REL-003: Annotate all prior ok results as rolled back
+              const failedStepIndex = i;
+              for (let j = 0; j < failedStepIndex; j++) {
+                const priorResult = results[j];
+                if (priorResult && typeof priorResult === "object" && priorResult.ok) {
+                  results[j] = {
+                    ok: false,
+                    rolledBack: true,
+                    result: priorResult,
+                  };
+                }
+              }
+              // Rollback by throwing — the transaction callback will abort
+              throw { __transactionFailed: true, stepIndex: failedStepIndex };
             }
           }
         }
       });
-      // If we got here, commit happened
+      // If we got here, commit happened — TV-REL-006: no rolledBack field
       return { ok: true, result: { ok: true, results } };
     } catch (error: any) {
-      if (error.message === "TRANSACTION_FAILED") {
-        // Return 200 OK but with transaction failure
-        // We need to return results including the failed one
+      if (error && error.__transactionFailed) {
+        // REL-003: Application-level step failure — results already annotated
         return {
           ok: true,
           result: {
             ok: false,
-            results: results,
+            results,
+            error: {
+              code: "TRANSACTION_ROLLED_BACK",
+              message: `Step ${error.stepIndex} failed; all steps rolled back`,
+            },
           },
         };
       }
-      // Adapter doesn't support transactions (e.g. memory adapter) — fall through
-      // to sequential execution below. Clear any partial results first.
-      results.length = 0;
+      // REL-001: Check if the adapter's transaction method signals "not supported"
+      // (e.g., memory adapter has transaction() but it throws "not supported")
+      // In that case, fall through to sequential execution
+      const msg = error?.message || "";
+      if (msg.includes("not supported") || msg.includes("not implemented")) {
+        results.length = 0; // Clear any partial results
+        // Fall through to sequential execution below
+      } else {
+        // DB-level error (serialization, timeout, constraint) → INTERNAL error
+        // NEVER fall through to sequential execution when adapter HAS transaction support
+        return {
+          ok: false,
+          error: {
+            code: "INTERNAL",
+            message: `Transaction failed: ${msg || "unknown error"}`,
+            details: { path: "$" },
+          },
+        };
+      }
     }
   }
 
-  // Sequential execution (non-atomic, or atomic fallback when transaction not supported)
-  for (const step of steps) {
+  // Sequential execution: ONLY when db.transaction is undefined (memory adapter)
+  // REL-001: This branch is NOT a fallback from transaction failure
+  // EXE-004: Query result cache within transaction scope (invalidated on mutation)
+  const queryCache = new Map<string, any>();
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
     try {
-      const result = await executeStep(step, db);
+      let result: any;
+      if (step.query) {
+        // EXE-004: Check cache before executing query
+        const cacheKey = JSON.stringify(step.query);
+        if (queryCache.has(cacheKey)) {
+          result = queryCache.get(cacheKey);
+        } else {
+          result = await executeStep(step, db);
+          queryCache.set(cacheKey, result);
+        }
+      } else {
+        result = await executeStep(step, db);
+        // EXE-004: Invalidate query cache on mutation (resource-specific)
+        if (step.mutation?.resource) {
+          for (const key of queryCache.keys()) {
+            if (key.includes(`"${step.mutation.resource}"`)) {
+              queryCache.delete(key);
+            }
+          }
+        }
+      }
       results.push(result);
 
       if (isAtomic && step.mutation) {
@@ -144,8 +199,13 @@ export async function executeTransaction(
         }
       }
     } catch (e: any) {
-      // Unexpected error during step execution
-      console.log("Transact Step Error:", e);
+      // EXE-003: Include step context in error log
+      logger?.error("Transact step error", {
+        step: i,
+        operation: step.mutation ? `mutation:${step.mutation.operation}` : "query",
+        resource: step.mutation?.resource ?? step.query?.resource ?? "?",
+        error: String(e?.message || e),
+      });
       // Map to an error result
       results.push({
         ok: false,
