@@ -20,6 +20,7 @@
     "styled-jsx": "^5.1.7"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4",
     "@types/mdx": "^2",
     "@types/node": "^22",
     "@types/react": "^19",
