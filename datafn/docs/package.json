@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@21n/fonts": "^1.0.1",
+    "@tailwindcss/postcss": "^4",
     "fumadocs-core": "^15",
     "fumadocs-mdx": "^11",
     "fumadocs-ui": "^15",
@@ -20,7 +21,6 @@
     "styled-jsx": "^5.1.7"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/mdx": "^2",
     "@types/node": "^22",
     "@types/react": "^19",
