@@ -5,6 +5,7 @@ import {
   validateSchema,
   unwrapEnvelope,
   ensureBuiltinKv,
+  isNamespaced,
 } from "@datafn/core";
 
 export type Dialect = "postgres" | "mysql" | "sqlite";
@@ -32,7 +33,7 @@ export function generateDrizzleSchema(
     a.name.localeCompare(b.name),
   );
 
-  const isMultiTenant = schema.multiTenant !== false;
+  const nsEnabled = isNamespaced(schema);
 
   for (const resource of resources) {
     const tableName = resource.name;
@@ -51,23 +52,25 @@ export function generateDrizzleSchema(
 
     lines.push(`export const ${varName} = ${tableConstructor}("${tableName}", {`);
 
-    // Add __ns column when multiTenant (alphabetical: __ns sorts before all alpha fields)
-    if (isMultiTenant) {
+    // Add __ns column when namespaced (alphabetical: __ns sorts before all alpha fields)
+    if (nsEnabled) {
       usedImports.add("text");
       lines.push(`  __ns: text("__ns").notNull(),`);
     }
 
     for (const field of fields) {
-      const colDef = buildColumnDefinition(field, dialect, usedImports);
+      const colDef = buildColumnDefinition(field, dialect, usedImports, nsEnabled);
       lines.push(`  ${field.name}: ${colDef},`);
     }
 
-    const needsIndexCallback = hasBaseIndices || isMultiTenant;
+    const needsIndexCallback = hasBaseIndices || nsEnabled;
 
     if (needsIndexCallback) {
       usedImports.add("index");
       lines.push(`}, (table) => [`);
-      if (isMultiTenant) {
+      if (nsEnabled) {
+        usedImports.add("primaryKey");
+        lines.push(`  primaryKey({ columns: [table.__ns, table.id] }),`);
         lines.push(`  index("idx_${tableName}___ns").on(table.__ns),`);
       }
       if (hasBaseIndices) {
@@ -107,8 +110,8 @@ export function generateDrizzleSchema(
 
     const joinFields: Array<{ name: string; def: string }> = [];
 
-    // Add __ns column for join tables when multiTenant
-    if (isMultiTenant) {
+    // Add __ns column for join tables when namespaced
+    if (nsEnabled) {
       usedImports.add("text");
       joinFields.push({
         name: "__ns",
@@ -128,8 +131,8 @@ export function generateDrizzleSchema(
           "string",
           dialect,
           usedImports,
-          false,
-          true,
+          nsEnabled, // notNull when namespaced (PK defined in callback)
+          !nsEnabled, // primaryKey only when not namespaced
         ),
       },
       {
@@ -163,8 +166,10 @@ export function generateDrizzleSchema(
     const toSnake = camelToSnake(toCol);
     usedImports.add("uniqueIndex");
     lines.push(`}, (table) => [`);
-    if (isMultiTenant) {
+    if (nsEnabled) {
       usedImports.add("index");
+      usedImports.add("primaryKey");
+      lines.push(`  primaryKey({ columns: [table.__ns, table.id] }),`);
       lines.push(`  index("idx_${jtName}___ns").on(table.__ns),`);
     }
     lines.push(
@@ -220,6 +225,7 @@ function buildColumnDefinition(
   field: DatafnFieldSchema,
   dialect: Dialect,
   usedImports: Set<string>,
+  isNamespaced = false,
 ): string {
   const snakeName = camelToSnake(field.name);
   const { call, importName } = getColumnType(field.type, dialect, snakeName);
@@ -228,7 +234,12 @@ function buildColumnDefinition(
   let def = call;
 
   if (field.name === "id") {
-    def += ".primaryKey()";
+    // In namespaced mode, composite PK (__ns, id) is defined in the table callback
+    if (!isNamespaced) {
+      def += ".primaryKey()";
+    } else {
+      def += ".notNull()";
+    }
   } else {
     if (field.required) def += ".notNull()";
     if (field.unique === true) def += ".unique()";

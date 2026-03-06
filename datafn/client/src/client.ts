@@ -16,7 +16,6 @@ import { SignalRegistry } from "./signals/querySignal.js";
 import { LiveSignalRegistry } from "./signals/liveSignal.js";
 import { createSyncFacade, type SyncFacade } from "./sync.js";
 import type { DatafnStorageAdapter, DatafnStorageFactory } from "./storage.js";
-import type { AuthContext, AuthContextProvider } from "@superfunctions/auth";
 import { DefaultHttpTransport } from "./transport/http.js";
 import { SyncEngine } from "./sync/engine.js";
 import { createKvApi, type DatafnKvApi, KV_RESOURCE_NAME } from "./kv.js";
@@ -188,37 +187,17 @@ export interface DatafnClientConfig<S extends DatafnSchema> {
   /**
    * Local persistence adapter. Can be:
    * - A direct `DatafnStorageAdapter` instance
-   * - A factory function `(context: AuthContext) => DatafnStorageAdapter` for multi-user isolation
+   * - A factory function `(namespace: string) => DatafnStorageAdapter` for multi-user isolation
    *
-   * When using a factory function, `authContext` must also be provided.
-   *
-   * @example
-   * ```typescript
-   * // Direct adapter
-   * storage: new IndexedDbStorageAdapter("my-app-db")
-   *
-   * // Factory for multi-user isolation
-   * storage: (ctx) => IndexedDbStorageAdapter.createForUser("my-app", ctx.userId, ctx.tenantId)
-   * ```
+   * When using a factory function, `namespace` must also be provided.
    */
   storage?: DatafnStorageAdapter | DatafnStorageFactory;
   /**
-   * Authentication context for multi-user/multi-tenant data isolation.
+   * Namespace for client-side data isolation.
+   * Used to construct isolated storage (IndexedDB database names, BroadcastChannel names).
    * Required when `storage` is a factory function.
-   *
-   * Can be provided directly as an `AuthContext` object, or via an `AuthContextProvider`
-   * that implements `getContext()`.
-   *
-   * @example
-   * ```typescript
-   * // Direct context
-   * authContext: { userId: "user-123", tenantId: "tenant-456" }
-   *
-   * // Via provider (e.g., from authfn)
-   * authContext: authClient.contextProvider
-   * ```
    */
-  authContext?: AuthContext | AuthContextProvider;
+  namespace?: string;
   getTimestamp?: () => number; // For testing with fake clock
   /**
    * Resource-aware ID generator function for insert operations.
@@ -234,8 +213,8 @@ export interface DatafnClientConfig<S extends DatafnSchema> {
  * Only the provided fields are changed; everything else is inherited from the current config.
  */
 export type SwitchContextOverride = {
-  /** New auth context (replaces current) */
-  authContext?: AuthContext;
+  /** New namespace (replaces current) */
+  namespace?: string;
   /** New sync configuration (replaces current, not merged) */
   sync?: DatafnSyncConfig;
   /** New storage adapter or factory (replaces current) */
@@ -276,8 +255,8 @@ export type DatafnClient<S extends DatafnSchema> = {
    * Concurrent calls are serialized. Auto-starts sync when sync.mode is "sync".
    */
   switchContext(override: SwitchContextOverride): Promise<void>;
-  /** Get the current resolved auth context, or undefined if not configured. */
-  currentContext(): AuthContext | undefined;
+  /** Get the current resolved namespace, or undefined if not configured. */
+  currentNamespace(): string | undefined;
   /**
    * Subscribe to client lifecycle changes.
    * The callback fires immediately with the stable proxy reference,
@@ -413,66 +392,33 @@ function _buildRawClient<S extends DatafnSchema>(
       return `${prefix}:${randomId}`;
     });
 
-  // Resolve storage adapter (may be a factory function requiring auth context)
+  // Validate empty namespace (NS-022)
+  if (config.namespace !== undefined && config.namespace === "") {
+    throw createClientError(
+      "DFQL_INVALID",
+      "Invalid client config: namespace must be a non-empty string",
+      { path: "namespace" },
+    );
+  }
+
+  // Resolve storage adapter (may be a factory function requiring namespace)
   let resolvedStorage: DatafnStorageAdapter | undefined;
-  let resolvedAuthContext: AuthContext | undefined;
+  let resolvedNamespace: string | undefined = config.namespace;
   if (config.storage) {
     if (typeof config.storage === "function") {
-      // Storage is a factory function - requires authContext
-      if (!config.authContext) {
-        throw createClientError(
-          "DFQL_INVALID",
-          "Invalid client config: authContext is required when storage is a factory function",
-          { path: "authContext" },
-        );
-      }
-
-      // Resolve auth context (may be a provider or direct context)
-      let authContext: AuthContext;
-      if ("getContext" in config.authContext) {
-        // It's a provider - call getContext()
-        const contextResult = config.authContext.getContext();
-        if (contextResult instanceof Promise) {
-          throw createClientError(
-            "DFQL_INVALID",
-            "Invalid client config: async AuthContextProvider.getContext() is not supported in synchronous createDatafnClient. Use a synchronous provider or resolve the context before calling createDatafnClient.",
-            { path: "authContext" },
-          );
-        }
-        authContext = contextResult;
+      // Storage is a factory function — requires namespace
+      if (config.namespace) {
+        resolvedStorage = config.storage(config.namespace);
       } else {
-        // Direct AuthContext object
-        authContext = config.authContext;
-      }
-
-      // Validate auth context
-      if (!authContext.userId) {
         throw createClientError(
           "DFQL_INVALID",
-          "Invalid client config: authContext.userId is required",
-          { path: "authContext.userId" },
+          "namespace is required when storage is a factory function",
+          { path: "namespace" },
         );
       }
-
-      // Store resolved auth context for changelog enrichment (AUD-001)
-      resolvedAuthContext = authContext;
-
-      // Create storage adapter from factory
-      resolvedStorage = config.storage(authContext);
     } else {
       // Direct storage adapter
       resolvedStorage = config.storage;
-      // If authContext was provided directly (not via factory), store it too
-      if (config.authContext) {
-        if ("getContext" in config.authContext) {
-          const contextResult = config.authContext.getContext();
-          if (!(contextResult instanceof Promise)) {
-            resolvedAuthContext = contextResult;
-          }
-        } else {
-          resolvedAuthContext = config.authContext;
-        }
-      }
     }
   }
 
@@ -796,7 +742,6 @@ function _buildRawClient<S extends DatafnSchema>(
         config.sync?.offlinability,
         config.clientId,
         debouncerMap,
-        resolvedAuthContext, // AUD-001: Pass authContext for changelog enrichment
       );
     },
 
@@ -1027,21 +972,6 @@ function _buildRawClient<S extends DatafnSchema>(
 }
 
 /**
- * Resolve the auth context from a DatafnClientConfig.
- * Returns undefined if not configured or if the provider returns a Promise.
- */
-function _resolveAuthContext(config: DatafnClientConfig<any>): AuthContext | undefined {
-  const auth = config.authContext;
-  if (!auth) return undefined;
-  if ("getContext" in auth) {
-    const result = auth.getContext();
-    if (result instanceof Promise) return undefined;
-    return result;
-  }
-  return auth as AuthContext;
-}
-
-/**
  * Create a DataFn client with built-in context switching.
  *
  * The returned client is a stable Proxy reference that always delegates to the
@@ -1141,7 +1071,7 @@ export function createDatafnClient<S extends DatafnSchema>(
     // Build new config by applying overrides
     const newConfig: DatafnClientConfig<S> = {
       ...currentConfig,
-      ...(overrides.authContext !== undefined ? { authContext: overrides.authContext } : {}),
+      ...(overrides.namespace !== undefined ? { namespace: overrides.namespace } : {}),
       ...(overrides.sync !== undefined ? { sync: overrides.sync } : {}),
       ...(overrides.storage !== undefined ? { storage: overrides.storage } : {}),
     };
@@ -1189,8 +1119,8 @@ export function createDatafnClient<S extends DatafnSchema>(
     }
   }
 
-  function currentContextFn(): AuthContext | undefined {
-    return _resolveAuthContext(currentConfig);
+  function currentNamespaceFn(): string | undefined {
+    return currentConfig.namespace;
   }
 
   function subscribeClientFn(fn: (c: DatafnClient<S>) => void): () => void {
@@ -1214,7 +1144,7 @@ export function createDatafnClient<S extends DatafnSchema>(
   outer = new Proxy(function () {} as unknown as DatafnClient<S>, {
     get(_target, prop) {
       if (prop === "switchContext") return switchContextFn;
-      if (prop === "currentContext") return currentContextFn;
+      if (prop === "currentNamespace") return currentNamespaceFn;
       if (prop === "subscribeClient") return subscribeClientFn;
       if (prop === "destroy") return destroyFn;
 
@@ -1239,16 +1169,16 @@ export function createDatafnClient<S extends DatafnSchema>(
     has(_target, prop) {
       return (
         prop === "switchContext" ||
-        prop === "currentContext" ||
+        prop === "currentNamespace" ||
         prop === "subscribeClient" ||
         prop in realClient
       );
     },
     ownKeys(_target) {
-      return [...Reflect.ownKeys(realClient), "switchContext", "currentContext", "subscribeClient"];
+      return [...Reflect.ownKeys(realClient), "switchContext", "currentNamespace", "subscribeClient"];
     },
     getOwnPropertyDescriptor(_target, prop) {
-      if (prop === "switchContext" || prop === "currentContext" || prop === "subscribeClient") {
+      if (prop === "switchContext" || prop === "currentNamespace" || prop === "subscribeClient") {
         return { configurable: true, enumerable: true, writable: true, value: undefined };
       }
       return Object.getOwnPropertyDescriptor(realClient, prop);

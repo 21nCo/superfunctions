@@ -8,7 +8,8 @@ import { randomUUID } from "crypto";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
 import { type DFQLMutation, buildReplaceRecord } from "./dfql.js";
 import { executeRelate, executeModifyRelation, executeUnrelate, extractJoinDeltas, extractRelationFkDeltas } from "./relations.js";
-import { ChangeTrackingService } from "../sync/change-tracking.js";
+import { executeSchemaAwareMerge } from "./merge-decision.js";
+import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry } from "../sync/change-tracking.js";
 import { evaluateGuard } from "./guards.js";
 import { isSearchPlugin } from "../../plugins/searchfn.js";
 import type { DatafnLogger } from "../../logger.js";
@@ -63,21 +64,58 @@ async function executeMutationCore(
         break;
 
       case "merge":
-        try {
+        {
           const mergeData = mutation.record || {};
-          await db.upsert({
-            model: mutation.resource,
-            where: [{ field: "id", operator: "eq", value: mutation.id }],
-            create: { id: mutation.id, ...mergeData },
-            update: mergeData,
-            namespace,
-            conflictTarget: "id",
+          const strictUpdateNotFound = db.capabilities?.operations?.strictUpdateNotFound === true;
+          const mergeResult = await executeSchemaAwareMerge({
+            schema,
+            resource: mutation.resource,
+            id: mutation.id,
+            delta: mergeData,
+            update: async () => {
+              await db.update({
+                model: mutation.resource,
+                where: [{ field: "id", operator: "eq", value: mutation.id }],
+                data: mergeData,
+                namespace,
+              });
+            },
+            create: async (record) => {
+              await db.create({
+                model: mutation.resource,
+                data: record,
+                namespace,
+              });
+            },
+            ...(strictUpdateNotFound
+              ? {}
+              : {
+                  findOne: async () =>
+                    db.findOne({
+                      model: mutation.resource,
+                      where: [{ field: "id", operator: "eq", value: mutation.id }],
+                      namespace,
+                    }),
+                }),
           });
-          opResult = { ok: true };
-        } catch (e: any) {
-          // EXE-010: Log original error for observability
-          logger?.error("Mutation merge failed", { error: String(e), operation: "merge", resource: mutation.resource });
-          opResult = { ok: false, code: "INTERNAL", message: e?.message || "Internal error", path: "$" };
+
+          if (mergeResult.ok) {
+            opResult = { ok: true };
+          } else {
+            if (mergeResult.code === "INTERNAL") {
+              logger?.error("Mutation merge failed", {
+                error: String(mergeResult.error),
+                operation: "merge",
+                resource: mutation.resource,
+              });
+            }
+            opResult = {
+              ok: false,
+              code: mergeResult.code,
+              message: mergeResult.message,
+              path: mergeResult.path,
+            };
+          }
         }
         break;
 
@@ -171,6 +209,11 @@ async function executeMutationCore(
         };
     }
   } catch (error: any) {
+    logger?.error("Unexpected mutation error", {
+      error: String(error),
+      operation: (mutation as any).operation,
+      resource: mutation.resource,
+    });
     opResult = { ok: false, code: "INTERNAL", message: error?.message || "Internal error", path: "$" };
   }
 
@@ -199,15 +242,14 @@ async function executeMutationCore(
         const allDeltas = [...fkDeltas, ...joinDeltas];
         if (allDeltas.length > 0) {
           const seqs = await changeTracking.getNextServerSeqBatch(allDeltas.length);
-          await changeTracking.recordChanges(
-            allDeltas.map((delta, i) => ({
-              serverSeq: seqs[i],
-              resource: delta.resource,
-              id: delta.id,
-              op: delta.op,
-              record: delta.record,
-            }))
-          );
+          const entries = allDeltas.map((delta, i) => ({
+            serverSeq: seqs[i],
+            resource: delta.resource,
+            id: delta.id,
+            op: delta.op,
+            record: delta.record,
+          }));
+          await recordChangesWithRetry(changeTracking, entries, 2, logger);
         }
       } else {
         const serverSeq = await changeTracking.getNextServerSeq();
@@ -222,13 +264,14 @@ async function executeMutationCore(
             : mutation.operation === "replace" && resolvedRecord !== undefined
               ? { id: mutation.id, ...resolvedRecord }
               : { id: mutation.id, ...(mutation.record || {}) };
-        await changeTracking.recordChange({
+        // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
+        await recordChangeWithRetry(changeTracking, {
           serverSeq,
           resource: mutation.resource,
           id: mutation.id,
           op: changeOp,
           record: changeRecord,
-        });
+        }, 2, logger);
       }
     } catch (error) {
       logger?.error("Change tracking failed", { error: String(error), operation: "changeTracking", resource: mutation.resource });

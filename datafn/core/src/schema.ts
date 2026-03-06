@@ -9,6 +9,24 @@ import type { DatafnEnvelope } from "./errors.js";
 import { ok, err } from "./errors.js";
 
 /**
+ * Resolve whether namespace isolation is enabled from a schema-like object.
+ * Default is `true`.
+ */
+function resolveNamespaced(s: Record<string, unknown>): boolean {
+  if (typeof s.namespaced === "boolean") return s.namespaced;
+  return true;
+}
+
+/**
+ * Returns whether namespace isolation is enabled for a given schema.
+ * Default is `true`.
+ */
+export function isNamespaced(schema: DatafnSchema): boolean {
+  if (typeof schema.namespaced === "boolean") return schema.namespaced;
+  return true;
+}
+
+/**
  * Validates a schema and returns a normalized version.
  *
  * Normalization:
@@ -230,13 +248,11 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
     }
   }
 
-  // multiTenant defaults to true (namespace isolation is the safe default).
-  // Only explicitly setting `multiTenant: false` disables it.
-  const multiTenant = (s as any).multiTenant === false ? false : true;
+  const namespaced = resolveNamespaced(s);
 
   return ok({
     resources: normalizedResources,
     relations: relations as DatafnSchema["relations"],
-    multiTenant,
+    namespaced,
   });
 }

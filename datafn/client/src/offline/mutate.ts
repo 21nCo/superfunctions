@@ -19,7 +19,6 @@ import { getJoinStoreKey, normalizeRelationPayload, findRelationBidirectional } 
  * @param schema Schema definition (required for relation operations)
  * @param mutation The full mutation object (including resource, version, clientId, mutationId)
  * @param timestampMs Client timestamp
- * @param authContext Authentication context for changelog enrichment (AUD-001)
  * @returns Optimistic mutation result
  */
 export async function handleOfflineMutation(
@@ -27,7 +26,6 @@ export async function handleOfflineMutation(
   schema: DatafnSchema,
   mutation: Record<string, unknown>,
   timestampMs: number,
-  authContext?: { userId?: string },
 ): Promise<any> {
   // Validate required fields
   if (!mutation.clientId) {
@@ -53,14 +51,13 @@ export async function handleOfflineMutation(
   }
 
   // 3. Append to changelog (after validation, before apply)
-  // AUD-001: Enrich with userId and timestamp
+  // AUD-001: Enrich with timestamp
   try {
     await storage.changelogAppend({
       clientId,
       mutationId,
       mutation,
       timestampMs,
-      userId: authContext?.userId,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {

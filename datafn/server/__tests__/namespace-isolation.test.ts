@@ -1,12 +1,11 @@
 /**
  * Namespace Isolation Tests
- * Tests for per-user/tenant serverSeq isolation via authContextProvider
+ * Tests for per-user/tenant serverSeq isolation via namespaceProvider
  */
 
 import { describe, it, expect } from "vitest";
 import { createDatafnServer } from "../src/server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { AuthContext } from "@superfunctions/auth";
 
 const testSchema = {
   resources: [
@@ -18,9 +17,9 @@ const testSchema = {
   ],
 };
 
-describe("Namespace Isolation via authContextProvider", () => {
+describe("Namespace Isolation via namespaceProvider", () => {
 
-  it("uses default namespace when authContextProvider is not provided", async () => {
+  it("uses default namespace when namespaceProvider is not provided", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
@@ -52,27 +51,24 @@ describe("Namespace Isolation via authContextProvider", () => {
     expect(body.result.cursor).toBeDefined();
   });
 
-  it("extracts namespace from authContextProvider using request headers", async () => {
+  it("extracts namespace from namespaceProvider using request context", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
-    
-    // authContextProvider extracts user from custom header (simulating session/JWT)
-    const authContextProvider = {
-      getContext: (ctx: any): AuthContext => {
-        // In real usage, this would extract from session, JWT, or similar
-        // For testing, we'll use the parsedBody.clientId as a proxy for userId
-        // Or we could add custom headers to the request
+
+    // namespaceProvider extracts user from parsed body (simulating session/JWT)
+    const namespaceProvider = {
+      getNamespace: (ctx: any) => {
         const parsedBody = ctx.parsedBody as any;
-        return {
-          userId: parsedBody?.userId || parsedBody?.clientId || "",
-          tenantId: parsedBody?.tenantId,
-        };
+        const userId = parsedBody?.userId || parsedBody?.clientId || "";
+        const tenantId = parsedBody?.tenantId;
+        if (tenantId) return `tenant:${tenantId}:user:${userId}`;
+        return userId ? `user:${userId}` : "datafn";
       },
     };
 
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
-      authContextProvider,
+      namespaceProvider,
     });
 
     // Push for user 1 (using clientId as userId for this test)
@@ -126,79 +122,10 @@ describe("Namespace Isolation via authContextProvider", () => {
     expect(body2.result.cursor).toBe("1"); // First serverSeq for user-2 (independent namespace)
   });
 
-  it("constructs tenant:userId namespace for multi-tenant isolation", async () => {
+  it("returns error when getNamespace throws (SRV-010: no silent fallback)", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
-    const authContextProvider = {
-      getContext: (ctx: any): AuthContext => {
-        const parsedBody = ctx.parsedBody as any;
-        return {
-          userId: parsedBody?.userId || "",
-          tenantId: parsedBody?.tenantId,
-        };
-      },
-    };
-
-    const server = await createDatafnServer({ allowUnknownResources: true,
-      schema: testSchema,
-      db,
-      authContextProvider,
-    });
-
-    // Push for tenant A, user 1
-    const req1 = new Request("http://localhost/datafn/push", {
-      method: "POST",
-      body: JSON.stringify({
-        clientId: "client:1",
-        userId: "user-1",
-        tenantId: "tenant-a",
-        mutations: [
-          {
-            operation: "insert",
-            resource: "task",
-            id: "task:1",
-            clientId: "client:1",
-            mutationId: "m-1",
-            record: { title: "Tenant A Task" },
-          },
-        ],
-      }),
-    });
-
-    const res1 = await server.router.handle(req1);
-    expect(res1.status).toBe(200);
-    const body1 = await res1.json();
-    expect(body1.result.cursor).toBe("1");
-
-    // Push for tenant B, same user ID (but different tenant = different namespace)
-    const req2 = new Request("http://localhost/datafn/push", {
-      method: "POST",
-      body: JSON.stringify({
-        clientId: "client:1",
-        userId: "user-1",
-        tenantId: "tenant-b",
-        mutations: [
-          {
-            operation: "insert",
-            resource: "task",
-            id: "task:2",
-            clientId: "client:1",
-            mutationId: "m-2",
-            record: { title: "Tenant B Task" },
-          },
-        ],
-      }),
-    });
-
-    const res2 = await server.router.handle(req2);
-    expect(res2.status).toBe(200);
-    const body2 = await res2.json();
-    expect(body2.result.cursor).toBe("1"); // Independent namespace
-  });
-
-  it("returns error when getContext throws (SRV-010: no silent fallback)", async () => {
-    const db = memoryAdapter({ libraryNamespace: "datafn" });
-    const authContextProvider = {
-      getContext: (): AuthContext => {
+    const namespaceProvider = {
+      getNamespace: () => {
         throw new Error("Auth error");
       },
     };
@@ -206,7 +133,7 @@ describe("Namespace Isolation via authContextProvider", () => {
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
-      authContextProvider,
+      namespaceProvider,
     });
 
     const req = new Request("http://localhost/datafn/push", {
@@ -227,25 +154,23 @@ describe("Namespace Isolation via authContextProvider", () => {
     });
 
     const res = await server.router.handle(req);
-    // SRV-010: extractNamespace now throws on auth errors instead of falling back
+    // SRV-010: namespaceProvider.getNamespace throwing must not silently fall back
     // to "datafn" to prevent accidental cross-tenant data leaks.
     expect(res.status).not.toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(false);
   });
 
-  it("falls back to default namespace when userId is missing", async () => {
+  it("falls back to default namespace when getNamespace returns 'datafn'", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
-    const authContextProvider = {
-      getContext: (): AuthContext => ({
-        userId: "", // Empty userId
-      }),
+    const namespaceProvider = {
+      getNamespace: () => "datafn", // Returns default namespace
     };
 
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
-      authContextProvider,
+      namespaceProvider,
     });
 
     const req = new Request("http://localhost/datafn/push", {

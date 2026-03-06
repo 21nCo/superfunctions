@@ -72,7 +72,6 @@ export async function executeMutation(
   offlinability?: boolean,
   clientId?: string,
   debouncerMap?: DebouncerMap,
-  authContext?: { userId?: string }, // AUD-001: Auth context for changelog enrichment
 ): Promise<unknown> {
   // Validate clientId is provided when offline functionality is needed
   if ((offlinability || storage) && !clientId) {
@@ -164,13 +163,12 @@ export async function executeMutation(
               // 3. Schedule push
 
               try {
-                // Append to changelog (AUD-001: with userId and timestamp enrichment)
+                // Append to changelog (AUD-001: with timestamp enrichment)
                 await storage.changelogAppend({
                   clientId: debouncedMutation.clientId as string,
                   mutationId: debouncedMutation.mutationId as string,
                   mutation: debouncedMutation,
                   timestampMs: getTimestamp(),
-                  userId: authContext?.userId,
                   timestamp: new Date().toISOString(),
                 });
 
@@ -281,7 +279,6 @@ export async function executeMutation(
           schema!,
           mut as Record<string, unknown>,
           getTimestamp(),
-          authContext, // AUD-001: Pass authContext for changelog enrichment
         );
 
         // Run afterMutation hooks
@@ -410,7 +407,6 @@ export async function executeMutation(
                 schema,
                 mutation as Record<string, unknown>,
                 getTimestamp(),
-                authContext, // AUD-001: Pass authContext for changelog enrichment
               );
               // Emit mutation_applied event (unless silent)
               emitMutationEvents(eventBus, getTimestamp, mutation, mutResult);
@@ -430,7 +426,6 @@ export async function executeMutation(
             schema,
             mutationToUse,
             getTimestamp(),
-            authContext, // AUD-001: Pass authContext for changelog enrichment
           );
           // REL-012: Emit applied here so only one event fires (no double-emit with final path)
           emitMutationEvents(eventBus, getTimestamp, mutationToUse, result);

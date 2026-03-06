@@ -39,17 +39,21 @@ Authorization is enforced on:
 
 ## Server-Derived Namespaces
 
-The namespace for row-level data isolation is always derived on the server from the authenticated user's context. The client never supplies a namespace value. This prevents a compromised client from accessing another tenant's data:
+The namespace for row-level data isolation is always derived on the server via the `namespaceProvider`. The client never supplies a namespace value. This prevents a compromised client from accessing another namespace's data:
 
 ```typescript
-// Server-side: namespace is derived from auth, never from request body
-const namespace = authContext.tenantId;
-await adapter.findMany({
-  model: "todos",
-  where: [],
-  namespace,  // Always server-derived
-});
+// Server-side: namespace is derived from namespaceProvider, never from request body
+namespaceProvider: {
+  getNamespace: (ctx) => ns(ctx.session.orgId, ctx.session.userId),
+},
+// The resolved namespace is applied to all queries and mutations automatically
 ```
+
+Additional namespace security guarantees:
+
+- **Empty validation**: An empty namespace string throws `NAMESPACE_INVALID`. There is no silent fallback.
+- **Error propagation**: If `namespaceProvider.getNamespace()` throws, the error propagates -- the server does not silently fall back to a default namespace.
+- **WebSocket isolation**: WebSocket connections are scoped to the namespace derived at connection time.
 
 ## Prototype Pollution Protection
 

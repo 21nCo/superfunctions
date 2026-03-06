@@ -17,22 +17,41 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2
  * Returns `{ ok: true }` if clean, or `{ ok: false, key }` with the first offending key found.
  */
 export function checkPrototypePollution(obj: unknown): { ok: boolean; key?: string } {
-  if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {
+  const visited = new WeakSet<object>();
+
+  const check = (value: unknown): { ok: boolean; key?: string } => {
+    if (typeof value !== "object" || value === null) {
+      return { ok: true };
+    }
+
+    const objectValue = value as object;
+    if (visited.has(objectValue)) {
+      return { ok: true };
+    }
+    visited.add(objectValue);
+
+    if (Array.isArray(value)) {
+      for (const element of value) {
+        const nestedResult = check(element);
+        if (!nestedResult.ok) return nestedResult;
+      }
+      return { ok: true };
+    }
+
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      if (DISALLOWED_KEYS.has(key)) {
+        return { ok: false, key };
+      }
+      const nestedResult = check((value as Record<string, unknown>)[key]);
+      if (!nestedResult.ok) {
+        return nestedResult;
+      }
+    }
+
     return { ok: true };
-  }
+  };
 
-  for (const key of Object.keys(obj as Record<string, unknown>)) {
-    if (DISALLOWED_KEYS.has(key)) {
-      return { ok: false, key };
-    }
-    const nested = (obj as Record<string, unknown>)[key];
-    if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
-      const result = checkPrototypePollution(nested);
-      if (!result.ok) return result;
-    }
-  }
-
-  return { ok: true };
+  return check(obj);
 }
 
 /**

@@ -3,6 +3,12 @@ import type { StorageAdapter } from '../integrations/filefn.js';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
 import type { CaptureResult } from './capture.js';
+import type { WebhookDeliverer } from '../worker/lifecycle.js';
+import type { MetricsEmitter } from '../integrations/watchfn.js';
+import { buildRecordingReadyPayload } from '../webhooks/events.js';
+import { checkRecordingDuration } from '../middleware/limits.js';
+import { loadLimitsConfig } from '../config.js';
+import { emitRecordingsCount } from '../observability/metrics.js';
 
 function generateRecordingId(): string {
   const ts = Date.now().toString(36);
@@ -50,10 +56,17 @@ export async function uploadRecording(
     storage: StorageAdapter;
     store: RecFnStore;
     logger: Logger;
+    webhookDeliverer?: WebhookDeliverer;
+    metrics?: MetricsEmitter;
   },
 ): Promise<UploadRecordingResult> {
   const { botId, namespace, capture } = input;
-  const { storage, store, logger } = deps;
+  const { storage, store, logger, webhookDeliverer, metrics } = deps;
+
+  if (capture.duration > 0) {
+    const limits = loadLimitsConfig();
+    checkRecordingDuration(capture.duration, limits);
+  }
 
   const recordingId = generateRecordingId();
   const key = storageKey(namespace, recordingId, capture.format);
@@ -92,6 +105,15 @@ export async function uploadRecording(
   };
 
   await store.createRecording(recording, namespace);
+
+  if (webhookDeliverer) {
+    webhookDeliverer.deliver(namespace, 'recording.ready', buildRecordingReadyPayload(recording, botId)).catch(() => {});
+  }
+
+  if (metrics) {
+    const recordings = await store.getRecordings(botId, namespace);
+    emitRecordingsCount(metrics, recordings.length, namespace);
+  }
 
   return { recording };
 }

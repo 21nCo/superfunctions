@@ -1,0 +1,110 @@
+---
+title: "@datafn/svelte"
+description: "API reference for the DataFn Svelte adapter package."
+---
+
+## Package
+
+```bash
+npm install @datafn/svelte
+```
+
+**Peer dependencies**: `svelte ^3.0.0 || ^4.0.0`
+
+---
+
+## `toSvelteStore<T>(signal)`
+
+Converts a `DatafnSignal<T>` to a Svelte `Readable` store. This is the primary API.
+
+```typescript
+function toSvelteStore<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T>;
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `signal` | `DatafnSignal<T>` | A signal obtained from a table handle, e.g. `client.todos.signal({ ... })`. |
+
+### Returns
+
+A `DatafnSvelteStore<T>` — a Svelte `Readable` store that emits signal state.
+
+### Example
+
+```typescript
+import { toSvelteStore } from "@datafn/svelte";
+
+const todosStore = toSvelteStore(
+  client.todos.signal({ sort: ["-createdAt"] })
+);
+```
+
+```svelte
+{#if $todosStore.loading}
+  <p>Loading...</p>
+{:else}
+  {#each $todosStore.data ?? [] as todo}
+    <p>{todo.title}</p>
+  {/each}
+{/if}
+```
+
+---
+
+## `DatafnSvelteStore<T>`
+
+The return type of `toSvelteStore`. A Svelte `Readable` store with signal state properties.
+
+```typescript
+type DatafnSvelteStore<T> = Readable<{
+  data: T;
+  loading: boolean;
+  error: DatafnError | null;
+  refreshing: boolean;
+  nextCursor?: string | null;
+}>;
+```
+
+### Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `data` | `T` | The current query result value. |
+| `loading` | `boolean` | `true` during the initial fetch. |
+| `error` | `DatafnError \| null` | Non-null if the last fetch failed. |
+| `refreshing` | `boolean` | `true` when re-fetching after a mutation. |
+| `nextCursor` | `string \| null` | Cursor for the next page, or `null`. |
+
+---
+
+## Deprecated: Factory Overload
+
+```typescript
+function toSvelteStore<T, C>(
+  clientRef: ClientRef<C>,
+  signalFactory: (client: C) => DatafnSignal<T>,
+): DatafnSvelteStore<T>;
+```
+
+**Deprecated.** No longer needed. Use the direct signal form `toSvelteStore(signal)` instead. Signals from `createDatafnClient` are lifecycle-aware via LiveSignals — they survive `switchContext()` and rebind automatically. The factory overload exists for backward compatibility and will be removed in the next major version.
+
+### Parameters
+
+| Parameter | Type | Description |
+|---|---|---|
+| `clientRef` | `ClientRef<C>` | A subscribable reference to the DataFn client. |
+| `signalFactory` | `(client: C) => DatafnSignal<T>` | A function that creates a signal from the current client. |
+
+---
+
+## `ClientRef<C>` (Deprecated)
+
+```typescript
+type ClientRef<C> = {
+  subscribe(fn: (client: C) => void): () => void;
+};
+```
+
+**Deprecated.** Used only with the factory overload.

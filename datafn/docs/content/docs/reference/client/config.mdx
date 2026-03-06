@@ -15,11 +15,11 @@ interface DatafnClientConfig {
   /** Required. Stable device/client identifier for idempotency and changelogs. */
   clientId: string;
 
-  /** Local persistence adapter. Instance or factory function for multi-user isolation. */
+  /** Local persistence adapter. Instance or factory function for namespace isolation. */
   storage?: DatafnStorageAdapter | DatafnStorageFactory;
 
-  /** Authentication context for multi-tenant data isolation. */
-  authContext?: AuthContext | AuthContextProvider;
+  /** Namespace string for data isolation. Required when storage is a factory function. */
+  namespace?: string;
 
   /** Sync and connectivity configuration. */
   sync?: DatafnSyncConfig;
@@ -112,11 +112,13 @@ interface DatafnWsReconnectConfig {
 
 ## DatafnStorageFactory
 
-Factory function for multi-user storage isolation.
+Factory function for namespace-based storage isolation.
 
 ```typescript
-type DatafnStorageFactory = (context: AuthContext) => DatafnStorageAdapter;
+type DatafnStorageFactory = (namespace: string) => DatafnStorageAdapter;
 ```
+
+The factory is called with the namespace string when the client is configured with `namespace`.
 
 ## DatafnRemoteAdapter
 

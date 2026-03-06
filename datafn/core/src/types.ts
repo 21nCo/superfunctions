@@ -7,8 +7,8 @@ import type { DatafnError } from "./errors.js";
 export type DatafnSchema = {
   resources: DatafnResourceSchema[];
   relations?: DatafnRelationSchema[];
-  /** Defaults to true. Set to false to disable row-level namespace isolation (single-tenant mode). */
-  multiTenant?: boolean;
+  /** Defaults to true. Set to false to disable row-level namespace isolation. */
+  namespaced?: boolean;
 };
 
 /**
@@ -123,7 +123,7 @@ export function defineSchema<
   const T extends {
     readonly resources: readonly DatafnResourceBase[];
     readonly relations?: readonly DatafnRelationSchema[] | DatafnRelationSchema[];
-    readonly multiTenant?: boolean;
+    readonly namespaced?: boolean;
   }
 >(schema: T & { readonly resources: ValidateResources<T["resources"]> }): T & DatafnSchema {
   return schema as unknown as T & DatafnSchema;

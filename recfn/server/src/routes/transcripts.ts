@@ -1,12 +1,13 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import { ErrorCode } from 'recfn';
-import type { Segment } from 'recfn';
+import { ErrorCode, toSRT, toVTT, toText } from 'recfn';
+import type { Segment, TranscriptExportFormat } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import type { QueueAdapter } from '../integrations/flowfn.js';
 import { QUEUE_NAMES } from '../integrations/flowfn.js';
 import { authenticate } from '../middleware/auth.js';
 import { ok, err } from '../middleware/envelope.js';
+import { redactSegmentText, getSpeakerDisplayLabel } from '../transcription/redact.js';
 
 export interface TranscriptRouteDeps {
   store: RecFnStore;
@@ -125,13 +126,64 @@ export function createTranscriptRoutes(deps: TranscriptRouteDeps): Route[] {
           );
         }
 
-        // Sort segments by startTime, then speakerId
-        const sorted = {
-          ...transcript,
-          segments: sortSegments(transcript.segments),
-        };
+        const url = new URL(request.url);
+        const formatParam = url.searchParams.get('format') ?? 'json';
+        const format = ['json', 'srt', 'vtt', 'text'].includes(formatParam)
+          ? (formatParam as TranscriptExportFormat)
+          : 'json';
+        const redact =
+          url.searchParams.get('redact') === 'true' ||
+          url.searchParams.get('redact') === '1';
 
-        return ok(sorted);
+        const sortedSegments = sortSegments(transcript.segments);
+        const participants = await store.getParticipants(
+          recording.botId,
+          auth.namespace,
+        );
+
+        let segmentsToFormat = sortedSegments;
+        if (redact) {
+          segmentsToFormat = redactSegmentText(sortedSegments, participants);
+        }
+
+        const displaySegments: Segment[] = segmentsToFormat.map((s) => ({
+          ...s,
+          speakerId: getSpeakerDisplayLabel(s.speakerId, participants, redact),
+        }));
+
+        if (format === 'json') {
+          const jsonSegments = displaySegments;
+          const result = {
+            ...transcript,
+            segments: jsonSegments,
+          };
+          return ok(result);
+        }
+
+        let body: string;
+        let contentType: string;
+        switch (format) {
+          case 'srt':
+            body = toSRT(displaySegments);
+            contentType = 'text/plain';
+            break;
+          case 'vtt':
+            body = toVTT(displaySegments);
+            contentType = 'text/vtt';
+            break;
+          case 'text':
+            body = toText(displaySegments);
+            contentType = 'text/plain';
+            break;
+          default:
+            body = toText(displaySegments);
+            contentType = 'text/plain';
+        }
+
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': contentType },
+        });
       },
     },
   ];

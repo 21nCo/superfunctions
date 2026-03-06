@@ -59,3 +59,10 @@ export {
 export { toSRT } from './formatters/srt.js';
 export { toVTT } from './formatters/vtt.js';
 export { toText } from './formatters/text.js';
+
+export {
+  computeAnalytics,
+  computeTalkTime,
+  computeSilencePercentage,
+  computeTopicSegments,
+} from './analytics/index.js';

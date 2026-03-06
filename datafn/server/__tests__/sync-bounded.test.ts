@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
+import { ChangeTrackingService, recordChangesWithRetry } from "../src/execution/sync/change-tracking.js";
 import { DatabaseSequenceStore, FallbackSequenceStore } from "../src/execution/sync/sequence-store.js";
 import { createDatafnServer } from "../src/server.js";
 
@@ -404,18 +404,37 @@ describe("BATCH-CHG-001/002: ChangeTrackingService.recordChanges()", () => {
       { serverSeq: 12, resource: "join_tasks_tags", id: "t1:tag2", op: "insert" as const, record: { from: "t1", to: "tag2" } },
     ];
 
-    const createSpy = vi.spyOn(db.internal, "create");
+    // EXE-018: Memory adapter has createMany, so batch path is used.
+    // Spy on createMany if available, otherwise create.
+    const hasBatch = typeof db.internal.createMany === "function";
+    const spy = hasBatch
+      ? vi.spyOn(db.internal, "createMany" as any)
+      : vi.spyOn(db.internal, "create");
 
     await ct.recordChanges(entries);
 
-    expect(createSpy).toHaveBeenCalledTimes(3);
+    if (hasBatch) {
+      // Batch path: one createMany call with all 3 rows
+      expect(spy).toHaveBeenCalledTimes(1);
+      const rows = spy.mock.calls[0][1] as any[];
+      expect(rows).toHaveLength(3);
+      expect(rows[0]).toMatchObject({ server_seq: 10, resource: "tasks" });
+      expect(rows[1]).toMatchObject({ server_seq: 11, resource: "join_tasks_tags" });
+      expect(rows[2]).toMatchObject({ server_seq: 12, resource: "join_tasks_tags" });
+    } else {
+      // Sequential fallback: 3 individual create calls
+      expect(spy).toHaveBeenCalledTimes(3);
+      expect(spy.mock.calls[0][1]).toMatchObject({ server_seq: 10, resource: "tasks" });
+      expect(spy.mock.calls[1][1]).toMatchObject({ server_seq: 11, resource: "join_tasks_tags" });
+      expect(spy.mock.calls[2][1]).toMatchObject({ server_seq: 12, resource: "join_tasks_tags" });
+    }
 
-    // Verify insertion order (serverSeq 10, 11, 12)
-    expect(createSpy.mock.calls[0][1]).toMatchObject({ server_seq: 10, resource: "tasks" });
-    expect(createSpy.mock.calls[1][1]).toMatchObject({ server_seq: 11, resource: "join_tasks_tags" });
-    expect(createSpy.mock.calls[2][1]).toMatchObject({ server_seq: 12, resource: "join_tasks_tags" });
+    // Verify all entries are stored correctly regardless of path
+    const changes = await ct.getChangesSince({ resource: "tasks", sinceSeq: 0 });
+    expect(changes).toHaveLength(1);
+    expect(changes[0].serverSeq).toBe(10);
 
-    createSpy.mockRestore();
+    spy.mockRestore();
   });
 
   it("TV-BATCH-CHG-002: recordChanges propagates error on failure and stops", async () => {
@@ -423,29 +442,93 @@ describe("BATCH-CHG-001/002: ChangeTrackingService.recordChanges()", () => {
     await db.initialize();
     const ct = new ChangeTrackingService(db, "datafn");
 
-    let callCount = 0;
-    const originalCreate = db.internal.create.bind(db.internal);
-    vi.spyOn(db.internal, "create").mockImplementation(async (table, data) => {
-      callCount++;
-      if (callCount === 2) {
+    const hasBatch = typeof db.internal.createMany === "function";
+
+    if (hasBatch) {
+      // EXE-018: Batch path — mock createMany to throw
+      const originalCreateMany = db.internal.createMany!.bind(db.internal);
+      db.internal.createMany = async (table: string, data: any[]) => {
         throw new Error("DB write failure");
-      }
-      return originalCreate(table, data);
-    });
+      };
 
+      const entries = [
+        { serverSeq: 1, resource: "tasks", id: "t1", op: "insert" as const, record: null },
+        { serverSeq: 2, resource: "tasks", id: "t2", op: "insert" as const, record: null },
+        { serverSeq: 3, resource: "tasks", id: "t3", op: "insert" as const, record: null },
+      ];
+
+      await expect(ct.recordChanges(entries)).rejects.toThrow("DB write failure");
+
+      // No entries written (batch is atomic)
+      const changes = await ct.getChangesSince({ resource: "tasks", sinceSeq: 0 });
+      expect(changes).toHaveLength(0);
+
+      db.internal.createMany = originalCreateMany;
+    } else {
+      // Sequential fallback path
+      let callCount = 0;
+      const originalCreate = db.internal.create.bind(db.internal);
+      vi.spyOn(db.internal, "create").mockImplementation(async (table, data) => {
+        callCount++;
+        if (callCount === 2) {
+          throw new Error("DB write failure");
+        }
+        return originalCreate(table, data);
+      });
+
+      const entries = [
+        { serverSeq: 1, resource: "tasks", id: "t1", op: "insert" as const, record: null },
+        { serverSeq: 2, resource: "tasks", id: "t2", op: "insert" as const, record: null },
+        { serverSeq: 3, resource: "tasks", id: "t3", op: "insert" as const, record: null },
+      ];
+
+      await expect(ct.recordChanges(entries)).rejects.toThrow("DB write failure");
+
+      // First entry was created, third was NOT (early exit)
+      const changes = await ct.getChangesSince({ resource: "tasks", sinceSeq: 0 });
+      expect(changes).toHaveLength(1);
+      expect(changes[0].serverSeq).toBe(1);
+
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+describe("FIX-REL-002: recordChangesWithRetry()", () => {
+  it("retries bulk write and succeeds on third attempt", async () => {
     const entries = [
-      { serverSeq: 1, resource: "tasks", id: "t1", op: "insert" as const, record: null },
-      { serverSeq: 2, resource: "tasks", id: "t2", op: "insert" as const, record: null },
-      { serverSeq: 3, resource: "tasks", id: "t3", op: "insert" as const, record: null },
+      { serverSeq: 1, resource: "task", id: "task:1", op: "insert" as const, record: { id: "task:1" } },
     ];
+    let attempts = 0;
+    const changeTracking = {
+      recordChanges: vi.fn(async () => {
+        attempts++;
+        if (attempts < 3) {
+          throw new Error("transient failure");
+        }
+      }),
+    } as unknown as ChangeTrackingService;
 
-    await expect(ct.recordChanges(entries)).rejects.toThrow("DB write failure");
+    await recordChangesWithRetry(changeTracking, entries, 2);
 
-    // First entry was created, third was NOT (early exit)
-    const changes = await ct.getChangesSince({ resource: "tasks", sinceSeq: 0 });
-    expect(changes).toHaveLength(1);
-    expect(changes[0].serverSeq).toBe(1);
+    expect(attempts).toBe(3);
+    expect((changeTracking as any).recordChanges).toHaveBeenCalledTimes(3);
+  });
 
-    vi.restoreAllMocks();
+  it("throws after retries are exhausted for bulk write", async () => {
+    const entries = [
+      { serverSeq: 2, resource: "task", id: "task:2", op: "merge" as const, record: { id: "task:2" } },
+    ];
+    let attempts = 0;
+    const changeTracking = {
+      recordChanges: vi.fn(async () => {
+        attempts++;
+        throw new Error("permanent failure");
+      }),
+    } as unknown as ChangeTrackingService;
+
+    await expect(recordChangesWithRetry(changeTracking, entries, 2)).rejects.toThrow("permanent failure");
+    expect(attempts).toBe(3);
+    expect((changeTracking as any).recordChanges).toHaveBeenCalledTimes(3);
   });
 });

@@ -18,30 +18,46 @@ const storage = IndexedDbStorageAdapter.create({
 });
 ```
 
-## Multi-Tenant / Multi-User Isolation
+## Namespace Isolation
 
-For multi-user applications, use `createForUser` to create isolated databases per user and tenant:
+For applications with namespace-based data isolation, use `createForNamespace` to create isolated IndexedDB databases per namespace:
 
 ```typescript
-// Single-tenant
-const storage = IndexedDbStorageAdapter.createForUser(
-  "my-app",
-  userId,
-  undefined,
-  undefined,
-  schema,
-);
-// Database name: "my-app_<userId>"
+import { ns } from "@datafn/client";
 
-// Multi-tenant
-const storage = IndexedDbStorageAdapter.createForUser(
+// Single-segment namespace
+const storage = IndexedDbStorageAdapter.createForNamespace(
   "my-app",
-  userId,
-  tenantId,
+  ns("user-123"),
   undefined,
   schema,
 );
-// Database name: "my-app_<tenantId>_<userId>"
+// Database name: "my-app_user-123"
+
+// Multi-segment namespace
+const storage = IndexedDbStorageAdapter.createForNamespace(
+  "my-app",
+  ns("org-456", "user-123"),
+  undefined,
+  schema,
+);
+// Database name: "my-app_org-456_user-123"
+```
+
+Colons in the namespace string are replaced with underscores in the database name.
+
+### As a Storage Factory
+
+Use `createForNamespace` with the client's factory pattern:
+
+```typescript
+const client = createDatafnClient({
+  schema,
+  clientId: "device-abc",
+  namespace: ns("org-456", "user-123"),
+  storage: (namespace) =>
+    IndexedDbStorageAdapter.createForNamespace("my-app", namespace, undefined, schema),
+});
 ```
 
 ## Schema-Aware Store Creation

@@ -33,8 +33,8 @@ describe("Phase 05: Mutation Optimization", () => {
     server = await createDatafnServer({ allowUnknownResources: true, schema, db });
   });
 
-  describe("MUT-001: Merge uses upsert", () => {
-    it("TV-MUT-UPSERT-001: merge creates new record via upsert", async () => {
+  describe("MUT-001: Merge uses update (not upsert)", () => {
+    it("TV-MUT-UPSERT-001: merge on non-existent record creates when required fields are present", async () => {
       const req = new Request("http://localhost/datafn/mutation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -56,14 +56,13 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(body.ok).toBe(true);
       expect(body.result.ok).toBe(true);
 
-      // Verify record was created
-      const record = await db.findOne({
+      const created = await db.findOne({
         model: "tasks",
         where: [{ field: "id", operator: "eq", value: "task-new-upsert" }],
       });
-      expect(record).toBeDefined();
-      expect(record.title).toBe("Created via upsert");
-      expect(record.status).toBe("pending");
+      expect(created).toBeDefined();
+      expect(created.title).toBe("Created via upsert");
+      expect(created.status).toBe("pending");
     });
 
     it("TV-MUT-UPSERT-002: merge updates existing record via upsert", async () => {
@@ -103,6 +102,48 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(record.title).toBe("Original"); // Unchanged
       expect(record.status).toBe("done"); // Updated
       expect(record.priority).toBe(1); // Unchanged
+    });
+
+    it("TV-MUT-MRG-STRICT-001: merge update skips fallback read when adapter has strict update not-found", async () => {
+      await db.create({
+        model: "tasks",
+        data: { id: "task-strict-update", title: "Original", status: "pending" },
+      });
+      const findOneSpy = vi.spyOn(db, "findOne");
+
+      const req = new Request("http://localhost/datafn/mutation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resource: "tasks",
+          version: "1",
+          clientId: "client-1",
+          mutationId: "mut-strict-update",
+          operation: "merge",
+          id: "task-strict-update",
+          record: { status: "done" },
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.result.ok).toBe(true);
+      expect(db.capabilities.operations.strictUpdateNotFound).toBe(true);
+      const mergeFallbackReads = findOneSpy.mock.calls.filter(([params]) =>
+        params?.model === "tasks" &&
+        Array.isArray(params?.where) &&
+        params.where.some((c: any) => c?.field === "id" && c?.operator === "eq" && c?.value === "task-strict-update"),
+      );
+      expect(mergeFallbackReads).toHaveLength(0);
+
+      findOneSpy.mockRestore();
+      const record = await db.findOne({
+        model: "tasks",
+        where: [{ field: "id", operator: "eq", value: "task-strict-update" }],
+      });
+      expect(record.status).toBe("done");
     });
   });
 
@@ -177,7 +218,7 @@ describe("Phase 05: Mutation Optimization", () => {
   });
 
   describe("MUT-003: Push merge uses upsert", () => {
-    it("TV-MUT-PUSH-001: push merge uses upsert", async () => {
+    it("TV-MUT-PUSH-001: push merge updates existing record and returns NOT_FOUND when create is ineligible", async () => {
       // Seed existing record
       await db.create({
         model: "tasks",
@@ -196,7 +237,7 @@ describe("Phase 05: Mutation Optimization", () => {
               operation: "merge",
               resource: "tasks",
               id: "task-push-new",
-              record: { title: "New via push merge" },
+              record: { status: "pending" },
             },
             {
               clientId: "client-push",
@@ -216,16 +257,14 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(res.status).toBe(200);
       expect(body.ok).toBe(true);
       expect(body.result.ok).toBe(true);
-      expect(body.result.applied).toContain("mut-push-merge-new");
+      // Merge on non-existent record returns NOT_FOUND error
       expect(body.result.applied).toContain("mut-push-merge-exist");
-
-      // Verify new record created
-      const newRecord = await db.findOne({
-        model: "tasks",
-        where: [{ field: "id", operator: "eq", value: "task-push-new" }],
-      });
-      expect(newRecord).toBeDefined();
-      expect(newRecord.title).toBe("New via push merge");
+      expect(body.result.applied).not.toContain("mut-push-merge-new");
+      expect(body.result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ mutationId: "mut-push-merge-new", code: "NOT_FOUND" }),
+        ]),
+      );
 
       // Verify existing record updated (merge semantics)
       const existRecord = await db.findOne({
@@ -235,6 +274,53 @@ describe("Phase 05: Mutation Optimization", () => {
       expect(existRecord).toBeDefined();
       expect(existRecord.title).toBe("Before push"); // Unchanged
       expect(existRecord.status).toBe("done"); // Updated
+    });
+
+    it("TV-MUT-PUSH-STRICT-001: push merge update skips fallback read when adapter has strict update not-found", async () => {
+      await db.create({
+        model: "tasks",
+        data: { id: "task-push-strict", title: "Before push", status: "pending" },
+      });
+      const findOneSpy = vi.spyOn(db, "findOne");
+
+      const req = new Request("http://localhost/datafn/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: "client-push",
+          mutations: [
+            {
+              clientId: "client-push",
+              mutationId: "mut-push-strict",
+              operation: "merge",
+              resource: "tasks",
+              id: "task-push-strict",
+              record: { status: "done" },
+            },
+          ],
+        }),
+      });
+
+      const res = await server.router.handle(req, {});
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.result.ok).toBe(true);
+      expect(body.result.applied).toContain("mut-push-strict");
+      expect(db.capabilities.operations.strictUpdateNotFound).toBe(true);
+      const mergeFallbackReads = findOneSpy.mock.calls.filter(([params]) =>
+        params?.model === "tasks" &&
+        Array.isArray(params?.where) &&
+        params.where.some((c: any) => c?.field === "id" && c?.operator === "eq" && c?.value === "task-push-strict"),
+      );
+      expect(mergeFallbackReads).toHaveLength(0);
+
+      findOneSpy.mockRestore();
+      const record = await db.findOne({
+        model: "tasks",
+        where: [{ field: "id", operator: "eq", value: "task-push-strict" }],
+      });
+      expect(record.status).toBe("done");
     });
   });
 

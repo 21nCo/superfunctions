@@ -50,14 +50,12 @@ export interface RequestLogMetadata {
 /**
  * Log a structured request record.
  *
- * LOG-002: Uses DatafnLogger when provided, falling back to console.
- * LOW-009: When using DatafnLogger, context is passed as structured data
- * instead of being serialized eagerly.
+ * FIX-LOG-002: Always routes through DatafnLogger — no console fallback.
+ * Server initialization guarantees a logger instance for all routes.
+ * LOW-009: Context is passed as structured data instead of being serialized eagerly.
  */
 export function logRequest(metadata: RequestLogMetadata, logger?: DatafnLogger) {
   if (logger) {
     logger.info("request", metadata as Record<string, unknown>);
-  } else {
-    console.log(JSON.stringify(metadata));
   }
 }

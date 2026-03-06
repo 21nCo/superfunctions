@@ -3,7 +3,9 @@ import type { RecFnStore } from '../store/types.js';
 import type { QueueAdapter, JobPayload } from '../integrations/flowfn.js';
 import { QUEUE_NAMES } from '../integrations/flowfn.js';
 import type { Logger } from '../integrations/logfn.js';
-import { transitionBot, type LifecycleDeps } from './lifecycle.js';
+import { transitionBot, type LifecycleDeps, type WebhookDeliverer } from './lifecycle.js';
+import { sendConsentMessage } from './consent.js';
+import { deliverWebhookEvent } from '../integrations/plugfn.js';
 import { createAutoLeaveTimer, type AutoLeaveTimer } from './auto-leave.js';
 import type { RealtimeTranscriptionPipeline } from '../transcription/realtime.js';
 import type { TranscriptStreamManager } from '../ws/transcript-stream.js';
@@ -15,6 +17,7 @@ export interface BotWorkerConfig {
   platformAdapters: Map<string, PlatformAdapter>;
   realtimePipeline?: RealtimeTranscriptionPipeline;
   streamManager?: TranscriptStreamManager;
+  metrics?: import('../integrations/watchfn.js').MetricsEmitter;
 }
 
 export interface BotWorker {
@@ -23,8 +26,18 @@ export interface BotWorker {
 }
 
 export function createBotWorker(config: BotWorkerConfig): BotWorker {
-  const { store, queue, logger, realtimePipeline, streamManager } = config;
-  const lifecycleDeps: LifecycleDeps = { store, logger, streamManager, realtimePipeline };
+  const { store, queue, logger, realtimePipeline, streamManager, metrics } = config;
+  const webhookDeliverer: WebhookDeliverer = {
+    deliver: (ns, ev, pl) => deliverWebhookEvent(ns, ev, pl, { store, metrics }),
+  };
+  const lifecycleDeps: LifecycleDeps = {
+    store,
+    logger,
+    streamManager,
+    realtimePipeline,
+    webhookDeliverer,
+    metrics,
+  };
   const autoLeaveTimer = createAutoLeaveTimer(lifecycleDeps);
 
   async function processJoinJob(payload: JobPayload): Promise<void> {
@@ -92,31 +105,40 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     // Successfully joined
     await transitionBot(lifecycleDeps, botId, namespace, 'joined');
 
-    // Send consent message then transition to recording
-    try {
-      const consentMsg =
-        bot.config.consentMessage ?? 'This meeting is being recorded';
-      await adapter.sendChatMessage(consentMsg);
-      logger.info('bot.consent_sent', { botId, message: consentMsg });
-    } catch {
-      logger.warn('bot.consent_failed', { botId });
-    }
+    // Send consent message before recording (BOT-008, SEC-006)
+    const consentMsg =
+      bot.config.consentMessage ?? 'This meeting is being recorded';
+    await sendConsentMessage(adapter, consentMsg, botId, logger);
 
-    // Transition to recording
+    // Transition to recording (only after consent message sent)
     await transitionBot(lifecycleDeps, botId, namespace, 'recording');
 
     // Set up participant monitoring for auto-leave
     setupParticipantMonitoring(bot, adapter);
 
-    // Broadcast participant events to websocket
-    if (config.streamManager) {
-      adapter.onParticipantJoin(async (participant) => {
-        config.streamManager!.broadcast(botId, 'participant_joined', participant);
+    // Broadcast participant events to websocket and fire webhooks
+    const { buildParticipantJoinedPayload, buildParticipantLeftPayload } = await import('../webhooks/events.js');
+    adapter.onParticipantJoin(async (participant) => {
+      if (config.streamManager) {
+        config.streamManager.broadcast(botId, 'participant_joined', participant);
+      }
+      // Ensure consent default: pending when bot joins, unknown if platform omits
+      const p = {
+        ...participant,
+        consent: participant.consent ?? 'pending',
+      };
+      await store.addParticipant(botId, p, bot.namespace);
+      webhookDeliverer.deliver(bot.namespace, 'participant.joined', buildParticipantJoinedPayload(botId, p)).catch(() => {});
+    });
+    adapter.onParticipantLeave(async (participantId) => {
+      await store.updateParticipant(botId, participantId, bot.namespace, {
+        leftAt: new Date().toISOString(),
       });
-      adapter.onParticipantLeave(async (participant) => {
-        config.streamManager!.broadcast(botId, 'participant_left', participant);
-      });
-    }
+      if (config.streamManager) {
+        config.streamManager.broadcast(botId, 'participant_left', { participantId });
+      }
+      webhookDeliverer.deliver(bot.namespace, 'participant.left', buildParticipantLeftPayload(botId, participantId)).catch(() => {});
+    });
 
     if (bot.config.enableRealTimeTranscript && config.realtimePipeline) {
       const audioStream = adapter.getAudioStream();

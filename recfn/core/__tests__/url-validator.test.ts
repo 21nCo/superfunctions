@@ -16,6 +16,10 @@ describe('detectPlatform', () => {
     expect(detectPlatform('https://teams.microsoft.com/l/meetup-join/123')).toBe('teams');
   });
 
+  it('detects desktop URLs', () => {
+    expect(detectPlatform('desktop://local')).toBe('desktop');
+  });
+
   it('returns null for unrecognized URLs', () => {
     expect(detectPlatform('https://example.com/not-a-meeting')).toBeNull();
     expect(detectPlatform('https://webex.com/meet/123')).toBeNull();
@@ -37,6 +41,11 @@ describe('validateMeetingUrl', () => {
   it('validates Teams URL', () => {
     const result = validateMeetingUrl('https://teams.microsoft.com/l/meetup-join/123');
     expect(result.platform).toBe('teams');
+  });
+
+  it('validates desktop URL', () => {
+    const result = validateMeetingUrl('desktop://local');
+    expect(result.platform).toBe('desktop');
   });
 
   it('accepts explicit platform matching URL', () => {

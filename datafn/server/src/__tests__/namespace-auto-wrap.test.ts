@@ -2,7 +2,7 @@
  * DFN-001 / DFN-002: Server auto-wrapping tests
  *
  * Verifies that createDatafnServer wraps the adapter with row-level
- * namespace filtering when authContextProvider is present, and does
+ * namespace filtering when namespaceProvider is present, and does
  * not wrap when it's absent or when rowLevelNamespace is explicitly false.
  */
 
@@ -10,7 +10,6 @@ import { describe, it, expect, vi } from "vitest";
 import { createDatafnServer } from "../server.js";
 import { memoryAdapter } from "@superfunctions/db/testing";
 import type { DatafnSchema } from "@datafn/core";
-import type { Adapter } from "@superfunctions/db";
 
 const testSchema: DatafnSchema = {
   version: 1,
@@ -26,16 +25,16 @@ const testSchema: DatafnSchema = {
   relations: [],
 };
 
-describe("DFN-001: Server auto-wrapping on authContextProvider", () => {
-  it("wraps adapter when authContextProvider is present", async () => {
+describe("DFN-001: Server auto-wrapping on namespaceProvider", () => {
+  it("wraps adapter when namespaceProvider is present", async () => {
     const db = memoryAdapter({ debug: false });
     const findManySpy = vi.spyOn(db, "findMany");
 
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
-      authContextProvider: {
-        getContext: () => ({ userId: "alice" }),
+      namespaceProvider: {
+        getNamespace: () => "user:alice",
       },
     });
 
@@ -60,7 +59,7 @@ describe("DFN-001: Server auto-wrapping on authContextProvider", () => {
     server.close();
   });
 
-  it("does NOT wrap adapter when authContextProvider is absent (DFN-002)", async () => {
+  it("does NOT wrap adapter when namespaceProvider is absent (DFN-002)", async () => {
     const db = memoryAdapter({ debug: false });
     const findManySpy = vi.spyOn(db, "findMany");
 
@@ -97,8 +96,8 @@ describe("DFN-001: Server auto-wrapping on authContextProvider", () => {
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
-      authContextProvider: {
-        getContext: () => ({ userId: "alice" }),
+      namespaceProvider: {
+        getNamespace: () => "user:alice",
       },
       rowLevelNamespace: false,
     });
@@ -111,7 +110,7 @@ describe("DFN-001: Server auto-wrapping on authContextProvider", () => {
 
     await server.router.handle(req, {});
 
-    // Should NOT have __ns filter even though authContextProvider is present
+    // Should NOT have __ns filter even though namespaceProvider is present
     if (findManySpy.mock.calls.length > 0) {
       const call = findManySpy.mock.calls[0];
       const params = call[0] as any;
@@ -131,8 +130,8 @@ describe("DFN-001: Server auto-wrapping on authContextProvider", () => {
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: testSchema,
       db,
-      authContextProvider: {
-        getContext: () => ({ userId: "alice" }),
+      namespaceProvider: {
+        getNamespace: () => "user:alice",
       },
       rowLevelNamespace: { enabled: true, columnName: "tenant_id", mandatory: true },
     });

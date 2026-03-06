@@ -190,6 +190,7 @@ export function createTransactHandler(
         namespace,
         sequenceStore,
         plugins,
+        logger,
         );
 
         if (!result.ok && result.error) {

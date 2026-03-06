@@ -485,11 +485,13 @@ describe("DatafnServerConfig with secondary databases", () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const redis = createMockRedisAdapter();
 
-    const authContextProvider = {
-      getContext: (ctx: any) => ({
-        userId: ctx.parsedBody?.userId || "",
-        tenantId: ctx.parsedBody?.tenantId,
-      }),
+    const namespaceProvider = {
+      getNamespace: (ctx: any) => {
+        const userId = ctx.parsedBody?.userId || "";
+        const tenantId = ctx.parsedBody?.tenantId;
+        if (tenantId) return `tenant:${tenantId}:user:${userId}`;
+        return userId ? `user:${userId}` : "datafn";
+      },
     };
 
     const server = await createDatafnServer({ allowUnknownResources: true,
@@ -497,7 +499,7 @@ describe("DatafnServerConfig with secondary databases", () => {
       db,
       redis,
       dbMapping: { serverseq: "redis" },
-      authContextProvider,
+      namespaceProvider,
     });
 
     // Push for user 1

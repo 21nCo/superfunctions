@@ -117,6 +117,7 @@ export async function executeReconcile(
         counts[resourceName] = records.length;
       }
     } catch (error) {
+      logger?.warn("Reconcile: resource count failed", { error: String(error), resource: resourceName, operation: "reconcile-count" });
       // On adapter error, return 0 count
       counts[resourceName] = 0;
     }
@@ -159,6 +160,7 @@ export async function executeReconcile(
           joinCounts[joinStoreKey] = joinRecords.length;
         }
       } catch (error) {
+        logger?.warn("Reconcile: join count failed", { error: String(error), joinTable: joinStoreKey, operation: "reconcile-join-count" });
         // Join table might not exist or be queryable; count as 0
         joinCounts[joinStoreKey] = 0;
       }

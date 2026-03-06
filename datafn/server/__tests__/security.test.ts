@@ -1022,6 +1022,223 @@ describe("SEC-009: Relation authz enforcement", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FIX-SEC-006: Configurable maxBatchSize (PHASE_00 baseline + failing-first)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("FIX-SEC-006: maxBatchSize config plumbing", () => {
+  it("defaults maxBatchSize to 500 when not specified", async () => {
+    // Baseline: config type accepts and defaults correctly
+    const s = await createDatafnServer({
+      schema: securitySchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+    });
+    expect(s).toBeDefined();
+    await s.close();
+  });
+
+  it("accepts custom maxBatchSize via limits", async () => {
+    const s = await createDatafnServer({
+      schema: securitySchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+      limits: { maxBatchSize: 10 },
+    });
+    expect(s).toBeDefined();
+    await s.close();
+  });
+
+  it("TV-SEC-006-N1: push rejects batch over configured maxBatchSize", async () => {
+    const s = await createDatafnServer({
+      schema: typeTestSchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+      limits: { maxBatchSize: 5 },
+    });
+
+    const mutations = Array.from({ length: 6 }, (_, i) => ({
+      resource: "users",
+      operation: "insert",
+      id: `u${i}`,
+      clientId: "c1",
+      mutationId: `m${i}`,
+      record: { name: `user${i}` },
+    }));
+
+    const res = await s.router.handle(
+      pushReq({ clientId: "c1", mutations }),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_INVALID");
+    // Error message must include actual count and configured max
+    expect(body.error.message).toContain("6");
+    expect(body.error.message).toContain("5");
+    await s.close();
+  });
+
+  it("TV-SEC-006-P1: push accepts batch exactly at configured limit", async () => {
+    const s = await createDatafnServer({
+      schema: typeTestSchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+      limits: { maxBatchSize: 5 },
+    });
+
+    const mutations = Array.from({ length: 5 }, (_, i) => ({
+      resource: "users",
+      operation: "insert",
+      id: `u${i}`,
+      clientId: "c1",
+      mutationId: `m${i}`,
+      record: { name: `user${i}` },
+    }));
+
+    const res = await s.router.handle(
+      pushReq({ clientId: "c1", mutations }),
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    await s.close();
+  });
+
+  it("TV-SEC-006-N2: mutation endpoint rejects array body over configured maxBatchSize", async () => {
+    const s = await createDatafnServer({
+      schema: typeTestSchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+      limits: { maxBatchSize: 5 },
+    });
+
+    const mutations = Array.from({ length: 6 }, (_, i) => ({
+      resource: "users",
+      operation: "insert",
+      id: `u${i}`,
+      record: { name: `user${i}` },
+    }));
+
+    const res = await s.router.handle(mutationReq(mutations));
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_INVALID");
+    expect(body.error.message).toContain("6");
+    expect(body.error.message).toContain("5");
+    await s.close();
+  });
+
+  it("TV-SEC-006-P2: mutation endpoint accepts array body at configured limit", async () => {
+    const s = await createDatafnServer({
+      schema: typeTestSchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+      limits: { maxBatchSize: 5 },
+    });
+
+    const mutations = Array.from({ length: 5 }, (_, i) => ({
+      resource: "users",
+      operation: "insert",
+      id: `u${i}`,
+      record: { name: `user${i}` },
+    }));
+
+    const res = await s.router.handle(mutationReq(mutations));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    await s.close();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIX-SRV-003: Configurable maxBatchQueryConcurrency (PHASE_00 baseline + failing-first)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("FIX-SRV-003: maxBatchQueryConcurrency config plumbing", () => {
+  it("defaults maxBatchQueryConcurrency to 20 when not specified", async () => {
+    const s = await createDatafnServer({
+      schema: securitySchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+    });
+    expect(s).toBeDefined();
+    await s.close();
+  });
+
+  it("accepts custom maxBatchQueryConcurrency via limits", async () => {
+    const s = await createDatafnServer({
+      schema: securitySchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+      limits: { maxBatchQueryConcurrency: 3 },
+    });
+    expect(s).toBeDefined();
+    await s.close();
+  });
+
+  it("TV-SRV-003-P1: batch query larger than concurrency executes fully", async () => {
+    const s = await createDatafnServer({
+      schema: securitySchema,
+      db: memoryAdapter(),
+      allowUnknownResources: true,
+      limits: { maxBatchQueryConcurrency: 2 },
+    });
+
+    // 5 queries, concurrency 2 — all should be processed
+    const queries = Array.from({ length: 5 }, () => ({
+      resource: "employees",
+    }));
+
+    const res = await s.router.handle(queryReq(queries));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(Array.isArray(body.result)).toBe(true);
+    expect(body.result.length).toBe(5);
+    await s.close();
+  });
+
+  it("TV-SRV-003-N1: in-flight query count never exceeds configured concurrency", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const base = memoryAdapter();
+
+    // Wrap findMany with a delay to make queries overlap-measurable
+    const originalFindMany = base.findMany.bind(base);
+    base.findMany = async (...args: any[]) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      const result = await (originalFindMany as any)(...args);
+      inFlight--;
+      return result;
+    };
+
+    const s = await createDatafnServer({
+      schema: securitySchema,
+      db: base,
+      allowUnknownResources: true,
+      limits: { maxBatchQueryConcurrency: 3 },
+    });
+
+    // 10 queries, concurrency 3
+    const queries = Array.from({ length: 10 }, () => ({
+      resource: "employees",
+    }));
+
+    const res = await s.router.handle(queryReq(queries));
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.result.length).toBe(10);
+    expect(maxInFlight).toBeLessThanOrEqual(3);
+    await s.close();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SEC-001/002: WebSocket Auth and Namespace
 // ═══════════════════════════════════════════════════════════════════════════
 

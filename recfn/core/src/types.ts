@@ -1,4 +1,4 @@
-export type Platform = 'zoom' | 'meet' | 'teams';
+export type Platform = 'zoom' | 'meet' | 'teams' | 'desktop';
 
 export type BotStatus =
   | 'creating'

@@ -98,8 +98,8 @@ export class WebSocketManager {
         this.pendingPong.add(client);
         try {
           client.ping();
-        } catch {
-          // Ping failed — treat as dead connection
+        } catch (e) {
+          this.logger?.warn("Heartbeat ping failed", { error: String(e), operation: "ws-heartbeat" });
           this.removeClient(client);
           client.close?.(1001, "Heartbeat ping failed");
           continue;
@@ -185,8 +185,8 @@ export class WebSocketManager {
       if (msg.type === "hello") {
         // SEC-002: Namespace is already locked in from addClient — ignore msg.namespace
       }
-    } catch {
-      // Ignore invalid JSON/messages
+    } catch (e) {
+      this.logger?.warn("WebSocket message handling error", { error: String(e), operation: "ws-message" });
     }
   }
 
@@ -225,8 +225,8 @@ export class WebSocketManager {
     for (const [client] of this.clientNamespace) {
       try {
         client.close?.(1001, "Going Away");
-      } catch {
-        /* ignore — client may already be dead */
+      } catch (e) {
+        this.logger?.warn("WebSocket close error", { error: String(e), operation: "ws-close" });
       }
     }
     this.namespaceClients.clear();

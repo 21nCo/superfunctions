@@ -1,4 +1,4 @@
 {
   "title": "DataFn",
-  "pages": ["index", "documentation", "dfql", "cli", "python", "reference"]
+  "pages": ["index", "documentation", "dfql", "cli", "reference"]
 }

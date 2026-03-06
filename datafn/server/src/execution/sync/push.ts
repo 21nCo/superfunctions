@@ -7,7 +7,7 @@ import { coerceDateFieldsToEpoch } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
-import { ChangeTrackingService } from "./change-tracking.js";
+import { ChangeTrackingService, recordChangeWithRetry } from "./change-tracking.js";
 import {
   executeRelate,
   executeModifyRelation,
@@ -15,31 +15,12 @@ import {
   extractJoinDeltas,
   extractRelationFkDeltas,
 } from "../mutation/relations.js";
+import { executeSchemaAwareMerge } from "../mutation/merge-decision.js";
 import type { DatafnLogger } from "../../logger.js";
 
 export interface PushRequest {
   clientId: string;
   mutations: Array<Record<string, unknown>>;
-}
-
-/**
- * REL-002: Retry recordChange with exponential backoff (50ms, 100ms).
- * On final failure, throws so the mutation is treated as failed.
- */
-async function recordChangeWithRetry(
-  changeTracking: ChangeTrackingService,
-  params: Parameters<ChangeTrackingService["recordChange"]>[0],
-  maxRetries = 2,
-): Promise<void> {
-  for (let i = 0; i <= maxRetries; i++) {
-    try {
-      await changeTracking.recordChange(params);
-      return;
-    } catch (e) {
-      if (i === maxRetries) throw e;
-      await new Promise(r => setTimeout(r, 50 * (i + 1))); // 50ms, 100ms
-    }
-  }
 }
 
 export interface PushResult {
@@ -141,6 +122,17 @@ export async function executePush(
   // Track per-resource max serverSeq so the client can advance per-table cursors (FIX-B)
   const resourceSeqs: Record<string, number> = {};
 
+  // FIX-REL-011: Detect transaction support for atomic mutation units
+  const hasTransaction =
+    (db.capabilities?.transactions?.supported !== false) &&
+    typeof db.transaction === "function";
+  if (!hasTransaction) {
+    logger?.warn("Push operating in non-atomic mode (adapter does not support transactions)", {
+      operation: "push",
+      namespace,
+    });
+  }
+
   // Pending change entries for a mutation that executed successfully
   type PendingChange = {
     resource: string;
@@ -148,328 +140,218 @@ export async function executePush(
     op: "insert" | "merge" | "replace" | "upsert" | "delete";
     record: Record<string, unknown> | null;
   };
-  type MutationWork = { mut: any; changes: PendingChange[] };
 
-  // ---- Phase 1: Execute mutations, collect pending changes (no seq allocation) ----
-  const pendingWork: MutationWork[] = [];
   // Local dedup: track mutations processed in this batch (clientId:mutationId → ok)
   const batchLocalSeen = new Map<string, boolean>();
 
+  /**
+   * Execute a single push mutation's DB operation against a given adapter.
+   */
+  async function executeMutationOp(
+    mut: any,
+    targetDb: Adapter,
+  ): Promise<{ ok: true } | { ok: false; code: string; message: string; path: string }> {
+    switch (mut.operation) {
+      case "insert": {
+        const coercedData = applyDateCoercion(schema, mut.resource, mut.record || {}, logger);
+        await targetDb.create({ model: mut.resource, data: { id: mut.id, ...coercedData }, namespace });
+        return { ok: true };
+      }
+      case "merge": {
+        const coercedData = applyDateCoercion(schema, mut.resource, mut.record || {}, logger);
+        const strictUpdateNotFound = targetDb.capabilities?.operations?.strictUpdateNotFound === true;
+        const mergeResult = await executeSchemaAwareMerge({
+          schema, resource: mut.resource, id: mut.id, delta: coercedData,
+          update: async () => {
+            await targetDb.update({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], data: coercedData, namespace });
+          },
+          create: async (record) => {
+            await targetDb.create({ model: mut.resource, data: record, namespace });
+          },
+          ...(strictUpdateNotFound ? {} : {
+            findOne: async () => targetDb.findOne({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], namespace }),
+          }),
+        });
+        if (mergeResult.ok) return { ok: true };
+        if (mergeResult.code === "NOT_FOUND") return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
+        logger?.error("Push merge failed", { error: String(mergeResult.error), operation: mut.operation, resource: mut.resource, id: mut.id });
+        return { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
+      }
+      case "replace": {
+        const coercedData = applyDateCoercion(schema, mut.resource, mut.record || {}, logger);
+        await targetDb.upsert({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], create: { id: mut.id, ...coercedData }, update: coercedData, namespace, conflictTarget: "id" });
+        return { ok: true };
+      }
+      case "delete":
+        await targetDb.delete({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], namespace });
+        return { ok: true };
+      case "relate": {
+        const result = await executeRelate(targetDb, schema, mut, namespace);
+        return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message, path: result.path };
+      }
+      case "modifyRelation": {
+        const result = await executeModifyRelation(targetDb, schema, mut, namespace);
+        return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message, path: result.path };
+      }
+      case "unrelate": {
+        const result = await executeUnrelate(targetDb, schema, mut, namespace);
+        return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message, path: result.path };
+      }
+      default:
+        return { ok: false, code: "DFQL_UNSUPPORTED", message: `Unsupported DFQL feature: mutation.operation.${mut.operation}`, path: "operation" };
+    }
+  }
+
+  /**
+   * Build pending change entries for a successful mutation.
+   */
+  function buildChangeEntries(mut: any): PendingChange[] {
+    const isRelationMutation = mut.operation === "relate" || mut.operation === "modifyRelation" || mut.operation === "unrelate";
+    const changes: PendingChange[] = [];
+    if (isRelationMutation) {
+      for (const delta of extractRelationFkDeltas(mut, schema)) {
+        changes.push({ resource: delta.resource, id: delta.id, op: delta.op, record: delta.record });
+      }
+      for (const delta of extractJoinDeltas(mut, schema)) {
+        changes.push({ resource: delta.resource, id: delta.id, op: delta.op as "upsert" | "delete", record: delta.record });
+      }
+    } else {
+      const changeRecord = mut.operation === "delete" ? null : { id: mut.id, ...applyDateCoercion(schema, mut.resource, mut.record || {}, logger) };
+      const changeOp = mut.operation === "delete" ? "delete" : mut.operation === "insert" ? "insert" : mut.operation === "merge" ? "merge" : "replace";
+      changes.push({ resource: mut.resource, id: mut.id, op: changeOp as "insert" | "merge" | "replace" | "delete", record: changeRecord });
+    }
+    return changes;
+  }
+
+  /**
+   * Record a mutation as failed in errors list and idempotency store.
+   */
+  async function recordMutationFailure(mut: any, code: string, message: string, path: string) {
+    errors.push({ mutationId: mut.mutationId, code, message, path });
+    const failResult: MutationResult = {
+      ok: false, mutationId: mut.mutationId, affectedIds: [],
+      errors: [{ code, message, path, retryable: code === "INTERNAL" }], deduped: false,
+    };
+    await idempotencyStore.set(mut.clientId, mut.mutationId, failResult);
+    batchLocalSeen.set(`${mut.clientId}:${mut.mutationId}`, false);
+  }
+
+  /**
+   * Record a mutation as successfully applied.
+   */
+  async function recordMutationSuccess(mut: any) {
+    applied.push(mut.mutationId);
+    const result: MutationResult = {
+      ok: true, mutationId: mut.mutationId, affectedIds: [mut.id], errors: [], deduped: false,
+    };
+    await idempotencyStore.set(mut.clientId, mut.mutationId, result);
+    batchLocalSeen.set(`${mut.clientId}:${mut.mutationId}`, true);
+  }
+
+  // ---- Process each mutation ----
   for (const mutation of request.mutations) {
     const mut = mutation as any;
 
     // Validate required fields
     if (!mut.clientId || !mut.mutationId) {
-      errors.push({
-        mutationId: mut.mutationId || "",
-        code: "DFQL_INVALID",
-        message: "Invalid DFQL: missing clientId or mutationId",
-        path: "$",
-      });
+      errors.push({ mutationId: mut.mutationId || "", code: "DFQL_INVALID", message: "Invalid DFQL: missing clientId or mutationId", path: "$" });
       continue;
     }
 
     const batchKey = `${mut.clientId}:${mut.mutationId}`;
 
-    // Intra-batch dedup: if we've already processed this mutationId in this batch
+    // Intra-batch dedup
     if (batchLocalSeen.has(batchKey)) {
-      if (batchLocalSeen.get(batchKey)) {
-        applied.push(mut.mutationId);
-      }
+      if (batchLocalSeen.get(batchKey)) applied.push(mut.mutationId);
       continue;
     }
 
-    // Cross-batch dedup: check idempotency store
+    // Cross-batch dedup
     const cached = await idempotencyStore.get(mut.clientId, mut.mutationId);
     if (cached) {
       if (cached.ok) {
         applied.push(mut.mutationId);
-      } else {
-        if (cached.errors && cached.errors.length > 0) {
-          errors.push({
-            mutationId: mut.mutationId,
-            code: cached.errors[0].code,
-            message: cached.errors[0].message,
-            path: cached.errors[0].path || "$",
-          });
-        }
+      } else if (cached.errors?.length) {
+        errors.push({ mutationId: mut.mutationId, code: cached.errors[0].code, message: cached.errors[0].message, path: cached.errors[0].path || "$" });
       }
       batchLocalSeen.set(batchKey, cached.ok);
       continue;
     }
 
-    // Execute operation using Adapter
-    let opResult:
-      | { ok: true }
-      | { ok: false; code: string; message: string; path: string };
-
-    try {
-      switch (mut.operation) {
-        case "insert":
-          {
-            const coercedData = applyDateCoercion(
-              schema,
-              mut.resource,
-              mut.record || {},
-              logger,
-            );
-            await db.create({
-              model: mut.resource,
-              data: {
-                id: mut.id,
-                ...coercedData,
-              },
-              namespace,
-            });
-            opResult = { ok: true };
+    // FIX-REL-011: When transactions are supported, wrap operation + change tracking atomically
+    if (hasTransaction) {
+      let mutationSucceeded = false;
+      try {
+        await (db as any).transaction(async (txDb: Adapter) => {
+          // Execute operation inside transaction
+          const opResult = await executeMutationOp(mut, txDb);
+          if (!opResult.ok) {
+            // Signal failure without aborting transaction (we handle it below)
+            throw { __opFailed: true, ...opResult };
           }
-          break;
 
-        case "merge":
-        case "replace":
-          // MUT-003: Use db.upsert() instead of findOne + conditional create/update
-          try {
-            const coercedData = applyDateCoercion(
-              schema,
-              mut.resource,
-              mut.record || {},
-              logger,
-            );
-
-            await db.upsert({
-              model: mut.resource,
-              where: [{ field: "id", operator: "eq", value: mut.id }],
-              create: { id: mut.id, ...coercedData },
-              update: coercedData,
-              namespace,
-            });
-            opResult = { ok: true };
-          } catch (innerError) {
-            logger?.error("Push operation failed", {
-              error: String(innerError),
-              operation: mut.operation,
-              resource: mut.resource,
-              id: mut.id,
-            });
-            opResult = {
-              ok: false,
-              code: "INTERNAL",
-              message: "Internal error",
-              path: "$",
-            };
+          // Build and record changes inside the same transaction
+          const changes = buildChangeEntries(mut);
+          const txChangeTracking = changeTracking.withDb(txDb);
+          for (const change of changes) {
+            const seq = await changeTracking.getNextServerSeq();
+            latestSeq = Math.max(latestSeq, seq);
+            resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
+            // FIX-REL-002: retry within transaction
+            await recordChangeWithRetry(txChangeTracking, {
+              serverSeq: seq, resource: change.resource, id: change.id, op: change.op, record: change.record,
+            }, 2, logger);
           }
-          break;
-
-        case "delete":
-          await db.delete({
-            model: mut.resource,
-            where: [{ field: "id", operator: "eq", value: mut.id }],
-            namespace,
-          });
-          opResult = { ok: true };
-          break;
-
-        case "relate":
-          {
-            const result = await executeRelate(db, schema, mut, namespace);
-            if (result.ok) {
-              opResult = { ok: true };
-            } else {
-              opResult = {
-                ok: false,
-                code: result.code,
-                message: result.message,
-                path: result.path,
-              };
-            }
-          }
-          break;
-
-        case "modifyRelation":
-          {
-            const result = await executeModifyRelation(db, schema, mut, namespace);
-            if (result.ok) {
-              opResult = { ok: true };
-            } else {
-              opResult = {
-                ok: false,
-                code: result.code,
-                message: result.message,
-                path: result.path,
-              };
-            }
-          }
-          break;
-
-        case "unrelate":
-          {
-            const result = await executeUnrelate(db, schema, mut, namespace);
-            if (result.ok) {
-              opResult = { ok: true };
-            } else {
-              opResult = {
-                ok: false,
-                code: result.code,
-                message: result.message,
-                path: result.path,
-              };
-            }
-          }
-          break;
-
-        default:
-          opResult = {
-            ok: false,
-            code: "DFQL_UNSUPPORTED",
-            message: `Unsupported DFQL feature: mutation.operation.${mut.operation}`,
-            path: "operation",
-          };
-      }
-    } catch (error) {
-      logger?.error("Push operation failed", {
-        error: String(error),
-        operation: mut.operation,
-        resource: mut.resource,
-        id: mut.id,
-      });
-      opResult = {
-        ok: false,
-        code: "INTERNAL",
-        message: "Internal error",
-        path: "$",
-      };
-    }
-
-    if (opResult.ok) {
-      // Collect change entries WITHOUT allocating sequences yet (PER-001)
-      const isRelationMutation =
-        mut.operation === "relate" ||
-        mut.operation === "modifyRelation" ||
-        mut.operation === "unrelate";
-
-      const changes: PendingChange[] = [];
-      if (isRelationMutation) {
-        // Relation mutations: FK deltas and join deltas
-        const fkDeltas = extractRelationFkDeltas(mut, schema);
-        for (const delta of fkDeltas) {
-          changes.push({
-            resource: delta.resource,
-            id: delta.id,
-            op: delta.op,
-            record: delta.record,
-          });
+        });
+        mutationSucceeded = true;
+      } catch (err: any) {
+        if (err?.__opFailed) {
+          await recordMutationFailure(mut, err.code, err.message, err.path);
+        } else {
+          logger?.error("Push atomic mutation failed", { error: String(err), operation: "push.transaction", resource: mut.resource });
+          await recordMutationFailure(mut, "INTERNAL", "Change tracking failed", "$");
         }
-        const joinDeltas = extractJoinDeltas(mut, schema);
-        for (const delta of joinDeltas) {
-          changes.push({
-            resource: delta.resource,
-            id: delta.id,
-            op: delta.op as "upsert" | "delete",
-            record: delta.record,
-          });
+      }
+
+      if (mutationSucceeded) {
+        await recordMutationSuccess(mut);
+      }
+    } else {
+      // Non-transaction path: execute operation, then record changes separately (best-effort)
+      let opResult: { ok: true } | { ok: false; code: string; message: string; path: string };
+      try {
+        opResult = await executeMutationOp(mut, db);
+      } catch (error) {
+        logger?.error("Push operation failed", { error: String(error), operation: mut.operation, resource: mut.resource, id: mut.id });
+        opResult = { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
+      }
+
+      if (opResult.ok) {
+        // Record changes (non-atomic — best-effort with retry)
+        const changes = buildChangeEntries(mut);
+        let changeTrackingFailed = false;
+        try {
+          for (const change of changes) {
+            const seq = await changeTracking.getNextServerSeq();
+            latestSeq = Math.max(latestSeq, seq);
+            resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
+            await recordChangeWithRetry(changeTracking, {
+              serverSeq: seq, resource: change.resource, id: change.id, op: change.op, record: change.record,
+            }, 2, logger);
+          }
+        } catch (error) {
+          logger?.error("Change tracking failed in push after retries", { error: String(error), operation: "push.changeTracking" });
+          changeTrackingFailed = true;
+        }
+
+        if (changeTrackingFailed) {
+          await recordMutationFailure(mut, "INTERNAL", "Change tracking failed", "$");
+        } else {
+          await recordMutationSuccess(mut);
         }
       } else {
-        // Regular mutations: single change entry
-        const changeRecord =
-          mut.operation === "delete"
-            ? null
-            : {
-                id: mut.id,
-                ...applyDateCoercion(schema, mut.resource, mut.record || {}, logger),
-              };
-        const changeOp =
-          mut.operation === "delete" ? "delete" :
-          mut.operation === "insert" ? "insert" :
-          mut.operation === "merge" ? "merge" :
-          "replace"; // only remaining op is "replace"
-        changes.push({
-          resource: mut.resource,
-          id: mut.id,
-          op: changeOp as "insert" | "merge" | "replace" | "delete",
-          record: changeRecord,
-        });
+        await recordMutationFailure(mut, opResult.code, opResult.message, opResult.path);
       }
-      pendingWork.push({ mut, changes });
-      batchLocalSeen.set(batchKey, true);
-    } else {
-      // Execution failed — store immediately in idempotency (enables intra-batch dedup)
-      errors.push({
-        mutationId: mut.mutationId,
-        code: opResult.code,
-        message: opResult.message,
-        path: opResult.path,
-      });
-      const failResult: MutationResult = {
-        ok: false,
-        mutationId: mut.mutationId,
-        affectedIds: [],
-        errors: [{ ...opResult, retryable: false }],
-        deduped: false,
-      };
-      await idempotencyStore.set(mut.clientId, mut.mutationId, failResult);
-      batchLocalSeen.set(batchKey, false);
-    }
-  }
-
-  // ---- Phase 2: Batch allocate all serverSeqs in ONE call (PER-001) ----
-  const totalSeqs = pendingWork.reduce((sum, w) => sum + w.changes.length, 0);
-  const seqBatch: number[] = totalSeqs > 0
-    ? await changeTracking.getNextServerSeqBatch(totalSeqs)
-    : [];
-
-  // ---- Phase 3: Record changes and finalize idempotency results ----
-  let seqIdx = 0;
-  for (const { mut, changes } of pendingWork) {
-    // REL-002: Record change tracking with retry — failure propagates as mutation error
-    let changeTrackingFailed = false;
-    try {
-      for (const change of changes) {
-        const seq = seqBatch[seqIdx++];
-        latestSeq = Math.max(latestSeq, seq);
-        resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
-        // Individual entry retry (REL-002)
-        await recordChangeWithRetry(changeTracking, {
-          serverSeq: seq,
-          resource: change.resource,
-          id: change.id,
-          op: change.op,
-          record: change.record,
-        });
-      }
-    } catch (error) {
-      logger?.error("Change tracking failed in push after retries", {
-        error: String(error),
-        operation: "push.changeTracking",
-      });
-      changeTrackingFailed = true;
-    }
-
-    if (changeTrackingFailed) {
-      // REL-002: Mutation goes to errors, not applied
-      errors.push({
-        mutationId: mut.mutationId,
-        code: "INTERNAL",
-        message: "Change tracking failed",
-        path: "$",
-      });
-      const result: MutationResult = {
-        ok: false,
-        mutationId: mut.mutationId,
-        affectedIds: [],
-        errors: [{ ok: false, code: "INTERNAL", message: "Change tracking failed", path: "$", retryable: true }],
-        deduped: false,
-      };
-      await idempotencyStore.set(mut.clientId, mut.mutationId, result);
-    } else {
-      applied.push(mut.mutationId);
-      const result: MutationResult = {
-        ok: true,
-        mutationId: mut.mutationId,
-        affectedIds: [mut.id],
-        errors: [],
-        deduped: false,
-      };
-      await idempotencyStore.set(mut.clientId, mut.mutationId, result);
     }
   }
 

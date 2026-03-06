@@ -40,6 +40,23 @@ describe("checkPrototypePollution", () => {
     expect(checkPrototypePollution([1, 2, 3])).toEqual({ ok: true });
   });
 
+  it("rejects disallowed keys nested inside arrays", () => {
+    const payload = {
+      select: [
+        "id",
+        { nested: { constructor: { prototype: {} } } },
+      ],
+    };
+    expect(checkPrototypePollution(payload)).toEqual({ ok: false, key: "constructor" });
+  });
+
+  it("rejects __proto__ nested inside nested arrays", () => {
+    const bad = Object.create(null);
+    bad["__proto__"] = {};
+    const payload = { select: [["id"], [bad]] };
+    expect(checkPrototypePollution(payload)).toEqual({ ok: false, key: "__proto__" });
+  });
+
   it("rejects deeply nested disallowed keys", () => {
     const result = checkPrototypePollution({
       level1: { level2: { level3: { __proto__: {} } } },

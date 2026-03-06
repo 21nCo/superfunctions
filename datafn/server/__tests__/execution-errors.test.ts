@@ -608,7 +608,7 @@ describe("TST-004: Specific outcome tests (no conditional if(result.ok) patterns
       // Error path: not found
       expect(body.result?.ok ?? body.ok).toBe(false);
       const code = body.result?.error?.code ?? body.error?.code;
-      expect(["DFQL_NOT_FOUND", "DFQL_INVALID"]).toContain(code);
+      expect(["DFQL_NOT_FOUND", "DFQL_INVALID", "NOT_FOUND"]).toContain(code);
     }
   });
 

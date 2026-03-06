@@ -6,6 +6,8 @@ import type { SearchFnPlugin } from "../../plugins/searchfn.js";
 import { DatafnExecutionError } from "../errors.js";
 import type { DatafnLogger } from "../../logger.js";
 
+const DEFAULT_SEARCH_CHUNK_SIZE = 1000;
+
 export async function executeSearchQuery(
   query: DFQLQuery,
   schema: DatafnSchema,
@@ -29,38 +31,50 @@ export async function executeSearchQuery(
     topK: query.search.topK,
   });
 
-  // 2. Merge filters
-  // Implicit: (Original Filters) AND (id IN candidates)
-  // Note: if candidates is empty, id IN [] should return 0 results.
-  // EXE-017: Cap IN clause to prevent unbounded queries
-  const MAX_SEARCH_CANDIDATES = 1000;
-  const cappedCandidates =
-    candidates.length > MAX_SEARCH_CANDIDATES
-      ? (() => {
-          logger?.warn("Search returned too many candidates, capping result set", {
-            operation: "executeSearchQuery",
-            resource: query.resource,
-            candidateCount: candidates.length,
-            maxCandidates: MAX_SEARCH_CANDIDATES,
-          });
-          return candidates.slice(0, MAX_SEARCH_CANDIDATES);
-        })()
-      : candidates;
-  const candidateFilter = { id: { in: cappedCandidates } };
-
-  let mergedFilters: Record<string, unknown> = candidateFilter;
-
-  if (query.filters && Object.keys(query.filters).length > 0) {
-    mergedFilters = {
-      $and: [query.filters, candidateFilter],
-    };
+  // 2. EXE-017: Process candidates in deterministic chunks instead of truncating
+  if (candidates.length <= DEFAULT_SEARCH_CHUNK_SIZE) {
+    // Fast path: single chunk
+    const candidateFilter = { id: { in: candidates } };
+    let mergedFilters: Record<string, unknown> = candidateFilter;
+    if (query.filters && Object.keys(query.filters).length > 0) {
+      mergedFilters = { $and: [query.filters, candidateFilter] };
+    }
+    return executeQuery({ ...query, filters: mergedFilters }, schema, store);
   }
 
-  // 3. Execute
-  const modifiedQuery: DFQLQuery = {
-    ...query,
-    filters: mergedFilters,
-  };
+  // Multi-chunk path: process all candidates in pages
+  const allData: Record<string, unknown>[] = [];
+  for (let i = 0; i < candidates.length; i += DEFAULT_SEARCH_CHUNK_SIZE) {
+    const chunk = candidates.slice(i, i + DEFAULT_SEARCH_CHUNK_SIZE);
+    const candidateFilter = { id: { in: chunk } };
+    let mergedFilters: Record<string, unknown> = candidateFilter;
+    if (query.filters && Object.keys(query.filters).length > 0) {
+      mergedFilters = { $and: [query.filters, candidateFilter] };
+    }
 
-  return executeQuery(modifiedQuery, schema, store);
+    // Execute without limit/offset/sort per chunk — we merge and re-apply after
+    const chunkQuery: DFQLQuery = {
+      ...query,
+      filters: mergedFilters,
+      limit: undefined,
+      offset: undefined,
+      sort: undefined,
+      cursor: undefined,
+    };
+    const chunkResult = executeQuery(chunkQuery, schema, store) as QueryResult;
+    if (chunkResult.data) {
+      allData.push(...chunkResult.data);
+    }
+  }
+
+  // 3. Re-execute with full merged data set using a final pass for sort/limit/offset
+  // Build an id-in filter for all matched records, then run the original query
+  const matchedIds = allData.map((r) => r.id).filter(Boolean);
+  const finalFilter = { id: { in: matchedIds } };
+  let finalMergedFilters: Record<string, unknown> = finalFilter;
+  if (query.filters && Object.keys(query.filters).length > 0) {
+    finalMergedFilters = { $and: [query.filters, finalFilter] };
+  }
+
+  return executeQuery({ ...query, filters: finalMergedFilters }, schema, store);
 }

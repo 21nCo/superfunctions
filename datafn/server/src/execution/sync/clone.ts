@@ -7,6 +7,7 @@ import { getJoinStoreKey, getJoinTableName } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
+import type { DatafnLogger } from "../../logger.js";
 
 export interface CloneRequest {
   clientId: string;
@@ -44,6 +45,7 @@ export async function executeClone(
   namespace: string,
   sequenceStore?: SequenceStore,
   maxCloneRecords: number = 10_000,
+  logger?: DatafnLogger,
 ): Promise<CloneResult> {
   // Validate clientId
   if (!request.clientId || typeof request.clientId !== "string") {
@@ -155,6 +157,7 @@ export async function executeClone(
       });
       cursors[table] = String(latestSeq);
     } catch (error) {
+      logger?.warn("Clone: paginated fetch failed", { error: String(error), resource: table, operation: "clone-paginate" });
       // On adapter error, return empty data for this table
       data[table] = [];
       cursors[table] = "0";
@@ -184,7 +187,8 @@ export async function executeClone(
           tableCounts[tableName] = recs.length;
         }
         totalCount += tableCounts[tableName];
-      } catch {
+      } catch (error) {
+        logger?.warn("Clone: table count failed", { error: String(error), resource: tableName, operation: "clone-count" });
         tableCounts[tableName] = 0;
       }
     }
@@ -223,7 +227,8 @@ export async function executeClone(
 
           const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           cursors[tableName] = String(latestSeq);
-        } catch {
+        } catch (error) {
+          logger?.warn("Clone: auto-paginate fetch failed", { error: String(error), resource: tableName, operation: "clone-paginate" });
           data[tableName] = [];
           cursors[tableName] = "0";
         }
@@ -243,7 +248,8 @@ export async function executeClone(
 
           const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           cursors[tableName] = String(latestSeq);
-        } catch {
+        } catch (error) {
+          logger?.warn("Clone: fetch failed", { error: String(error), resource: tableName, operation: "clone-fetch" });
           data[tableName] = [];
           cursors[tableName] = "0";
         }
@@ -290,6 +296,7 @@ export async function executeClone(
           joins[joinStoreKey] = joinRecords;
         }
       } catch (error) {
+        logger?.warn("Clone: join table fetch failed", { error: String(error), operation: "clone-joins" });
         // Join table might not exist or be queryable; skip gracefully
         continue;
       }

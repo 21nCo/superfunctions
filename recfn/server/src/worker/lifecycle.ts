@@ -4,12 +4,26 @@ import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
 import type { TranscriptStreamManager } from '../ws/transcript-stream.js';
 import type { RealtimeTranscriptionPipeline } from '../transcription/realtime.js';
+import type { WebhookPayload } from '../webhooks/events.js';
+import type { MetricsEmitter } from '../integrations/watchfn.js';
+import { recordJoinLatency } from '../observability/latency.js';
+import { emitBotsActive } from '../observability/metrics.js';
+
+export interface WebhookDeliverer {
+  deliver(
+    namespace: string,
+    eventType: string,
+    payload: WebhookPayload,
+  ): Promise<void>;
+}
 
 export interface LifecycleDeps {
   store: RecFnStore;
   logger: Logger;
   streamManager?: TranscriptStreamManager;
   realtimePipeline?: RealtimeTranscriptionPipeline;
+  webhookDeliverer?: WebhookDeliverer;
+  metrics?: MetricsEmitter;
 }
 
 export async function transitionBot(
@@ -19,7 +33,7 @@ export async function transitionBot(
   newStatus: BotStatus,
   errorMessage?: string,
 ): Promise<Bot | null> {
-  const { store, logger, streamManager, realtimePipeline } = deps;
+  const { store, logger, streamManager, realtimePipeline, webhookDeliverer, metrics } = deps;
 
   const bot = await store.getBot(botId, namespace);
   if (!bot) return null;
@@ -58,7 +72,28 @@ export async function transitionBot(
     const createdAt = new Date(bot.createdAt).getTime();
     const joinedAt = Date.now();
     const latencyMs = joinedAt - createdAt;
-    logger.info('bot.join_latency', { botId, latencyMs });
+    recordJoinLatency({ botId, latencyMs, namespace, logger, metrics });
+  }
+
+  if (metrics && (newStatus === 'joined' || newStatus === 'left' || newStatus === 'error')) {
+    const active = await store.listBots(namespace, { limit: 1000 });
+    const count = active.items.filter(
+      (b) => ['creating', 'joining', 'joined', 'recording', 'leaving'].includes(b.status),
+    ).length;
+    emitBotsActive(metrics, count, namespace);
+  }
+
+  if (webhookDeliverer) {
+    const { buildBotJoiningPayload, buildBotJoinedPayload, buildBotLeftPayload, buildBotErrorPayload } = await import('../webhooks/events.js');
+    if (newStatus === 'joining') {
+      webhookDeliverer.deliver(namespace, 'bot.joining', buildBotJoiningPayload(updated!)).catch(() => {});
+    } else if (newStatus === 'joined') {
+      webhookDeliverer.deliver(namespace, 'bot.joined', buildBotJoinedPayload(updated!)).catch(() => {});
+    } else if (newStatus === 'left') {
+      webhookDeliverer.deliver(namespace, 'bot.left', buildBotLeftPayload(updated!)).catch(() => {});
+    } else if (newStatus === 'error') {
+      webhookDeliverer.deliver(namespace, 'bot.error', buildBotErrorPayload(botId, bot.meetingUrl, bot.platform, errorMessage ?? '')).catch(() => {});
+    }
   }
 
   return updated;

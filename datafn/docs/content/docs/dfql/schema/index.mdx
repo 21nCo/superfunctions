@@ -1,0 +1,120 @@
+---
+title: "Schema Definition"
+description: "Define your data model for DFQL operations."
+---
+
+## DatafnSchema
+
+A DataFn schema is the central definition of your data model. It declares the [resources](/docs/dfql/schema/resources) (tables), their [fields](/docs/dfql/schema/fields), indices, and the [relations](/docs/dfql/schema/relations) between them.
+
+```typescript
+type DatafnSchema = {
+  resources: DatafnResourceSchema[];
+  relations?: DatafnRelationSchema[];
+  namespaced?: boolean; // defaults to true
+};
+```
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `resources` | `DatafnResourceSchema[]` | Array of resource definitions. Must contain at least one resource. Maximum 100 resources. |
+| `relations` | `DatafnRelationSchema[]` | Optional array of relation definitions. Defaults to `[]`. |
+| `namespaced` | `boolean` | Enables row-level namespace isolation. Defaults to `true`. Set to `false` only for single-namespace deployments. |
+
+## defineSchema
+
+Use `defineSchema` for full TypeScript type safety. It preserves literal types for field names and constrains index entries to only reference declared fields within each resource.
+
+```typescript
+import { defineSchema } from "@datafn/core";
+
+const schema = defineSchema({
+  resources: [
+    {
+      name: "projects",
+      version: 1,
+      idPrefix: "prj",
+      fields: [
+        { name: "title", type: "string", required: true, maxLength: 200 },
+        { name: "status", type: "string", required: true, enum: ["active", "archived"] },
+        { name: "budget", type: "number", required: false, min: 0 },
+      ],
+      indices: { base: ["title", "status"] },
+    },
+    {
+      name: "tasks",
+      version: 1,
+      idPrefix: "tsk",
+      fields: [
+        { name: "title", type: "string", required: true },
+        { name: "completed", type: "boolean", required: true, default: false },
+        { name: "description", type: "string", required: false },
+        { name: "tags", type: "array", required: false },
+      ],
+      indices: {
+        base: ["title", "completed"],
+        search: ["description"],
+      },
+    },
+  ],
+  relations: [
+    {
+      from: "projects",
+      to: "tasks",
+      type: "one-many",
+      relation: "projectTasks",
+    },
+  ],
+});
+```
+
+The `const` generic on `defineSchema` ensures that field names like `"title"` and `"completed"` are inferred as string literals, not widened to `string`. This means the `indices` property will produce a type error if you reference a field name that does not exist on the resource.
+
+## validateSchema
+
+At runtime, `validateSchema` checks the schema structure and returns a normalized result inside an envelope.
+
+```typescript
+import { validateSchema } from "@datafn/core";
+
+const result = validateSchema(schema);
+
+if (!result.ok) {
+  console.error(result.error.code, result.error.message);
+  // e.g. "SCHEMA_INVALID" "Invalid schema: duplicate resource name: tasks"
+} else {
+  const normalizedSchema = result.result;
+}
+```
+
+Validation checks:
+
+- `resources` must be present and be a non-empty array (max 100 resources).
+- Each resource must have a unique `name` (string) and an integer `version`.
+- `fields` must be an array with unique field names within each resource (max 200 fields per resource).
+- Index field names must reference declared fields on the resource.
+- Relation `from` and `to` must reference declared resource names.
+- `joinTable` must be a string; `joinColumns` must have `from` and `to` string properties.
+
+### Index Normalization
+
+If `indices` is provided as a flat string array, it is normalized to `{ base: [...], search: [], vector: [] }`. If omitted entirely, all three arrays default to empty.
+
+```typescript
+// Shorthand:
+indices: ["title", "status"]
+// Normalized to:
+indices: { base: ["title", "status"], search: [], vector: [] }
+```
+
+### Namespace Default
+
+The `namespaced` flag defaults to `true`. Only an explicit `namespaced: false` disables row-level namespace isolation. This ensures safe defaults for multi-tenant deployments. See [Namespaces](/docs/documentation/concepts/multi-tenancy) for details.
+
+You can check whether a schema has namespace isolation enabled with `isNamespaced()`:
+
+```typescript
+import { isNamespaced } from "@datafn/core";
+
+isNamespaced(schema); // true (default)
+```

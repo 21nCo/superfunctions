@@ -2,23 +2,21 @@
  * Storage adapter types for local persistence
  */
 
-import type { AuthContext } from "@superfunctions/auth";
-
 export type DatafnHydrationState = "notStarted" | "hydrating" | "ready";
 
 /**
- * Factory function for creating storage adapters with auth context.
+ * Factory function for creating storage adapters with namespace-based isolation.
  * Used for multi-user/multi-tenant data isolation.
- * 
+ *
  * @example
  * ```typescript
- * const storageFactory: DatafnStorageFactory = (context) => {
- *   return IndexedDbStorageAdapter.createForUser("my-app", context.userId, context.tenantId);
+ * const storageFactory: DatafnStorageFactory = (namespace) => {
+ *   return IndexedDbStorageAdapter.createForNamespace("my-app", namespace);
  * };
  * ```
  */
 export type DatafnStorageFactory = (
-  context: AuthContext,
+  namespace: string,
 ) => DatafnStorageAdapter;
 
 export type DatafnChangelogEntry = {
@@ -28,8 +26,8 @@ export type DatafnChangelogEntry = {
   mutationId: string;
   mutation: Record<string, unknown>;
   timestampMs: number;
-  /** User ID from auth context (when available) - AUD-001 */
-  userId?: string;
+  /** Actor ID for audit attribution (when available) - AUD-001 */
+  actorId?: string;
   /** ISO 8601 timestamp - AUD-001 */
   timestamp?: string;
 };

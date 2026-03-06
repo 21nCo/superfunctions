@@ -1,7 +1,12 @@
 import type { BotConfig } from '../types.js';
 import { createError, ErrorCode } from '../errors.js';
 
-const KNOWN_ASR_PROVIDERS = ['whisper', 'deepgram', 'assemblyai', 'google-stt'];
+const KNOWN_ASR_PROVIDERS = [
+  'whisper',
+  'deepgram',
+  'assemblyai',
+  'google-stt',
+];
 
 const BOT_CONFIG_DEFAULTS: Required<BotConfig> = {
   displayName: 'RecFn Bot',

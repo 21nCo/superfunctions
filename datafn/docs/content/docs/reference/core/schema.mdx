@@ -11,7 +11,7 @@ Type-safe schema builder that preserves literal types for field names and valida
 function defineSchema<const T extends {
   readonly resources: readonly DatafnResourceBase[];
   readonly relations?: readonly DatafnRelationSchema[];
-  readonly multiTenant?: boolean;
+  readonly namespaced?: boolean;
 }>(schema: T): T & DatafnSchema;
 ```
 
@@ -41,7 +41,40 @@ function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema>;
 Normalization applied on success:
 - `indices: string[]` is converted to `{ base: string[], search: [], vector: [] }`.
 - `relations` defaults to `[]` if absent.
-- `multiTenant` defaults to `true` unless explicitly `false`.
+- `namespaced` defaults to `true` unless explicitly `false`.
+
+## isNamespaced
+
+Checks whether namespace isolation is enabled for a schema. Uses `namespaced`, defaults to `true`.
+
+```typescript
+function isNamespaced(schema: DatafnSchema): boolean;
+```
+
+```typescript
+import { isNamespaced } from "@datafn/core";
+
+isNamespaced(schema); // true (default)
+```
+
+## ns
+
+Composable namespace string builder. Joins non-empty segments with `:` and throws if the result would be empty.
+
+```typescript
+function ns(...segments: string[]): string;
+```
+
+```typescript
+import { ns } from "@datafn/core";
+
+ns("org-acme", "user-123");  // "org-acme:user-123"
+ns("user-1");                // "user-1"
+ns("a", "", "b");            // "a:b"
+ns();                        // throws Error
+```
+
+Also re-exported from `@datafn/client`.
 
 Validation checks: resource structure, unique names, integer versions, unique field names, valid relation references, index field existence, and size limits (max 100 resources, max 200 fields per resource).
 

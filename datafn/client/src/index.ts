@@ -27,8 +27,8 @@ export {
   type DatafnChangelogEntry,
 } from "./storage.js";
 
-// Re-export auth context types for convenience
-export type { AuthContext, AuthContextProvider } from "@superfunctions/auth";
+// Re-export namespace helper from core
+export { ns } from "@datafn/core";
 
 // CloneUp types
 export type { CloneUpOptions, CloneUpResult } from "./sync/cloneUp.js";

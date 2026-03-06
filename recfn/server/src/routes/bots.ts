@@ -7,6 +7,7 @@ import {
   canTransition,
 } from 'recfn';
 import type { RecFnStore, ListBotsOptions } from '../store/types.js';
+import { checkConcurrentBots, checkPaginationLimit } from '../middleware/limits.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import { authenticate } from '../middleware/auth.js';
 import { ok, err } from '../middleware/envelope.js';
@@ -18,12 +19,13 @@ import type { BotStatus, Platform } from 'recfn';
 export interface BotRouteDeps {
   store: RecFnStore;
   validateApiKey: ValidateApiKey;
+  limits: import('../config.js').RecFnLimitsConfig;
   queue?: QueueAdapter;
   logger?: Logger;
 }
 
 export function createBotRoutes(deps: BotRouteDeps): Route[] {
-  const { store, validateApiKey } = deps;
+  const { store, validateApiKey, limits } = deps;
 
   return [
     {
@@ -31,6 +33,7 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
       path: '/api/v1/bots',
       handler: async (request: Request, ctx: RouteContext) => {
         const auth = await authenticate(request, validateApiKey);
+        await checkConcurrentBots(store, auth.namespace, limits);
         const body = await ctx.json<{
           meetingUrl?: string;
           platform?: Platform;
@@ -89,10 +92,12 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
 
         let limit = limitParam ? parseInt(limitParam, 10) : 20;
         if (isNaN(limit) || limit < 1) limit = 20;
-        if (limit > 100) {
+        try {
+          checkPaginationLimit(limit, limits);
+        } catch (e) {
           return err(
-            ErrorCode.BAD_REQUEST,
-            'limit must be between 1 and 100.',
+            (e as import('recfn').RecFnError).code,
+            (e as Error).message,
           );
         }
 

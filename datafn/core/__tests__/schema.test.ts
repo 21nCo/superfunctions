@@ -1,10 +1,10 @@
 /**
  * Schema validation tests
- * Tests TV-SCHEMA-001 and TV-SCHEMA-002 from TEST_VECTORS.md
+ * Tests TV-SCHEMA-001, TV-SCHEMA-002, TV-NS-004, TV-NS-005, TV-NS-006 from TEST_VECTORS.md
  */
 
 import { describe, it, expect } from "vitest";
-import { validateSchema } from "../src/schema.js";
+import { validateSchema, isNamespaced } from "../src/schema.js";
 
 describe("validateSchema", () => {
   // TV-SCHEMA-001: Valid schema with indices normalization
@@ -34,7 +34,7 @@ describe("validateSchema", () => {
           },
         ],
         relations: [],
-        multiTenant: true,
+        namespaced: true,
       });
     }
   });
@@ -114,7 +114,10 @@ describe("validateSchema", () => {
         {
           name: "task",
           version: 1,
-          fields: [],
+          fields: [
+            { name: "id", type: "string" },
+            { name: "label", type: "string" },
+          ],
           indices: { base: ["id"], search: ["label"], vector: [] },
         },
       ],
@@ -216,5 +219,49 @@ describe("validateSchema — relation from/to resource validation (CLI-004)", ()
       // Error message should mention at least one of the valid resource names
       expect(result.error.message).toMatch(/task|comment/);
     }
+  });
+});
+
+describe("validateSchema — namespaced field (TV-NS-004, TV-NS-005, TV-NS-006)", () => {
+  const baseResource = { name: "todos", version: 1, fields: [{ name: "title", type: "string", required: true }] };
+
+  // TV-NS-004: namespaced: true
+  it("TV-NS-004: accepts schema with namespaced: true", () => {
+    const result = validateSchema({ resources: [baseResource], namespaced: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.namespaced).toBe(true);
+    }
+  });
+
+  // TV-NS-005: namespaced: false
+  it("TV-NS-005: accepts schema with namespaced: false", () => {
+    const result = validateSchema({ resources: [baseResource], namespaced: false });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.namespaced).toBe(false);
+    }
+  });
+
+  it("defaults to namespaced: true when neither field is set", () => {
+    const result = validateSchema({ resources: [baseResource] });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.namespaced).toBe(true);
+    }
+  });
+});
+
+describe("isNamespaced() helper", () => {
+  it("returns true when namespaced is true", () => {
+    expect(isNamespaced({ resources: [], namespaced: true })).toBe(true);
+  });
+
+  it("returns false when namespaced is false", () => {
+    expect(isNamespaced({ resources: [], namespaced: false })).toBe(false);
+  });
+
+  it("defaults to true when namespaced is not set", () => {
+    expect(isNamespaced({ resources: [] })).toBe(true);
   });
 });

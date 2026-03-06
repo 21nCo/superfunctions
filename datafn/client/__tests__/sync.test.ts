@@ -1901,5 +1901,110 @@ describe("@datafn/client sync", () => {
 
     client.sync.stop();
   });
+
+  // RC-1 fix: unplanned non-remote-only resources auto-included in hydration plan
+  it("TV-KV-001: Unplanned schema resources are cloned and reach ready state when hydration plan is used", async () => {
+    const storage = new MockStorageAdapter();
+
+    // Track which tables are sent to clone
+    const cloneTablesSeen: string[][] = [];
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockImplementation(async (payload: any) => {
+      cloneTablesSeen.push(payload.tables);
+      const data: Record<string, any[]> = {};
+      const cursors: Record<string, string> = {};
+      for (const table of payload.tables) {
+        data[table] = []; // server returns zero records — simulates kv with no data
+        cursors[table] = "1";
+      }
+      return { ok: true, result: { ok: true, data, cursors } };
+    });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "pull").mockResolvedValue({
+      ok: true,
+      result: { ok: true, records: {}, deleted: {}, cursors: {} },
+    });
+
+    const schema = {
+      resources: [
+        { name: "todos", version: 1, fields: [] },
+        { name: "kv", version: 1, fields: [] }, // simulates built-in kv
+      ],
+    };
+
+    const client = createDatafnClient({
+      schema,
+      sync: {
+        offlinability: true,
+        remote: "http://example.com",
+        hydration: {
+          bootResources: ["todos"],
+          // "kv" is intentionally omitted — should be auto-included
+        },
+      },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+    await vi.runAllTimersAsync();
+
+    // kv must appear in some clone call
+    const allClonedTables = cloneTablesSeen.flat();
+    expect(allClonedTables).toContain("kv");
+
+    // kv hydration state must be "ready"
+    const kvState = await storage.getHydrationState("kv");
+    expect(kvState).toBe("ready");
+
+    // todos must also be ready
+    const todosState = await storage.getHydrationState("todos");
+    expect(todosState).toBe("ready");
+  });
+
+  // RC-4 fix: resources with zero server records still reach "ready"
+  it("TV-KV-002: Resource with zero server records transitions to ready after clone", async () => {
+    const storage = new MockStorageAdapter();
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        // "kv" is absent from data — server returned nothing for it
+        data: { todos: [{ id: "todos:1", title: "Buy milk" }] },
+        cursors: { todos: "1" },
+      },
+    });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "pull").mockResolvedValue({
+      ok: true,
+      result: { ok: true, records: {}, deleted: {}, cursors: {} },
+    });
+
+    const schema = {
+      resources: [
+        { name: "todos", version: 1, fields: [] },
+        { name: "kv", version: 1, fields: [] },
+      ],
+    };
+
+    const client = createDatafnClient({
+      schema,
+      sync: {
+        offlinability: true,
+        remote: "http://example.com",
+        // No hydration plan — cloneNow clones all resources
+      },
+      clientId: "c1",
+      storage,
+    });
+
+    await client.sync.start();
+    await vi.runAllTimersAsync();
+
+    // kv was requested for clone but the server omitted it from the response
+    // The fix ensures it still transitions to "ready"
+    const kvState = await storage.getHydrationState("kv");
+    expect(kvState).toBe("ready");
+  });
 });
 });

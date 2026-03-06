@@ -42,7 +42,11 @@
   },
   "dependencies": {
     "recfn": "*",
-    "@superfunctions/http": "*"
+    "@superfunctions/http": "*",
+    "@searchfn/client": "*",
+    "recfn-deepgram": "*",
+    "recfn-assemblyai": "*",
+    "recfn-google-stt": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

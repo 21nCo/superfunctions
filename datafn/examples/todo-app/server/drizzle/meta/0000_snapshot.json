@@ -1,5 +1,5 @@
 {
-  "id": "fd954c90-d470-47ae-97d0-54fae5e10172",
+  "id": "cc63b35d-0a8e-4b8d-8d5a-0608d0c7b9cd",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -23,7 +23,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "to": {
@@ -72,7 +72,15 @@
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "__datafn_join_todos_tags___ns_id_pk": {
+          "name": "__datafn_join_todos_tags___ns_id_pk",
+          "columns": [
+            "__ns",
+            "id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {}
@@ -103,7 +111,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "name": {
@@ -146,7 +154,15 @@
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "categories___ns_id_pk": {
+          "name": "categories___ns_id_pk",
+          "columns": [
+            "__ns",
+            "id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {}
@@ -164,7 +180,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "value": {
@@ -192,7 +208,15 @@
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "kv___ns_id_pk": {
+          "name": "kv___ns_id_pk",
+          "columns": [
+            "__ns",
+            "id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {}
@@ -223,7 +247,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "priority": {
@@ -294,7 +318,15 @@
         }
       },
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "todos___ns_id_pk": {
+          "name": "todos___ns_id_pk",
+          "columns": [
+            "__ns",
+            "id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {}

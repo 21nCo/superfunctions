@@ -385,9 +385,21 @@ export class SyncEngine {
   private async initializeWithHydrationPlan() {
     const { bootResources = [], backgroundResources = [] } = this.hydrationPlan!;
 
+    // Auto-include schema resources not listed in any plan bucket and not remote-only.
+    // Framework-injected resources (e.g. "kv") are never added to user hydration plans,
+    // so they would otherwise stay at "notStarted" forever, causing every query to fall
+    // back to the remote server (RC-1 / issue 2026-03-02-k7m4x9r8).
+    const plannedResources = new Set([...bootResources, ...backgroundResources]);
+    const unplannedResources = this.schema.resources
+      .filter((r) => !r.isRemoteOnly && !plannedResources.has(r.name))
+      .map((r) => r.name);
+
+    // Merge unplanned resources into boot (they are typically small — kv is tiny)
+    const effectiveBootResources = [...bootResources, ...unplannedResources];
+
     // Partition boot resources into those needing clone vs already ready
     const bootNeedingClone: string[] = [];
-    for (const table of bootResources) {
+    for (const table of effectiveBootResources) {
       const state = await this.storage.getHydrationState(table);
       if (state !== "ready") {
         bootNeedingClone.push(table);
@@ -399,7 +411,7 @@ export class SyncEngine {
     }
 
     // If all boot resources were already ready, do a pull to catch up on missed changes
-    if (bootNeedingClone.length === 0 && bootResources.length > 0) {
+    if (bootNeedingClone.length === 0 && effectiveBootResources.length > 0) {
       await this.pullNow();
     }
 
@@ -463,6 +475,17 @@ export class SyncEngine {
           await applyCloneResult(this.storage, result);
         } else {
           throw new Error(response.error?.message || "Clone rejected by server");
+        }
+      }
+
+      // Ensure every requested table reaches "ready" even if the server returned no
+      // records for it (RC-4 / issue 2026-03-02-k7m4x9r8).  applyCloneResult only
+      // marks a resource "ready" when it appears in the response data object, so a
+      // resource with zero records would be left stuck at "hydrating".
+      for (const table of tables) {
+        const state = await this.storage.getHydrationState(table);
+        if (state !== "ready") {
+          await this.storage.setHydrationState(table, "ready");
         }
       }
 

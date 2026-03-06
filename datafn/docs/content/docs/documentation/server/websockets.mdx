@@ -41,16 +41,14 @@ const server = await createDatafnServer({ schema, db });
 // In your WebSocket upgrade handler:
 wss.on("connection", (ws, req) => {
   // Authenticate the connection (your logic)
-  const authContext = authenticate(req);
-  if (!authContext) {
+  const auth = authenticate(req);
+  if (!auth) {
     ws.close(4401, "Unauthorized");
     return;
   }
 
-  // Derive namespace from auth context
-  const namespace = authContext.tenantId
-    ? `tenant:${authContext.tenantId}:user:${authContext.userId}`
-    : `user:${authContext.userId}`;
+  // Derive namespace using the ns() helper
+  const namespace = ns(auth.orgId, auth.userId);
 
   // Register the client
   const accepted = server.websocketHandler.addClient(ws, { namespace });

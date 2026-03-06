@@ -27,6 +27,7 @@ export class DbDataStore implements DataStore {
     namespace: string = "datafn",
     primaryResource?: string,
     primaryWhere?: WhereClause[],
+    logger?: DatafnLogger,
   ): Promise<DbDataStore> {
     const store = new DbDataStore();
 
@@ -50,6 +51,7 @@ export class DbDataStore implements DataStore {
 
         store.recordsCache.set(resource, sorted);
       } catch (error) {
+        logger?.warn("DbDataStore.create: failed to load resource", { error: String(error), resource, operation: "db-store-create" });
         store.recordsCache.set(resource, []);
       }
     }
@@ -74,6 +76,7 @@ export class DbDataStore implements DataStore {
     query: { select?: string[] },
     schema: any,
     namespace: string = "datafn",
+    logger?: DatafnLogger,
   ): Promise<DbDataStore> {
     const store = new DbDataStore();
 
@@ -136,7 +139,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(rel.to as string, rows);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: many-one forward load failed", { error: String(error), resource: rel.to as string, operation: "db-store-pushdown" });
             store.recordsCache.set(rel.to as string, []);
           }
         } else if (rel.type === "many-one" && isInverse) {
@@ -151,7 +155,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(rel.from as string, rows);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: many-one inverse load failed", { error: String(error), resource: rel.from as string, operation: "db-store-pushdown" });
             store.recordsCache.set(rel.from as string, []);
           }
         } else if (rel.type === "one-many" && isForward) {
@@ -166,7 +171,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(rel.to as string, rows);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: one-many forward load failed", { error: String(error), resource: rel.to as string, operation: "db-store-pushdown" });
             store.recordsCache.set(rel.to as string, []);
           }
         } else if (rel.type === "one-many" && isInverse) {
@@ -188,7 +194,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(rel.from as string, rows);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: one-many inverse load failed", { error: String(error), resource: rel.from as string, operation: "db-store-pushdown" });
             store.recordsCache.set(rel.from as string, []);
           }
         } else if (rel.type === "many-many") {
@@ -207,7 +214,8 @@ export class DbDataStore implements DataStore {
                   namespace,
                 })
               : [];
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
             joinRows = [];
           }
 
@@ -239,7 +247,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(targetModel, rows);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: many-many related load failed", { error: String(error), resource: targetModel, operation: "db-store-pushdown" });
             store.recordsCache.set(targetModel, []);
           }
         }
@@ -307,7 +316,8 @@ export class DbDataStore implements DataStore {
                   namespace,
                 })
               : [];
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: nested many-many join load failed", { error: String(error), operation: "db-store-pushdown" });
             joinRows2 = [];
           }
           store.joinCache.set(
@@ -330,7 +340,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(rel2.to as string, rows2);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: nested many-many related load failed", { error: String(error), resource: rel2.to as string, operation: "db-store-pushdown" });
             store.recordsCache.set(rel2.to as string, []);
           }
         } else if (rel2.type === "one-many" && isF2) {
@@ -344,7 +355,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(rel2.to as string, rows2);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: nested one-many load failed", { error: String(error), resource: rel2.to as string, operation: "db-store-pushdown" });
             store.recordsCache.set(rel2.to as string, []);
           }
         } else if (rel2.type === "many-one" && isF2) {
@@ -361,7 +373,8 @@ export class DbDataStore implements DataStore {
                 })
               : [];
             store.recordsCache.set(rel2.to as string, rows2);
-          } catch {
+          } catch (error) {
+            logger?.warn("forPushdownResult: nested many-one forward load failed", { error: String(error), resource: rel2.to as string, operation: "db-store-pushdown" });
             store.recordsCache.set(rel2.to as string, []);
           }
         }
@@ -380,6 +393,7 @@ export class DbDataStore implements DataStore {
     relationKey: string,
     namespace: string = "datafn",
     relation?: { joinTable?: string; joinColumns?: { from: string; to: string }; metadata?: Array<{ name: string; type: string }> },
+    logger?: DatafnLogger,
   ): Promise<void> {
     try {
       const [joinFrom, joinRel] = relationKey.split(".");
@@ -401,6 +415,7 @@ export class DbDataStore implements DataStore {
         })) as JoinRow[],
       );
     } catch (error) {
+      logger?.warn("DbDataStore.loadJoinRows: failed to load join rows", { error: String(error), operation: "db-store-load-joins" });
       this.joinCache.set(relationKey, []);
     }
   }
@@ -661,11 +676,12 @@ export class DbDataStore implements DataStore {
           String(a.id || "").localeCompare(String(b.id || "")),
         ),
       );
-    } catch {
+    } catch (error) {
+      logger?.warn("forQuery: primary resource load failed", { error: String(error), resource: query.resource, operation: "db-store-forQuery" });
       store.recordsCache.set(query.resource, []);
     }
 
-    // Step 2: INMEM-003 fast path — empty primary after pre-filter
+    // Step 2: INMEM-003 fast path
     const primaryRecords = store.recordsCache.get(query.resource) || [];
     const preFilterApplied =
       preFilterWhere !== undefined && preFilterWhere.length > 0;
@@ -738,7 +754,8 @@ export class DbDataStore implements DataStore {
           store.recordsCache.set(secondaryModel, records);
           manyManySecondaries.add(secondaryModel);
         }
-      } catch {
+      } catch (error) {
+        logger?.warn("forQuery: join table load failed", { error: String(error), operation: "db-store-forQuery" });
         store.joinCache.set(relationKey, []);
         if (secondaryModel) {
           store.recordsCache.set(secondaryModel, []);
@@ -839,20 +856,18 @@ export class DbDataStore implements DataStore {
             });
           }
         } else {
-          // INMEM-004: unhandled relation type → fall back to full load with warning
-          logger?.warn("Falling back to full secondary load for unhandled relation type", {
+          // EXE-022: unhandled relation type → empty result with warning (no full-table scan)
+          logger?.warn("Unhandled relation type for secondary resource; returning empty set instead of full scan", {
             operation: "forQuery",
             resource: secondaryResource,
+            relationType: (rel as any).type,
           });
-          records = await db.findMany({
-            model: secondaryResource,
-            where: [],
-            namespace,
-          });
+          records = [];
         }
 
         store.recordsCache.set(secondaryResource, records);
-      } catch {
+      } catch (error) {
+        logger?.warn("forQuery: secondary resource load failed", { error: String(error), resource: secondaryResource, operation: "db-store-forQuery" });
         store.recordsCache.set(secondaryResource, []);
       }
     }

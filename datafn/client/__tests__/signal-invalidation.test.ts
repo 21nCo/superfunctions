@@ -198,6 +198,95 @@ describe("Phase 01 - Signal Invalidation", () => {
     unsub();
   });
 
+  // RC-3 fix: sync_applied with empty resources must NOT broadcast-refresh all signals
+  it("TV-SIG-003: sync_applied with empty resources does not refresh unrelated signals", async () => {
+    let queryCallCount = 0;
+
+    vi.spyOn(DefaultHttpTransport.prototype, "query").mockImplementation(async () => {
+      queryCallCount++;
+      return { ok: true, result: { data: [], nextCursor: null } };
+    });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "pull").mockResolvedValue({
+      ok: true,
+      // Returning records: {} means the sync_applied event will have resources: []
+      result: { ok: true, records: {}, deleted: {}, cursors: {} },
+    });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: { node: [] }, cursors: { node: "1" } },
+    });
+
+    const client = createDatafnClient({
+      schema: testSchema,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
+    });
+
+    const nodeSignal = client.node.signal({ select: ["id"] });
+    const unsub = nodeSignal.subscribe(() => {});
+
+    // Wait for initial query
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const countAfterInit = queryCallCount;
+    expect(countAfterInit).toBeGreaterThanOrEqual(1);
+
+    // Trigger a pull that returns no records → sync_applied with resources: []
+    await (client.sync as any).pull({ clientId: "test-client", cursors: {} });
+
+    // Wait to allow any potential debounced refresh
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // With the RC-3 fix, empty resources must NOT trigger a refresh
+    expect(queryCallCount).toBe(countAfterInit);
+
+    unsub();
+  });
+
+  it("TV-SIG-003N: sync_applied with matching resources still refreshes the signal", async () => {
+    let queryCallCount = 0;
+
+    vi.spyOn(DefaultHttpTransport.prototype, "query").mockImplementation(async () => {
+      queryCallCount++;
+      return { ok: true, result: { data: [], nextCursor: null } };
+    });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "pull").mockResolvedValue({
+      ok: true,
+      // "node" appears in records → sync_applied with resources: ["node"]
+      result: { ok: true, records: { node: [{ id: "node:1", label: "A" }] }, deleted: {}, cursors: { node: "2" } },
+    });
+
+    vi.spyOn(DefaultHttpTransport.prototype, "clone").mockResolvedValue({
+      ok: true,
+      result: { ok: true, data: { node: [] }, cursors: { node: "1" } },
+    });
+
+    const client = createDatafnClient({
+      schema: testSchema,
+      sync: { remote: "http://example.com" },
+      clientId: "test-client",
+    });
+
+    const nodeSignal = client.node.signal({ select: ["id"] });
+    const unsub = nodeSignal.subscribe(() => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const countAfterInit = queryCallCount;
+    expect(countAfterInit).toBeGreaterThanOrEqual(1);
+
+    // Pull returns node records → should refresh the node signal
+    await (client.sync as any).pull({ clientId: "test-client", cursors: {} });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Signal must have refreshed because "node" is in its footprint
+    expect(queryCallCount).toBeGreaterThan(countAfterInit);
+
+    unsub();
+  });
+
   it("TV-SIG-002N: A refresh queued during in-flight fetch executes once after completion", async () => {
     let queryCallCount = 0;
     let resolveFirstQuery: any;

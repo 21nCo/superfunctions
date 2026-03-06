@@ -6,7 +6,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createDatafnServer } from "../src/server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { AuthContext } from "@superfunctions/auth";
 
 describe("Server Authorization (AUTH-001)", () => {
   const testSchema = {
@@ -352,20 +351,20 @@ describe("Namespace Isolation (AUTH-002)", () => {
   it("TV-AUTH-002: Namespace isolation is enforced end-to-end", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
 
-    const authContextProvider = {
-      getContext: (ctx: any): AuthContext => {
+    const namespaceProvider = {
+      getNamespace: (ctx: any) => {
         const parsedBody = ctx.parsedBody as any;
-        return {
-          userId: parsedBody?.userId || "",
-          tenantId: parsedBody?.tenantId,
-        };
+        const userId = parsedBody?.userId || "";
+        const tenantId = parsedBody?.tenantId;
+        if (tenantId) return `tenant:${tenantId}:user:${userId}`;
+        return userId ? `user:${userId}` : "datafn";
       },
     };
 
     const server = await createDatafnServer({
       schema: testSchema,
       db,
-      authContextProvider,
+      namespaceProvider,
     });
 
     // Push for user 1
@@ -425,20 +424,18 @@ describe("Namespace Isolation (AUTH-002)", () => {
     // We test this by ensuring namespace extraction works correctly
     const db = memoryAdapter({ libraryNamespace: "datafn" });
 
-    const authContextProvider = {
-      getContext: (ctx: any): AuthContext => {
+    const namespaceProvider = {
+      getNamespace: (ctx: any) => {
         const parsedBody = ctx.parsedBody as any;
-        // Return a non-default namespace
-        return {
-          userId: parsedBody?.userId || "default-user",
-        };
+        const userId = parsedBody?.userId || "default-user";
+        return `user:${userId}`;
       },
     };
 
     const server = await createDatafnServer({
       schema: testSchema,
       db,
-      authContextProvider,
+      namespaceProvider,
     });
 
     // Push with explicit user
@@ -464,7 +461,7 @@ describe("Namespace Isolation (AUTH-002)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    // The fact that this succeeds with authContextProvider means namespace is being extracted
+    // The fact that this succeeds with namespaceProvider means namespace is being extracted
     // and passed through correctly (not hard-coded)
   });
 });

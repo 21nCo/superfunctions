@@ -22,7 +22,10 @@ export type { DatafnErrorCode, DatafnError, DatafnEnvelope } from "./errors.js";
 export { ok, err } from "./errors.js";
 
 // Re-export schema validation
-export { validateSchema } from "./schema.js";
+export { validateSchema, isNamespaced } from "./schema.js";
+
+// Re-export namespace helper
+export { ns } from "./ns.js";
 
 // Re-export DFQL normalization
 export { normalizeDfql, dfqlKey } from "./normalize.js";

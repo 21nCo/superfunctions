@@ -104,47 +104,31 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
   }
 
   /**
-   * Create an IndexedDB storage adapter with automatic user/tenant isolation.
-   * Database name is constructed as: `${baseDbName}_${tenantId}_${userId}` or `${baseDbName}_${userId}`
-   * 
-   * @param baseDbName - Base database name (e.g., "my-app-db")
-   * @param userId - User identifier for data isolation
-   * @param tenantId - Optional tenant identifier for multi-tenant isolation
-   * @param resources - Optional list of valid resource names
-   * @param schema - Schema for creating object stores and indexes (strongly recommended)
-   * 
+   * Create a storage adapter with a namespace-derived database name.
+   * The namespace string has `:` replaced with `_` for the IDB database name.
+   *
    * @example
    * ```typescript
-   * // Single-tenant
-   * const storage = IndexedDbStorageAdapter.createForUser("my-app", userId, undefined, undefined, schema);
-   * 
-   * // Multi-tenant
-   * const storage = IndexedDbStorageAdapter.createForUser("my-app", userId, tenantId, undefined, schema);
+   * const storage = IndexedDbStorageAdapter.createForNamespace("my-app", "org:user-1");
+   * // IDB database name: "my-app_org_user-1"
    * ```
    */
-  static createForUser(
+  static createForNamespace(
     baseDbName: string,
-    userId: string,
-    tenantId?: string,
+    namespace: string,
     resources?: string[],
     schema?: DatafnSchema,
   ): IndexedDbStorageAdapter {
-    const dbName = tenantId
-      ? `${baseDbName}_${tenantId}_${userId}`
-      : `${baseDbName}_${userId}`;
-    
-    // Derive resources from schema if not provided
+    const sanitized = namespace.replace(/:/g, "_");
+    const dbName = `${baseDbName}_${sanitized}`;
+
     let finalResources = resources;
     if (!finalResources && schema) {
       finalResources = schema.resources.map((r) => r.name);
     }
-
-    // Ensure built-in KV resource is always included (KV-001)
     if (finalResources && !finalResources.includes(KV_RESOURCE_NAME)) {
       finalResources = [...finalResources, KV_RESOURCE_NAME];
     }
-
-    // Register join store keys for many-many relations
     if (finalResources && schema?.relations) {
       for (const key of enumerateJoinStoreKeys(schema.relations)) {
         if (!finalResources.includes(key)) {

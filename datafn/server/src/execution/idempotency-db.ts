@@ -6,17 +6,22 @@
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "./idempotency.js";
 import { ensureInternalTable } from "./internal-tables.js";
+import type { DatafnLogger } from "../logger.js";
 
 /**
  * Adapter-backed idempotency store for durable deduplication
  */
 export class DbIdempotencyStore implements IdempotencyStore {
   private ensured = false;
+  private logger?: DatafnLogger;
 
   constructor(
     private db: Adapter,
     private namespace: string = "datafn",
-  ) {}
+    logger?: DatafnLogger,
+  ) {
+    this.logger = logger;
+  }
 
   async get(
     clientId: string,
@@ -41,8 +46,13 @@ export class DbIdempotencyStore implements IdempotencyStore {
     // Only catch JSON parse errors; DB errors propagated above
     try {
       return JSON.parse(record.result as string);
-    } catch {
-      // Malformed JSON in stored result — treat as cache miss
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) {
+        this.logger?.warn("Idempotency store get: unexpected error during parse", {
+          error: String(error),
+          operation: "idempotency-get",
+        });
+      }
       return null;
     }
   }
@@ -82,9 +92,20 @@ export class DbIdempotencyStore implements IdempotencyStore {
         result: JSON.stringify(result),
         created_at: new Date().toISOString(),
       });
-    } catch (error) {
-      // Silently fail - idempotency is best-effort
-      // Duplicate key errors are expected on replay
+    } catch (error: any) {
+      // Duplicate key errors are expected on replay — stay silent
+      const code = error?.code;
+      const msg = (error?.message || "").toLowerCase();
+      const isDuplicate =
+        code === "23505" || code === "UNIQUE_VIOLATION" || code === "ER_DUP_ENTRY" ||
+        code === "SQLITE_CONSTRAINT_UNIQUE" ||
+        msg.includes("unique") || msg.includes("duplicate") || msg.includes("conflict");
+      if (!isDuplicate) {
+        this.logger?.warn("Idempotency store set failed (non-duplicate)", {
+          error: String(error),
+          operation: "idempotency-set",
+        });
+      }
     }
   }
 }

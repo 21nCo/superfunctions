@@ -874,9 +874,9 @@ describe("IN_MEMORY targeted secondary loading", () => {
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
 
-    // Warning must have been emitted via logger
+    // EXE-022: Warning must have been emitted via logger (no full scan, empty result instead)
     expect(warnLogs).toContain(
-      "Falling back to full secondary load for unhandled relation type",
+      "Unhandled relation type for secondary resource; returning empty set instead of full scan",
     );
   });
 });

@@ -34,7 +34,7 @@ const result = await client.table("todos").query({
 });
 ```
 
-Supported filter operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `in`, `nin`, `isNull`.
+Supported filter operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `like`, `in`, `nin`, `isNull`. See the full [DFQL Filters reference](/docs/dfql/filters) for all filter operators and logical combinators.
 
 Combine filters with logical operators:
 
@@ -51,7 +51,7 @@ const result = await client.table("todos").query({
 
 ### Sorting
 
-Sort results by one or more fields in ascending or descending order.
+Sort results by one or more fields in ascending or descending order. See the full [DFQL Sorting reference](/docs/dfql/sorting) for all sorting options.
 
 ```typescript
 const result = await client.table("todos").query({
@@ -64,7 +64,7 @@ const result = await client.table("todos").query({
 
 ### Pagination
 
-Use `limit` and `offset` for offset-based pagination, or `cursor` for cursor-based pagination.
+Use `limit` and `offset` for offset-based pagination, or `cursor` for cursor-based pagination. See the full [DFQL Pagination reference](/docs/dfql/pagination) for cursor-based and offset-based strategies.
 
 ```typescript
 // Offset-based
@@ -94,7 +94,7 @@ const result = await client.table("todos").query({
 
 ### Field Selection
 
-Use `select` to return only specific fields, or `omit` to exclude fields.
+Use `select` to return only specific fields, or `omit` to exclude fields. See the full [DFQL Select reference](/docs/dfql/select) for field projection and relation expansion.
 
 ```typescript
 // Only return id and title
@@ -110,7 +110,7 @@ const result = await client.table("todos").query({
 
 ### Full-Text Search
 
-Search across indexed fields using the `search` option.
+Search across indexed fields using the `search` option. See the full [DFQL Search reference](/docs/dfql/search) for full-text search options.
 
 ```typescript
 const result = await client.table("todos").query({

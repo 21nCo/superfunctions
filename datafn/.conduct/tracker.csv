@@ -48,4 +48,15 @@ id, desc, status, completedAt, completionDoc
 2026-02-27-x8k3m9v7-issue, Namespace-polluted upsert conflict target breaks join tables and KV persistence, 1, 2026-02-27T15:50:00Z, 2026-02-27-x8k3m9v7-completion
 2026-03-01-k7v3m9x4-issue, KV value field schema type object rejects primitive values — kv.set(key string) fails with 400, 1, 2026-03-01T12:59:00Z, 2026-03-01-r7k4m9x3-completion
 2026-03-01-r4m7k9x3-issue, Built-in KV resource has no permissions policy — blocked by deny-by-default authz, 1, 2026-03-01T07:58:00Z, 2026-03-01-v4k9m7x3-completion
-2026-03-01-m4k7x9v2-issue, Push upsert missing conflictTarget id — namespace wrapper corrupts ON CONFLICT target, 0, , 
+2026-03-01-m4k7x9v2-issue, Push upsert missing conflictTarget id — namespace wrapper corrupts ON CONFLICT target, 1, 2026-03-01T13:15:00Z, 2026-03-01-r9k4m7x2-completion
+2026-03-01-x7k3m9v4-issue, KV table id-only primary key causes cross-tenant collisions in multi-tenant deployments, 1, 2026-03-01T18:58:00Z, 2026-03-01-p7k3m9x4-completion
+2026-03-01-change-r7k4m9x3-spec, Replace tenant/user namespace model with composable generic namespace string, 1, 2026-03-01T22:18:00Z,
+2026-03-01-n4k8v2m7-issue,KV mutation fails with INTERNAL — push upsert conflictTarget mismatch with composite primary key,1,2026-03-01T19:36:00Z,2026-03-01-v8k3m9x7-completion
+2026-03-02-change-k9m4x7r3-spec,Remove legacy authContextProvider backward compat + update docs + add @datafn/svelte docs,1,2026-03-02T23:05:00Z,
+2026-03-02-k7m4x9r8-issue,KV signal refresh after pull routes to remote — hydration state never set to ready for built-in KV resource,1,2026-03-02T18:05:00Z,2026-03-02-q5k8m3r7-completion
+2026-03-03-r4k7m9x3-issue,Push merge/upsert fails with NOT NULL constraint violation on PostgreSQL — partial delta cannot satisfy INSERT requirements,1,2026-03-05T04:20:00Z,2026-03-05-k7m9x4r3-completion
+2026-03-05-audit-fix-k7m9x4r3-spec,Fix all 24 error handling audit findings: silent swallowing + missing logger propagation + generic client messages + return-zero patterns,1,2026-03-05T11:45:00Z,
+2026-03-05-fix-q9m4k7r2-spec,Restore merge persistence correctness for KV first-write without regressing todo partial merges,1,2026-03-05T08:07:39Z,
+2026-03-05-525771eb-issue,Remove merge fallback read via strict adapter not-found contract with reliability guarantees,1,2026-03-05T14:14:06Z,2026-03-05-m2k7x9r4-completion
+2026-03-05-audit-fix-nv5royb4-spec,Close remaining open datafn audit findings from 2026-02-28 full audit,1,2026-03-06T00:45:00Z,
+2026-03-06-new-k4m7x9r3-spec,Schema capabilities system — timestamps/audit/trash/archivable/shareable with auto-injection and auto-filtering,0,,

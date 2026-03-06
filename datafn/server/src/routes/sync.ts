@@ -25,6 +25,8 @@ import type { MutationValidationOpts } from "../validation/mutation.js";
  */
 export interface PushHandlerOpts extends MutationValidationOpts {
   allowUnknownResources?: boolean;
+  /** FIX-SEC-006: Max batch size for push mutations (default 500) */
+  maxBatchSize?: number;
 }
 
 /**
@@ -82,6 +84,8 @@ export function createCloneHandler(
         db,
         namespace,
         sequenceStore,
+        undefined,
+        logger,
         );
 
         if (!result.ok) {
@@ -297,8 +301,8 @@ export function createPushHandler(
         );
         }
 
-        // SEC-006: Enforce batch size limit
-        const maxBatchSize = 500; // TODO: wire from config in later phase
+        // FIX-SEC-006: Enforce configurable batch size limit
+        const maxBatchSize = handlerOpts?.maxBatchSize ?? 500;
         if (payload.mutations.length > maxBatchSize) {
           return errorResponse(
             {
@@ -374,6 +378,7 @@ export function createPushHandler(
         namespace,
         sequenceStore,
         onChange,
+        logger,
         );
 
         timer?.startPhase("changeLog");
@@ -481,6 +486,7 @@ export function createReconcileHandler(
         db,
         namespace,
         sequenceStore,
+        logger,
         );
 
         if (!result.ok) {

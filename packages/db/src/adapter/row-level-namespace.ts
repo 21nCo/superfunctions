@@ -208,11 +208,19 @@ export function wrapWithRowLevelNamespace(
       );
       const create = stampData(params.create, col, params.namespace!);
       const update = removeColumnFromData(params.update, col);
+      // Augment conflict target to include namespace column for composite PK
+      let conflictTarget = params.conflictTarget;
+      if (conflictTarget) {
+        conflictTarget = Array.isArray(conflictTarget)
+          ? [col, ...conflictTarget]
+          : [col, conflictTarget];
+      }
       const result = await adapter.upsert({
         ...params,
         where,
         create,
         update,
+        conflictTarget,
       });
       return stripColumn(result, col);
     },

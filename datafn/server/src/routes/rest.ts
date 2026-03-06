@@ -8,6 +8,7 @@ import type { DatafnSchema } from "@datafn/core";
 import { errorResponse } from "../http/errors.js";
 import { jsonResponse, getBodyFromContext } from "../http/json.js";
 import type { Route } from "@superfunctions/http";
+import type { DatafnLogger } from "../logger.js";
 
 /**
  * SEC-010: Sanitize a URL path segment against path traversal attacks.
@@ -44,6 +45,7 @@ export function createRestRoutes<TContext>(
   schema: DatafnSchema,
   executeMutation: MutationExecutor,
   executeQuery: QueryExecutor,
+  logger?: DatafnLogger,
 ): Route<TContext>[] {
   const resources = new Set(
     schema.resources.map((r: { name: string }) => r.name),
@@ -120,6 +122,7 @@ export function createRestRoutes<TContext>(
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {
             return errorResponse(err, 400);
           }
+          logger?.error("REST GET failed", { error: String(err), resource, operation: "rest-get" });
           return errorResponse(err);
         }
       },
@@ -194,6 +197,7 @@ export function createRestRoutes<TContext>(
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {
             return errorResponse(err, 400);
           }
+          logger?.error("REST POST failed", { error: String(err), resource, operation: "rest-post" });
           return errorResponse(err);
         }
       },
@@ -268,6 +272,7 @@ export function createRestRoutes<TContext>(
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {
             return errorResponse(err, 400);
           }
+          logger?.error("REST PATCH failed", { error: String(err), resource, operation: "rest-patch" });
           return errorResponse(err);
         }
       },
@@ -335,6 +340,7 @@ export function createRestRoutes<TContext>(
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {
             return errorResponse(err, 400);
           }
+          logger?.error("REST DELETE failed", { error: String(err), resource, operation: "rest-delete" });
           return errorResponse(err);
         }
       },

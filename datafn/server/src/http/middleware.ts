@@ -1,4 +1,5 @@
 import { errorResponse } from "./errors.js";
+import type { DatafnLogger } from "../logger.js";
 
 /**
  * Check payload size against Content-Length header.
@@ -27,6 +28,7 @@ export function checkPayloadLimit(req: Request, maxBytes: number): Response | nu
 export async function readBodyWithLimit(
   req: Request,
   maxBytes: number,
+  logger?: DatafnLogger,
 ): Promise<{ ok: true; body: string } | { ok: false; response: Response }> {
   // Fast reject via Content-Length header
   const headerCheck = checkPayloadLimit(req, maxBytes);
@@ -49,7 +51,8 @@ export async function readBodyWithLimit(
       };
     }
     return { ok: true, body };
-  } catch {
+  } catch (error) {
+    logger?.warn("Failed to read request body", { error: String(error), operation: "readBody" });
     return {
       ok: false,
       response: errorResponse({

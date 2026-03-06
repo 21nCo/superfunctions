@@ -2,7 +2,7 @@
  * Data-Level Namespace Isolation Integration Tests
  *
  * End-to-end tests proving that clone, query, mutation, and push operations
- * are data-isolated when the datafn server has `authContextProvider` enabled
+ * are data-isolated when the datafn server has `namespaceProvider` enabled
  * and row-level namespace wrapping is active.
  *
  * Covers: DFN-001, DFN-003, DFN-004, DFN-005, DFN-006, RLN-001, RLN-003, RLN-005
@@ -13,7 +13,6 @@ import { createDatafnServer, type DatafnServer } from "../src/server.js";
 import { WebSocketManager, type WebSocketClient } from "../src/ws.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
-import type { AuthContext } from "@superfunctions/auth";
 
 // ---------------------------------------------------------------------------
 // Test schema
@@ -47,11 +46,11 @@ async function createIsolatedServer(db: Adapter) {
   return createDatafnServer({ allowUnknownResources: true,
     schema: testSchema,
     db,
-    authContextProvider: {
-      getContext: (): AuthContext => ({
-        userId: currentUser.userId,
-        tenantId: currentUser.tenantId,
-      }),
+    namespaceProvider: {
+      getNamespace: () => {
+        if (currentUser.tenantId) return `tenant:${currentUser.tenantId}:user:${currentUser.userId}`;
+        return `user:${currentUser.userId}`;
+      },
     },
   });
 }
@@ -549,10 +548,10 @@ describe("Data-Level Namespace Isolation (Phase 03)", () => {
   });
 
   // =========================================================================
-  // TST-002 — Seed handler uses namespace from authContext (not hardcoded)
+  // TST-002 — Seed handler uses namespace from namespaceProvider (not hardcoded)
   // =========================================================================
 
-  describe("TST-002: Seed handler uses auth-context-derived namespace", () => {
+  describe("TST-002: Seed handler uses namespaceProvider-derived namespace", () => {
     it("seed for alice creates seed record under alice's namespace", async () => {
       setUser("alice");
       const res = await server.router.handle(

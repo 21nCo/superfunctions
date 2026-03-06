@@ -4,6 +4,7 @@
   "root": true,
   "pages": [
     "index",
+    "schema",
     "queries",
     "filters",
     "sorting",
@@ -12,7 +13,6 @@
     "aggregations",
     "search",
     "mutations",
-    "relations",
     "transactions"
   ]
 }

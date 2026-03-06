@@ -394,6 +394,71 @@ describe('wrapWithRowLevelNamespace', () => {
   });
 
   // -----------------------------------------------------------------------
+  // TV-RLN-014: upsert augments conflictTarget with namespace column
+  // -----------------------------------------------------------------------
+  describe('upsert conflictTarget augmentation (TV-RLN-014)', () => {
+    it('transforms string conflictTarget to composite [__ns, id]', async () => {
+      // Spy on the base adapter to capture the conflictTarget passed through
+      const originalUpsert = baseAdapter.upsert.bind(baseAdapter);
+      let capturedParams: any;
+      baseAdapter.upsert = async (params: any) => {
+        capturedParams = params;
+        return originalUpsert(params);
+      };
+
+      await db.upsert({
+        model: 'kv',
+        where: [{ field: 'id', operator: 'eq', value: 'kv:pref:theme' }],
+        create: { id: 'kv:pref:theme', value: 'light' },
+        update: { value: 'light' },
+        namespace: 'user:A',
+        conflictTarget: 'id',
+      });
+
+      expect(capturedParams.conflictTarget).toEqual(['__ns', 'id']);
+    });
+
+    it('transforms array conflictTarget to prepend __ns', async () => {
+      const originalUpsert = baseAdapter.upsert.bind(baseAdapter);
+      let capturedParams: any;
+      baseAdapter.upsert = async (params: any) => {
+        capturedParams = params;
+        return originalUpsert(params);
+      };
+
+      await db.upsert({
+        model: 'kv',
+        where: [{ field: 'id', operator: 'eq', value: 'kv:pref:theme' }],
+        create: { id: 'kv:pref:theme', value: 'light' },
+        update: { value: 'light' },
+        namespace: 'user:A',
+        conflictTarget: ['id', 'type'],
+      });
+
+      expect(capturedParams.conflictTarget).toEqual(['__ns', 'id', 'type']);
+    });
+
+    it('does not modify conflictTarget when not provided', async () => {
+      const originalUpsert = baseAdapter.upsert.bind(baseAdapter);
+      let capturedParams: any;
+      baseAdapter.upsert = async (params: any) => {
+        capturedParams = params;
+        return originalUpsert(params);
+      };
+
+      await db.upsert({
+        model: 'kv',
+        where: [{ field: 'id', operator: 'eq', value: 'kv:pref:theme' }],
+        create: { id: 'kv:pref:theme', value: 'light' },
+        update: { value: 'light' },
+        namespace: 'user:A',
+      });
+
+      expect(capturedParams.conflictTarget).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // TV-RLN-013: disabled mode — no filtering
   // -----------------------------------------------------------------------
   describe('disabled mode (TV-RLN-013)', () => {

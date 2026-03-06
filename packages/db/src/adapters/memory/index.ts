@@ -152,6 +152,25 @@ function createMemoryInternalCrud(): InternalCrud {
       }
       return count;
     },
+
+    /** EXE-018: Batch create for change-tracking performance */
+    async createMany(
+      table: string,
+      data: Record<string, unknown>[],
+    ): Promise<Record<string, unknown>[]> {
+      if (!internalStore.has(table)) {
+        internalStore.set(table, new Map());
+      }
+      const tableStore = internalStore.get(table)!;
+      const results: Record<string, unknown>[] = [];
+      for (const item of data) {
+        const id = (item.id as string) ?? Math.random().toString(36).substr(2, 9);
+        const record = { ...item, id };
+        tableStore.set(id, record);
+        results.push(record);
+      }
+      return results;
+    },
   };
 }
 
@@ -178,6 +197,7 @@ export function memoryAdapter(config?: MemoryAdapterConfig): Adapter {
           streaming: false,
           fulltext: false,
           returning: true,
+          strictUpdateNotFound: true,
         },
         transactions: {
           supported: false, // Simple in-memory, no real transactions

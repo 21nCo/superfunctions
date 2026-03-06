@@ -39,7 +39,8 @@
     "cmsfn/*",
     "recfn/*",
     "recfn/platforms/*",
-    "recfn/adapters/*"
+    "recfn/adapters/*",
+    "apifn/*"
   ],
   "scripts": {
     "build": "turbo run build",

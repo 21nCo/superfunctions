@@ -11,7 +11,7 @@ Top-level schema definition.
 type DatafnSchema = {
   resources: DatafnResourceSchema[];
   relations?: DatafnRelationSchema[];
-  multiTenant?: boolean; // default: true
+  namespaced?: boolean;          // default: true
 };
 ```
 

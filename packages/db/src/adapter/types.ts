@@ -431,6 +431,12 @@ export interface InternalCrud {
     table: string,
     where: Array<{ field: string; op: string; value: unknown }>,
   ): Promise<number>;
+
+  /** EXE-018: Optional batch create for change-tracking performance */
+  createMany?(
+    table: string,
+    data: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]>;
 }
 
 // ============================================================================

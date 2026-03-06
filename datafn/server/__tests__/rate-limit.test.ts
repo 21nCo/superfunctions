@@ -313,7 +313,7 @@ describe("Rate limiting integration", () => {
     server.close();
   });
 
-  it("TV-RATE-005: default keyExtractor uses authContext userId (unit level)", async () => {
+  it("TV-RATE-005: default keyExtractor uses namespace (unit level)", async () => {
     // The router.handle() doesn't pass context, so we test keyExtractor isolation
     // at the middleware unit level with per-user keys.
     const limiter = new MemoryRateLimiter();

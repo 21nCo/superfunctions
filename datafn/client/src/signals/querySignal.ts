@@ -353,7 +353,10 @@ function createQuerySignal<T>(
       const phase = ctx?.phase;
       if (phase === "clone" || phase === "pull") {
         const affectedResources: string[] = ctx?.resources ?? [];
-        if (affectedResources.length === 0 || affectedResources.some(r => footprint.has(r))) {
+        // Only refresh when specific resources that overlap with this signal's footprint
+        // changed.  Removing the "length === 0" broadcast avoids refreshing all signals
+        // (including KV) on every pull that returns no records (RC-3 / issue 2026-03-02-k7m4x9r8).
+        if (affectedResources.some(r => footprint.has(r))) {
           scheduleRefresh();
         }
       }

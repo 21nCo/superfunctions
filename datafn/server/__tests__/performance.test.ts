@@ -349,3 +349,137 @@ describe("PER-005: Targeted relation filter (findRecords)", () => {
     expect(store.getRecords).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// TV-EXE-018: Batched change-tracking writes
+// ---------------------------------------------------------------------------
+describe("EXE-018: Batched change-tracking writes", () => {
+  it("TV-EXE-018-P1: batch insert path is used when createMany capability exists", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    await db.initialize();
+
+    // Track calls by wrapping the internal methods
+    let batchInsertCalls = 0;
+    let batchInsertRows = 0;
+    let singleInsertCalls = 0;
+
+    const originalCreateMany = db.internal.createMany!.bind(db.internal);
+    (db.internal as any).createMany = async (table: string, data: Record<string, unknown>[]) => {
+      if (table === "__datafn_changes") {
+        batchInsertCalls++;
+        batchInsertRows += data.length;
+      }
+      return originalCreateMany(table, data);
+    };
+
+    const originalCreate = db.internal.create.bind(db.internal);
+    db.internal.create = async (table: string, data: Record<string, unknown>) => {
+      if (table === "__datafn_changes") {
+        singleInsertCalls++;
+      }
+      return originalCreate(table, data);
+    };
+
+    const ct = new ChangeTrackingService(db, "datafn");
+
+    const entries = Array.from({ length: 500 }, (_, i) => ({
+      serverSeq: i + 1,
+      resource: "tasks",
+      id: `task-${i}`,
+      op: "insert" as const,
+      record: { title: `Task ${i}` },
+    }));
+
+    await ct.recordChanges(entries);
+
+    // EXE-018: batch path used — one createMany call, zero individual create calls
+    expect(batchInsertCalls).toBe(1);
+    expect(batchInsertRows).toBe(500);
+    expect(singleInsertCalls).toBe(0);
+
+    // Verify data was actually stored
+    const changes = await ct.getChangesSince({ resource: "tasks", sinceSeq: 0 });
+    expect(changes).toHaveLength(500);
+  });
+
+  it("TV-EXE-018-N1: fallback to sequential when createMany unavailable", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    await db.initialize();
+
+    // Remove createMany capability to trigger fallback
+    const originalCreateMany = db.internal.createMany;
+    delete (db.internal as any).createMany;
+
+    const createSpy = vi.spyOn(db.internal, "create");
+
+    const ct = new ChangeTrackingService(db, "datafn");
+
+    const entries = Array.from({ length: 5 }, (_, i) => ({
+      serverSeq: i + 1,
+      resource: "tasks",
+      id: `task-${i}`,
+      op: "insert" as const,
+      record: { title: `Task ${i}` },
+    }));
+
+    await ct.recordChanges(entries);
+
+    // Fallback: individual create calls for each entry
+    const changeCreateCalls = createSpy.mock.calls.filter(
+      (call) => call[0] === "__datafn_changes",
+    );
+    expect(changeCreateCalls).toHaveLength(5);
+
+    // Verify order preserved (sequential by serverSeq)
+    for (let i = 0; i < 5; i++) {
+      const data = changeCreateCalls[i][1] as Record<string, unknown>;
+      expect(data.server_seq).toBe(i + 1);
+      expect(data.record_id).toBe(`task-${i}`);
+    }
+
+    // Verify data was actually stored correctly
+    const changes = await ct.getChangesSince({ resource: "tasks", sinceSeq: 0 });
+    expect(changes).toHaveLength(5);
+    expect(changes[0].serverSeq).toBe(1);
+    expect(changes[4].serverSeq).toBe(5);
+
+    createSpy.mockRestore();
+    (db.internal as any).createMany = originalCreateMany;
+  });
+
+  it("TV-EXE-018: error behavior remains fail-fast", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    await db.initialize();
+
+    // Remove createMany to use sequential path, then make 3rd create fail
+    delete (db.internal as any).createMany;
+
+    const ct = new ChangeTrackingService(db, "datafn");
+
+    let callCount = 0;
+    const originalCreate = db.internal.create.bind(db.internal);
+    db.internal.create = async (table: string, data: Record<string, unknown>) => {
+      if (table === "__datafn_changes") {
+        callCount++;
+        if (callCount === 3) {
+          throw new Error("Simulated write failure");
+        }
+      }
+      return originalCreate(table, data);
+    };
+
+    const entries = Array.from({ length: 5 }, (_, i) => ({
+      serverSeq: i + 1,
+      resource: "tasks",
+      id: `task-${i}`,
+      op: "insert" as const,
+      record: { title: `Task ${i}` },
+    }));
+
+    await expect(ct.recordChanges(entries)).rejects.toThrow("Simulated write failure");
+
+    // Only 2 entries should have been written before the failure
+    const changes = await ct.getChangesSince({ resource: "tasks", sinceSeq: 0 });
+    expect(changes).toHaveLength(2);
+  });
+});

@@ -1,72 +1,8 @@
-import { createDatafnClient, IndexedDbStorageAdapter } from "@datafn/client";
+import { createDatafnClient, IndexedDbStorageAdapter, ns } from "@datafn/client";
 import type { DatafnPlugin } from "@datafn/core";
+import schema from "todo-app-server/schema";
 
-// ---------------------------------------------------------------------------
-// Schema — two resources + a many-many relation
-// ---------------------------------------------------------------------------
-
-export const schema = {
-  resources: [
-    {
-      name: "todos",
-      version: 1,
-      idPrefix: "todo",
-      fields: [
-        { name: "id", type: "string", required: true, unique: true },
-        {
-          name: "text",
-          type: "string",
-          required: true,
-          minLength: 1,
-          maxLength: 500,
-        },
-        { name: "completed", type: "boolean", required: true, default: false },
-        {
-          name: "priority",
-          type: "number",
-          required: false,
-          min: 1,
-          max: 5,
-          default: 3,
-        },
-        { name: "createdAt", type: "date", required: true },
-        { name: "updatedAt", type: "date", required: true },
-      ],
-      indices: {
-        base: ["createdAt", "completed"],
-      },
-    },
-    {
-      name: "categories",
-      version: 1,
-      idPrefix: "cat",
-      fields: [
-        { name: "id", type: "string", required: true, unique: true },
-        {
-          name: "name",
-          type: "string",
-          required: true,
-          minLength: 1,
-          maxLength: 100,
-        },
-        { name: "color", type: "string", required: true, default: "#646cff" },
-        { name: "createdAt", type: "date", required: true },
-      ],
-      indices: {
-        base: ["name"],
-      },
-    },
-  ],
-  relations: [
-    {
-      from: "todos",
-      to: "categories",
-      type: "many-many",
-      relation: "tags",
-      inverse: "todos",
-    },
-  ],
-};
+export { schema };
 
 // ---------------------------------------------------------------------------
 // Audit-log plugin — demonstrates the plugin system
@@ -152,26 +88,37 @@ function makeSyncConfig(mode: AppMode) {
 }
 
 // ---------------------------------------------------------------------------
+// Namespace — scope data by the stable clientId
+// ---------------------------------------------------------------------------
+
+const clientId = getOrCreateClientId();
+const namespace = ns("user", clientId);
+
+// ---------------------------------------------------------------------------
 // Unified client — stable Proxy reference with built-in mode switching
 // ---------------------------------------------------------------------------
 
 export const client = createDatafnClient({
   schema,
-  clientId: getOrCreateClientId(),
-  storage: IndexedDbStorageAdapter.create({ dbName: "todo-app-db", schema }),
+  clientId,
+  namespace,
+  storage: (ns) =>
+    IndexedDbStorageAdapter.createForNamespace("todo-app", ns as string, undefined, schema),
   plugins: [auditPlugin],
   sync: makeSyncConfig("sync"),
 });
 
 /**
  * Switch the client between sync and local-only mode.
- * Creates a fresh storage adapter on each switch (same IndexedDB name, new connection).
+ * Creates a fresh storage adapter on each switch (same namespace, new connection).
  * Sync is auto-started by switchContext when switching to "sync" mode.
  */
 export async function switchMode(mode: AppMode): Promise<void> {
   console.log("[DEBUG] switchMode called with mode:", mode);
   await client.switchContext({
     sync: makeSyncConfig(mode),
-    storage: IndexedDbStorageAdapter.create({ dbName: "todo-app-db", schema }),
+    storage: IndexedDbStorageAdapter.createForNamespace(
+      "todo-app", namespace, undefined, schema,
+    ),
   });
 }

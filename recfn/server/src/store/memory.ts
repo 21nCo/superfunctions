@@ -1,10 +1,12 @@
 import type {
   Bot,
+  Calendar,
   ChatMessage,
   MeetingMetadata,
   Participant,
   Recording,
   Transcript,
+  Webhook,
 } from 'recfn';
 import type {
   CreateBotInput,
@@ -26,6 +28,9 @@ export function createMemoryStore(): RecFnStore {
   const participants = new Map<string, (Participant & { namespace: string })[]>();
   const chatMessages = new Map<string, (ChatMessage & { namespace: string })[]>();
   const metadata = new Map<string, MeetingMetadata & { namespace: string }>();
+  const webhooks = new Map<string, Webhook & { namespace: string }>();
+  const calendars = new Map<string, Calendar & { namespace: string }>();
+  const eventBotIds = new Map<string, string>();
 
   return {
     async createBot(input: CreateBotInput): Promise<Bot> {
@@ -123,6 +128,42 @@ export function createMemoryStore(): RecFnStore {
       return true;
     },
 
+    async createWebhook(
+      input: Omit<Webhook, 'id' | 'createdAt'>,
+      namespace: string,
+    ): Promise<Webhook> {
+      const id = `wh_${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
+      const createdAt = new Date().toISOString();
+      const webhook: Webhook & { namespace: string } = {
+        ...input,
+        id,
+        createdAt,
+        namespace,
+      };
+      webhooks.set(id, webhook);
+      return { ...webhook, namespace: undefined as unknown as string };
+    },
+
+    async listWebhooks(namespace: string): Promise<Webhook[]> {
+      return [...webhooks.values()]
+        .filter((w) => w.namespace === namespace)
+        .map(({ namespace: _ns, ...rest }) => rest);
+    },
+
+    async getWebhook(id: string, namespace: string): Promise<Webhook | null> {
+      const w = webhooks.get(id);
+      if (!w || w.namespace !== namespace) return null;
+      const { namespace: _ns, ...rest } = w;
+      return rest;
+    },
+
+    async deleteWebhook(id: string, namespace: string): Promise<boolean> {
+      const w = webhooks.get(id);
+      if (!w || w.namespace !== namespace) return false;
+      webhooks.delete(id);
+      return true;
+    },
+
     async createRecording(
       recording: Recording,
       namespace: string,
@@ -212,6 +253,52 @@ export function createMemoryStore(): RecFnStore {
         .map(({ namespace: _ns, ...rest }) => rest);
     },
 
+    async addParticipant(
+      botId: string,
+      participant: Participant,
+      namespace: string,
+    ): Promise<Participant> {
+      const bot = bots.get(botId);
+      if (!bot || bot.namespace !== namespace) {
+        throw new Error('Bot not found or namespace mismatch');
+      }
+      const parts = participants.get(botId) ?? [];
+      const withNs: Participant & { namespace: string } = {
+        ...participant,
+        namespace,
+      };
+      const existing = parts.findIndex((p) => p.id === participant.id);
+      if (existing >= 0) {
+        parts[existing] = withNs;
+      } else {
+        parts.push(withNs);
+      }
+      participants.set(botId, parts);
+      return participant;
+    },
+
+    async updateParticipant(
+      botId: string,
+      participantId: string,
+      namespace: string,
+      updates: Partial<Pick<Participant, 'leftAt' | 'consent'>>,
+    ): Promise<Participant | null> {
+      const bot = bots.get(botId);
+      if (!bot || bot.namespace !== namespace) return null;
+
+      const parts = participants.get(botId) ?? [];
+      const idx = parts.findIndex((p) => p.id === participantId);
+      if (idx < 0) return null;
+
+      const p = parts[idx];
+      if (updates.leftAt !== undefined) p.leftAt = updates.leftAt;
+      if (updates.consent !== undefined) p.consent = updates.consent;
+      participants.set(botId, parts);
+
+      const { namespace: _ns, ...rest } = p;
+      return rest;
+    },
+
     async getChatMessages(
       botId: string,
       namespace: string,
@@ -236,6 +323,67 @@ export function createMemoryStore(): RecFnStore {
       if (!meta || meta.namespace !== namespace) return null;
       const { namespace: _ns, ...rest } = meta;
       return rest;
+    },
+
+    async createCalendar(
+      input: Omit<Calendar, 'id' | 'createdAt'>,
+      namespace: string,
+    ): Promise<Calendar> {
+      const id = `cal_${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
+      const createdAt = new Date().toISOString();
+      const cal: Calendar & { namespace: string } = {
+        ...input,
+        id,
+        createdAt,
+        namespace,
+      };
+      calendars.set(id, cal);
+      return { ...cal, namespace: undefined as unknown as string };
+    },
+
+    async listCalendars(namespace: string): Promise<Calendar[]> {
+      return [...calendars.values()]
+        .filter((c) => c.namespace === namespace)
+        .map(({ namespace: _ns, ...rest }) => rest);
+    },
+
+    async getCalendar(id: string, namespace: string): Promise<Calendar | null> {
+      const cal = calendars.get(id);
+      if (!cal || cal.namespace !== namespace) return null;
+      const { namespace: _ns, ...rest } = cal;
+      return rest;
+    },
+
+    async deleteCalendar(id: string, namespace: string): Promise<boolean> {
+      const cal = calendars.get(id);
+      if (!cal || cal.namespace !== namespace) return false;
+      calendars.delete(id);
+      for (const [key] of eventBotIds) {
+        if (key.startsWith(`${id}:`)) eventBotIds.delete(key);
+      }
+      return true;
+    },
+
+    async setEventBotId(
+      calendarId: string,
+      eventId: string,
+      botId: string,
+      _namespace: string,
+    ): Promise<void> {
+      eventBotIds.set(`${calendarId}:${eventId}`, botId);
+    },
+
+    async getEventBotIds(
+      calendarId: string,
+      eventIds: string[],
+      _namespace: string,
+    ): Promise<Map<string, string>> {
+      const map = new Map<string, string>();
+      for (const eid of eventIds) {
+        const bid = eventBotIds.get(`${calendarId}:${eid}`);
+        if (bid) map.set(eid, bid);
+      }
+      return map;
     },
   };
 }

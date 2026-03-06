@@ -51,8 +51,8 @@ const client = createDatafnClient({
 |---|---|---|
 | `schema` | `DatafnSchema` | Required. Your application schema created with `defineSchema()`. |
 | `clientId` | `string` | Required. Stable device/client identifier used for idempotency and offline changelogs. |
-| `storage` | `DatafnStorageAdapter \| DatafnStorageFactory` | Local persistence adapter. Pass an instance directly or a factory function `(ctx: AuthContext) => DatafnStorageAdapter` for multi-user isolation. |
-| `authContext` | `AuthContext \| AuthContextProvider` | Authentication context for multi-tenant data isolation. Required when `storage` is a factory function. Can be a plain object or a provider that implements `getContext()`. |
+| `storage` | `DatafnStorageAdapter \| DatafnStorageFactory` | Local persistence adapter. Pass an instance directly or a factory function `(namespace: string) => DatafnStorageAdapter` for multi-namespace isolation. |
+| `namespace` | `string` | Namespace string for data isolation. Required when `storage` is a factory function. Use the `ns()` helper to compose from segments. |
 | `sync` | `DatafnSyncConfig` | Sync and connectivity configuration. See below. |
 | `plugins` | `DatafnPlugin[]` | Client-side plugins for hook execution (beforeQuery, afterMutation, etc.). |
 | `generateId` | `(params: { resource: string; idPrefix?: string }) => string` | Custom ID generator for insert operations. Defaults to `crypto.randomUUID()` with resource prefix. |
@@ -135,18 +135,31 @@ const memory = new MemoryStorageAdapter();
 const idb = new IndexedDbStorageAdapter("my-app-db");
 ```
 
-For multi-user isolation, pass a factory function:
+For multi-namespace isolation, pass a factory function with a `namespace`:
 
 ```typescript
+import { ns } from "@datafn/client";
+
 const client = createDatafnClient({
   schema,
   clientId: "device-abc",
-  storage: (ctx) =>
-    IndexedDbStorageAdapter.createForUser("my-app", ctx.userId, ctx.tenantId),
-  authContext: { userId: "user-123", tenantId: "tenant-456" },
+  namespace: ns("tenant-456", "user-123"),
+  storage: (namespace) =>
+    IndexedDbStorageAdapter.createForNamespace("my-app", namespace),
   sync: { remote: "https://api.example.com/datafn" },
 });
 ```
+
+The `ns()` helper composes namespace segments with `:` separators. See [Namespaces](/docs/documentation/concepts/multi-tenancy) for details.
+
+## Framework Integration
+
+DataFn provides framework-specific adapter packages that convert signals into native reactive primitives:
+
+- **Svelte**: `@datafn/svelte` — converts signals to Svelte readable stores via `toSvelteStore()`
+- **React, Vue, Solid, Angular**: Coming soon
+
+See [Framework Adapters](/docs/documentation/client/frameworks) for setup and usage.
 
 ## Destroying the Client
 

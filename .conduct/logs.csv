@@ -1,2 +1,4 @@
 timestamp,model,launcher,command,agent_name,phase(s),path
 2026-01-29T07:54:36Z,GPT-5.2,CLI,spec,Droid,,/Users/ar/dev/superfunctions/.conduct/specs/2026-01-29-audit-fix-k4j2q7b9-spec
+2026-03-06T06:44:20Z,gpt-5 (Codex),Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-06-q9k4m7x2-full-audit.md
+2026-03-06T06:54:07Z,gpt-5 (Codex),Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-06-r7m2k9v4-completion.md

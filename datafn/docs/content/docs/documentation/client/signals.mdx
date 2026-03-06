@@ -9,7 +9,7 @@ Signals provide reactive, cached query results that automatically refresh when m
 
 ## Creating a Signal
 
-Create a signal through a table handle. The signal is lazy -- it fetches data on the first `subscribe()` call.
+Create a signal through a table handle. The signal is lazy -- it fetches data on the first `subscribe()` call. Signals accept all standard [DFQL query options](/docs/dfql/queries) including [filters](/docs/dfql/filters), [sorting](/docs/dfql/sorting), and [select projections](/docs/dfql/select).
 
 ```typescript
 const todosSignal = client.table("todos").signal({
@@ -130,3 +130,33 @@ todosSignal.dispose();
 ```
 
 After disposal, `get()` returns the last cached value (no re-fetch), and the signal stops reacting to mutations.
+
+## Framework Integration
+
+Signals integrate with UI frameworks through thin adapter packages. Each adapter converts a `DatafnSignal<T>` into the framework's native reactive primitive.
+
+### Svelte
+
+Use `@datafn/svelte` to convert signals to Svelte readable stores:
+
+```typescript
+import { toSvelteStore } from "@datafn/svelte";
+
+const todosStore = toSvelteStore(
+  client.todos.signal({ sort: ["-createdAt"] })
+);
+```
+
+The store provides `data`, `loading`, `error`, and `refreshing` properties:
+
+```svelte
+{#if $todosStore.loading}
+  <p>Loading...</p>
+{:else}
+  {#each $todosStore.data ?? [] as todo}
+    <p>{todo.title}</p>
+  {/each}
+{/if}
+```
+
+See [Framework Adapters](/docs/documentation/client/frameworks) for full documentation and other framework options.

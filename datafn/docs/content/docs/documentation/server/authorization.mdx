@@ -3,6 +3,8 @@ title: "Authorization"
 description: "Control access to resources and fields."
 ---
 
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+
 ## Overview
 
 DataFn enforces field-level authorization on every query and mutation. Access control is defined per-resource in your schema using `DatafnPermissionsPolicy`, and enforced server-side before any data is read or written.
@@ -89,21 +91,45 @@ When a mutation is executed, the server checks:
 
 The `authorize` callback runs on every request after JSON parsing but before execution. Use it to implement custom per-request authorization logic:
 
-```typescript
-const server = await createDatafnServer({
-  schema,
-  db,
-  authorize: async (ctx, action, payload) => {
-    // Reject unauthenticated requests
-    if (!ctx.session?.userId) return false;
+<Tabs items={["TypeScript", "Python"]}>
+  <Tab value="TypeScript">
+    ```typescript
+    const server = await createDatafnServer({
+      schema,
+      db,
+      authorize: async (ctx, action, payload) => {
+        // Reject unauthenticated requests
+        if (!ctx.session?.userId) return false;
 
-    // Only admins can seed
-    if (action === "seed" && !ctx.session.isAdmin) return false;
+        // Only admins can seed
+        if (action === "seed" && !ctx.session.isAdmin) return false;
 
-    return true;
-  },
-});
-```
+        return true;
+      },
+    });
+    ```
+  </Tab>
+  <Tab value="Python">
+    ```python
+    async def authorize(ctx, action, payload):
+        # Reject unauthenticated requests
+        if not ctx.get("user"):
+            return False
+
+        # Only admins can seed
+        if action == "seed" and not ctx["user"].get("is_admin"):
+            return False
+
+        return True
+
+    server = create_datafn_server({
+        "schema": schema,
+        "db": my_db_adapter,
+        "authorize": authorize,
+    })
+    ```
+  </Tab>
+</Tabs>
 
 The `action` parameter is one of: `"status"`, `"query"`, `"mutation"`, `"transact"`, `"seed"`, `"clone"`, `"pull"`, `"push"`, `"reconcile"`.
 
@@ -158,3 +184,19 @@ Authorization denied
 ```
 
 This prevents leaking schema details to clients.
+
+## Python Handler Architecture
+
+In the Python SDK, each DataFn route is backed by a handler module in `datafn/handlers/`. All handlers follow the same pattern: parse the request payload, validate against the schema, execute the operation via the database adapter, and return a DataFn envelope response.
+
+| Handler | Route | Description |
+|---|---|---|
+| `handle_query` | `POST /datafn/query` | Execute a DFQL query via `adapter.find_many()`. |
+| `handle_mutation` | `POST /datafn/mutation` | Execute a DFQL mutation with idempotency support. |
+| `handle_transact` | `POST /datafn/transact` | Execute multi-step transactions within a single database transaction. |
+| `handle_seed` | `POST /datafn/seed` | Bulk insert seed data. |
+| `handle_clone` | `POST /datafn/clone` | Paginated full-resource clone for offline hydration. |
+| `handle_pull` | `POST /datafn/pull` | Incremental changes since a cursor. |
+| `handle_push` | `POST /datafn/push` | Apply client-side mutations with change tracking. |
+
+Error codes match the TypeScript implementation: `SCHEMA_INVALID`, `DFQL_INVALID`, `DFQL_UNKNOWN_RESOURCE`, `DFQL_UNKNOWN_FIELD`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `LIMIT_EXCEEDED`, `INTERNAL`.

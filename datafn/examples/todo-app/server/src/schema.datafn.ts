@@ -30,6 +30,14 @@ const schema = defineSchema({
       indices: {
         base: ["completed", "createdAt"],
       },
+      permissions: {
+        read: {
+          fields: ["id", "text", "completed", "priority", "createdAt", "updatedAt"],
+        },
+        write: {
+          fields: ["text", "completed", "priority", "createdAt", "updatedAt"],
+        },
+      },
     },
     {
       name: "categories",
@@ -49,6 +57,14 @@ const schema = defineSchema({
       ],
       indices: {
         base: ["name"],
+      },
+      permissions: {
+        read: {
+          fields: ["id", "name", "color", "createdAt"],
+        },
+        write: {
+          fields: ["name", "color", "createdAt"],
+        },
       },
     },
   ],

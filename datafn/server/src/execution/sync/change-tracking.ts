@@ -21,6 +21,59 @@ import type { DatafnLogger } from "../../logger.js";
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 /**
+ * FIX-REL-002: Shared retry helper for change-tracking writes.
+ * Retries up to `maxRetries` times with 50ms/100ms backoff.
+ * Used by both execute-mutation and push paths for parity.
+ * On final failure, throws so the caller can treat the mutation as failed.
+ */
+export async function recordChangeWithRetry(
+  changeTracking: ChangeTrackingService,
+  params: ChangeEntryInput,
+  maxRetries = 2,
+  logger?: DatafnLogger,
+): Promise<void> {
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      await changeTracking.recordChange(params);
+      return;
+    } catch (e) {
+      if (i === maxRetries) throw e;
+      logger?.warn("Change tracking retry", { attempt: i + 1, maxRetries, error: String(e) });
+      await sleep(50 * (i + 1)); // 50ms, 100ms
+    }
+  }
+}
+
+/**
+ * FIX-REL-002: Shared retry helper for bulk change-tracking writes.
+ * Retries up to `maxRetries` times with 50ms/100ms backoff.
+ */
+export async function recordChangesWithRetry(
+  changeTracking: ChangeTrackingService,
+  entries: ChangeEntryInput[],
+  maxRetries = 2,
+  logger?: DatafnLogger,
+): Promise<void> {
+  if (entries.length === 0) return;
+
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      await changeTracking.recordChanges(entries);
+      return;
+    } catch (e) {
+      if (i === maxRetries) throw e;
+      logger?.warn("Change tracking retry (bulk)", {
+        attempt: i + 1,
+        maxRetries,
+        entryCount: entries.length,
+        error: String(e),
+      });
+      await sleep(50 * (i + 1)); // 50ms, 100ms
+    }
+  }
+}
+
+/**
  * Change entry representing a mutation effect
  */
 export interface ChangeEntry {
@@ -165,6 +218,7 @@ export class ChangeTrackingService {
             "INTERNAL: Failed to allocate serverSeq after maximum retries",
           );
         }
+        this.logger?.warn("Sequence batch CAS retry", { attempt, error: String(error), operation: "seq-batch-cas" });
       }
     }
 
@@ -183,6 +237,9 @@ export class ChangeTrackingService {
   /**
    * Record multiple change entries in a single call.
    * Ensures internal table once. Propagates errors immediately.
+   *
+   * EXE-018: Uses batched write path when internal.createMany is available.
+   * Falls back to deterministic sequential inserts otherwise.
    */
   async recordChanges(entries: ChangeEntryInput[]): Promise<void> {
     if (entries.length === 0) return;
@@ -192,19 +249,36 @@ export class ChangeTrackingService {
       this.changesEnsured = true;
     }
 
-    // EXE-018: Sequential to preserve error-stops-further-writes semantics;
-    // onChange callbacks are batched after all writes succeed.
-    for (const params of entries) {
-      await this.db.internal.create("__datafn_changes", {
-        id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
-        namespace: this.namespace,
-        server_seq: params.serverSeq,
-        resource: params.resource,
-        record_id: params.id,
-        op: params.op,
-        record: params.record ? JSON.stringify(params.record) : null,
-        created_at: new Date().toISOString(),
+    const now = new Date().toISOString();
+    const rows = entries.map((params) => ({
+      id: `change:${this.namespace}:${params.serverSeq}:${params.resource}:${params.id}`,
+      namespace: this.namespace,
+      server_seq: params.serverSeq,
+      resource: params.resource,
+      record_id: params.id,
+      op: params.op,
+      record: params.record ? JSON.stringify(params.record) : null,
+      created_at: now,
+    }));
+
+    // EXE-018: Batch capability detection — use createMany when available
+    const hasBatchCapability = typeof this.db.internal.createMany === "function";
+
+    if (hasBatchCapability) {
+      this.logger?.debug("recordChanges: using batch insert path", {
+        operation: "recordChanges",
+        entryCount: entries.length,
       });
+      await this.db.internal.createMany!("__datafn_changes", rows);
+    } else {
+      this.logger?.debug("recordChanges: batch insert unavailable, using sequential fallback", {
+        operation: "recordChanges",
+        entryCount: entries.length,
+      });
+      // Sequential to preserve error-stops-further-writes semantics
+      for (const row of rows) {
+        await this.db.internal.create("__datafn_changes", row);
+      }
     }
 
     // Fire onChange callbacks after all writes succeed
@@ -392,7 +466,7 @@ export class ChangeTrackingService {
         operation: "getLatestServerSeq",
         resource: params.resource,
       });
-      return 0;
+      throw error;
     }
   }
 }

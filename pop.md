@@ -9,7 +9,7 @@
 [ ] py publish
 
 ## apifn
-[ ] spec
+[x] spec
 [ ] ts code
 [ ] ts publish
 [ ] py code
@@ -169,7 +169,7 @@
 
 ## recfn
 [x] spec
-[ ] ts code
+[x] ts code
 [ ] ts publish
 [ ] py code
 [ ] py publish

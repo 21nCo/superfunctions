@@ -87,20 +87,21 @@ Each resource tracks its hydration state independently: `"notStarted"`, `"hydrat
 
 ## Storage Factory
 
-For multi-user or multi-tenant applications, use a `DatafnStorageFactory` to create isolated storage instances per auth context:
+For applications with namespace-based isolation, use a `DatafnStorageFactory` to create isolated storage instances per namespace:
 
 ```typescript
 import type { DatafnStorageFactory } from "@datafn/client";
-import { IndexedDbStorageAdapter } from "@datafn/client";
+import { IndexedDbStorageAdapter, ns } from "@datafn/client";
 
-const storageFactory: DatafnStorageFactory = (context) => {
-  return IndexedDbStorageAdapter.createForUser(
+const storageFactory: DatafnStorageFactory = (namespace) => {
+  return IndexedDbStorageAdapter.createForNamespace(
     "my-app",
-    context.userId,
-    context.tenantId,
+    namespace,
   );
 };
 ```
+
+The factory is called with the namespace string when the client is configured with `namespace`. See [Namespaces](/docs/documentation/concepts/multi-tenancy) for details.
 
 ## Available Adapters
 

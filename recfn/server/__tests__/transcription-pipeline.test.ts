@@ -3,6 +3,7 @@ import { processTranscriptionJob } from '../src/transcription/pipeline.js';
 import { createAsrRegistry } from '../src/transcription/registry.js';
 import { createMemoryStore } from '../src/store/memory.js';
 import { MemoryLogger } from '../src/integrations/logfn.js';
+import { createSearchFnClient } from '../src/integrations/searchfn.js';
 import type { AsrAdapter, AsrOpts, Segment } from 'recfn';
 
 function createMockAsrAdapter(segments: Segment[]): AsrAdapter {
@@ -249,5 +250,47 @@ describe('processTranscriptionJob', () => {
     expect(result.status).toBe('error');
     expect(logger.findByEvent('transcription.error')).toHaveLength(1);
     expect(logger.findByEvent('transcription.error')[0].data.error).toBe('Whisper process crashed');
+  });
+
+  it('indexes transcript in searchfn when searchClient provided (TV-SRCH-001)', async () => {
+    const store = createMemoryStore();
+    const logger = new MemoryLogger();
+    const registry = createAsrRegistry();
+    const searchClient = createSearchFnClient();
+
+    const mockSegments: Segment[] = [
+      { speakerId: 'p1', startTime: 0, endTime: 5000, text: 'Action items for next week', confidence: 0.9 },
+    ];
+    registry.register(createMockAsrAdapter(mockSegments));
+
+    const bot = await store.createBot({
+      meetingUrl: 'https://zoom.us/j/123', platform: 'zoom',
+      config: {
+        displayName: 'Bot', joinTimeout: 30000, autoLeaveOnEmpty: true,
+        autoLeaveEmptyTimeout: 30000, consentMessage: 'Rec',
+        enableRealTimeTranscript: false, asrProvider: 'whisper',
+        recordingFormat: 'mp4', language: 'en-US',
+      },
+      namespace: 'ns_test',
+    });
+
+    await store.createRecording({
+      id: 'rec_idx', botId: bot.id, format: 'mp4',
+      duration: 10000, storageRef: 'recordings/ns_test/rec_idx.mp4',
+      size: 256, createdAt: new Date().toISOString(),
+    }, 'ns_test');
+
+    await processTranscriptionJob(
+      {
+        recordingId: 'rec_idx', namespace: 'ns_test',
+        audioRef: 'recordings/ns_test/rec_idx.mp4',
+        asrProvider: 'whisper', language: 'en-US',
+      },
+      { store, logger, asrRegistry: registry, searchClient },
+    );
+
+    const results = searchClient.search('action items');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.document?.text).toContain('Action items');
   });
 });

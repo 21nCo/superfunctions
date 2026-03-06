@@ -966,16 +966,17 @@ describe("SRV-015: $or operator rejected at validation time", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SRV-003: maxBatchQueries limit
+// FIX-SRV-003: Bounded concurrency batch query (replaces old rejection-based SRV-003)
 // ---------------------------------------------------------------------------
 
-describe("SRV-003: maxBatchQueries batch size limit", () => {
-  it("TV-SRV-003-001: batch exceeding default limit (20) returns LIMIT_EXCEEDED", async () => {
+describe("FIX-SRV-003: bounded concurrency batch query", () => {
+  it("batch larger than default concurrency (20) is accepted and processed fully", async () => {
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
+      db: (await import("@superfunctions/db/adapters")).memoryAdapter(),
     });
 
-    const queries = Array.from({ length: 21 }, () => ({ resource: "task" }));
+    const queries = Array.from({ length: 25 }, () => ({ resource: "task" }));
 
     const req = new Request("http://localhost/datafn/query", {
       method: "POST",
@@ -984,16 +985,18 @@ describe("SRV-003: maxBatchQueries batch size limit", () => {
     });
 
     const res = await server.router.handle(req, {});
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.ok).toBe(false);
-    expect(body.error.code).toBe("LIMIT_EXCEEDED");
-    expect(body.error.message).toMatch(/Batch query count exceeds limit/);
+    expect(body.ok).toBe(true);
+    expect(Array.isArray(body.result)).toBe(true);
+    expect(body.result.length).toBe(25);
+    await server.close();
   });
 
-  it("TV-SRV-003-002: batch at exactly default limit (20) is accepted", async () => {
+  it("batch at exactly default concurrency (20) is accepted", async () => {
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,
+      db: (await import("@superfunctions/db/adapters")).memoryAdapter(),
     });
 
     const queries = Array.from({ length: 20 }, () => ({ resource: "task" }));
@@ -1005,7 +1008,103 @@ describe("SRV-003: maxBatchQueries batch size limit", () => {
     });
 
     const res = await server.router.handle(req, {});
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.error?.code).not.toBe("LIMIT_EXCEEDED");
+    expect(body.ok).toBe(true);
+    await server.close();
+  });
+});
+
+// ─── FIX-SEC-008: Query-level prototype pollution checks ─────────────
+
+describe("FIX-SEC-008: Query prototype pollution validation", () => {
+  it("__proto__ in query aggregations is rejected at route level", async () => {
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    // Build JSON with __proto__ key in aggregations manually
+    const bodyStr = '{"resource":"task","aggregations":{"__proto__":{"op":"count","field":"*"}}}';
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: bodyStr,
+    });
+
+    const res = await server.router.handle(req, {});
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_INVALID");
+    expect(body.error.message).toContain("Disallowed key");
+  });
+
+  it("constructor in having clause is rejected at route level", async () => {
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    const bodyStr = '{"resource":"task","aggregations":{"total":{"op":"count","field":"*"}},"having":{"constructor":{"prototype":{}}}}';
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: bodyStr,
+    });
+
+    const res = await server.router.handle(req, {});
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_INVALID");
+    expect(body.error.message).toContain("Disallowed key");
+  });
+
+  it("constructor nested inside array payload is rejected at route level", async () => {
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    const bodyStr = '{"resource":"task","select":[{"meta":{"constructor":{"prototype":{}}}}]}';
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: bodyStr,
+    });
+
+    const res = await server.router.handle(req, {});
+    const body = await res.json();
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_INVALID");
+    expect(body.error.message).toContain("Disallowed key");
+  });
+
+  it("clean aggregations + having passes validation", async () => {
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: fixtureF1Schema,
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        aggregations: { total: { op: "count", field: "*" } },
+        groupBy: ["priority"],
+        having: { total: { $gt: 0 } },
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
   });
 });

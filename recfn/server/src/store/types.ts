@@ -2,12 +2,14 @@ import type {
   Bot,
   BotConfig,
   BotStatus,
+  Calendar,
   ChatMessage,
   MeetingMetadata,
   Participant,
   Platform,
   Recording,
   Transcript,
+  Webhook,
 } from 'recfn';
 
 export interface ListOptions {
@@ -62,6 +64,17 @@ export interface RecFnStore {
   ): Promise<Transcript | null>;
 
   getParticipants(botId: string, namespace: string): Promise<Participant[]>;
+  addParticipant(
+    botId: string,
+    participant: Participant,
+    namespace: string,
+  ): Promise<Participant>;
+  updateParticipant(
+    botId: string,
+    participantId: string,
+    namespace: string,
+    updates: Partial<Pick<Participant, 'leftAt' | 'consent'>>,
+  ): Promise<Participant | null>;
 
   getChatMessages(botId: string, namespace: string): Promise<ChatMessage[]>;
 
@@ -69,4 +82,17 @@ export interface RecFnStore {
     botId: string,
     namespace: string,
   ): Promise<MeetingMetadata | null>;
+
+  createWebhook(webhook: Omit<Webhook, 'id' | 'createdAt'>, namespace: string): Promise<Webhook>;
+  listWebhooks(namespace: string): Promise<Webhook[]>;
+  getWebhook(id: string, namespace: string): Promise<Webhook | null>;
+  deleteWebhook(id: string, namespace: string): Promise<boolean>;
+
+  createCalendar(calendar: Omit<Calendar, 'id' | 'createdAt'>, namespace: string): Promise<Calendar>;
+  listCalendars(namespace: string): Promise<Calendar[]>;
+  getCalendar(id: string, namespace: string): Promise<Calendar | null>;
+  deleteCalendar(id: string, namespace: string): Promise<boolean>;
+
+  setEventBotId(calendarId: string, eventId: string, botId: string, namespace: string): Promise<void>;
+  getEventBotIds(calendarId: string, eventIds: string[], namespace: string): Promise<Map<string, string>>;
 }

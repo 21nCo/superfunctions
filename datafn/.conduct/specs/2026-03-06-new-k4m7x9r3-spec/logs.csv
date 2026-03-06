@@ -1,0 +1,2 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-06T18:00:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec

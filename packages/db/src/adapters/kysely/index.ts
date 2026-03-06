@@ -22,7 +22,7 @@ import type {
   OrderBy,
 } from '../../adapter/types.js';
 import { createAdapterFactory } from '../../adapter/factory.js';
-import { OperationNotSupportedError } from '../../adapter/errors.js';
+import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
 import { createKyselyInternalCrud } from './internal.js';
 
 export type KyselyDialect = 'postgres' | 'mysql' | 'sqlite';
@@ -191,11 +191,12 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
           selectQb = applyWhere(selectQb, where);
           selectQb = applySelect(selectQb, select);
           const row = await selectQb.executeTakeFirst();
-          if (!row) throw new Error('Update affected zero rows');
+          if (!row) throw new NotFoundError(model, where);
           return row as T;
         } else {
           qb = qb.returning(select && select.length > 0 ? select : ['*' as any]);
           const result = await qb.executeTakeFirst();
+          if (!result) throw new NotFoundError(model, where);
           return result as T;
         }
       },
@@ -394,7 +395,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
       namespace: config.namespace,
       capabilities: {
         types: { json: true, dates: true, booleans: true, bigint: true, uuid: true, enum: true },
-        operations: { batch: true, upsert: true, streaming: false, fulltext: false, returning: config.dialect !== 'mysql' },
+        operations: { batch: true, upsert: true, streaming: false, fulltext: false, returning: config.dialect !== 'mysql', strictUpdateNotFound: true },
         transactions: { supported: true, nested: false, isolation: undefined },
         performance: { supportsJoins: true, supportsPreparedStatements: true },
         schema: { migrations: false, constraints: true, indexes: true },

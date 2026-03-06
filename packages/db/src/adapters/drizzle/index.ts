@@ -24,7 +24,7 @@ import type {
   OrderBy,
 } from '../../adapter/types.js';
 import { createAdapterFactory } from '../../adapter/factory.js';
-import { OperationNotSupportedError } from '../../adapter/errors.js';
+import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
 import { createDrizzleInternalCrud } from './internal.js';
 
 // Import Drizzle helpers loosely to avoid strict peer typing
@@ -221,12 +221,14 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
         if (dialect === 'mysql') {
           await q.execute();
           const row = await this.findOne<T>({ model, where, select });
-          if (!row) throw new Error('Update affected zero rows');
+          if (!row) throw new NotFoundError(model, where);
           return row;
         } else {
           const returning = select && select.length > 0 ? Object.fromEntries(select.map((k) => [k, (tbl as any)[k]])) : undefined;
           const res = await (returning ? q.returning(returning as any) : q.returning()).execute();
-          return (Array.isArray(res) ? res[0] : (res as any)) as T;
+          const row = Array.isArray(res) ? res[0] : (res as any);
+          if (!row) throw new NotFoundError(model, where);
+          return row as T;
         }
       },
 
@@ -450,7 +452,7 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
       namespace: config.namespace,
       capabilities: {
         types: { json: true, dates: true, booleans: true, bigint: true, uuid: true, enum: true },
-        operations: { batch: true, upsert: true, streaming: false, fulltext: false, returning: config.dialect !== 'mysql' },
+        operations: { batch: true, upsert: true, streaming: false, fulltext: false, returning: config.dialect !== 'mysql', strictUpdateNotFound: true },
         transactions: { supported: true, nested: false, isolation: undefined },
         performance: { supportsJoins: true, supportsPreparedStatements: true },
         schema: { migrations: false, constraints: true, indexes: true },

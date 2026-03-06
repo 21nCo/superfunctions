@@ -21,13 +21,15 @@ import { logRequest, redactSensitiveFields } from "../logging.js";
 import type { DatafnLogger } from "../logger.js";
 import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 import type { MutationValidationOpts } from "../validation/mutation.js";
-import type { AuthzOptions } from "../validation/authz.js";
+import { validateMutationAuthz, type AuthzOptions } from "../validation/authz.js";
 
 /**
  * Options for mutation handler (VAL-001, VAL-006–009)
  */
 export interface MutationHandlerOpts extends MutationValidationOpts {
   allowUnknownResources?: boolean;
+  /** FIX-SEC-006: Max batch size for mutation array bodies (default 500) */
+  maxBatchSize?: number;
 }
 
 /**
@@ -93,8 +95,19 @@ export function createMutationHandler(
 
         const { isBatch, mutations: transformedMutations } = validationResult.result;
 
+        // FIX-SEC-006: Enforce configurable batch size limit on array bodies
+        if (isBatch) {
+          const maxBatchSize = handlerOpts?.maxBatchSize ?? 500;
+          if (transformedMutations.length > maxBatchSize) {
+            return errorResponse({
+              code: "DFQL_INVALID",
+              message: `Batch size ${transformedMutations.length} exceeds limit ${maxBatchSize}`,
+              details: { path: "$" },
+            }, 400);
+          }
+        }
+
         // PHASE_11: Enforce write permissions for each mutation (VAL-001: deny-by-default)
-        const { validateMutationAuthz } = await import("../validation/authz.js");
         for (let i = 0; i < transformedMutations.length; i++) {
           const mut = transformedMutations[i] as Record<string, unknown>;
           const authzResult = validateMutationAuthz(mut, validatedSchema, {
@@ -140,6 +153,7 @@ export function createMutationHandler(
             changeTracking,
             plugins,
             namespace,
+            logger,
         );
         results.push(result);
         }

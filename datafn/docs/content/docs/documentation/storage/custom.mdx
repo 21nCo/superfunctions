@@ -150,11 +150,12 @@ const client = createDatafnClient({
 });
 ```
 
-Or use a factory for multi-user isolation:
+Or use a factory for namespace-based isolation:
 
 ```typescript
 const client = createDatafnClient({
   schema,
-  storage: (context) => new CustomStorageAdapter(context.userId),
+  namespace: "org-123:user-456",
+  storage: (namespace) => new CustomStorageAdapter(namespace),
 });
 ```

@@ -4,11 +4,10 @@
  */
 
 import type { DatafnSchema, DatafnPlugin, RetentionConfig, RateLimitConfig, ObservabilityConfig } from "./core-types.js";
-import { validateSchema, ensureBuiltinKv } from "@datafn/core";
+import { validateSchema, ensureBuiltinKv, isNamespaced } from "@datafn/core";
 import { createRouter, type Router, type Route, type RouteHandler } from "@superfunctions/http";
 import type { Adapter, RedisAdapter, KVStoreAdapter, RowLevelNamespaceConfig } from "@superfunctions/db";
 import { wrapWithRowLevelNamespace } from "@superfunctions/db";
-import type { AuthContext, AuthContextProvider } from "@superfunctions/auth";
 import type { DbMapping, SequenceStore } from "./execution/sync/sequence-store.js";
 import { createSequenceStore } from "./execution/sync/sequence-store.js";
 import { createStatusHandler } from "./routes/status.js";
@@ -84,6 +83,10 @@ export interface DatafnServerConfig<TContext = any> {
     maxAggregations?: number;
     /** VAL-006: Max ID length (default 255) */
     maxIdLength?: number;
+    /** FIX-SEC-006: Max batch size for push/mutation endpoints (default 500) */
+    maxBatchSize?: number;
+    /** FIX-SRV-003: Max in-flight query concurrency for batch queries (default 20) */
+    maxBatchQueryConcurrency?: number;
   };
 
   /**
@@ -114,26 +117,22 @@ export interface DatafnServerConfig<TContext = any> {
   rest?: boolean;
 
   /**
-   * Optional auth context provider for per-user/tenant serverSeq isolation.
-   * When provided, extracts user/tenant context from request context to create
-   * isolated namespaces for change tracking (e.g., "user:123" or "tenant:456:user:123").
-   * Without this, all users share the default "datafn" namespace.
-   * 
-   * The provider's `getContext()` receives the request context (TContext) and should
-   * return an AuthContext with at least `userId`.
-   * 
+   * Namespace provider for per-request data isolation.
+   * Returns the namespace string used to scope all data operations.
+   * Without this, all data shares the default "datafn" namespace.
+   *
    * @example
    * ```typescript
-   * authContextProvider: {
-   *   getContext: (ctx) => ({
-   *     userId: ctx.session.userId,
-   *     tenantId: ctx.session.tenantId,
-   *   }),
+   * namespaceProvider: {
+   *   getNamespace: (ctx) => ns(ctx.orgId, ctx.userId),
+   *   getActorId: (ctx) => ctx.userId,
    * }
    * ```
    */
-  authContextProvider?: {
-    getContext: (ctx: TContext) => AuthContext | Promise<AuthContext>;
+  namespaceProvider?: {
+    getNamespace: (ctx: TContext) => string | Promise<string>;
+    /** Optional actor ID for audit attribution (separate from isolation). */
+    getActorId?: (ctx: TContext) => string | Promise<string>;
   };
 
   /**
@@ -177,8 +176,7 @@ export interface DatafnServerConfig<TContext = any> {
 
   /**
    * Row-level namespace isolation configuration.
-   * - Omitted + authContextProvider present → auto-enabled with defaults (__ns column, mandatory).
-   * - Explicitly `false` → disabled even when authContextProvider is present.
+   * - Explicitly `false` → disabled.
    * - Object → used as-is for wrapping configuration.
    */
   rowLevelNamespace?: false | RowLevelNamespaceConfig;
@@ -270,17 +268,18 @@ export async function createDatafnServer<TContext = any>(
   }
 
   // Row-level namespace auto-wrapping (DFN-001)
-  // When schema has multiTenant enabled (the default) and rowLevelNamespace is not explicitly false,
+  // When schema has namespace isolation enabled (the default) and rowLevelNamespace is not explicitly false,
   // wrap the adapter so all CRUD operations are namespace-isolated.
   // This activates for SQL-backed adapters (which have __ns NOT NULL columns from codegen)
-  // regardless of whether authContextProvider is present — without auth, the default "datafn"
+  // regardless of whether a namespace provider is present — without one, the default "datafn"
   // namespace is used. For in-memory adapters (no schema constraints), wrapping is only
-  // applied when authContextProvider is present (explicit multi-tenancy).
+  // applied when a namespace/auth provider is present (explicit namespace isolation).
   let db = config.db;
-  const schemaMultiTenant = validatedSchema.multiTenant !== false;
+  const schemaIsNamespaced = isNamespaced(validatedSchema);
   const adapterHasSchemaConstraints = db?.capabilities?.schema?.constraints === true;
-  const shouldWrapNamespace = db && schemaMultiTenant && config.rowLevelNamespace !== false
-    && (adapterHasSchemaConstraints || config.authContextProvider || (typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace));
+  const hasNamespaceProvider = !!config.namespaceProvider;
+  const shouldWrapNamespace = db && schemaIsNamespaced && config.rowLevelNamespace !== false
+    && (adapterHasSchemaConstraints || hasNamespaceProvider || (typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace));
   if (shouldWrapNamespace) {
     const rlnConfig: RowLevelNamespaceConfig =
       typeof config.rowLevelNamespace === 'object' && config.rowLevelNamespace
@@ -304,7 +303,7 @@ export async function createDatafnServer<TContext = any>(
         logger.info("Pruned change log entries", { deleted, operation: "startup-prune" });
       }
       const idempotencyStoreForPrune = db
-        ? new DbIdempotencyStore(db)
+        ? new DbIdempotencyStore(db, "datafn", logger)
         : undefined;
       if (config.retention.idempotencyDays && idempotencyStoreForPrune) {
         const deleted = await idempotencyStoreForPrune.pruneIdempotency(config.retention.idempotencyDays);
@@ -350,6 +349,8 @@ export async function createDatafnServer<TContext = any>(
     maxSortFields: config.limits?.maxSortFields ?? 10,
     maxAggregations: config.limits?.maxAggregations ?? 20,
     maxIdLength: config.limits?.maxIdLength ?? 255,
+    maxBatchSize: config.limits?.maxBatchSize ?? 500,
+    maxBatchQueryConcurrency: config.limits?.maxBatchQueryConcurrency ?? 20,
   };
 
   // Observability: create timing emitter (OBS-004)
@@ -365,11 +366,15 @@ export async function createDatafnServer<TContext = any>(
       : (() => { const m = new MemoryRateLimiter(); memoryRateLimiter = m; return m; })();
 
     const defaultKeyExtractor = async (ctx: TContext): Promise<string> => {
-      if (config.authContextProvider) {
+      if (config.namespaceProvider) {
         try {
-          const authContext = await config.authContextProvider.getContext(ctx);
-          if (authContext?.userId) return String(authContext.userId);
-        } catch { /* fall through */ }
+          return await config.namespaceProvider.getNamespace(ctx);
+        } catch (error) {
+          logger.warn("Namespace provider failed for rate limiting, using anonymous", {
+            error: String(error),
+            operation: "rate-limit-key",
+          });
+        }
       }
       return "anonymous";
     };
@@ -396,7 +401,7 @@ export async function createDatafnServer<TContext = any>(
           const deleted = await ct.pruneChanges(retentionForInterval.changeLogDays);
           logger.info("Periodic prune: removed change log entries", { deleted, operation: "periodic-prune" });
         }
-        const idStore = new DbIdempotencyStore(dbForInterval);
+        const idStore = new DbIdempotencyStore(dbForInterval, "datafn", logger);
         if (retentionForInterval.idempotencyDays) {
           const deleted = await idStore.pruneIdempotency(retentionForInterval.idempotencyDays);
           logger.info("Periodic prune: removed idempotency entries", { deleted, operation: "periodic-prune" });
@@ -413,23 +418,29 @@ export async function createDatafnServer<TContext = any>(
 
   // Helper to extract namespace
   const extractNamespace = async (ctx: TContext): Promise<string> => {
-    if (!config.authContextProvider) {
-      return "datafn";
-    }
-    try {
-      const authContext = await config.authContextProvider.getContext(ctx);
-      if (authContext?.userId) {
-        return authContext.tenantId
-          ? `tenant:${authContext.tenantId}:user:${authContext.userId}`
-          : `user:${authContext.userId}`;
+    if (config.namespaceProvider) {
+      const ns = await config.namespaceProvider.getNamespace(ctx);
+      if (typeof ns !== "string" || ns === "") {
+        const err = new Error("Namespace provider returned empty namespace");
+        (err as any).code = "NAMESPACE_INVALID";
+        throw err;
       }
-      logger.warn("authContextProvider returned context without userId, using default namespace", { operation: "extract-namespace" });
-      return "datafn";
-    } catch (error) {
-      // SRV-010: Propagate auth errors instead of silently falling back to default namespace
-      logger.error("Failed to extract auth context for namespace", { error: String(error), operation: "extract-namespace" });
-      throw error;
+      return ns;
     }
+    return "datafn";
+  };
+
+  // Helper to extract actor ID (for audit attribution)
+  const extractActorId = async (ctx: TContext): Promise<string | undefined> => {
+    if (config.namespaceProvider?.getActorId) {
+      try {
+        return await config.namespaceProvider.getActorId(ctx);
+      } catch (error) {
+        logger.warn("Failed to extract actorId, proceeding without audit attribution", { error: String(error), operation: "extract-actor-id" });
+        return undefined;
+      }
+    }
+    return undefined;
   };
 
   // Create route handlers
@@ -447,7 +458,7 @@ export async function createDatafnServer<TContext = any>(
   const queryHandler = createQueryHandler(
     validatedSchema,
     limits.maxLimit,
-    db, // Pass adapter (namespace-wrapped when authContextProvider is present)
+    db,
     config.plugins || [],
     extractNamespace,
     timingEmitter,
@@ -456,6 +467,7 @@ export async function createDatafnServer<TContext = any>(
       maxFilterKeysPerLevel: limits.maxFilterKeysPerLevel,
       maxSortFields: limits.maxSortFields,
       maxAggregations: limits.maxAggregations,
+      maxBatchQueryConcurrency: limits.maxBatchQueryConcurrency,
       allowUnknownResources,
       debug: debugMode,
     },
@@ -464,12 +476,12 @@ export async function createDatafnServer<TContext = any>(
 
   // Create mutation handler and idempotency store
   const idempotencyStore = db
-    ? new DbIdempotencyStore(db)
+    ? new DbIdempotencyStore(db, "datafn", logger)
     : undefined;
 
   const mutationHandler = createMutationHandler(
     validatedSchema,
-    db, // Pass adapter (namespace-wrapped when authContextProvider is present)
+    db,
     idempotencyStore,
     config.plugins || [], // Pass plugins
     extractNamespace,
@@ -477,6 +489,7 @@ export async function createDatafnServer<TContext = any>(
     timingEmitter,
     {
       maxIdLength: limits.maxIdLength,
+      maxBatchSize: limits.maxBatchSize,
       allowUnknownResources,
       debug: debugMode,
     },
@@ -485,7 +498,7 @@ export async function createDatafnServer<TContext = any>(
 
   const transactHandler = createTransactHandler(
     validatedSchema,
-    db, // Pass adapter (namespace-wrapped when authContextProvider is present)
+    db,
     idempotencyStore,
     limits,
     extractNamespace,
@@ -539,6 +552,7 @@ export async function createDatafnServer<TContext = any>(
     timingEmitter,
     {
       maxIdLength: limits.maxIdLength,
+      maxBatchSize: limits.maxBatchSize,
       allowUnknownResources,
       debug: debugMode,
     },
@@ -604,7 +618,7 @@ export async function createDatafnServer<TContext = any>(
         if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
           // If maxPayloadBytes is set but Content-Length was missing, enforce on actual body
           if (limits.maxPayloadBytes) {
-            const bodyResult = await readBodyWithLimit(req, limits.maxPayloadBytes);
+            const bodyResult = await readBodyWithLimit(req, limits.maxPayloadBytes, logger);
             if (!bodyResult.ok) return bodyResult.response;
             // Parse JSON from the already-read body text
             try {
@@ -703,28 +717,26 @@ export async function createDatafnServer<TContext = any>(
 
   // Register REST routes if config.rest is true
   if (config.rest) {
+    // FIX-SRV-001: Direct internal execution helpers — no synthetic Request construction.
+    // Handlers use ctx.parsedBody exclusively; the Request parameter is never read in this path.
+    const internalMutate = async (m: unknown): Promise<unknown> => {
+      const res = await mutationHandler(undefined as any, { parsedBody: m });
+      const env = await res.json() as { ok: boolean; error?: unknown; result?: unknown };
+      if (!env.ok) throw env.error;
+      return env.result;
+    };
+    const internalQuery = async (q: unknown): Promise<unknown> => {
+      const res = await queryHandler(undefined as any, { parsedBody: q });
+      const env = await res.json() as { ok: boolean; error?: unknown; result?: unknown };
+      if (!env.ok) throw env.error;
+      return env.result;
+    };
+
     const restRoutes = createRestRoutes(
       validatedSchema,
-      // Bind mutation handler's execution
-      // SRV-001: Pass parsedBody via context to avoid JSON.stringify+parse round-trip
-      (m) =>
-        mutationHandler(
-          new Request("http://localhost/datafn/mutation", { method: "POST" }),
-          { parsedBody: m },
-        ).then(async (res) => {
-          const env = await res.json() as { ok: boolean; error?: unknown; result?: unknown };
-          if (!env.ok) throw env.error;
-          return env.result;
-        }),
-      (q) =>
-        queryHandler(
-          new Request("http://localhost/datafn/query", { method: "POST" }),
-          { parsedBody: q },
-        ).then(async (res) => {
-          const env = await res.json() as { ok: boolean; error?: unknown; result?: unknown };
-          if (!env.ok) throw env.error;
-          return env.result;
-        }),
+      internalMutate,
+      internalQuery,
+      logger,
     );
 
     // Map REST routes to router format and apply auth if needed

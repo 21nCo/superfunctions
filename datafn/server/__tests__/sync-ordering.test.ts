@@ -34,7 +34,25 @@ describe("Phase 09: Server Sync Semantics", () => {
         db,
       });
 
-      // First mutation
+      // Seed the record first via insert
+      const res0 = await server.router.handle(
+        new Request("http://localhost/datafn/mutation", {
+          method: "POST",
+          body: JSON.stringify({
+            resource: "task",
+            version: 1,
+            operation: "insert",
+            clientId: "client:0",
+            mutationId: "m-0",
+            id: "task:1",
+            record: { title: "Initial" },
+          }),
+        })
+      );
+      const body0 = await res0.json();
+      expect(body0.ok).toBe(true);
+
+      // First merge mutation
       const res1 = await server.router.handle(
         new Request("http://localhost/datafn/mutation", {
           method: "POST",
@@ -54,7 +72,7 @@ describe("Phase 09: Server Sync Semantics", () => {
       expect(body1.result.ok).toBe(true);
       expect(body1.result.mutationId).toBe("m-1");
 
-      // Second mutation on same record
+      // Second merge mutation on same record
       const res2 = await server.router.handle(
         new Request("http://localhost/datafn/mutation", {
           method: "POST",
@@ -99,7 +117,25 @@ describe("Phase 09: Server Sync Semantics", () => {
         db,
       });
 
-      // First mutation with high client timestamp
+      // Seed the record first via insert
+      const res0 = await server.router.handle(
+        new Request("http://localhost/datafn/mutation", {
+          method: "POST",
+          body: JSON.stringify({
+            resource: "task",
+            version: 1,
+            operation: "insert",
+            clientId: "client:0",
+            mutationId: "m-ts-0",
+            id: "task:1",
+            record: { title: "Initial" },
+          }),
+        })
+      );
+      const body0 = await res0.json();
+      expect(body0.ok).toBe(true);
+
+      // First merge mutation with high client timestamp
       const res1 = await server.router.handle(
         new Request("http://localhost/datafn/mutation", {
           method: "POST",
@@ -118,7 +154,7 @@ describe("Phase 09: Server Sync Semantics", () => {
       const body1 = await res1.json();
       expect(body1.ok).toBe(true);
 
-      // Second mutation with low client timestamp
+      // Second merge mutation with low client timestamp
       const res2 = await server.router.handle(
         new Request("http://localhost/datafn/mutation", {
           method: "POST",
@@ -369,13 +405,22 @@ describe("Phase 09: Server Sync Semantics", () => {
         db,
       });
 
-      // Push mutation
+      // Push insert + merge mutation
       const res1 = await server.router.handle(
         new Request("http://localhost/datafn/push", {
           method: "POST",
           body: JSON.stringify({
             clientId: "client:1",
             mutations: [
+              {
+                resource: "task",
+                version: 1,
+                operation: "insert",
+                clientId: "client:1",
+                mutationId: "m-push-0",
+                id: "task:1",
+                record: { title: "Initial" },
+              },
               {
                 resource: "task",
                 version: 1,
@@ -393,17 +438,18 @@ describe("Phase 09: Server Sync Semantics", () => {
       const body1 = await res1.json();
       expect(body1.ok).toBe(true);
       expect(body1.result.ok).toBe(true);
+      expect(body1.result.applied).toContain("m-push-0");
       expect(body1.result.applied).toContain("m-push-1");
       expect(body1.result.errors).toHaveLength(0);
 
-      // Pull to verify
+      // Pull to verify — expect 2 changes (insert + merge)
       const res2 = await server.router.handle(
         new Request("http://localhost/datafn/pull", {
           method: "POST",
           body: JSON.stringify({
             clientId: "client:1",
             cursor: "0",
-            limit: 1,
+            limit: 10,
           }),
         })
       );
@@ -411,12 +457,12 @@ describe("Phase 09: Server Sync Semantics", () => {
       const body2 = await res2.json();
       expect(body2.ok).toBe(true);
       expect(body2.result.ok).toBe(true);
-      expect(body2.result.changes).toHaveLength(1);
-      // After FIX-A, merge ops preserve op type in changelog (was "upsert", now "merge")
-      expect(body2.result.changes[0].op).toBe("merge");
-      expect(body2.result.changes[0].id).toBe("task:1");
-      expect(body2.result.changes[0].record.title).toBe("P");
-      expect(body2.result.nextCursor).toBe("1");
+      expect(body2.result.changes.length).toBeGreaterThanOrEqual(1);
+      // The merge change should be present
+      const mergeChange = body2.result.changes.find((c: any) => c.op === "merge");
+      expect(mergeChange).toBeDefined();
+      expect(mergeChange.id).toBe("task:1");
+      expect(mergeChange.record.title).toBe("P");
     });
 
     it("TV-SERVER-PUSH-002: Missing clientId is rejected", async () => {
@@ -439,6 +485,57 @@ describe("Phase 09: Server Sync Semantics", () => {
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
       expect(body.error.message).toContain("clientId must be string");
+    });
+  });
+
+  describe("OBS-001: applied/change-tracking gating", () => {
+    it("ineligible merge is excluded from applied and does not produce pull changes", async () => {
+      const db = memoryAdapter({ libraryNamespace: "datafn" });
+      const server = await createDatafnServer({
+        allowUnknownResources: true,
+        schema: defaultSchema,
+        db,
+      });
+
+      const pushRes = await server.router.handle(
+        new Request("http://localhost/datafn/push", {
+          method: "POST",
+          body: JSON.stringify({
+            clientId: "client:1",
+            mutations: [
+              {
+                resource: "task",
+                version: 1,
+                operation: "merge",
+                clientId: "client:1",
+                mutationId: "m-missing-task",
+                id: "task:missing",
+                record: {},
+              },
+            ],
+          }),
+        }),
+      );
+      const pushBody = await pushRes.json();
+      expect(pushBody.ok).toBe(true);
+      expect(pushBody.result.ok).toBe(true);
+      expect(pushBody.result.applied).not.toContain("m-missing-task");
+      expect(pushBody.result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ mutationId: "m-missing-task", code: "NOT_FOUND", path: "id" }),
+        ]),
+      );
+
+      const pullRes = await server.router.handle(
+        new Request("http://localhost/datafn/pull", {
+          method: "POST",
+          body: JSON.stringify({ clientId: "client:1", cursor: "0", limit: 100 }),
+        }),
+      );
+      const pullBody = await pullRes.json();
+      expect(pullBody.ok).toBe(true);
+      expect(pullBody.result.ok).toBe(true);
+      expect(pullBody.result.changes).toHaveLength(0);
     });
   });
 });

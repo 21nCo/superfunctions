@@ -35,9 +35,9 @@ const code = generateDrizzleSchema(mySchema, "postgres");
 | `array` | `jsonb()` | `json()` | `text()` |
 | `file` | `text()` | `text()` | `text()` |
 
-## Multi-Tenancy
+## Namespace Column
 
-When `schema.multiTenant` is `true` (the default), every table includes an `__ns` column for namespace isolation:
+When `schema.namespaced` is `true` (the default), every table includes an `__ns` column for namespace isolation:
 
 ```typescript
 export const todos = pgTable("todos", {
@@ -50,13 +50,13 @@ export const todos = pgTable("todos", {
 ]);
 ```
 
-Set `multiTenant: false` in your schema to omit the `__ns` column.
+Set `namespaced: false` in your schema to omit the `__ns` column.
 
 ## Index Generation
 
 Each table may include:
 
-- **Namespace index** -- `idx_{table}___ns` when multi-tenant is enabled.
+- **Namespace index** -- `idx_{table}___ns` when namespace isolation is enabled.
 - **Base indices** -- one index per field listed in `indices.base`.
 - **Join table unique index** -- `{joinTable}_{from}_{to}_idx` for many-many relations.
 

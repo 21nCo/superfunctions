@@ -43,7 +43,7 @@ interface RateLimitConfig<TContext = any> {
     { maxRequests: number; windowSeconds: number }
   >>;
 
-  /** Custom key extractor. Default: uses authContext userId or "anonymous". */
+  /** Custom key extractor. Default: uses namespace from namespaceProvider or "anonymous". */
   keyExtractor?: (ctx: TContext) => string | Promise<string>;
 }
 ```
@@ -71,7 +71,7 @@ const server = await createDatafnServer({
 
 ### Custom Key Extractor
 
-By default, the rate limit key is derived from the `authContextProvider`. Provide a custom extractor to key on IP address, API key, or any other property:
+By default, the rate limit key is derived from the `namespaceProvider`. Provide a custom extractor to key on IP address, API key, or any other property:
 
 ```typescript
 const server = await createDatafnServer({

@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createDatafnServer } from "@datafn/server";
 import { toHono } from "@superfunctions/http-hono";
+import { ns } from "@datafn/core";
 import { adapter } from "./db.js";
 import schema from "./schema.datafn.js";
 
@@ -16,13 +17,15 @@ async function main() {
     // In production, inspect ctx (headers / session) and restrict per action.
     authorize: async (_ctx: any, _action: any, _payload: any) => true,
 
-    // Sample auth context — hardcoded user + tenant so namespace scoping can be verified.
+    // Namespace provider — hardcoded namespace so scoping can be verified.
     // Replace with real session/token extraction in production.
-    authContextProvider: {
-      getContext: (_ctx: any) => ({
-        userId: "user-001",
-        tenantId: "tenant-acme",
-      }),
+    // namespaceProvider: {
+    //   getNamespace: (_ctx: any) => ns("user", _ctx.parsedBody?.clientId ?? "anonymous"),
+    //   getActorId: (_ctx: any) => _ctx.parsedBody?.clientId ?? "anonymous",
+    // },
+    namespaceProvider: {
+      getNamespace: (_ctx: any) => "multiclienttest",
+      getActorId: (_ctx: any) => "multiclienttestuser",
     },
 
     // Limits

@@ -51,9 +51,10 @@ interface DatafnServerConfig<TContext = any> {
   /** Enable REST endpoint generation. Default: false. */
   rest?: boolean;
 
-  /** Auth context provider for per-user namespace isolation. */
-  authContextProvider?: {
-    getContext: (ctx: TContext) => AuthContext | Promise<AuthContext>;
+  /** Namespace provider for data isolation. */
+  namespaceProvider?: {
+    getNamespace: (ctx: TContext) => string | Promise<string>;
+    getActorId?: (ctx: TContext) => string | Promise<string>;
   };
 
   /** Redis adapter for atomic operations. */

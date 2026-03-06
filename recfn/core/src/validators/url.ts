@@ -19,6 +19,10 @@ const PLATFORM_PATTERNS: { platform: Platform; pattern: RegExp }[] = [
     platform: 'teams',
     pattern: /^https?:\/\/teams\.microsoft\.com\//i,
   },
+  {
+    platform: 'desktop',
+    pattern: /^desktop:\/\//i,
+  },
 ];
 
 export function detectPlatform(meetingUrl: string): Platform | null {
@@ -45,10 +49,14 @@ export function validateMeetingUrl(
     );
   }
 
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+  if (
+    url.protocol !== 'https:' &&
+    url.protocol !== 'http:' &&
+    url.protocol !== 'desktop:'
+  ) {
     throw createError(
       ErrorCode.BOT_CREATE_FAILED,
-      'Meeting URL must use http or https protocol.',
+      'Meeting URL must use http, https, or desktop protocol.',
       { meetingUrl },
     );
   }
@@ -69,7 +77,7 @@ export function validateMeetingUrl(
   if (!detected) {
     throw createError(
       ErrorCode.BOT_CREATE_FAILED,
-      'Unrecognized meeting URL. Supported platforms: zoom, meet, teams.',
+      'Unrecognized meeting URL. Supported platforms: zoom, meet, teams, desktop.',
       { meetingUrl },
     );
   }

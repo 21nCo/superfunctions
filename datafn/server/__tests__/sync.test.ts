@@ -2031,3 +2031,150 @@ describe("TST-005 (sync): Concurrent push produces correct ordering", () => {
     expect(queryBody.result.data).toHaveLength(1); // exactly 1 — deduped
   });
 });
+
+describe("MRG-003: push merge race retry behavior", () => {
+  it("retries update once after create conflict and succeeds", async () => {
+    const baseDb = memoryAdapter();
+    await baseDb.initialize();
+    const baseCreate = baseDb.create.bind(baseDb);
+    const baseUpdate = baseDb.update.bind(baseDb);
+    let updateCalls = 0;
+    let insertedByConcurrentWriter = false;
+
+    const db = new Proxy(baseDb, {
+      get(target, prop, receiver) {
+        if (prop === "update") {
+          return async (params: any) => {
+            const id = params?.where?.[0]?.value;
+            if (params?.model === "task" && id === "task:race-ok") {
+              updateCalls += 1;
+              if (updateCalls === 1) {
+                const err: any = new Error("Record not found");
+                err.name = "NotFoundError";
+                throw err;
+              }
+            }
+            return baseUpdate(params);
+          };
+        }
+        if (prop === "create") {
+          return async (params: any) => {
+            if (params?.model === "task" && params?.data?.id === "task:race-ok" && !insertedByConcurrentWriter) {
+              insertedByConcurrentWriter = true;
+              await baseCreate(params); // simulate concurrent insert winning the race
+              const err: any = new Error("duplicate key value violates unique constraint");
+              err.code = "23505";
+              throw err;
+            }
+            return baseCreate(params);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: taskSchema as any,
+      db: db as any,
+    });
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: "race-client",
+          mutations: [
+            {
+              resource: "task",
+              version: 1,
+              operation: "merge",
+              clientId: "race-client",
+              mutationId: "m-race-ok",
+              id: "task:race-ok",
+              record: { title: "Race title", status: "done" },
+            },
+          ],
+        }),
+      }),
+    );
+
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.result.ok).toBe(true);
+    expect(body.result.applied).toContain("m-race-ok");
+    expect(body.result.errors).toHaveLength(0);
+    expect(updateCalls).toBe(2);
+  });
+
+  it("returns NOT_FOUND when retry update still fails after create conflict", async () => {
+    const baseDb = memoryAdapter();
+    await baseDb.initialize();
+    const baseCreate = baseDb.create.bind(baseDb);
+
+    const db = new Proxy(baseDb, {
+      get(target, prop, receiver) {
+        if (prop === "update") {
+          return async (params: any) => {
+            const id = params?.where?.[0]?.value;
+            if (params?.model === "task" && id === "task:race-fail") {
+              const err: any = new Error("Record not found");
+              err.name = "NotFoundError";
+              throw err;
+            }
+            return (target as any).update(params);
+          };
+        }
+        if (prop === "create") {
+          return async (params: any) => {
+            if (params?.model === "task" && params?.data?.id === "task:race-fail") {
+              const err: any = new Error("duplicate key");
+              err.code = "SQLITE_CONSTRAINT_UNIQUE";
+              throw err;
+            }
+            return baseCreate(params);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: taskSchema as any,
+      db: db as any,
+    });
+
+    const res = await server.router.handle(
+      new Request("http://localhost/datafn/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: "race-client",
+          mutations: [
+            {
+              resource: "task",
+              version: 1,
+              operation: "merge",
+              clientId: "race-client",
+              mutationId: "m-race-fail",
+              id: "task:race-fail",
+              record: { title: "Race title", status: "done" },
+            },
+          ],
+        }),
+      }),
+    );
+
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.result.ok).toBe(true);
+    expect(body.result.applied).not.toContain("m-race-fail");
+    expect(body.result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mutationId: "m-race-fail", code: "NOT_FOUND", path: "id" }),
+      ]),
+    );
+  });
+});

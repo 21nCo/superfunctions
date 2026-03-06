@@ -1,4 +1,4 @@
 {
   "title": "Concepts",
-  "pages": ["schema", "resources", "fields", "relations", "system-fields", "multi-tenancy"]
+  "pages": ["overview", "multi-tenancy"]
 }

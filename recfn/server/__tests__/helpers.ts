@@ -2,6 +2,7 @@ import {
   createRecFnServer,
   createMemoryStore,
   MemoryStorageAdapter,
+  createNoopLogger,
 } from '../src/index.js';
 import type { AuthResult } from '../src/middleware/auth.js';
 
@@ -17,6 +18,8 @@ export function createTestServer() {
   const server = createRecFnServer({
     store,
     storage,
+    logger: createNoopLogger(),
+    rateLimit: false,
     validateApiKey: (key: string) => API_KEYS[key] ?? null,
   });
   return { server, store, storage };

@@ -8,6 +8,8 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 import Database from 'better-sqlite3';
 import { drizzleAdapter } from './index.js';
+import { NotFoundError } from '../../adapter/errors.js';
+import { wrapWithRowLevelNamespace } from '../../adapter/row-level-namespace.js';
 import type { Adapter } from '../../adapter/types.js';
 
 // Define test schema
@@ -23,6 +25,12 @@ const posts = sqliteTable('posts', {
   title: text('title').notNull(),
   content: text('content'),
   authorId: text('author_id').notNull(),
+});
+
+const namespacedUsers = sqliteTable('namespaced_users', {
+  id: text('id').primaryKey(),
+  __ns: text('__ns').notNull(),
+  name: text('name').notNull(),
 });
 
 describe('DrizzleAdapter - SQLite', () => {
@@ -47,6 +55,11 @@ describe('DrizzleAdapter - SQLite', () => {
         content TEXT,
         author_id TEXT NOT NULL
       );
+      CREATE TABLE namespaced_users (
+        id TEXT PRIMARY KEY,
+        __ns TEXT NOT NULL,
+        name TEXT NOT NULL
+      );
       CREATE TABLE __superfunctions_schema_versions (
         namespace TEXT PRIMARY KEY,
         version INTEGER NOT NULL,
@@ -61,7 +74,7 @@ describe('DrizzleAdapter - SQLite', () => {
     });
 
     // Pass schema to drizzle() constructor so it's available in db._.fullSchema
-    const schema = { users, posts, __superfunctions_schema_versions: schemaVersionsTable };
+    const schema = { users, posts, namespacedUsers, __superfunctions_schema_versions: schemaVersionsTable };
     const db = drizzle(sqlite, { schema });
 
     adapter = drizzleAdapter({
@@ -195,6 +208,28 @@ describe('DrizzleAdapter - SQLite', () => {
       });
 
       expect(updated).toMatchObject({ id: '11', age: 46 });
+    });
+
+    it('should throw NotFoundError when update matches zero rows', async () => {
+      await expect(
+        adapter.update({
+          model: 'users',
+          where: [{ field: 'id', operator: 'eq', value: 'missing-user' }],
+          data: { age: 46 },
+        }),
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it('should preserve NotFoundError through row-level namespace wrapper', async () => {
+      const namespaced = wrapWithRowLevelNamespace(adapter, { enabled: true });
+      await expect(
+        namespaced.update({
+          model: 'namespacedUsers',
+          where: [{ field: 'id', operator: 'eq', value: 'missing-user' }],
+          data: { name: 'updated-name' },
+          namespace: 'user:a',
+        }),
+      ).rejects.toThrow(NotFoundError);
     });
 
     it('should delete a record', async () => {

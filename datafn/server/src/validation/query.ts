@@ -48,6 +48,12 @@ export function validateQuery(
 
   const q = query as Record<string, unknown>;
 
+  // FIX-SEC-008: Prototype pollution check on full query payload
+  const queryPollutionCheck = checkPrototypePollution(q);
+  if (!queryPollutionCheck.ok) {
+    return vErr("DFQL_INVALID", `Disallowed key: ${queryPollutionCheck.key}`, basePath);
+  }
+
   // Validate resource exists
   if (typeof q.resource !== "string") {
     return vErr("DFQL_INVALID", "Invalid DFQL: resource must be string", `${basePath}.resource`);

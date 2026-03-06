@@ -2,6 +2,9 @@
   "name": "todo-app-server",
   "version": "0.0.1",
   "type": "module",
+  "exports": {
+    "./schema": "./src/schema.datafn.ts"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

@@ -1,4 +1,4 @@
 {
   "title": "Client",
-  "pages": ["setup", "queries", "mutations", "transactions", "signals", "events", "kv", "tables"]
+  "pages": ["setup", "queries", "mutations", "transactions", "signals", "frameworks", "events", "kv", "tables"]
 }

@@ -185,7 +185,8 @@ export class DatabaseSequenceStore implements SequenceStore {
               next_server_seq: 1 + count,
             });
             return Array.from({ length: count }, (_, i) => 1 + i);
-          } catch {
+          } catch (error) {
+            this.logger?.warn("Sequence allocation create retry", { attempt, error: String(error), operation: "seq-create" });
             continue;
           }
         } else {
@@ -206,7 +207,8 @@ export class DatabaseSequenceStore implements SequenceStore {
             }
 
             return Array.from({ length: count }, (_, i) => currentSeq + i);
-          } catch {
+          } catch (error) {
+            this.logger?.warn("Sequence allocation CAS retry", { attempt, error: String(error), operation: "seq-cas" });
             continue;
           }
         }
@@ -246,7 +248,7 @@ export class DatabaseSequenceStore implements SequenceStore {
         operation: "getCurrent",
         resource: "__datafn_meta",
       });
-      return 0;
+      throw error;
     }
   }
 }

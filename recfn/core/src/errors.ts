@@ -16,6 +16,7 @@ export const ErrorCode = {
   ASR_ERROR: 'ASR_ERROR',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   INVALID_TRANSITION: 'INVALID_TRANSITION',
+  RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED',
 } as const;
 
 export type ErrorCodeType = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -38,6 +39,7 @@ export const ErrorHttpStatus: Record<string, number> = {
   [ErrorCode.ASR_ERROR]: 502,
   [ErrorCode.INTERNAL_ERROR]: 500,
   [ErrorCode.INVALID_TRANSITION]: 400,
+  [ErrorCode.RATE_LIMIT_EXCEEDED]: 429,
 };
 
 export interface RecFnErrorOptions {

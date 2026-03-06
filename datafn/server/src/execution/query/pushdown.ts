@@ -158,9 +158,11 @@ async function pushdownCore(
   }
 
   // 3. Push limit/offset to adapter
-  //    EXE-016: Also pass limit for cursor queries to avoid unbounded full-table fetches
+  // For cursor queries, apply cursor trimming in-memory against the full
+  // sorted row set; applying limit at adapter level can truncate rows that
+  // should appear on later pages (TV-PUSHDOWN-008).
   const pushdownLimit =
-    query.limit != null
+    !hasCursor && query.limit != null
       ? query.limit + 1 // +1 to detect next page
       : undefined;
   // Offset only applies to non-cursor queries (cursor handles position)

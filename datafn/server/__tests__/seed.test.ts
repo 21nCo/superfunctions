@@ -6,8 +6,6 @@
 import { describe, it, expect } from "vitest";
 import { createDatafnServer } from "../src/server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { AuthContext } from "@superfunctions/auth";
-
 // Default schema for testing
 const defaultSchema = {
   resources: [
@@ -65,16 +63,14 @@ describe("@datafn/server seed endpoint", () => {
   it("TV-SEC-033: Seed uses auth-derived namespace, not hardcoded 'datafn'", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
 
-    const authContextProvider = {
-      getContext: (ctx: any): AuthContext => ({
-        userId: ctx?.parsedBody?.userId || "u1",
-      }),
+    const namespaceProvider = {
+      getNamespace: (ctx: any) => `user:${ctx?.parsedBody?.userId || "u1"}`,
     };
 
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: defaultSchema,
       db,
-      authContextProvider,
+      namespaceProvider,
       rowLevelNamespace: false, // Disable RLN to avoid pre-existing wrapWithRowLevelNamespace issue
     });
 

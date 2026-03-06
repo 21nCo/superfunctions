@@ -7,7 +7,7 @@ import { describe, it, expect, vi } from "vitest";
 import { WebSocketManager, type WebSocketClient } from "../src/ws.js";
 import { validateQueryAuthz, validateMutationAuthz } from "../src/validation/authz.js";
 import { validateMutation, validatePushMutations } from "../src/validation/mutation.js";
-import { validateFilters } from "../src/validation/query.js";
+import { validateFilters, validateQuery } from "../src/validation/query.js";
 import { buildSchemaIndex } from "../src/validation/index.js";
 import { readBodyWithLimit } from "../src/http/middleware.js";
 import type { DatafnSchema } from "@datafn/core";
@@ -39,7 +39,7 @@ const schemaIndex = buildSchemaIndex(testSchema);
 // ─── SEC-001 / SEC-002: WebSocket Auth ────────────────────────────────
 
 describe("SEC-001/002: WebSocket Auth", () => {
-  it("addClient requires authContext and stores server-derived namespace", () => {
+  it("addClient requires namespace and stores server-derived namespace", () => {
     const manager = new WebSocketManager();
     const client: WebSocketClient = { send: vi.fn() };
 
@@ -413,5 +413,74 @@ describe("SEC-008: Prototype pollution protection", () => {
       schemaIndex,
     );
     expect(result.ok).toBe(true);
+  });
+
+  // FIX-SEC-008: Query-level, aggregations, and having pollution checks
+
+  it("TV-SEC-008-P1: clean query with aggregations/having passes", () => {
+    const result = validateFilters(
+      { name: { $eq: "test" } },
+      "users",
+      schemaIndex,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("TV-SEC-008-N1: __proto__ in aggregations is rejected", () => {
+
+    const aggObj = Object.create(null);
+    aggObj["__proto__"] = { op: "count", field: "*" };
+
+    const result = validateQuery(
+      { resource: "users", aggregations: aggObj },
+      schemaIndex,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("DFQL_INVALID");
+      expect(result.error.message).toContain("__proto__");
+    }
+  });
+
+  it("TV-SEC-008-N2: constructor in nested query object is rejected", () => {
+
+    const result = validateQuery(
+      { resource: "users", meta: { constructor: { prototype: {} } } },
+      schemaIndex,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("DFQL_INVALID");
+      expect(result.error.message).toContain("constructor");
+    }
+  });
+
+  it("FIX-SEC-008: __proto__ in having clause is rejected", () => {
+
+    const havingObj = Object.create(null);
+    havingObj["__proto__"] = { $gt: 0 };
+
+    const result = validateQuery(
+      { resource: "users", having: havingObj, aggregations: { total: { op: "count", field: "*" } } },
+      schemaIndex,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("DFQL_INVALID");
+      expect(result.error.message).toContain("__proto__");
+    }
+  });
+
+  it("FIX-SEC-008: prototype in aggregation value is rejected", () => {
+
+    const result = validateQuery(
+      { resource: "users", aggregations: { total: { op: "count", field: "*", prototype: {} } } },
+      schemaIndex,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("DFQL_INVALID");
+      expect(result.error.message).toContain("prototype");
+    }
   });
 });

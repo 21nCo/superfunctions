@@ -12,6 +12,7 @@
     "@datafn/client": "*",
     "@datafn/core": "*",
     "@datafn/svelte": "*",
+    "todo-app-server": "*",
     "svelte": "^4.2.7"
   },
   "devDependencies": {

@@ -42,7 +42,7 @@ type DatafnChangelogEntry = {
   mutationId: string;    // Unique mutation identifier
   mutation: Record<string, unknown>;  // The full mutation payload
   timestampMs: number;   // Local timestamp
-  userId?: string;       // User ID from auth context
+  actorId?: string;      // Audit attribution (who performed the action)
   timestamp?: string;    // ISO 8601 timestamp
 };
 ```

@@ -57,6 +57,34 @@ function isNestedSelectToken(token: string): boolean {
 }
 
 /**
+ * EXE-014: Compute FK fields to omit for a target resource, cached per (schema, targetResource) pair.
+ * Avoids O(N) recomputation inside per-record loops.
+ */
+const _fkOmitCache = new WeakMap<DatafnSchema, Map<string, Set<string>>>();
+
+function getFkFieldsToOmit(schema: DatafnSchema, targetResource: string): Set<string> {
+  let perSchema = _fkOmitCache.get(schema);
+  if (!perSchema) {
+    perSchema = new Map();
+    _fkOmitCache.set(schema, perSchema);
+  }
+  let cached = perSchema.get(targetResource);
+  if (cached) return cached;
+
+  cached = new Set<string>();
+  if (schema.relations) {
+    for (const rel of schema.relations) {
+      if (rel.from === targetResource && rel.type === "many-one") {
+        const fkField = rel.fkField || `${rel.relation}Id`;
+        cached.add(fkField);
+      }
+    }
+  }
+  perSchema.set(targetResource, cached);
+  return cached;
+}
+
+/**
  * Materialize select tokens for a record
  */
 export function materializeSelect(
@@ -70,21 +98,8 @@ export function materializeSelect(
   const resourceSchema = schema.resources.find((r) => r.name === resource);
   if (!resourceSchema) return { id: record.id };
 
-  // Collect FK field names from relations to auto-omit them
-  const fkFieldsToOmit = new Set<string>();
-  if (schema.relations) {
-    for (const rel of schema.relations) {
-      if (rel.from === resource && rel.type === "many-one") {
-        const fkField = rel.fkField || `${rel.relation}Id`;
-        fkFieldsToOmit.add(fkField);
-      }
-      // Also check inverse many-one (which is one-many from this resource)
-      if (rel.to === resource && rel.type === "one-many") {
-        const fkField = rel.fkField || `${rel.inverse}Id`;
-        // Don't add FK for inverse, as the FK is on the other side
-      }
-    }
-  }
+  // EXE-014: Use cached FK omit-set computation
+  const fkFieldsToOmit = getFkFieldsToOmit(schema, resource);
 
   // Merge user-provided omit with auto-omitted FK fields
   const effectiveOmit = omit
@@ -141,6 +156,10 @@ export function materializeSelect(
 
       // For each intermediate record, apply the rest of the select token
       if (Array.isArray(intermediateRecords)) {
+        // EXE-014: Cache FK omit-set outside per-record loop
+        const targetFkFieldsToOmit = getFkFieldsToOmit(schema, relation.to as string);
+        const targetEffectiveOmit = omit ? [...omit] : [];
+
         const newRecords = intermediateRecords.map((intermediateRecord) => {
           const nestedResult = materializeSelect(
             intermediateRecord,
@@ -166,29 +185,11 @@ export function materializeSelect(
             mergedRecord = nestedResult;
           }
 
-          // Calculate FK fields to omit for target resource
-          const targetFkFieldsToOmit = new Set<string>();
-          if (schema.relations) {
-            for (const rel of schema.relations) {
-              // Direct many-one: this resource has FK pointing to another
-              if (rel.from === relation.to && rel.type === "many-one") {
-                const targetFkField = rel.fkField || `${rel.relation}Id`;
-                targetFkFieldsToOmit.add(targetFkField);
-              }
-              // Inverse one-many: another resource points to this one, so this has FK
-              if (rel.to === relation.to && rel.type === "one-many") {
-                const targetFkField = rel.fkField || `${rel.inverse}Id`;
-                targetFkFieldsToOmit.add(targetFkField);
-              }
-            }
-          }
-
           // Explicitly remove FK fields from merged record before applying remaining omit
           for (const fkField of targetFkFieldsToOmit) {
             delete mergedRecord[fkField];
           }
 
-          const targetEffectiveOmit = omit ? [...omit] : [];
           return applyOmit(mergedRecord, targetEffectiveOmit);
         });
         result[firstRelation] = newRecords;
@@ -491,16 +492,8 @@ function expandRelation(
     const relatedRecord = store.getRecord(relation.to as string, relatedId);
     if (!relatedRecord) return null;
 
-    // Calculate FK fields to omit for the TARGET resource
-    const targetFkFieldsToOmit = new Set<string>();
-    if (schema.relations) {
-      for (const rel of schema.relations) {
-        if (rel.from === relation.to && rel.type === "many-one") {
-          const targetFkField = rel.fkField || `${rel.relation}Id`;
-          targetFkFieldsToOmit.add(targetFkField);
-        }
-      }
-    }
+    // EXE-014: Use cached FK omit-set for target resource
+    const targetFkFieldsToOmit = getFkFieldsToOmit(schema, relation.to as string);
     const targetEffectiveOmit = omit
       ? [...omit, ...Array.from(targetFkFieldsToOmit)]
       : Array.from(targetFkFieldsToOmit);
@@ -606,16 +599,8 @@ function expandRelation(
       return aId.localeCompare(bId);
     });
 
-    // Calculate FK fields for target resource
-    const targetFkFieldsToOmit = new Set<string>();
-    if (schema.relations) {
-      for (const rel of schema.relations) {
-        if (rel.from === relation.to && rel.type === "many-one") {
-          const targetFkField = rel.fkField || `${rel.relation}Id`;
-          targetFkFieldsToOmit.add(targetFkField);
-        }
-      }
-    }
+    // EXE-014: Use cached FK omit-set for target resource
+    const targetFkFieldsToOmit = getFkFieldsToOmit(schema, relation.to as string);
     const targetEffectiveOmit = omit
       ? [...omit, ...Array.from(targetFkFieldsToOmit)]
       : Array.from(targetFkFieldsToOmit);
