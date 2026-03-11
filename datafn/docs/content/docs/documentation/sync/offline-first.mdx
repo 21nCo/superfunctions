@@ -57,7 +57,8 @@ The sync engine listens to the browser `online` and `offline` events:
 - **Coming online**: The push interval resumes, an immediate pull is triggered, and pending mutations are pushed.
 
 ```typescript
-client.events.on("connectivity_changed", (event) => {
+client.subscribe((event) => {
+  if (event.type !== "connectivity_changed") return;
   if (event.context.isOnline) {
     console.log("Back online -- syncing...");
   } else {

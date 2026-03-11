@@ -2,7 +2,7 @@
  * Record CRUD operations (insert, merge, replace, delete)
  */
 
-import type { DatafnSchema, DatafnResourceSchema } from "@datafn/core";
+import type { DatafnSchema, DatafnResourceSchema } from "../../core-types.js";
 import type { DataStore } from "../store.js";
 
 /**

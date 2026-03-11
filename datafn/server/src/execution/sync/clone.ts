@@ -2,9 +2,9 @@
  * Clone implementation - full data sync with change tracking
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import { getJoinStoreKey, getJoinTableName } from "@datafn/core";
-import type { Adapter } from "@superfunctions/db";
+import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { DatafnLogger } from "../../logger.js";
@@ -29,7 +29,7 @@ export interface CloneResult {
   /** SCA-002: true when auto-pagination was triggered because total > maxCloneRecords */
   paginated?: boolean;
   error?: {
-    code: string;
+    code: DatafnErrorCode;
     message: string;
     details?: Record<string, unknown>;
   };
@@ -127,7 +127,7 @@ export async function executeClone(
 
     try {
       // Build where clause for afterId pagination
-      const where = afterId
+      const where: WhereClause[] = afterId
         ? [{ field: "id", operator: "gt", value: afterId }]
         : [];
 

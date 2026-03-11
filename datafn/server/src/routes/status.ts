@@ -16,6 +16,7 @@ export interface StatusResult {
     maxLimit: number;
     maxTransactSteps?: number;
     maxPayloadBytes?: number;
+    maxPullLimit?: number;
   };
   serverTimeMs: number;
 }
@@ -40,6 +41,7 @@ export function createStatusHandler(
     maxLimit: number;
     maxTransactSteps?: number;
     maxPayloadBytes?: number;
+    maxPullLimit?: number;
   },
   getServerTime: () => number = () => Date.now(),
   db?: Adapter,

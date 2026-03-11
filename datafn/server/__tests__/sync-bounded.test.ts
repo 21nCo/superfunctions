@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { ChangeTrackingService, recordChangesWithRetry } from "../src/execution/sync/change-tracking.js";
-import { DatabaseSequenceStore, FallbackSequenceStore } from "../src/execution/sync/sequence-store.js";
+import { DatabaseSequenceStore, ChainedSequenceStore } from "../src/execution/sync/sequence-store.js";
 import { createDatafnServer } from "../src/server.js";
 
 const defaultSchema = {
@@ -372,7 +372,7 @@ describe("BATCH-SEQ-001/002/003: DatabaseSequenceStore.getNextN()", () => {
     await expect(store.getNextN("datafn", 1001)).rejects.toThrow("count must be a positive integer");
   });
 
-  it("TV-BATCH-SEQ-004: FallbackSequenceStore.getNextN delegates to primary when healthy", async () => {
+  it("TV-BATCH-SEQ-004: ChainedSequenceStore.getNextN delegates to primary when healthy", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     await db.initialize();
     const primary = new DatabaseSequenceStore(db);
@@ -380,7 +380,7 @@ describe("BATCH-SEQ-001/002/003: DatabaseSequenceStore.getNextN()", () => {
     await fallbackDb.initialize();
     const fallback = new DatabaseSequenceStore(fallbackDb);
 
-    const fallbackStore = new FallbackSequenceStore(primary, fallback);
+    const fallbackStore = new ChainedSequenceStore(primary, fallback);
     const result = await fallbackStore.getNextN("datafn", 3);
     expect(result).toEqual([1, 2, 3]);
 

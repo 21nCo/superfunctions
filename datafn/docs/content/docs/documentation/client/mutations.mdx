@@ -1,15 +1,20 @@
 ---
 title: "Mutations"
-description: "Create, update, and delete records."
+description: "Execute core and capability-aware mutations from the DataFn client."
 ---
 
 ## Mutation Operations
 
-DataFn supports four mutation operations: `insert`, `merge`, `replace`, and `delete`. For the complete DFQL mutation specification including guards and relation payloads, see the [DFQL Mutations reference](/docs/dfql/mutations).
+Client table handles support:
+
+- core operations: `insert`, `merge`, `replace`, `delete`,
+- capability operations (schema-gated): `trash`, `restore`, `archive`, `unarchive`, `share`, `unshare`.
+
+For full DFQL payload details, see [DFQL Mutations](/docs/dfql/mutations).
+
+## Core Mutations
 
 ### Insert
-
-Create a new record. The client auto-generates an ID using the resource's `idPrefix` if you omit `id`.
 
 ```typescript
 const result = await client.table("todos").mutate({
@@ -19,47 +24,28 @@ const result = await client.table("todos").mutate({
     completed: false,
   },
 });
-// result.ok: true
-// result.affectedIds: ["td:a1b2c3d4..."]
 ```
 
-You can provide your own ID:
-
-```typescript
-await client.table("todos").mutate({
-  operation: "insert",
-  id: "td:my-custom-id",
-  record: {
-    title: "Custom ID todo",
-    completed: false,
-  },
-});
-```
+If `id` is omitted, the table handle auto-generates one using the resource `idPrefix`.
 
 ### Merge
-
-Partial upsert. Updates only the specified fields, leaving other fields unchanged. Creates the record if it does not exist.
 
 ```typescript
 await client.table("todos").mutate({
   operation: "merge",
-  id: "td:a1b2c3d4",
-  record: {
-    completed: true,
-  },
+  id: "td:1",
+  record: { completed: true },
 });
 ```
 
 ### Replace
 
-Full replace. Overwrites the entire record. Fields not included in `record` are cleared.
-
 ```typescript
 await client.table("todos").mutate({
   operation: "replace",
-  id: "td:a1b2c3d4",
+  id: "td:1",
   record: {
-    title: "Completely new content",
+    title: "Rewritten task",
     completed: false,
     priority: 1,
   },
@@ -68,18 +54,33 @@ await client.table("todos").mutate({
 
 ### Delete
 
-Remove a record by ID.
-
 ```typescript
 await client.table("todos").mutate({
   operation: "delete",
-  id: "td:a1b2c3d4",
+  id: "td:1",
 });
 ```
 
-## Batch Mutations
+`delete` is hard delete.
 
-Pass an array of mutations to execute them in a single request.
+## Capability Convenience Methods
+
+These methods appear only when the resource enables corresponding capabilities:
+
+```typescript
+await client.table("todos").trash?.("td:1");
+await client.table("todos").restore?.("td:1");
+
+await client.table("todos").archive?.("td:1");
+await client.table("todos").unarchive?.("td:1");
+
+await client.table("docs").share?.("doc:1", "user:alice", "editor");
+await client.table("docs").unshare?.("doc:1", "user:alice");
+```
+
+See [Capabilities](/docs/documentation/concepts/capabilities) and [Tables](/docs/documentation/client/tables).
+
+## Batch Mutations
 
 ```typescript
 await client.table("todos").mutate([
@@ -89,73 +90,69 @@ await client.table("todos").mutate([
 ]);
 ```
 
+## Readonly Capability Field Sanitization
+
+When `timestamps`, `audit`, or `trash` are enabled, client mutation payloads are sanitized before outbound transport and changelog persistence:
+
+- `createdAt`, `updatedAt`
+- `createdBy`, `updatedBy`
+- `trashedAt`, `trashedBy`
+
+This keeps server-owned fields authoritative and prevents push-route validation issues.
+
+## Optimistic Capability Injection
+
+In local-first/offline flows, optimistic records are enriched for enabled capabilities:
+
+- insert: timestamps + audit create/update fields
+- merge/replace: update timestamp/audit fields
+
+This keeps local UI state aligned with server lifecycle semantics.
+
 ## Context
 
-Attach arbitrary JSON-serializable metadata to a mutation. Context is propagated through events, making it available to subscribers.
+Attach JSON-serializable metadata with `context`:
 
 ```typescript
 await client.table("todos").mutate({
   operation: "merge",
-  id: "td:a1b2c3d4",
+  id: "td:1",
   record: { completed: true },
-  context: {
-    completedBy: "user-123",
-    reason: "task finished",
-  },
+  context: { source: "keyboard-shortcut", userId: "user-123" },
 });
 ```
 
-## Silent Mutations
-
-Set `silent: true` to suppress event emission. The mutation still executes, but no `mutation_applied` or `mutation_rejected` event is fired. Signals will not auto-refresh from silent mutations.
+## Silent and System Flags
 
 ```typescript
 await client.table("todos").mutate({
   operation: "merge",
-  id: "td:a1b2c3d4",
-  record: { lastSeen: Date.now() },
+  id: "td:1",
+  record: { syncedAt: Date.now() },
   silent: true,
-});
-```
-
-## System Mutations
-
-Mark a mutation as system-initiated with `system: true`. The flag is propagated in the emitted event payload, allowing subscribers to distinguish system operations from user actions.
-
-```typescript
-await client.table("todos").mutate({
-  operation: "merge",
-  id: "td:a1b2c3d4",
-  record: { syncedAt: new Date().toISOString() },
   system: true,
 });
 ```
 
-## Debounced Mutations
+- `silent: true` suppresses mutation events.
+- `system: true` marks event payloads as system-initiated.
 
-For high-frequency updates (such as typing in a text field), use `debounceKey` and `debounceMs` to coalesce mutations. Only the last mutation within the debounce window is committed to the changelog and pushed.
+## Debounced Mutations
 
 ```typescript
 await client.table("todos").mutate({
   operation: "merge",
-  id: "td:a1b2c3d4",
+  id: "td:1",
   record: { title: "Buy gr" },
-  debounceKey: "todo-title-td:a1b2c3d4",
+  debounceKey: "todo-title-td:1",
   debounceMs: 1500,
 });
 ```
 
-The local storage is updated immediately (optimistic), but the changelog entry and event emission are delayed until the debounce window elapses. Subsequent mutations with the same `debounceKey` reset the timer and coalesce the record fields.
+Use `client.flush(key)` or `client.flushAll()` to force execution.
 
-Use `client.flush()` or `client.flushAll()` to force immediate execution of pending debounced mutations:
+## Events
 
-```typescript
-await client.flush("todo-title-td:a1b2c3d4");
-await client.flushAll();
-```
+Successful mutations emit `mutation_applied`; failures emit `mutation_rejected`.
 
-## Event Emission
-
-On success, each mutation emits a `mutation_applied` event. On failure, a `mutation_rejected` event is emitted. Events include the `action` (operation name) and `fields` (sorted list of affected field names, excluding `id`).
-
-See the [Events](/docs/documentation/client/events) page for details on subscribing to these events.
+See [Events](/docs/documentation/client/events).

@@ -20,6 +20,7 @@ interface DatafnRemoteAdapter {
   clone(payload: unknown): Promise<unknown>;
   pull(payload: unknown): Promise<unknown>;
   push(payload: unknown): Promise<unknown>;
+  reconcile(payload: unknown): Promise<unknown>;
 }
 ```
 
@@ -36,25 +37,13 @@ Each method posts JSON to the corresponding server endpoint and returns the resp
 | `clone` | `POST /datafn/clone` |
 | `pull` | `POST /datafn/pull` |
 | `push` | `POST /datafn/push` |
+| `reconcile` | `POST /datafn/reconcile` |
 
-## Timeout Handling
+## Timeout and Error Behavior
 
-The default transport uses `AbortController` with a configurable timeout. If a request exceeds the timeout, it is aborted and a `TRANSPORT_ERROR` envelope is returned.
+The default HTTP transport does not expose a built-in timeout option. It forwards an optional `signal` only for `query()` payloads and maps `AbortError` to a `DFQL_ABORTED` envelope.
 
-## Error Wrapping
-
-Network errors (connection refused, DNS failure, etc.) are caught and wrapped in a `TRANSPORT_ERROR` envelope rather than throwing:
-
-```typescript
-{
-  ok: false,
-  error: {
-    code: "TRANSPORT_ERROR",
-    message: "Network request failed: ...",
-    details: { path: "$" }
-  }
-}
-```
+Other network failures are thrown as errors, and non-OK HTTP responses throw unless the response body is already a DataFn envelope.
 
 ## Extension Transport
 

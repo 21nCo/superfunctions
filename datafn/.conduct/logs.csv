@@ -139,3 +139,22 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-05T14:14:06Z,gpt-5,CLI,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-03-05-m2k7x9r4-completion.md
 2026-03-05T16:56:59Z,gpt-5 (Codex),Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-05-audit-fix-nv5royb4-spec
 2026-03-06T18:00:00Z,claude-opus-4-6,VS Code (Claude Code Extension),spec,unknown-agent,,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec
+2026-03-06T18:05:00Z,claude-opus-4-6,VS Code (Claude Code Extension),audit,unknown-agent,,datafn/.conduct/audits/2026-03-06-py7k4m9x-full-audit.md
+2026-03-07T00:05:00Z,claude-opus-4-6,VS Code (Claude Code Extension),spec,unknown-agent,,datafn/.conduct/specs/2026-03-06-audit-fix-r7k9m4x3-spec
+2026-03-07T10:30:00Z,claude-opus-4-6,VS Code (Claude Code Extension),execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-03-06-audit-fix-r7k9m4x3-spec/phase-reports/PHASE_00-2026-03-07-r7m4x9k2-report.md
+2026-03-07T22:45:00Z,claude-opus-4-6,VS Code (Claude Code Extension),execute,unknown-agent,PHASE_07,datafn/.conduct/specs/2026-03-06-audit-fix-r7k9m4x3-spec/phase-reports/PHASE_07-2026-03-07-k9r4m7x2-report.md
+2026-03-07T05:07:47Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,datafn/.conduct/audits/2026-03-07-q8w2m4r9-full-audit.md
+2026-03-07T05:31:24Z,gpt-5-codex,Codex Desktop,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-07-y8m4k2p7-issue.md
+2026-03-07T05:32:52Z,gpt-5-codex,Codex Desktop,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-07-y8m4k2p7-issue.md
+2026-03-07T05:38:17Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-03-07-n6k4x9p2-completion.md
+2026-03-07T05:47:46Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-03-07-v4m8k2p1-completion.md
+2026-03-07T05:53:28Z,gpt-5-codex,Codex Desktop,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-07-k2m9x4p7-issue.md
+2026-03-07T06:00:15Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,datafn/.conduct/issue-completions/2026-03-07-p4m8x2k7-completion.md
+2026-03-07T07:09:10Z,unknown,CLI,spec,unknown-agent,,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec
+2026-03-07T12:53:30Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_00-2026-03-07-m4r9k2x7-report.md
+2026-03-07T13:07:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_01-2026-03-07-k9x4r2m7-report.md
+2026-03-07T13:26:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_02-2026-03-07-r5k8m2x4-report.md
+2026-03-07T15:03:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_03,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_03-2026-03-07-k4n9m2x7-report.md
+2026-03-07T15:46:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_04,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_04-2026-03-07-p7n3k5q2-report.md
+2026-03-07T16:20:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_05,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_05-2026-03-07-n2k8r4q9-report.md
+2026-03-07T16:45:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_06,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_06-2026-03-07-q9r5k2m7-report.md

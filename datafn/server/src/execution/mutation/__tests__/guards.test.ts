@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createDatafnServer } from "../../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../../core-types.js";
 
 // Schema for testing
 const schema: DatafnSchema = {
@@ -56,7 +56,7 @@ describe("MUT-GUARD-001: Optimistic Concurrency Guards", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -89,7 +89,7 @@ describe("MUT-GUARD-001: Optimistic Concurrency Guards", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     // MUST return top-level CONFLICT error
@@ -125,7 +125,7 @@ describe("MUT-GUARD-001: Optimistic Concurrency Guards", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     // MUST return top-level CONFLICT error

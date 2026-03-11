@@ -33,7 +33,7 @@ const query: DfqlQuery = {
 
 ### Mutations
 
-Create, update, or delete records. Mutations support single and batch operations, relation management, conditional guards, and debounced writes.
+Create, update, or delete records. Mutations support core operations (`insert`, `merge`, `replace`, `delete`), capability operations (`trash`, `restore`, `archive`, `unarchive`, `share`, `unshare`), relation management, conditional guards, and debounced writes.
 
 ```typescript
 const mutation: DfqlMutation = {
@@ -73,6 +73,8 @@ import type {
 ```
 
 The `DfqlQueryFragment` and `DfqlMutationFragment` types omit the `resource` and `version` fields, which are useful when working through client table handles that inject those fields automatically.
+
+Capability semantics are schema-driven. See [Capabilities](/docs/documentation/concepts/capabilities).
 
 ## Normalization and Caching
 

@@ -16,9 +16,9 @@ The `generate` command reads your DataFn schema and produces TypeScript type def
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--schema` | `string` | auto-discovered | Path to schema file. |
-| `--adapter` | `drizzle \| kysely \| prisma` | `drizzle` | ORM adapter for database schema generation. |
-| `--database` | `postgres \| mysql \| sqlite` | `postgres` | Target database dialect. |
-| `--output` | `string` | `./src` | Output directory for generated files. |
+| `--adapter` | `drizzle` | -- | Required. ORM adapter for schema generation. |
+| `--database` | `postgres \| mysql \| sqlite` | -- | Required. Target database dialect. |
+| `--output` | `string` | `./` | Output directory for generated files. |
 
 ## What Gets Generated
 
@@ -34,10 +34,10 @@ Running `datafn generate` produces two outputs:
 datafn generate --adapter drizzle --database postgres --output ./src/generated
 
 # Generate from a specific schema file
-datafn generate --schema ./config/schema.datafn.ts --output ./src/db
+datafn generate --adapter drizzle --database postgres --schema ./config/schema.datafn.ts --output ./src/db
 
 # Generate for SQLite
-datafn generate --database sqlite --output ./src/generated
+datafn generate --adapter drizzle --database sqlite --output ./src/generated
 ```
 
 Given this schema:

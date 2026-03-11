@@ -8,6 +8,14 @@
     type AppMode,
     type AuditEntry,
   } from "./lib/datafn";
+  import "@21n/fonts/styles.css";
+
+  type SearchResultItem = {
+    id: string;
+    resource: string;
+    score: number;
+    data: Record<string, unknown>;
+  };
 
   // ── Mode toggle (sync vs local-only) ──────────────────────────────────
   let currentMode: AppMode = "sync";
@@ -33,8 +41,15 @@
   let newCategoryName = "";
   let newCategoryColor = "#646cff";
   let selectedCategoryId: string | null = null;
+  let selectedTodoId: string | null = null;
   let filterView: "all" | "active" | "completed" = "all";
   let activeTab = "todos";
+  let searchQuery = "";
+  let searchResults: SearchResultItem[] = [];
+  let isSearching = false;
+  let searchError = "";
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let searchAbortController: AbortController | null = null;
 
   // ── Event log ──────────────────────────────────────────────────────────
   let eventEntries: Array<{ ts: number; type: string; detail: string }> = [];
@@ -46,12 +61,19 @@
   const unsubClientForEvents = client.subscribeClient((c) => {
     unsubEvents?.();
     unsubEvents = c.subscribe((event) => {
-      console.log("[DEBUG] Event:", event.type, (event as any).resource, (event as any).action, (event as any).ids);
+      console.log(
+        "[DEBUG] Event:",
+        event.type,
+        (event as any).resource,
+        (event as any).action,
+        (event as any).ids,
+      );
       eventEntries = [
         {
           ts: event.timestampMs,
           type: event.type,
-          detail: `${(event as any).action ?? ""} ${(event as any).resource ?? ""} ${((event as any).ids ?? []).join(",")}`.trim(),
+          detail:
+            `${(event as any).action ?? ""} ${(event as any).resource ?? ""} ${((event as any).ids ?? []).join(",")}`.trim(),
         },
         ...eventEntries,
       ].slice(0, MAX_EVENTS);
@@ -60,36 +82,55 @@
 
   // ── Signals — lifecycle-aware LiveSignals (survive switchContext automatically) ──
   const allTodosStore = toSvelteStore(
-    client.table("todos").signal({ sort: ["-createdAt"], select: ["*", "tags.*"] })
+    client
+      .table("todos")
+      .signal({ sort: ["-createdAt"], select: ["*", "tags.*"] }),
   );
 
   const activeTodosStore = toSvelteStore(
-    client.table("todos").signal({ filters: { completed: false }, sort: ["createdAt:desc"], select: ["*", "tags.*"] })
+    client
+      .table("todos")
+      .signal({
+        filters: { completed: false },
+        sort: ["createdAt:desc"],
+        select: ["*", "tags.*"],
+      }),
   );
 
   const completedTodosStore = toSvelteStore(
-    client.table("todos").signal({ filters: { completed: true }, sort: ["createdAt:desc"], select: ["*", "tags.*"] })
+    client
+      .table("todos")
+      .signal({
+        filters: { completed: true },
+        sort: ["createdAt:desc"],
+        select: ["*", "tags.*"],
+      }),
   );
 
   const categoriesStore = toSvelteStore(
-    client.table("categories").signal({ sort: ["name"] })
+    client.table("categories").signal({ sort: ["name"] }),
   );
 
   // KV signals — reactive key-value preferences
   const themeSignalStore = toSvelteStore(
-    client.kv.signal<string>("pref:theme", { defaultValue: "dark" })
+    client.kv.signal<string>("pref:theme", { defaultValue: "dark" }),
   );
 
   const sortSignalStore = toSvelteStore(
-    client.kv.signal<string>("pref:sort", { defaultValue: "createdAt:desc" })
+    client.kv.signal<string>("pref:sort", { defaultValue: "createdAt:desc" }),
   );
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
   onMount(async () => {
     // Debug: test a direct query to see what comes back
     try {
-      const directResult = await client.table("todos").query({ sort: ["createdAt:desc"] });
-      console.log("[DEBUG] Direct query result:", JSON.stringify(directResult, null, 2));
+      const directResult = await client
+        .table("todos")
+        .query({ sort: ["createdAt:desc"] });
+      console.log(
+        "[DEBUG] Direct query result:",
+        JSON.stringify(directResult, null, 2),
+      );
     } catch (err) {
       console.error("[DEBUG] Direct query failed:", err);
     }
@@ -99,8 +140,13 @@
         await client.sync.start();
         console.log("[DEBUG] Sync started OK");
         try {
-          const postSyncResult = await client.table("todos").query({ sort: ["createdAt:desc"] });
-          console.log("[DEBUG] Post-sync query result:", JSON.stringify(postSyncResult, null, 2));
+          const postSyncResult = await client
+            .table("todos")
+            .query({ sort: ["createdAt:desc"] });
+          console.log(
+            "[DEBUG] Post-sync query result:",
+            JSON.stringify(postSyncResult, null, 2),
+          );
         } catch (err2) {
           console.error("[DEBUG] Post-sync query failed:", err2);
         }
@@ -111,6 +157,12 @@
   });
 
   onDestroy(() => {
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
+    }
+    searchAbortController?.abort();
+    searchAbortController = null;
     unsubEvents?.();
     unsubClientForEvents();
   });
@@ -124,7 +176,14 @@
         : $allTodosStore;
 
   $: console.log("[DEBUG] $allTodosStore:", JSON.stringify($allTodosStore));
-  $: console.log("[DEBUG] typeof $allTodosStore:", typeof $allTodosStore, "keys:", $allTodosStore && typeof $allTodosStore === "object" ? Object.keys($allTodosStore) : "N/A");
+  $: console.log(
+    "[DEBUG] typeof $allTodosStore:",
+    typeof $allTodosStore,
+    "keys:",
+    $allTodosStore && typeof $allTodosStore === "object"
+      ? Object.keys($allTodosStore)
+      : "N/A",
+  );
 
   $: todoData = visibleTodos?.data ?? [];
   $: allCount = ($allTodosStore?.data ?? []).length;
@@ -134,7 +193,14 @@
   $: currentTheme = $themeSignalStore?.data ?? "dark";
   $: currentSort = $sortSignalStore?.data ?? "createdAt:desc";
 
-  $: console.log("[DEBUG] todoData:", JSON.stringify(todoData), "length:", todoData?.length, "isArray:", Array.isArray(todoData));
+  $: console.log(
+    "[DEBUG] todoData:",
+    JSON.stringify(todoData),
+    "length:",
+    todoData?.length,
+    "isArray:",
+    Array.isArray(todoData),
+  );
 
   // ── Mutations ──────────────────────────────────────────────────────────
 
@@ -278,6 +344,157 @@
     await client.kv.set("pref:sort", sort);
   }
 
+  function getSearchError(payload: unknown): { code?: string; message?: string } | null {
+    if (!payload || typeof payload !== "object") return null;
+    const envelope = payload as Record<string, any>;
+    if (envelope.ok === false && envelope.error && typeof envelope.error === "object") {
+      return {
+        code: typeof envelope.error.code === "string" ? envelope.error.code : undefined,
+        message:
+          typeof envelope.error.message === "string"
+            ? envelope.error.message
+            : "Search failed",
+      };
+    }
+    return null;
+  }
+
+  function extractSearchResults(payload: unknown): SearchResultItem[] {
+    if (!payload || typeof payload !== "object") return [];
+    const envelope = payload as Record<string, any>;
+    const result =
+      envelope.ok === true && envelope.result && typeof envelope.result === "object"
+        ? envelope.result
+        : envelope;
+    if (!Array.isArray((result as any).results)) return [];
+    return (result as any).results
+      .filter((row: unknown) => row && typeof row === "object")
+      .map((row: any) => ({
+        id: String(row.id ?? ""),
+        resource: String(row.resource ?? "unknown"),
+        score: typeof row.score === "number" ? row.score : 0,
+        data: row.data && typeof row.data === "object" ? row.data : {},
+      }))
+      .filter((row: SearchResultItem) => row.id !== "");
+  }
+
+  async function runSearch(query: string) {
+    if (searchAbortController) {
+      searchAbortController.abort();
+    }
+    const controller = new AbortController();
+    searchAbortController = controller;
+    isSearching = true;
+    searchError = "";
+
+    try {
+      const response = await client.search({
+        query,
+        resources: ["todos", "categories"],
+        limit: 20,
+        select: ["id", "text", "completed", "priority", "name", "color"],
+        signal: controller.signal,
+      });
+      const error = getSearchError(response);
+      if (error?.code === "DFQL_ABORTED") {
+        return;
+      }
+      if (error) {
+        throw error;
+      }
+      searchResults = extractSearchResults(response);
+    } catch (err: any) {
+      if (err?.code === "DFQL_ABORTED" || err?.name === "AbortError") {
+        return;
+      }
+      searchResults = [];
+      searchError =
+        typeof err?.message === "string" ? err.message : "Search request failed";
+      console.error("[search] request failed:", err);
+    } finally {
+      if (searchAbortController === controller) {
+        searchAbortController = null;
+      }
+      isSearching = false;
+    }
+  }
+
+  function handleSearchInput(value: string) {
+    searchQuery = value;
+    searchError = "";
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
+    }
+
+    const query = value.trim();
+    if (!query) {
+      searchAbortController?.abort();
+      searchAbortController = null;
+      isSearching = false;
+      searchResults = [];
+      return;
+    }
+
+    searchDebounceTimer = setTimeout(() => {
+      runSearch(query);
+    }, 300);
+  }
+
+  function clearSearch() {
+    handleSearchInput("");
+  }
+
+  function openSearchResult(result: SearchResultItem) {
+    if (result.resource === "todos") {
+      activeTab = "todos";
+      filterView = "all";
+      selectedTodoId = result.id;
+      selectedCategoryId = null;
+      return;
+    }
+    if (result.resource === "categories") {
+      activeTab = "categories";
+      selectedCategoryId = result.id;
+      selectedTodoId = null;
+    }
+  }
+
+  function searchTitle(result: SearchResultItem): string {
+    if (result.resource === "todos") {
+      const text = result.data.text;
+      return typeof text === "string" && text.trim() !== ""
+        ? text
+        : `Todo ${result.id}`;
+    }
+    if (result.resource === "categories") {
+      const name = result.data.name;
+      return typeof name === "string" && name.trim() !== ""
+        ? name
+        : `Category ${result.id}`;
+    }
+    return `${result.resource} · ${result.id}`;
+  }
+
+  function searchMeta(result: SearchResultItem): string {
+    if (result.resource === "todos") {
+      const completed = result.data.completed === true ? "completed" : "active";
+      const priority =
+        typeof result.data.priority === "number"
+          ? `P${result.data.priority}`
+          : "P3";
+      return `${priority} · ${completed}`;
+    }
+    if (result.resource === "categories") {
+      const color =
+        typeof result.data.color === "string" && result.data.color.trim() !== ""
+          ? result.data.color
+          : "no color";
+      return `color ${color}`;
+    }
+    return `id ${result.id}`;
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────
 
   function priorityLabel(p: number | undefined): string {
@@ -308,17 +525,6 @@
 </script>
 
 <main class:light={currentTheme === "light"}>
-  <!-- ─── DEBUG PANEL ─────────────────────────────────────────────── -->
-  <div style="background: #1a0a0a; border: 2px solid red; padding: 12px; margin: 8px; font-family: monospace; font-size: 11px; color: #ff6666; max-height: 200px; overflow: auto;">
-    <strong>DEBUG PANEL</strong><br/>
-    <div>$allTodosStore: {JSON.stringify($allTodosStore)?.slice(0, 300)}</div>
-    <div>typeof: {typeof $allTodosStore}</div>
-    <div>todoData length: {todoData?.length ?? "N/A"} | isArray: {Array.isArray(todoData)}</div>
-    <div>allCount: {allCount} | activeCount: {activeCount} | completedCount: {completedCount}</div>
-    <div>visibleTodos: {JSON.stringify(visibleTodos)?.slice(0, 200)}</div>
-    <div>filterView: {filterView} | currentMode: {currentMode}</div>
-  </div>
-
   <!-- ─── Header ────────────────────────────────────────────────────── -->
   <header>
     <h1>DataFn Todo App</h1>
@@ -347,7 +553,7 @@
 
   <!-- ─── Tab bar ───────────────────────────────────────────────────── -->
   <nav class="tabs">
-    {#each ["todos", "categories", "kv", "events"] as tab}
+    {#each ["todos", "search", "categories", "kv", "events"] as tab}
       <button
         class="tab"
         class:active={activeTab === tab}
@@ -355,9 +561,11 @@
       >
         {tab === "todos"
           ? `Todos (${allCount})`
+          : tab === "search"
+            ? `Search (${searchResults.length})`
           : tab === "categories"
             ? `Categories (${categories.length})`
-            : tab === "kv"
+          : tab === "kv"
               ? "KV Prefs"
               : `Events (${eventEntries.length})`}
       </button>
@@ -412,10 +620,18 @@
         <span class="spacer" />
 
         <!-- Transactions: bulk actions -->
-        <button class="bulk-btn" on:click={markAllComplete} title="Transaction: mark all as complete">
+        <button
+          class="bulk-btn"
+          on:click={markAllComplete}
+          title="Transaction: mark all as complete"
+        >
           ✓ Complete All
         </button>
-        <button class="bulk-btn danger" on:click={clearCompleted} title="Transaction: delete all completed">
+        <button
+          class="bulk-btn danger"
+          on:click={clearCompleted}
+          title="Transaction: delete all completed"
+        >
           ✕ Clear Done
         </button>
       </div>
@@ -430,7 +646,11 @@
           <p class="hint">No todos here yet.</p>
         {:else}
           {#each todoData as todo (todo.id)}
-            <div class="todo-item" class:completed={todo.completed}>
+            <div
+              class="todo-item"
+              class:completed={todo.completed}
+              class:search-focus={selectedTodoId === todo.id}
+            >
               <input
                 type="checkbox"
                 checked={todo.completed}
@@ -449,9 +669,16 @@
               {#if todo.tags && todo.tags.length > 0}
                 <div class="todo-tags">
                   {#each todo.tags as tag (tag.id)}
-                    <span class="todo-tag" style="background:{tag.color}" title={tag.name}>
+                    <span
+                      class="todo-tag"
+                      style="background:{tag.color}"
+                      title={tag.name}
+                    >
                       {tag.name}
-                      <button class="untag-btn" on:click={() => untagTodo(todo.id, tag.id)}>×</button>
+                      <button
+                        class="untag-btn"
+                        on:click={() => untagTodo(todo.id, tag.id)}>×</button
+                      >
                     </span>
                   {/each}
                 </div>
@@ -475,10 +702,7 @@
                 </select>
               {/if}
 
-              <button
-                class="delete-btn"
-                on:click={() => deleteTodo(todo)}
-              >
+              <button class="delete-btn" on:click={() => deleteTodo(todo)}>
                 ×
               </button>
             </div>
@@ -487,12 +711,71 @@
       </div>
 
       <div class="status-bar">
-        {activeCount} remaining · {completedCount} completed ·
-        mode: <strong>{currentMode}</strong>
+        {activeCount} remaining · {completedCount} completed · mode:
+        <strong>{currentMode}</strong>
       </div>
     </section>
 
-  <!-- ─── CATEGORIES TAB ────────────────────────────────────────────── -->
+    <!-- ─── SEARCH TAB ────────────────────────────────────────────────── -->
+  {:else if activeTab === "search"}
+    <section class="panel">
+      <h2>Search <small>(cross-resource + offline fallback)</small></h2>
+
+      <div class="search-row">
+        <input
+          type="text"
+          class="search-input"
+          value={searchQuery}
+          placeholder="Search todos and categories..."
+          on:input={(e) => handleSearchInput(e.currentTarget.value)}
+        />
+        <button
+          class="search-clear"
+          on:click={clearSearch}
+          disabled={!searchQuery.trim()}
+        >
+          Clear
+        </button>
+      </div>
+
+      <p class="hint">
+        Uses <code>client.search()</code> with debounce and request cancellation.
+      </p>
+
+      {#if isSearching}
+        <div class="search-loading">
+          <span class="search-spinner" />
+          Searching...
+        </div>
+      {:else if searchError}
+        <p class="error">{searchError}</p>
+      {:else if searchQuery.trim() !== "" && searchResults.length === 0}
+        <p class="hint">No results for "{searchQuery.trim()}".</p>
+      {:else if searchResults.length > 0}
+        <div class="search-results">
+          {#each searchResults as result (result.resource + ":" + result.id)}
+            <button class="search-result" on:click={() => openSearchResult(result)}>
+              <div class="search-result-head">
+                <span
+                  class="search-badge"
+                  class:todo-badge={result.resource === "todos"}
+                  class:category-badge={result.resource === "categories"}
+                >
+                  {result.resource}
+                </span>
+                <span class="search-score">score {result.score.toFixed(3)}</span>
+              </div>
+              <div class="search-title">{searchTitle(result)}</div>
+              <div class="search-meta">{searchMeta(result)}</div>
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <p class="hint">Start typing to search across todos and categories.</p>
+      {/if}
+    </section>
+
+    <!-- ─── CATEGORIES TAB ────────────────────────────────────────────── -->
   {:else if activeTab === "categories"}
     <section class="panel">
       <h2>Categories <small>(many-many relation with todos)</small></h2>
@@ -513,7 +796,7 @@
           <p class="hint">No categories yet.</p>
         {:else}
           {#each categories as cat (cat.id)}
-            <div class="cat-item">
+            <div class="cat-item" class:search-focus={selectedCategoryId === cat.id}>
               <span class="cat-dot" style="background:{cat.color}" />
               <span class="cat-name">{cat.name}</span>
               <code class="cat-id">{cat.id}</code>
@@ -526,7 +809,7 @@
       </div>
     </section>
 
-  <!-- ─── KV PREFS TAB ──────────────────────────────────────────────── -->
+    <!-- ─── KV PREFS TAB ──────────────────────────────────────────────── -->
   {:else if activeTab === "kv"}
     <section class="panel">
       <h2>KV Preferences <small>(client.kv API)</small></h2>
@@ -584,12 +867,14 @@
 
       <div class="kv-raw">
         <h3>Raw KV Operations</h3>
-        <pre><code>client.kv.get("pref:theme")   → {JSON.stringify(currentTheme)}
-client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code></pre>
+        <pre><code
+            >client.kv.get("pref:theme")   → {JSON.stringify(currentTheme)}
+client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code
+          ></pre>
       </div>
     </section>
 
-  <!-- ─── EVENTS TAB ─────────────────────────────────────────────────── -->
+    <!-- ─── EVENTS TAB ─────────────────────────────────────────────────── -->
   {:else if activeTab === "events"}
     <section class="panel">
       <h2>Event Bus <small>(client.subscribe)</small></h2>
@@ -635,6 +920,25 @@ client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code></pre>
       </div>
     </section>
   {/if}
+
+  <!-- ─── DEBUG PANEL ─────────────────────────────────────────────── -->
+  <div
+    style="background: #1a0a0a; border: 2px solid red; padding: 12px; margin: 8px; font-family: monospace; font-size: 11px; color: #ff6666; max-height: 600px; overflow: auto;"
+  >
+    <strong>DEBUG PANEL</strong><br />
+    <div>$allTodosStore: {JSON.stringify($allTodosStore)?.slice(0, 300)}</div>
+    <div>typeof: {typeof $allTodosStore}</div>
+    <div>
+      todoData length: {todoData?.length ?? "N/A"} | isArray: {Array.isArray(
+        todoData,
+      )}
+    </div>
+    <div>
+      allCount: {allCount} | activeCount: {activeCount} | completedCount: {completedCount}
+    </div>
+    <div>visibleTodos: {JSON.stringify(visibleTodos)?.slice(0, 200)}</div>
+    <div>filterView: {filterView} | currentMode: {currentMode}</div>
+  </div>
 </main>
 
 <style>
@@ -667,7 +971,6 @@ client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code></pre>
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: "Inter", system-ui, -apple-system, sans-serif;
     min-height: 100vh;
   }
 
@@ -774,6 +1077,135 @@ client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code></pre>
     color: var(--text-muted);
     font-weight: 400;
     font-size: 0.75rem;
+  }
+
+  /* ── Search ───────────────────────────────────────────────────────── */
+  .search-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .search-input {
+    flex: 1;
+    padding: 0.7rem 0.9rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .search-clear {
+    padding: 0.7rem 1rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .search-clear:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .search-loading {
+    margin-top: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .search-spinner {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .search-results {
+    margin-top: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .search-result {
+    width: 100%;
+    text-align: left;
+    padding: 0.75rem 0.9rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s;
+  }
+
+  .search-result:hover {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }
+
+  .search-result-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .search-badge {
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: #445;
+    color: #fff;
+  }
+
+  .todo-badge {
+    background: var(--search-todo-badge);
+  }
+
+  .category-badge {
+    background: var(--search-category-badge);
+  }
+
+  .search-score {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-family: monospace;
+  }
+
+  .search-title {
+    margin-top: 0.4rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+  }
+
+  .search-meta {
+    margin-top: 0.2rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
   }
 
   /* ── Add row ──────────────────────────────────────────────────────── */
@@ -1003,6 +1435,10 @@ client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code></pre>
     border-radius: var(--radius);
   }
 
+  .search-focus {
+    box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px rgba(100, 108, 255, 0.2);
+  }
+
   .cat-dot {
     width: 14px;
     height: 14px;
@@ -1145,6 +1581,10 @@ client.kv.get("pref:sort")    → {JSON.stringify(currentSort)}</code></pre>
 
     .filter-bar {
       flex-wrap: wrap;
+    }
+
+    .search-row {
+      flex-direction: column;
     }
   }
 </style>

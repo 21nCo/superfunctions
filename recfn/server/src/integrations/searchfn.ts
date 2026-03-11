@@ -1,4 +1,4 @@
-import { InMemorySearchFn } from '@searchfn/client';
+import { MemoryAdapter } from '@searchfn/adapters';
 
 export interface TranscriptSearchDocument {
   segmentId?: string;
@@ -10,12 +10,12 @@ export interface TranscriptSearchDocument {
   text: string;
 }
 
-const FIELDS = ['text'];
+const RESOURCE = 'transcripts';
 
 export interface SearchFnClient {
-  index(documents: TranscriptSearchDocument[]): void;
-  search(query: string, opts?: { limit?: number; botId?: string }): TranscriptSearchResultItem[];
-  removeByRecording(recordingId: string): void;
+  index(documents: TranscriptSearchDocument[]): Promise<void>;
+  search(query: string, opts?: { limit?: number; botId?: string }): Promise<TranscriptSearchResultItem[]>;
+  removeByRecording(recordingId: string): Promise<void>;
 }
 
 export interface TranscriptSearchResultItem {
@@ -29,34 +29,36 @@ function createSegmentId(recordingId: string, index: number): string {
 }
 
 export function createSearchFnClient(): SearchFnClient {
-  const search = new InMemorySearchFn({ fields: FIELDS });
+  const search = new MemoryAdapter();
   const docIdToMeta = new Map<string, TranscriptSearchDocument>();
 
   return {
-    index(documents: TranscriptSearchDocument[]) {
+    async index(documents: TranscriptSearchDocument[]) {
+      const payload: Array<{ id: string; fields: Record<string, string> }> = [];
       for (let i = 0; i < documents.length; i++) {
         const doc = documents[i]!;
         const segmentId = doc.segmentId ?? createSegmentId(doc.recordingId, i);
         const toStore = { ...doc, segmentId };
-        search.add({
-          id: segmentId,
-          fields: { text: doc.text },
-          store: toStore,
-        });
+        payload.push({ id: segmentId, fields: { text: doc.text } });
         docIdToMeta.set(segmentId, toStore);
+      }
+
+      if (payload.length > 0) {
+        await search.index({ resource: RESOURCE, documents: payload });
       }
     },
 
-    search(query: string, opts?: { limit?: number; botId?: string }) {
-      const results = search.searchDetailed(query, {
+    async search(query: string, opts?: { limit?: number; botId?: string }) {
+      const results = await search.searchAll!({
+        query,
+        resources: [RESOURCE],
         limit: opts?.limit ?? 20,
-        includeStored: true,
       });
 
       let items = results.map((r) => ({
-        docId: r.docId as string,
+        docId: String(r.id),
         score: r.score,
-        document: r.document as TranscriptSearchDocument | undefined,
+        document: docIdToMeta.get(String(r.id)),
       }));
 
       if (opts?.botId) {
@@ -66,15 +68,19 @@ export function createSearchFnClient(): SearchFnClient {
       return items;
     },
 
-    removeByRecording(recordingId: string) {
+    async removeByRecording(recordingId: string) {
       const toRemove: string[] = [];
       for (const [docId, doc] of docIdToMeta.entries()) {
         if (doc.recordingId === recordingId) {
           toRemove.push(docId);
         }
       }
+
+      if (toRemove.length > 0) {
+        await search.remove({ resource: RESOURCE, ids: toRemove });
+      }
+
       for (const docId of toRemove) {
-        search.remove(docId);
         docIdToMeta.delete(docId);
       }
     },

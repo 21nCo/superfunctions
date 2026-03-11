@@ -269,7 +269,7 @@ Internal tables are created automatically on first use via `CREATE TABLE IF NOT 
 ## Row-Level Namespace Configuration
 
 ```typescript
-const adapter = createDrizzleAdapter({
+const adapter = drizzleAdapter({
   db: drizzleInstance,
   dialect: "postgres",
   rowLevelNamespace: {

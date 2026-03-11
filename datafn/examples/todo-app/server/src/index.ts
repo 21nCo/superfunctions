@@ -2,16 +2,70 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createDatafnServer } from "@datafn/server";
+import { ElasticsearchAdapter, MemoryAdapter } from "@searchfn/adapters";
+import { createSearchProvider } from "@searchfn/datafn-provider";
 import { toHono } from "@superfunctions/http-hono";
-import { ns } from "@datafn/core";
 import { adapter } from "./db.js";
 import schema from "./schema.datafn.js";
 
+function createSearchAdapter() {
+  const openSearchUrl = process.env.OPENSEARCH_URL?.trim();
+  const elasticsearchUrl = process.env.ELASTICSEARCH_URL?.trim();
+
+  if (openSearchUrl) {
+    return {
+      label: "opensearch",
+      adapter: new ElasticsearchAdapter({
+        node: openSearchUrl,
+        engine: "opensearch",
+        indexPrefix: "todo_app",
+        requestTimeoutMs: 10_000,
+        retry: {
+          maxRetries: 3,
+          baseDelayMs: 100,
+          maxDelayMs: 5_000,
+        },
+      }),
+    };
+  }
+
+  if (elasticsearchUrl) {
+    return {
+      label: "elasticsearch",
+      adapter: new ElasticsearchAdapter({
+        node: elasticsearchUrl,
+        engine: "elasticsearch",
+        indexPrefix: "todo_app",
+        requestTimeoutMs: 10_000,
+        retry: {
+          maxRetries: 3,
+          baseDelayMs: 100,
+          maxDelayMs: 5_000,
+        },
+      }),
+    };
+  }
+
+  return {
+    label: "memory",
+    adapter: new MemoryAdapter(),
+  };
+}
+
 async function main() {
+  const { adapter: searchAdapter, label: searchAdapterLabel } = createSearchAdapter();
+  const searchProvider = createSearchProvider(searchAdapter, {
+    resourceFields: {
+      todos: ["text"],
+      categories: ["name"],
+    },
+  });
+
   // ── Create DataFn Server ───────────────────────────────────────────
   const datafn = await createDatafnServer({
     schema,
     db: adapter,
+    searchProvider,
 
     // Authorization — allow everything in this example.
     // In production, inspect ctx (headers / session) and restrict per action.
@@ -60,10 +114,12 @@ async function main() {
   console.log(`  POST /datafn/query      — execute queries`);
   console.log(`  POST /datafn/mutation    — execute mutations`);
   console.log(`  POST /datafn/transact    — execute transactions`);
+  console.log(`  POST /datafn/search      — cross-resource search`);
   console.log(`  POST /datafn/clone       — full sync download`);
   console.log(`  POST /datafn/pull        — incremental sync`);
   console.log(`  POST /datafn/push        — upload local mutations`);
   console.log(`  GET  /datafn/status      — server status`);
+  console.log(`  Search adapter: ${searchAdapterLabel}`);
 
   serve({ fetch: app.fetch, port });
 }

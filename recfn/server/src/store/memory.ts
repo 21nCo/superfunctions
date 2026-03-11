@@ -141,7 +141,8 @@ export function createMemoryStore(): RecFnStore {
         namespace,
       };
       webhooks.set(id, webhook);
-      return { ...webhook, namespace: undefined as unknown as string };
+      const { namespace: _ns, ...rest } = webhook;
+      return rest;
     },
 
     async listWebhooks(namespace: string): Promise<Webhook[]> {
@@ -338,7 +339,8 @@ export function createMemoryStore(): RecFnStore {
         namespace,
       };
       calendars.set(id, cal);
-      return { ...cal, namespace: undefined as unknown as string };
+      const { namespace: _ns, ...rest } = cal;
+      return rest;
     },
 
     async listCalendars(namespace: string): Promise<Calendar[]> {

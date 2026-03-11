@@ -6,6 +6,9 @@ import {
   unwrapEnvelope,
   ensureBuiltinKv,
   isNamespaced,
+  resolveCapabilities,
+  getCapabilityFields,
+  RELATION_CAPABILITY_FIELD_DEFS,
 } from "@datafn/core";
 
 export type Dialect = "postgres" | "mysql" | "sqlite";
@@ -32,6 +35,7 @@ export function generateDrizzleSchema(
   const resources = [...schema.resources].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
+  const permissionTables: string[] = [];
 
   const nsEnabled = isNamespaced(schema);
 
@@ -43,6 +47,16 @@ export function generateDrizzleSchema(
 
     const fields = [...resource.fields].sort((a, b) =>
       a.name.localeCompare(b.name),
+    );
+    const resolvedCapabilities = resolveCapabilities(
+      schema.capabilities,
+      resource.capabilities,
+    );
+    const capabilityFieldNames = new Set(
+      getCapabilityFields(resolvedCapabilities).map((field) => field.name),
+    );
+    const capabilityFields = getCapabilityFields(resolvedCapabilities).filter(
+      (field) => !fields.some((userField) => userField.name === field.name),
     );
     const hasBaseIndices =
       resource.indices &&
@@ -59,7 +73,13 @@ export function generateDrizzleSchema(
     }
 
     for (const field of fields) {
-      const colDef = buildColumnDefinition(field, dialect, usedImports, nsEnabled);
+      const colDef = capabilityFieldNames.has(field.name)
+        ? buildCapabilityColumnDefinition(field, dialect, usedImports)
+        : buildColumnDefinition(field, dialect, usedImports, nsEnabled);
+      lines.push(`  ${field.name}: ${colDef},`);
+    }
+    for (const field of capabilityFields) {
+      const colDef = buildCapabilityColumnDefinition(field, dialect, usedImports);
       lines.push(`  ${field.name}: ${colDef},`);
     }
 
@@ -85,6 +105,47 @@ export function generateDrizzleSchema(
     } else {
       lines.push(`});`);
     }
+    lines.push("");
+
+    const hasShareable = resolvedCapabilities.some(
+      (capability) => typeof capability === "object" && capability !== null && "shareable" in capability,
+    );
+    if (hasShareable) {
+      permissionTables.push(resource.name);
+    }
+  }
+
+  for (const resourceName of permissionTables) {
+    const permissionsTableName = `__datafn_permissions_${resourceName}`;
+    const varName = sanitizeVarName(permissionsTableName);
+    tableExports.push(varName);
+
+    usedImports.add(tableConstructor);
+    usedImports.add("text");
+    usedImports.add("bigint");
+    usedImports.add("primaryKey");
+    usedImports.add("uniqueIndex");
+    usedImports.add("index");
+
+    lines.push(
+      `export const ${varName} = ${tableConstructor}("${permissionsTableName}", {`,
+    );
+    lines.push(`  __ns: text("__ns").notNull(),`);
+    lines.push(`  id: text("id").notNull(),`);
+    lines.push(`  resourceId: text("resource_id").notNull(),`);
+    lines.push(`  userId: text("user_id").notNull(),`);
+    lines.push(`  level: text("level").notNull(),`);
+    lines.push(`  grantedBy: text("granted_by").notNull(),`);
+    lines.push(`  grantedAt: bigint("granted_at", { mode: "number" }).notNull(),`);
+    lines.push(`}, (table) => [`);
+    lines.push(`  primaryKey({ columns: [table.__ns, table.id] }),`);
+    lines.push(
+      `  uniqueIndex("${permissionsTableName}___ns_resource_id_user_id_idx").on(table.__ns, table.resourceId, table.userId),`,
+    );
+    lines.push(
+      `  index("idx_${permissionsTableName}___ns_user_id").on(table.__ns, table.userId),`,
+    );
+    lines.push(`]);`);
     lines.push("");
   }
 
@@ -153,6 +214,21 @@ export function generateDrizzleSchema(
             false,
           ),
         });
+      }
+    }
+
+    // JCG-001: Inject relation capability columns for opted-in many-many relations
+    if (rel.capabilities && rel.capabilities.length > 0) {
+      const canonicalCaps = (["timestamps", "audit"] as const).filter(
+        (cap) => (rel.capabilities as string[]).includes(cap),
+      );
+      for (const cap of canonicalCaps) {
+        for (const fieldDef of RELATION_CAPABILITY_FIELD_DEFS[cap]) {
+          joinFields.push({
+            name: fieldDef.name,
+            def: buildSimpleColumn(fieldDef.name, fieldDef.type, dialect, usedImports, false),
+          });
+        }
       }
     }
 
@@ -274,6 +350,26 @@ function buildSimpleColumn(
     def += ".primaryKey()";
   } else if (notNull) {
     def += ".notNull()";
+  }
+
+  return def;
+}
+
+function buildCapabilityColumnDefinition(
+  field: DatafnFieldSchema,
+  dialect: Dialect,
+  usedImports: Set<string>,
+): string {
+  const snakeName = camelToSnake(field.name);
+  const { call, importName } = getColumnType(field.type, dialect, snakeName);
+  usedImports.add(importName);
+
+  let def = call;
+
+  if (field.name === "createdAt" || field.name === "updatedAt") {
+    def += ".notNull()";
+  } else if (field.name === "isArchived") {
+    def += ".notNull().default(false)";
   }
 
   return def;

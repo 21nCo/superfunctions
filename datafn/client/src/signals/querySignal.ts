@@ -301,7 +301,7 @@ function createQuerySignal<T>(
         inFlight = false;
         isRefresh = false;
         notifySubscribers();
-        // Still throw for backward compatibility
+        // Preserve throw behavior for initial-load failures
         throw error;
       } else {
         // Refresh error - store but don't notify with error updates

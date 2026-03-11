@@ -26,5 +26,9 @@ export async function authenticateWebSocket(
   }
 
   const result = await validateApiKey(token);
-  return { ok: result.ok, botId };
+  const ok =
+    !!result &&
+    (!(typeof result === 'object' && result !== null && 'ok' in result) ||
+      Boolean((result as { ok?: boolean }).ok));
+  return { ok, botId };
 }

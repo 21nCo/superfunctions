@@ -3,8 +3,15 @@
  */
 
 import type { DatafnError } from "./errors.js";
+import type {
+  CapabilityEntry,
+  SchemaCapabilities,
+  ResourceCapabilities,
+  SimpleCapability,
+} from "./capabilities.js";
 
 export type DatafnSchema = {
+  capabilities?: SchemaCapabilities;
   resources: DatafnResourceSchema[];
   relations?: DatafnRelationSchema[];
   /** Defaults to true. Set to false to disable row-level namespace isolation. */
@@ -40,6 +47,7 @@ export type DatafnResourceSchema = {
   version: number;
   idPrefix?: string;
   isRemoteOnly?: boolean;
+  capabilities?: ResourceCapabilities;
   fields: DatafnFieldSchema[];
   indices?:
     | {
@@ -69,6 +77,8 @@ export type DatafnFieldSchema = {
   volatile?: boolean;
 };
 
+export type RelationSimpleCapability = "timestamps" | "audit";
+
 export type DatafnRelationSchema = {
   from: string | string[];
   to: string | string[];
@@ -84,6 +94,7 @@ export type DatafnRelationSchema = {
   pathField?: string;
   joinTable?: string;
   joinColumns?: { from: string; to: string };
+  capabilities?: RelationSimpleCapability[];
 };
 
 /**
@@ -102,11 +113,17 @@ type DatafnIndicesInput<FieldName extends string> =
   | { readonly base?: readonly FieldName[]; readonly search?: readonly FieldName[]; readonly vector?: readonly FieldName[] }
   | readonly FieldName[];
 
+type SchemaCapabilitiesInput = readonly CapabilityEntry[];
+type ResourceCapabilitiesInput =
+  | SchemaCapabilitiesInput
+  | { readonly exclude: readonly SimpleCapability[] };
+
 type DatafnResourceBase = {
   readonly name: string;
   readonly version: number;
   readonly idPrefix?: string;
   readonly isRemoteOnly?: boolean;
+  readonly capabilities?: ResourceCapabilitiesInput;
   readonly fields: readonly DatafnFieldInput[];
   readonly indices?: DatafnIndicesInput<string>;
   readonly permissions?: DatafnPermissionsPolicy;
@@ -121,6 +138,7 @@ type ValidateResources<R extends readonly DatafnResourceBase[]> = {
 
 export function defineSchema<
   const T extends {
+    readonly capabilities?: SchemaCapabilitiesInput;
     readonly resources: readonly DatafnResourceBase[];
     readonly relations?: readonly DatafnRelationSchema[] | DatafnRelationSchema[];
     readonly namespaced?: boolean;

@@ -587,7 +587,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
          });
     }
 
-    // Fallback: list all and filter (now strictly scoped to resource)
+    // Index-miss path: list all and filter (strictly scoped to resource)
     const all = await this.listRecords(resource);
     return all.filter((r) => r[field] === value);
   }

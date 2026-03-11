@@ -112,8 +112,8 @@ if (!result.ok) {
 Clone Up emits a `sync_applied` event on success or `sync_failed` on error:
 
 ```typescript
-client.events.on("sync_applied", (event) => {
-  if (event.context.phase === "cloneup") {
+client.subscribe((event) => {
+  if (event.type === "sync_applied" && event.context.phase === "cloneUp") {
     console.log("Upload complete:", event.context.stats);
   }
 });

@@ -5,7 +5,7 @@
  * for resources and join stores.
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import { getJoinStoreKey, getJoinTableName } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import { ChangeTrackingService } from "./change-tracking.js";
@@ -24,7 +24,7 @@ export interface ReconcileResult {
   joinCounts?: Record<string, number>;
   latestCursor?: string;
   error?: {
-    code: string;
+    code: DatafnErrorCode;
     message: string;
     details?: Record<string, unknown>;
   };
@@ -104,8 +104,8 @@ export async function executeReconcile(
           namespace,
         });
       } else {
-        // Fallback for adapters without count support
-        logger?.warn("Adapter lacks count() — falling back to findMany", {
+        // Alternate path for adapters without count support
+        logger?.warn("Adapter lacks count() — using findMany path", {
           operation: "reconcile",
           resource: resourceName,
         });
@@ -132,16 +132,22 @@ export async function executeReconcile(
       if (relation.type !== "many-many") continue;
 
       // Check if this relation involves any of the requested resources
+      const fromResources = Array.isArray(relation.from)
+        ? relation.from
+        : [relation.from];
+      const toResources = Array.isArray(relation.to) ? relation.to : [relation.to];
       const involvesRequestedResource =
-        request.resources.includes(relation.from) ||
-        request.resources.includes(relation.to);
+        fromResources.some((name) => request.resources.includes(name)) ||
+        toResources.some((name) => request.resources.includes(name));
 
       if (!involvesRequestedResource) continue;
 
       // Logical key used by the client for its join store (matches change tracking and pull)
-      const joinStoreKey = getJoinStoreKey(relation.from as string, relation.relation!, relation.to as string);
+      const fromResource = fromResources[0];
+      const toResource = toResources[0];
+      const joinStoreKey = getJoinStoreKey(fromResource, relation.relation!, toResource);
       // Actual DB table name (matches what relations.ts writes and what codegen generates)
-      const joinTableName = getJoinTableName(relation.from as string, relation.relation!, relation.joinTable);
+      const joinTableName = getJoinTableName(fromResource, relation.relation!, relation.joinTable);
 
       try {
         // SCA-001: Use db.count() for join rows too

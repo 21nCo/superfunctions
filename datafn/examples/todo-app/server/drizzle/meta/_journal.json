@@ -8,6 +8,13 @@
       "when": 1772372304410,
       "tag": "0000_legal_leper_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1772860337846,
+      "tag": "0001_special_catseye",
+      "breakpoints": true
     }
   ]
 }

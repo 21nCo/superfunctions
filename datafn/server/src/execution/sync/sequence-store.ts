@@ -4,7 +4,7 @@
  * Supports multiple backends:
  * - Redis: Uses atomic INCR for high-performance sequence generation
  * - KV Store: Uses atomic incr if available
- * - Database: Falls back to CAS retry loop (existing behavior)
+ * - Database: Uses CAS retry loop
  */
 
 import type { Adapter } from "@superfunctions/db";
@@ -106,7 +106,7 @@ export class KVSequenceStore implements SequenceStore {
 
 /**
  * Database-based sequence store using CAS retry loop
- * This is the fallback implementation using the main database adapter
+ * Uses the main database adapter
  */
 export class DatabaseSequenceStore implements SequenceStore {
   private ensured = false;
@@ -115,7 +115,7 @@ export class DatabaseSequenceStore implements SequenceStore {
 
   /**
    * DI-003: Ensure next_server_seq in meta is at least (minSeq + 1).
-   * Called by FallbackSequenceStore on Redis→DB failover to prevent duplicate sequences.
+   * Called by ChainedSequenceStore during primary→database failover to prevent duplicate sequences.
    */
   async ensureMinSeq(namespace: string, minSeq: number): Promise<void> {
     if (!this.ensured) {
@@ -254,17 +254,17 @@ export class DatabaseSequenceStore implements SequenceStore {
 }
 
 /**
- * Fallback sequence store that tries primary store first, falls back to database.
+ * Chained sequence store that tries primary store first, then uses database.
  * DI-003: Tracks the last known primary sequence per namespace so that on failover
  * the DB store is synced to avoid duplicate sequences.
  */
-export class FallbackSequenceStore implements SequenceStore {
+export class ChainedSequenceStore implements SequenceStore {
   /** DI-003: Track last-issued seq per namespace from the primary store */
   private lastKnownPrimarySeq = new Map<string, number>();
 
   constructor(
     private primary: SequenceStore,
-    private fallback: SequenceStore,
+    private secondary: SequenceStore,
     private logger?: DatafnLogger,
   ) {}
 
@@ -273,13 +273,13 @@ export class FallbackSequenceStore implements SequenceStore {
   }
 
   /**
-   * DI-003: Sync the fallback (DB) store to start from at least lastKnownPrimarySeq+1.
+   * DI-003: Sync the secondary (DB) store to start from at least lastKnownPrimarySeq+1.
    * Prevents duplicate sequences after Redis→DB failover.
    */
-  private async syncFallbackOnFailover(namespace: string): Promise<void> {
+  private async syncSecondaryOnFailover(namespace: string): Promise<void> {
     const lastKnown = this.lastKnownPrimarySeq.get(namespace);
-    if (lastKnown !== undefined && lastKnown > 0 && this.fallback instanceof DatabaseSequenceStore) {
-      await this.fallback.ensureMinSeq(namespace, lastKnown);
+    if (lastKnown !== undefined && lastKnown > 0 && this.secondary instanceof DatabaseSequenceStore) {
+      await this.secondary.ensureMinSeq(namespace, lastKnown);
     }
   }
 
@@ -288,12 +288,12 @@ export class FallbackSequenceStore implements SequenceStore {
       if (this.primary.isHealthy) {
         const healthy = await this.primary.isHealthy();
         if (!healthy) {
-          this.logger?.warn("Primary sequence store unhealthy, using fallback", {
+          this.logger?.warn("Primary sequence store unhealthy, using database sequence path", {
             operation: "getNextN",
           });
           // DI-003: Sync DB store to last known primary seq before allocating
-          await this.syncFallbackOnFailover(namespace);
-          return await this.fallback.getNextN(namespace, count);
+          await this.syncSecondaryOnFailover(namespace);
+          return await this.secondary.getNextN(namespace, count);
         }
       }
       const seqs = await this.primary.getNextN(namespace, count);
@@ -301,13 +301,13 @@ export class FallbackSequenceStore implements SequenceStore {
       this.lastKnownPrimarySeq.set(namespace, seqs[seqs.length - 1]);
       return seqs;
     } catch (error) {
-      this.logger?.warn("Primary sequence store failed, using fallback", {
+      this.logger?.warn("Primary sequence store failed, using database sequence path", {
         error: String(error),
         operation: "getNextN",
       });
       // DI-003: Sync DB store to last known primary seq before allocating
-      await this.syncFallbackOnFailover(namespace);
-      return await this.fallback.getNextN(namespace, count);
+      await this.syncSecondaryOnFailover(namespace);
+      return await this.secondary.getNextN(namespace, count);
     }
   }
 
@@ -316,16 +316,16 @@ export class FallbackSequenceStore implements SequenceStore {
       if (this.primary.isHealthy) {
         const healthy = await this.primary.isHealthy();
         if (!healthy) {
-          return await this.fallback.getCurrent(namespace);
+          return await this.secondary.getCurrent(namespace);
         }
       }
       return await this.primary.getCurrent(namespace);
     } catch (error) {
-      this.logger?.warn("Primary sequence store failed for getCurrent, using fallback", {
+      this.logger?.warn("Primary sequence store failed for getCurrent, using database sequence path", {
         error: String(error),
         operation: "getCurrent",
       });
-      return await this.fallback.getCurrent(namespace);
+      return await this.secondary.getCurrent(namespace);
     }
   }
 
@@ -366,23 +366,23 @@ export function createSequenceStore(config: {
     return undefined;
   }
 
-  const dbFallback = new DatabaseSequenceStore(db, logger);
+  const dbSequenceStore = new DatabaseSequenceStore(db, logger);
 
   if (mapping === "redis" && redis) {
     const primary = new RedisSequenceStore(redis);
-    return new FallbackSequenceStore(primary, dbFallback, logger);
+    return new ChainedSequenceStore(primary, dbSequenceStore, logger);
   }
 
   if (mapping === "kv" && kvStore) {
     if (!kvStore.incr) {
-      logger?.warn("KV store does not support incr(), falling back to database for serverSeq", {
+      logger?.warn("KV store does not support incr(), using database sequence path for serverSeq", {
         operation: "createSequenceStore",
       });
-      return dbFallback;
+      return dbSequenceStore;
     }
     const primary = new KVSequenceStore(kvStore);
-    return new FallbackSequenceStore(primary, dbFallback, logger);
+    return new ChainedSequenceStore(primary, dbSequenceStore, logger);
   }
 
-  return dbFallback;
+  return dbSequenceStore;
 }

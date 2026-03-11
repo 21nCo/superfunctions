@@ -3,7 +3,7 @@
  * Converts execution errors to deterministic DatafnError objects
  */
 
-import type { DatafnErrorCode } from "@datafn/core";
+import type { DatafnErrorCode } from "../core-types.js";
 
 export interface DatafnError {
   code: DatafnErrorCode;

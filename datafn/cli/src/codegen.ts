@@ -2,6 +2,7 @@ import {
   type DatafnSchema,
   validateSchema,
   unwrapEnvelope,
+  RELATION_CAPABILITY_FIELD_DEFS,
 } from "@datafn/core";
 
 /**
@@ -58,7 +59,10 @@ export function generateTypes(schemaInput: unknown): string {
   const joinTableInterfaces: Array<{ name: string; pascalName: string }> = [];
 
   for (const rel of relations) {
-    if (rel.type !== "many-many" || !rel.metadata || rel.metadata.length === 0) {
+    // JCG-002: emit join interface when metadata OR relation capabilities are present
+    const hasMetadata = rel.metadata && rel.metadata.length > 0;
+    const hasCapabilities = rel.capabilities && rel.capabilities.length > 0;
+    if (rel.type !== "many-many" || (!hasMetadata && !hasCapabilities)) {
       continue;
     }
 
@@ -72,10 +76,25 @@ export function generateTypes(schemaInput: unknown): string {
     lines.push(`  ${toCol}: string;`);
 
     // Sort metadata fields for stability
-    const sortedMeta = [...rel.metadata].sort((a, b) => a.name.localeCompare(b.name));
-    for (const meta of sortedMeta) {
-      const tsType = mapFieldType(meta.type);
-      lines.push(`  ${meta.name}: ${tsType};`);
+    if (hasMetadata) {
+      const sortedMeta = [...rel.metadata!].sort((a, b) => a.name.localeCompare(b.name));
+      for (const meta of sortedMeta) {
+        const tsType = mapFieldType(meta.type);
+        lines.push(`  ${meta.name}: ${tsType};`);
+      }
+    }
+
+    // JCG-002: Add relation capability fields in canonical order
+    if (hasCapabilities) {
+      const canonicalCaps = (["timestamps", "audit"] as const).filter(
+        (cap) => (rel.capabilities as string[]).includes(cap),
+      );
+      for (const cap of canonicalCaps) {
+        for (const fieldDef of RELATION_CAPABILITY_FIELD_DEFS[cap]) {
+          const tsType = mapFieldType(fieldDef.type);
+          lines.push(`  ${fieldDef.name}?: ${tsType};`);
+        }
+      }
     }
 
     lines.push("}");

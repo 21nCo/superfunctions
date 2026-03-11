@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createDatafnServer } from "../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 
 // Schema with nested objects and sensitive fields
 const schema: DatafnSchema = {
@@ -25,7 +25,7 @@ describe("Phase 15 Completeness", () => {
   let db: any;
 
   beforeEach(async () => {
-    db = memoryAdapter({ namespace: "datafn" });
+    db = memoryAdapter({ namespace: { enabled: true, prefix: "datafn" } });
     server = await createDatafnServer({ allowUnknownResources: true,
       schema,
       db,

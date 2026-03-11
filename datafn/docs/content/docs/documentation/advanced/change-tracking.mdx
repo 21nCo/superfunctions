@@ -36,7 +36,7 @@ The `serverSeq` is a strictly increasing integer per namespace. It serves as the
 | `RedisSequenceStore` | Redis / Valkey | Atomic `INCR` command |
 | `KVSequenceStore` | KV Store | Atomic `incr()` operation |
 | `DatabaseSequenceStore` | Primary database | CAS retry loop on `__datafn_meta` |
-| `FallbackSequenceStore` | Primary + fallback | Tries primary, falls back to database |
+| Combined sequence chain | Primary + database chain | Uses the configured primary store and database sequence store together |
 
 ### Redis Sequence Store
 
@@ -69,9 +69,9 @@ const affected = await db.update("__datafn_meta",
 
 The CAS loop retries up to 10 times with exponential backoff (`10ms * 2^attempt`).
 
-### Fallback Store
+### Combined Store
 
-The `FallbackSequenceStore` tries the primary store first and falls back to the database on failure. It tracks the last known primary sequence per namespace to prevent duplicate sequences after failover:
+The combined chain coordinates primary + database sequence allocation and tracks last-known primary sequence state per namespace:
 
 ```typescript
 import { createSequenceStore } from "@datafn/server";

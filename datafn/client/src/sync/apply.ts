@@ -20,9 +20,9 @@ export type CloneResult = {
 };
 
 /**
- * Legacy pull result shape (global cursor)
+ * Global-cursor pull result shape
  */
-export type PullResultLegacy = {
+export type PullResultGlobalCursor = {
   ok: boolean;
   changes: Array<{
     serverSeq: number;
@@ -50,7 +50,7 @@ export type PullResultCanonical = {
   hasMore?: boolean; // CLIENT-PULL-001: true when more changes remain on server
 };
 
-export type PullResult = PullResultLegacy | PullResultCanonical;
+export type PullResult = PullResultGlobalCursor | PullResultCanonical;
 
 /**
  * Apply clone result to local storage.
@@ -115,15 +115,15 @@ export async function applyCloneResult(
 }
 
 /**
- * Detect if pull result is legacy format
+ * Detect if pull result is global-cursor format
  */
-function isLegacyPullResult(result: PullResult): result is PullResultLegacy {
+function isGlobalCursorPullResult(result: PullResult): result is PullResultGlobalCursor {
   return "changes" in result && Array.isArray((result as any).changes);
 }
 
 /**
  * Apply pull result to local storage.
- * Supports both legacy and canonical per-table cursor formats.
+ * Supports both global-cursor and canonical per-table cursor formats.
  */
 export async function applyPullResult(
   storage: DatafnStorageAdapter,
@@ -133,19 +133,19 @@ export async function applyPullResult(
     return; // Don't apply failed results
   }
 
-  if (isLegacyPullResult(result)) {
-    await applyPullResultLegacy(storage, result);
+  if (isGlobalCursorPullResult(result)) {
+    await applyPullResultGlobalCursor(storage, result);
   } else {
     await applyPullResultCanonical(storage, result as PullResultCanonical);
   }
 }
 
 /**
- * Apply legacy pull result (global cursor)
+ * Apply global-cursor pull result
  */
-async function applyPullResultLegacy(
+async function applyPullResultGlobalCursor(
   storage: DatafnStorageAdapter,
-  result: PullResultLegacy,
+  result: PullResultGlobalCursor,
 ): Promise<void> {
   const { changes, nextCursor } = result;
 

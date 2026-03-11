@@ -2,14 +2,98 @@
  * Relation mutation operations (relate, modifyRelation, unrelate)
  */
 
-import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
-import { getJoinStoreKey, getJoinTableName, type NormalizedRelation, normalizeRelationPayload } from "@datafn/core";
-import type { Adapter } from "@superfunctions/db";
+import type { DatafnSchema, DatafnRelationSchema, NormalizedRelation } from "../../core-types.js";
+import { getJoinStoreKey, getJoinTableName, normalizeRelationPayload, RELATION_CAPABILITY_FIELD_DEFS } from "@datafn/core";
+import type { Adapter, TransactionAdapter } from "@superfunctions/db";
 import type { DFQLMutation } from "./dfql.js";
+
+// Local alias — avoids TS2709 ("Cannot use namespace as type") for the @datafn/core re-export.
+type RelationSimpleCapability = "timestamps" | "audit";
 
 // NormalizedRelation and normalizeRelationPayload are imported from @datafn/core above.
 export type { NormalizedRelation };
 export { normalizeRelationPayload };
+
+function pickResourceName(name: string | string[]): string {
+  return Array.isArray(name) ? name[0] : name;
+}
+
+// ─── Relation Capability Helpers (JRT-001/002/003/004, SEC-001) ───────────────
+
+/**
+ * Returns the resolved (canonical-ordered, deduplicated) relation capabilities
+ * for a relation definition. Schema is already validated at this point.
+ */
+function getResolvedRelationCaps(relation: DatafnRelationSchema): RelationSimpleCapability[] {
+  const caps = relation.capabilities as string[] | undefined;
+  if (!caps || caps.length === 0) return [];
+  // Canonical order: timestamps first, then audit
+  const result: RelationSimpleCapability[] = [];
+  if (caps.includes("timestamps")) result.push("timestamps");
+  if (caps.includes("audit")) result.push("audit");
+  return result;
+}
+
+/**
+ * JRT-001 / SEC-001: Strip readonly relation capability fields from
+ * client-provided metadata. Only strips fields for enabled capabilities.
+ */
+function stripRelationCapabilityFields(
+  metadata: Record<string, unknown>,
+  caps: RelationSimpleCapability[],
+): Record<string, unknown> {
+  if (caps.length === 0) return metadata;
+  const stripped = { ...metadata };
+  for (const cap of caps) {
+    for (const fieldDef of RELATION_CAPABILITY_FIELD_DEFS[cap]) {
+      delete stripped[fieldDef.name];
+    }
+  }
+  return stripped;
+}
+
+/**
+ * JRT-002 / SEC-001: Build create-time capability fields (all four when enabled).
+ * actorId must come from server context — never from client payload.
+ */
+function buildRelationCapabilityCreateFields(
+  caps: RelationSimpleCapability[],
+  actorId?: string,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  const now = Date.now();
+  for (const cap of caps) {
+    if (cap === "timestamps") {
+      fields.createdAt = now;
+      fields.updatedAt = now;
+    } else if (cap === "audit") {
+      fields.createdBy = actorId ?? null;
+      fields.updatedBy = actorId ?? null;
+    }
+  }
+  return fields;
+}
+
+/**
+ * JRT-003 / JRT-004 / SEC-001: Build update-time capability fields only.
+ * Immutable insert-time fields (createdAt/createdBy) are NOT included.
+ */
+function buildRelationCapabilityUpdateFields(
+  caps: RelationSimpleCapability[],
+  actorId?: string,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const cap of caps) {
+    if (cap === "timestamps") {
+      fields.updatedAt = Date.now();
+    } else if (cap === "audit") {
+      fields.updatedBy = actorId ?? null;
+    }
+  }
+  return fields;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Find relation definition (forward-only — intentional for mutation executor).
@@ -32,6 +116,7 @@ export async function executeRelate(
   schema: DatafnSchema,
   mutation: DFQLMutation,
   namespace: string,
+  actorId?: string,
 ): Promise<{ ok: true; affectedIds: string[] } | { ok: false; code: string; message: string; path: string }> {
   if (!mutation.relations) {
     return { ok: true, affectedIds: [mutation.id] };
@@ -52,14 +137,14 @@ export async function executeRelate(
 
     // Batch validate targets exist (REL-OPT-001)
     if (items.length > 0) {
-      const targetIds = items.map(i => i.toId);
+      const targetIds = items.map((i: NormalizedRelation) => i.toId);
       const existingTargets = await adapter.findMany({
-        model: relation.to,
+        model: pickResourceName(relation.to),
         where: [{ field: "id", operator: "in", value: targetIds }],
         namespace,
       });
       const existingTargetIds = new Set(existingTargets.map((t: any) => t.id));
-      const missingId = targetIds.find(id => !existingTargetIds.has(id));
+      const missingId = targetIds.find((id: string) => !existingTargetIds.has(id));
       if (missingId !== undefined) {
         return {
           ok: false,
@@ -94,17 +179,17 @@ export async function executeRelate(
       const fkField = relation.fkField || relation.inverse || `${relation.from}Id`; // Inverse side FK
       // PER-004: Batch update when adapter supports it and there are multiple items
       if (items.length > 1 && adapter.capabilities.operations.batch) {
-        const targetIds = items.map(i => i.toId);
+        const targetIds = items.map((i: NormalizedRelation) => i.toId);
         await adapter.updateMany({
-          model: relation.to,
+          model: pickResourceName(relation.to),
           where: [{ field: "id", operator: "in", value: targetIds }],
           data: { [fkField]: mutation.id },
           namespace,
         });
       } else {
         for (const item of items) {
-          await adapter.update({
-            model: relation.to,
+            await adapter.update({
+            model: pickResourceName(relation.to),
             where: [{ field: "id", operator: "eq", value: item.toId }],
             data: { [fkField]: mutation.id },
             namespace,
@@ -116,11 +201,28 @@ export async function executeRelate(
       const fromCol = relation.joinColumns?.from || "from";
       const toCol = relation.joinColumns?.to || "to";
 
+      // JRT-001/002/003: Resolve relation capabilities for this relation
+      const relCaps = getResolvedRelationCaps(relation);
+
       // Use upsert per join item instead of findOne + conditional create/update (REL-OPT-002)
       // Target the `id` column (PK) for conflict detection, not (from, to) which may lack a unique constraint.
       // The composite id `${from}:${to}` guarantees the same uniqueness semantics.
       for (const item of items) {
         const compositeId = `${mutation.id}:${item.toId}`;
+
+        // JRT-001 / SEC-001: Strip readonly capability fields from client-provided metadata
+        const strippedMetadata = stripRelationCapabilityFields(item.metadata, relCaps);
+
+        // JRT-002: Create payload includes insert-time capability fields
+        const createCapFields = buildRelationCapabilityCreateFields(relCaps, actorId);
+
+        // JRT-003: Update payload includes only update-time capability fields (NOT createdAt/createdBy)
+        const updateCapFields = buildRelationCapabilityUpdateFields(relCaps, actorId);
+
+        // Build payloads: stripped metadata merged with server-injected capability fields
+        const hasUpdateContent =
+          Object.keys(strippedMetadata).length > 0 || Object.keys(updateCapFields).length > 0;
+
         await adapter.upsert({
           model: tableName,
           where: [
@@ -130,9 +232,10 @@ export async function executeRelate(
             id: compositeId,
             [fromCol]: mutation.id,
             [toCol]: item.toId,
-            ...item.metadata,
+            ...strippedMetadata,
+            ...createCapFields,
           },
-          update: Object.keys(item.metadata).length > 0 ? item.metadata : {},
+          update: hasUpdateContent ? { ...strippedMetadata, ...updateCapFields } : {},
           namespace,
           conflictTarget: "id",
         });
@@ -151,6 +254,7 @@ export async function executeModifyRelation(
   schema: DatafnSchema,
   mutation: DFQLMutation,
   namespace: string,
+  actorId?: string,
 ): Promise<{ ok: true; affectedIds: string[] } | { ok: false; code: string; message: string; path: string }> {
   if (!mutation.relations) {
     return { ok: true, affectedIds: [mutation.id] };
@@ -181,10 +285,21 @@ export async function executeModifyRelation(
     const fromCol = relation.joinColumns?.from || "from";
     const toCol = relation.joinColumns?.to || "to";
 
+    // JRT-001/004: Resolve relation capabilities once per relation
+    const relCaps = getResolvedRelationCaps(relation);
+
     for (const item of items) {
+      // JRT-001 / SEC-001: Strip readonly capability fields from client-provided metadata
+      const strippedMetadata = stripRelationCapabilityFields(item.metadata, relCaps);
+
+      // JRT-004: Inject update-time capability fields for existing rows
+      const updateCapFields = buildRelationCapabilityUpdateFields(relCaps, actorId);
+
       // DI-001: Atomic findOne + update to prevent TOCTOU race.
       // Wrap in transaction when adapter supports it; otherwise execute sequentially.
-      const performModify = async (adp: typeof adapter): Promise<"ok" | "not_found"> => {
+      const performModify = async (
+        adp: Adapter | TransactionAdapter,
+      ): Promise<"ok" | "not_found"> => {
         const existing = await adp.findOne({
           model: tableName,
           where: [
@@ -200,7 +315,8 @@ export async function executeModifyRelation(
             { field: fromCol, operator: "eq", value: mutation.id },
             { field: toCol, operator: "eq", value: item.toId },
           ],
-          data: item.metadata,
+          // JRT-004: merge stripped user metadata with server-injected update fields
+          data: { ...strippedMetadata, ...updateCapFields },
           namespace,
         });
         return "ok";
@@ -211,8 +327,8 @@ export async function executeModifyRelation(
       // If capabilities are absent/incomplete (test mocks), fall back to duck-typing.
       if ((adapter.capabilities?.transactions?.supported !== false) && typeof adapter.transaction === "function") {
         let txOutcome: "ok" | "not_found" = "ok";
-        await adapter.transaction(async (txAdp: typeof adapter) => {
-          txOutcome = await performModify(txAdp as any);
+        await adapter.transaction(async (txAdp: TransactionAdapter) => {
+          txOutcome = await performModify(txAdp);
         });
         itemResult = txOutcome;
       } else {
@@ -391,6 +507,92 @@ export function extractRelationFkDeltas(
 }
 
 /**
+ * JSY-002: Extract join deltas by reading actual persisted join rows from DB.
+ * Unlike extractJoinDeltas (which reflects client payload), this function reads
+ * back the full row after the write, so the change-tracking record includes
+ * server-injected relation capability fields (createdAt, updatedAt, createdBy,
+ * updatedBy).
+ *
+ * Used by push.ts for `relate` and `modifyRelation` cases only.
+ * `unrelate` (delete ops) continues to use extractJoinDeltas — no DB read needed.
+ */
+export async function extractJoinDeltasFromDB(
+  adapter: Adapter,
+  mutation: RelationMutationInput,
+  schema: DatafnSchema,
+  namespace: string,
+): Promise<
+  Array<{
+    resource: string;
+    id: string;
+    op: "upsert" | "delete";
+    record: Record<string, unknown> | null;
+  }>
+> {
+  const deltas: Array<{
+    resource: string;
+    id: string;
+    op: "upsert" | "delete";
+    record: Record<string, unknown> | null;
+  }> = [];
+
+  if (!mutation.relations) {
+    return deltas;
+  }
+
+  for (const [relName, payload] of Object.entries(mutation.relations)) {
+    const relation = findRelation(schema, mutation.resource, relName);
+    if (!relation || relation.type !== "many-many") {
+      continue;
+    }
+
+    const items = normalizeRelationPayload(payload);
+    const joinTableName = getJoinTableName(mutation.resource, relName, relation.joinTable);
+    const joinStoreKey = getJoinStoreKey(mutation.resource, relName, relation.to as string);
+    const fromCol = relation.joinColumns?.from || "from";
+    const toCol = relation.joinColumns?.to || "to";
+
+    for (const item of items) {
+      const compositeId = `${mutation.id}:${item.toId}`;
+
+      // Read the actual persisted join row so the change record includes
+      // server-injected capability fields (createdAt, updatedAt, createdBy, updatedBy).
+      const persistedRow = (await adapter.findOne({
+        model: joinTableName,
+        where: [{ field: "id", operator: "eq", value: compositeId }],
+        namespace,
+      })) as Record<string, unknown> | null;
+
+      let record: Record<string, unknown>;
+      if (persistedRow) {
+        // Normalize custom joinColumns to standard from/to keys for client-side change records.
+        record = { ...persistedRow };
+        if (fromCol !== "from") {
+          record.from = record[fromCol];
+          delete record[fromCol];
+        }
+        if (toCol !== "to") {
+          record.to = record[toCol];
+          delete record[toCol];
+        }
+      } else {
+        // Row should exist after a successful write; use a minimal record when unavailable.
+        record = { from: mutation.id, to: item.toId };
+      }
+
+      deltas.push({
+        resource: joinStoreKey,
+        id: compositeId,
+        op: "upsert",
+        record,
+      });
+    }
+  }
+
+  return deltas;
+}
+
+/**
  * Execute unrelate operation
  */
 export async function executeUnrelate(
@@ -430,17 +632,17 @@ export async function executeUnrelate(
         const fkField = relation.fkField || relation.inverse || `${relation.from}Id`;
         // PER-004: Batch update when adapter supports it and there are multiple items
         if (items.length > 1 && adapter.capabilities.operations.batch) {
-          const targetIds = items.map(i => i.toId);
+          const targetIds = items.map((i: NormalizedRelation) => i.toId);
           await adapter.updateMany({
-            model: relation.to,
+            model: pickResourceName(relation.to),
             where: [{ field: "id", operator: "in", value: targetIds }],
             data: { [fkField]: null },
             namespace,
           });
         } else {
           for (const item of items) {
-            await adapter.update({
-              model: relation.to,
+              await adapter.update({
+              model: pickResourceName(relation.to),
               where: [{ field: "id", operator: "eq", value: item.toId }],
               data: { [fkField]: null },
               namespace,
@@ -454,7 +656,7 @@ export async function executeUnrelate(
 
         // PER-004: Batch delete when adapter supports it and there are multiple items
         if (items.length > 1 && adapter.capabilities.operations.batch) {
-          const toIds = items.map(i => i.toId);
+          const toIds = items.map((i: NormalizedRelation) => i.toId);
           await adapter.deleteMany({
             model: tableName,
             where: [

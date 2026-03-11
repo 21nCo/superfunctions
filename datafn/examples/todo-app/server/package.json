@@ -17,6 +17,8 @@
   "dependencies": {
     "@datafn/core": "*",
     "@datafn/server": "*",
+    "@searchfn/adapters": "*",
+    "@searchfn/datafn-provider": "*",
     "@superfunctions/db": "*",
     "@superfunctions/http-hono": "*",
     "drizzle-orm": "^0.35.0",

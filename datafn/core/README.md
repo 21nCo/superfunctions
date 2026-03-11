@@ -452,7 +452,7 @@ The built-in KV (key-value) resource provides a schemaless store that syncs alon
 
 ### ensureBuiltinKv
 
-Ensures the schema includes the built-in `kv` resource. If it already exists, validates compatibility; otherwise appends it.
+Ensures the schema includes the built-in `kv` resource. If it already exists, validates its shape; otherwise appends it.
 
 ```typescript
 import { ensureBuiltinKv } from "@datafn/core";

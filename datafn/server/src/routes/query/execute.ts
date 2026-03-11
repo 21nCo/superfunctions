@@ -3,15 +3,21 @@
  * Extracted from routes/query.ts — single responsibility: strategy classification + data store + execution
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 import type { Adapter, WhereClause } from "@superfunctions/db";
-import { isSearchPlugin } from "../../plugins/searchfn.js";
+import type { SearchProvider } from "../../search-provider.js";
 import type { DatafnLogger } from "../../logger.js";
 import { executeQuery } from "../../execution/query/execute.js";
 import { DbDataStore } from "../../execution/db-store.js";
 import { classifyQuery, extractPushableFilters } from "../../execution/query/planner.js";
 import { executePushdownQuery, executePartialPushdownQuery } from "../../execution/query/pushdown.js";
 import { executeSearchQuery } from "../../execution/query/search.js";
+import { DatafnExecutionError } from "../../execution/errors.js";
+import {
+  executeDbNativeResourceSearch,
+  hasDbNativeSearchSupport,
+  NO_PROVIDER_NATIVE_UNSUPPORTED_MESSAGE,
+} from "../../execution/search/native-fallback.js";
 import type { ExecutionTimer } from "../../middleware/timing.js";
 
 /**
@@ -23,7 +29,7 @@ export async function executeSingleQuery(
   schema: DatafnSchema,
   db: Adapter,
   namespace: string,
-  plugins: DatafnPlugin[],
+  searchProvider: SearchProvider | undefined,
   logger?: DatafnLogger,
   timer?: ExecutionTimer | null,
 ): Promise<unknown> {
@@ -71,11 +77,31 @@ export async function executeSingleQuery(
 
   // Execute search query or regular query
   if (query.search) {
-    const searchPlugin = plugins.find(isSearchPlugin);
-    if (!searchPlugin) {
-      throw new Error("Search plugin missing");
+    if (searchProvider) {
+      return executeSearchQuery(query as any, schema, store, searchProvider, undefined, logger);
     }
-    return executeSearchQuery(query as any, schema, store, searchPlugin);
+    if (!hasDbNativeSearchSupport(db)) {
+      throw new DatafnExecutionError(
+        "DFQL_UNSUPPORTED",
+        NO_PROVIDER_NATIVE_UNSUPPORTED_MESSAGE,
+        "search",
+      );
+    }
+    return executeSearchQuery(
+      query as any,
+      schema,
+      store,
+      undefined,
+      async ({ resource, query: searchQuery, fields, limit, signal }) =>
+        executeDbNativeResourceSearch(db, schema, namespace, {
+          resource,
+          query: searchQuery,
+          fields,
+          limit,
+          signal,
+        }),
+      logger,
+    );
   }
 
   return executeQuery(query as any, schema, store);

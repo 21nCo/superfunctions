@@ -1,4 +1,4 @@
 {
   "title": "Plugins",
-  "pages": ["overview", "soft-delete", "custom-plugins"]
+  "pages": ["overview", "custom-plugins"]
 }

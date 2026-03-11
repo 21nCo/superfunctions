@@ -8,7 +8,7 @@
  * - __datafn_meta: stores next_server_seq per namespace
  * - __datafn_changes: stores change entries with (namespace, resource, server_seq) index
  *
- * Supports pluggable sequence stores (Redis, KV, or database fallback) for
+ * Supports pluggable sequence stores (Redis, KV, or database sequence path) for
  * high-performance serverSeq generation.
  */
 
@@ -100,7 +100,7 @@ export interface ChangeEntryInput {
  * Service for managing serverSeq and change tracking
  *
  * When a sequenceStore is provided, serverSeq generation uses that store
- * (e.g., Redis for atomic INCR). Otherwise, falls back to the database
+ * (e.g., Redis for atomic INCR). Otherwise, uses the database
  * with CAS retry loop.
  */
 export class ChangeTrackingService {
@@ -239,7 +239,7 @@ export class ChangeTrackingService {
    * Ensures internal table once. Propagates errors immediately.
    *
    * EXE-018: Uses batched write path when internal.createMany is available.
-   * Falls back to deterministic sequential inserts otherwise.
+   * Uses deterministic sequential inserts otherwise.
    */
   async recordChanges(entries: ChangeEntryInput[]): Promise<void> {
     if (entries.length === 0) return;
@@ -271,7 +271,7 @@ export class ChangeTrackingService {
       });
       await this.db.internal.createMany!("__datafn_changes", rows);
     } else {
-      this.logger?.debug("recordChanges: batch insert unavailable, using sequential fallback", {
+      this.logger?.debug("recordChanges: batch insert unavailable, using sequential path", {
         operation: "recordChanges",
         entryCount: entries.length,
       });
@@ -299,14 +299,14 @@ export class ChangeTrackingService {
       try {
         return await this.sequenceStore.getCurrent(this.namespace);
       } catch (error) {
-        this.logger?.warn("Sequence store getCurrent failed, falling back to database", {
+        this.logger?.warn("Sequence store getCurrent failed, using database sequence path", {
           error: String(error),
           operation: "getCurrentServerSeq",
         });
       }
     }
 
-    // Fallback to database
+    // Database sequence path
     if (!this.metaEnsured) {
       await ensureInternalTable(this.db, "__datafn_meta");
       this.metaEnsured = true;

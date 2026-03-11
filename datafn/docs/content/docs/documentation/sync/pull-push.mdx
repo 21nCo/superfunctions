@@ -19,8 +19,8 @@ Pull retrieves incremental updates since the last known cursor for each resource
 6. If `hasMore` is true, the engine repeats the pull (catch-up loop).
 
 ```typescript
-// Trigger a manual pull
-await client.sync.pull();
+// Trigger a manual pull cycle using the sync engine
+await client.sync.pullNow();
 ```
 
 ### Pull Request
@@ -87,8 +87,11 @@ Push uploads locally queued mutations from the changelog to the server.
 5. If the batch was full, the engine immediately schedules another push for remaining entries.
 
 ```typescript
-// Trigger a manual push
-client.sync.push();
+// Trigger a manual push with explicit payload
+await client.sync.push({
+  clientId: "client-abc-123",
+  mutations: [],
+});
 ```
 
 ### Push Request

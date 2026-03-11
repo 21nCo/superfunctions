@@ -1,100 +1,171 @@
 import { createRouter, type Router, type Route } from "@superfunctions/http";
-import type { Adapter } from "@superfunctions/db";
-import type { DatafnSchema } from "@datafn/core";
-import { indexData } from "./indexing.js";
-import { searchIndex } from "./search.js";
+import type { SearchAdapter } from "@searchfn/adapters";
+import { errorResponse, parseJsonBody } from "./http/errors.js";
+import { DEFAULT_LIMITS, type ServerLimits } from "./http/validation.js";
+import { statusHandler, type ServerHealthSnapshot } from "./routes/status.js";
+import { indexHandler } from "./routes/index.js";
+import { searchHandler } from "./routes/search.js";
+import { searchAllHandler } from "./routes/search-all.js";
+import { removeHandler } from "./routes/remove.js";
+import { clearHandler } from "./routes/clear.js";
 
-export interface SearchFnConfig<TContext = any> {
-  schema: DatafnSchema;
-  db: Adapter;
-  /**
-   * Optional prefix for internal tables used by searchfn
-   * Default: "_searchfn_"
-   */
-  tablePrefix?: string;
+export type ServerContext = Record<string, unknown>;
+
+export interface SearchFnLogger {
+  info(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>): void;
+  debug(message: string, context?: Record<string, unknown>): void;
 }
 
-export interface SearchFnServer<TContext = any> {
+export interface SearchFnServerConfig<TContext = unknown> {
+  adapter: SearchAdapter;
+  basePath?: string;
+  limits?: Partial<ServerLimits>;
+  authorize?: (
+    ctx: TContext,
+    action: "status" | "index" | "search" | "searchAll" | "remove" | "clear",
+    payload: unknown,
+  ) => Promise<boolean> | boolean;
+  logger?: SearchFnLogger;
+}
+
+export interface SearchFnServer<TContext = unknown> {
   router: Router<TContext>;
+  close(): Promise<void>;
 }
 
-export async function createSearchFnServer<TContext = any>(
-  config: SearchFnConfig<TContext>
+/** Redact sensitive keys from objects before logging. */
+const SENSITIVE_KEYS = /apikey|password|secret|token|authorization|connectionstring/i;
+
+function redact(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (SENSITIVE_KEYS.test(k)) {
+      out[k] = "[REDACTED]";
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      out[k] = redact(v as Record<string, unknown>);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+export async function createSearchFnServer<TContext = unknown>(
+  config: SearchFnServerConfig<TContext>,
 ): Promise<SearchFnServer<TContext>> {
-  const { schema, db } = config;
+  const {
+    adapter,
+    basePath = "/searchfn",
+    limits: limitsOverrides,
+    authorize,
+    logger,
+  } = config;
 
-  // Handler for triggering indexing
-  // POST /searchfn/index
-  const indexHandler = async (req: Request) => {
-    try {
-      // In a real implementation, this might be triggered via webhooks or run in background
-      // Here we allow manual trigger for specific model or all
-      const body = await req.json().catch(() => ({}));
-      const model = body.model; // Optional: index specific model
-
-      const result = await indexData({
-        schema,
-        db,
-        model,
-        tablePrefix: config.tablePrefix
-      });
-
-      return new Response(JSON.stringify({ ok: true, result }), {
-        headers: { "Content-Type": "application/json" }
-      });
-    } catch (error: any) {
-      return new Response(JSON.stringify({ ok: false, error: error.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      });
+  const limits: ServerLimits = { ...DEFAULT_LIMITS, ...limitsOverrides };
+  const startTime = Date.now();
+  const health: ServerHealthSnapshot = {
+    state: "ok",
+    failureCount: 0,
+  };
+  const markDegraded = (): void => {
+    health.state = "degraded";
+    health.failureCount += 1;
+    if (health.degradedSince === undefined) {
+      health.degradedSince = Date.now();
     }
   };
 
-  // Handler for search
-  // POST /searchfn/search
-  const searchHandler = async (req: Request) => {
-    try {
-      const body = await req.json();
-      const { query, model, limit } = body;
+  type Action = "status" | "index" | "search" | "searchAll" | "remove" | "clear";
 
-      if (!query) {
-        return new Response(JSON.stringify({ ok: false, error: "Missing query" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" }
-        });
+  // Wrap handler to inject auth + logging
+  function wrap(
+    action: Action,
+    handler: (req: Request, ctx: any) => Promise<Response>,
+  ): (req: Request, ctx: any) => Promise<Response> {
+    return async (req: Request, ctx: any): Promise<Response> => {
+      const start = Date.now();
+      const logCtx: Record<string, unknown> = {
+        operation: action,
+        adapter: adapter.name,
+      };
+
+      logger?.debug("request.start", redact(logCtx));
+
+      // Auth check
+      if (authorize) {
+        try {
+          const payload = await getAuthorizationPayload(req, limits.maxPayloadBytes);
+          const allowed = await authorize(ctx as TContext, action, payload);
+          if (!allowed) {
+            logger?.warn("authorization.denied", redact({ ...logCtx }));
+            return errorResponse("FORBIDDEN", "Authorization denied");
+          }
+        } catch {
+          logger?.error("authorization.error", redact({ ...logCtx }));
+          return errorResponse("FORBIDDEN", "Authorization denied");
+        }
       }
 
-      const results = await searchIndex({
-        schema,
-        db,
-        query,
-        model,
-        limit,
-        tablePrefix: config.tablePrefix
-      });
+      try {
+        const response = await handler(req, ctx);
+        if (response.status >= 500) {
+          markDegraded();
+        }
+        const durationMs = Date.now() - start;
+        logger?.info("request.end", redact({
+          ...logCtx,
+          durationMs,
+          success: response.status < 400,
+          status: response.status,
+        }));
+        return response;
+      } catch {
+        markDegraded();
+        const durationMs = Date.now() - start;
+        logger?.error("request.error", redact({
+          ...logCtx,
+          durationMs,
+          success: false,
+          errorCode: "INTERNAL",
+        }));
+        return errorResponse("INTERNAL", "Unexpected server error");
+      }
+    };
+  }
 
-      return new Response(JSON.stringify({ ok: true, results }), {
-        headers: { "Content-Type": "application/json" }
-      });
-    } catch (error: any) {
-      return new Response(JSON.stringify({ ok: false, error: error.message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  };
-
-  const routes: Route<TContext>[] = [
+  const routes: Route<any>[] = [
     {
-      method: "POST",
-      path: "/searchfn/index",
-      handler: indexHandler,
+      method: "GET",
+      path: `${basePath}/status`,
+      handler: wrap("status", statusHandler(adapter, startTime, () => ({ ...health }))),
     },
     {
       method: "POST",
-      path: "/searchfn/search",
-      handler: searchHandler,
-    }
+      path: `${basePath}/index`,
+      handler: wrap("index", indexHandler(adapter, limits)),
+    },
+    {
+      method: "POST",
+      path: `${basePath}/search`,
+      handler: wrap("search", searchHandler(adapter, limits)),
+    },
+    {
+      method: "POST",
+      path: `${basePath}/search-all`,
+      handler: wrap("searchAll", searchAllHandler(adapter, limits)),
+    },
+    {
+      method: "POST",
+      path: `${basePath}/remove`,
+      handler: wrap("remove", removeHandler(adapter, limits)),
+    },
+    {
+      method: "POST",
+      path: `${basePath}/clear`,
+      handler: wrap("clear", clearHandler(adapter, limits)),
+    },
   ];
 
   const router = createRouter<TContext>({
@@ -102,5 +173,32 @@ export async function createSearchFnServer<TContext = any>(
     basePath: "/",
   });
 
-  return { router };
+  async function close(): Promise<void> {
+    if (adapter.dispose) {
+      await adapter.dispose();
+    }
+    logger?.info("server.close", { adapter: adapter.name });
+  }
+
+  return { router, close };
+}
+
+async function getAuthorizationPayload(
+  req: Request,
+  maxPayloadBytes: number,
+): Promise<unknown> {
+  if (req.method === "GET" || req.method === "HEAD") {
+    return null;
+  }
+
+  const contentType = req.headers.get("content-type");
+  if (contentType && !contentType.includes("application/json")) {
+    return null;
+  }
+
+  const parsed = await parseJsonBody(req.clone(), maxPayloadBytes);
+  if (!parsed.ok) {
+    return null;
+  }
+  return parsed.data;
 }

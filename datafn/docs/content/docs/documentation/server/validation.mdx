@@ -21,6 +21,8 @@ The following checks are applied to every query:
 | Relation depth bounded | Relation expansion depth in select tokens is capped at 5 levels. |
 | Prototype pollution | Filter objects are checked for disallowed keys (`__proto__`, `constructor`, `prototype`). |
 
+Capability-injected fields are included in query field validation based on resolved capabilities for the target resource.
+
 ### Query Limits
 
 | Limit | Default | Config Key | Description |
@@ -57,7 +59,7 @@ The following checks are applied to every mutation:
 |-------|-------------|
 | Mutation is object | The body must be a plain object (not array, null, or primitive). |
 | Resource exists | The `resource` field must reference a defined resource. |
-| Operation valid | Must be one of: `insert`, `merge`, `replace`, `delete`, `relate`, `modifyRelation`, `unrelate`. |
+| Operation valid | Must be one of: `insert`, `merge`, `replace`, `delete`, `trash`, `restore`, `archive`, `unarchive`, `share`, `unshare`, `relate`, `modifyRelation`, `unrelate`. |
 | ID is string | The `id` field must be a string within `maxIdLength` (default: 255). |
 | ID prefix matches | If the resource defines `idPrefix`, the ID must start with that prefix. |
 | Record keys match schema | For `insert`, `merge`, and `replace`, all keys in `record` must be recognized fields or relations. |
@@ -68,6 +70,13 @@ The following checks are applied to every mutation:
 | clientId / mutationId | If present, must be non-empty strings of at most 255 characters. |
 | version | If present, must be a positive integer. |
 | Prototype pollution | The entire mutation object is checked for disallowed keys. |
+
+### Capability-aware validation rules
+
+- `trash`/`restore` require `trash` capability on the resource.
+- `archive`/`unarchive` require `archivable` capability.
+- `share`/`unshare` require `shareable` capability and validate `shareWith`.
+- readonly capability fields are stripped before execution routes process records.
 
 ### Mutation Limits
 

@@ -32,7 +32,7 @@ export function createUploadRoutes(deps: UploadRouteDeps): Route[] {
     {
       method: 'POST',
       path: '/api/v1/recordings/upload',
-      handler: async (request: Request, ctx: RouteContext) => {
+      handler: async (request: Request, _ctx: RouteContext) => {
         const auth = await authenticate(request, validateApiKey);
 
         const url = new URL(request.url);

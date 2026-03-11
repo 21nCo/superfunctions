@@ -3,7 +3,7 @@
  * Delegates to shared @datafn/core hook runner with env: "server"
  */
 
-import type { DatafnPlugin, DatafnHookContext, HookError } from "@datafn/core";
+import type { DatafnPlugin, DatafnHookContext, HookError } from "../core-types.js";
 import { runBeforeHook, runAfterHook } from "@datafn/core";
 import type { DatafnLogger } from "../logger.js";
 
@@ -67,7 +67,7 @@ export async function runAfterMutation(
 }
 
 export async function runBeforeSync(
-  phase: "seed" | "clone" | "pull" | "push",
+  phase: "seed" | "clone" | "pull" | "push" | "reconcile",
   payload: unknown,
   ctx: { plugins: DatafnPlugin[]; schema: any },
   plugins: DatafnPlugin[],
@@ -79,7 +79,7 @@ export async function runBeforeSync(
 }
 
 export async function runAfterSync(
-  phase: "seed" | "clone" | "pull" | "push",
+  phase: "seed" | "clone" | "pull" | "push" | "reconcile",
   payload: unknown,
   result: unknown,
   ctx: { plugins: DatafnPlugin[]; schema: any },
@@ -87,11 +87,4 @@ export async function runAfterSync(
 ): Promise<void> {
   const hookCtx: DatafnHookContext = { env: "server", schema: ctx.schema };
   await runAfterHook(plugins, "server", "afterSync", hookCtx, payload, result, [phase]);
-}
-
-/**
- * Check if a searchfn plugin is installed (server-only)
- */
-export function hasSearchPlugin(plugins: DatafnPlugin[]): boolean {
-  return plugins.filter((p) => p.runsOn.includes("server")).some((p) => p.name === "searchfn");
 }

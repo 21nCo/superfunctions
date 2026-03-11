@@ -15,11 +15,12 @@ export { matchesFilter, type EventFilter } from "./events/filter.js";
 export {
   type DatafnClientError,
   throwClientError,
-  /** @deprecated Use throwClientError */
+  /** Alias for throwClientError */
   createClientError,
 } from "./errors.js";
 export { unwrapRemoteSuccess } from "./remote/unwrap.js";
 export { type DatafnTable } from "./tables/table.js";
+export { type PermissionEntry } from "./query.js";
 export {
   type DatafnStorageAdapter,
   type DatafnStorageFactory,
@@ -47,14 +48,3 @@ export {
   parseDateFields,
   parseQueryResultDates,
 } from "./codecs/date.js";
-
-// Plugins
-export {
-  createSoftDeletePlugin,
-  restore,
-  type SoftDeleteConfig,
-} from "./plugins/softDelete.js";
-export {
-  createClientSearchPlugin,
-  type ClientSearchConfig,
-} from "./plugins/clientSearch.js";

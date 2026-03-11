@@ -2,8 +2,8 @@
  * Push implementation - upload local mutations with change tracking
  */
 
-import type { DatafnSchema } from "@datafn/core";
-import { coerceDateFieldsToEpoch } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
+import { coerceDateFieldsToEpoch, resolveCapabilities } from "@datafn/core";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
 import type { SequenceStore } from "./sequence-store.js";
@@ -13,9 +13,12 @@ import {
   executeModifyRelation,
   executeUnrelate,
   extractJoinDeltas,
+  extractJoinDeltasFromDB,
   extractRelationFkDeltas,
 } from "../mutation/relations.js";
 import { executeSchemaAwareMerge } from "../mutation/merge-decision.js";
+import { stripReadonlyCapabilityFields } from "../mutation/execute.js";
+import { executeShare, executeUnshare, getPermissionsTable } from "../mutation/share.js";
 import type { DatafnLogger } from "../../logger.js";
 
 export interface PushRequest {
@@ -54,6 +57,67 @@ function applyDateCoercion(
   return coerceDateFieldsToEpoch({ ...data }, resourceDef.fields);
 }
 
+function hasSimpleCapability(
+  resolvedCapabilities: unknown[],
+  capability: "timestamps" | "audit" | "trash" | "archivable",
+): boolean {
+  return resolvedCapabilities.some((entry) => entry === capability);
+}
+
+function resolveCapabilitiesForResource(
+  schema: DatafnSchema,
+  resourceName: string,
+): unknown[] {
+  const resource = schema.resources.find((r) => r.name === resourceName);
+  if (!resource) return [];
+  return resolveCapabilities(schema.capabilities as any, resource.capabilities as any);
+}
+
+function injectCapabilityFieldsOnInsert(
+  record: Record<string, unknown>,
+  resolvedCapabilities: unknown[],
+  actorId?: string,
+): Record<string, unknown> {
+  const next = { ...record };
+  const now = Date.now();
+
+  if (hasSimpleCapability(resolvedCapabilities, "timestamps")) {
+    next.createdAt = now;
+    next.updatedAt = now;
+  }
+  if (hasSimpleCapability(resolvedCapabilities, "audit")) {
+    next.createdBy = actorId ?? null;
+    next.updatedBy = actorId ?? null;
+  }
+
+  return next;
+}
+
+function injectCapabilityFieldsOnUpdate(
+  record: Record<string, unknown>,
+  resolvedCapabilities: unknown[],
+  actorId?: string,
+): Record<string, unknown> {
+  const next = { ...record };
+
+  if (hasSimpleCapability(resolvedCapabilities, "timestamps")) {
+    next.updatedAt = Date.now();
+  }
+  if (hasSimpleCapability(resolvedCapabilities, "audit")) {
+    next.updatedBy = actorId ?? null;
+  }
+
+  return next;
+}
+
+function hasTrashCapability(resolvedCapabilities: unknown[]): boolean {
+  return resolvedCapabilities.some((entry) => entry === "trash");
+}
+
+function hasArchivableCapability(resolvedCapabilities: unknown[]): boolean {
+  return resolvedCapabilities.some((entry) => entry === "archivable");
+}
+
 /**
  * Execute push operation - apply mutations with change tracking
  */
@@ -65,6 +129,7 @@ export async function executePush(
   namespace: string,
   sequenceStore?: SequenceStore,
   onChange?: (seq: number, namespace: string) => void,
+  actorId?: string,
   logger?: DatafnLogger,
 ): Promise<PushResult> {
   // Validate clientId at request level - this is a critical error
@@ -123,14 +188,48 @@ export async function executePush(
   const resourceSeqs: Record<string, number> = {};
 
   // FIX-REL-011: Detect transaction support for atomic mutation units
-  const hasTransaction =
+  let hasTransaction =
     (db.capabilities?.transactions?.supported !== false) &&
     typeof db.transaction === "function";
+  if (hasTransaction) {
+    // Some adapters (notably drizzle+better-sqlite3) expose transaction support but
+    // reject async callbacks. Probe once and downgrade to non-atomic mode when needed.
+    try {
+      await (db as any).transaction(() => Promise.resolve(undefined));
+    } catch (error) {
+      const txMsg = String((error as any)?.message || error).toLowerCase();
+      if (
+        txMsg.includes("cannot return a promise") ||
+        txMsg.includes("not supported") ||
+        txMsg.includes("not implemented")
+      ) {
+        hasTransaction = false;
+      } else {
+        throw error;
+      }
+    }
+  }
   if (!hasTransaction) {
     logger?.warn("Push operating in non-atomic mode (adapter does not support transactions)", {
       operation: "push",
       namespace,
     });
+  }
+
+  let initialSeqBatchAllocated = false;
+  let seqPool: number[] = [];
+  async function takeNextServerSeq(): Promise<number> {
+    if (seqPool.length === 0) {
+      if (!initialSeqBatchAllocated) {
+        initialSeqBatchAllocated = true;
+        seqPool = await changeTracking.getNextServerSeqBatch(
+          Math.max(1, request.mutations.length),
+        );
+      } else {
+        seqPool = await changeTracking.getNextServerSeqBatch(1);
+      }
+    }
+    return seqPool.shift()!;
   }
 
   // Pending change entries for a mutation that executed successfully
@@ -141,6 +240,10 @@ export async function executePush(
     record: Record<string, unknown> | null;
   };
 
+  type ExecuteMutationResult =
+    | { ok: true; changes: PendingChange[] }
+    | { ok: false; code: string; message: string; path: string };
+
   // Local dedup: track mutations processed in this batch (clientId:mutationId → ok)
   const batchLocalSeen = new Map<string, boolean>();
 
@@ -150,20 +253,43 @@ export async function executePush(
   async function executeMutationOp(
     mut: any,
     targetDb: Adapter,
-  ): Promise<{ ok: true } | { ok: false; code: string; message: string; path: string }> {
+  ): Promise<ExecuteMutationResult> {
+    const resolvedCapabilities = resolveCapabilitiesForResource(schema, mut.resource);
     switch (mut.operation) {
       case "insert": {
         const coercedData = applyDateCoercion(schema, mut.resource, mut.record || {}, logger);
-        await targetDb.create({ model: mut.resource, data: { id: mut.id, ...coercedData }, namespace });
-        return { ok: true };
+        const strippedRecord = stripReadonlyCapabilityFields(coercedData, resolvedCapabilities);
+        const insertRecord = injectCapabilityFieldsOnInsert(
+          strippedRecord,
+          resolvedCapabilities,
+          actorId,
+        );
+        await targetDb.create({ model: mut.resource, data: { id: mut.id, ...insertRecord }, namespace });
+        return {
+          ok: true,
+          changes: [
+            { resource: mut.resource, id: mut.id, op: "insert", record: { id: mut.id, ...insertRecord } },
+          ],
+        };
       }
       case "merge": {
         const coercedData = applyDateCoercion(schema, mut.resource, mut.record || {}, logger);
+        const strippedRecord = stripReadonlyCapabilityFields(coercedData, resolvedCapabilities);
+        const updateData = injectCapabilityFieldsOnUpdate(
+          strippedRecord,
+          resolvedCapabilities,
+          actorId,
+        );
+        const createData = injectCapabilityFieldsOnInsert(
+          strippedRecord,
+          resolvedCapabilities,
+          actorId,
+        );
         const strictUpdateNotFound = targetDb.capabilities?.operations?.strictUpdateNotFound === true;
         const mergeResult = await executeSchemaAwareMerge({
-          schema, resource: mut.resource, id: mut.id, delta: coercedData,
+          schema, resource: mut.resource, id: mut.id, delta: createData,
           update: async () => {
-            await targetDb.update({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], data: coercedData, namespace });
+            await targetDb.update({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], data: updateData, namespace });
           },
           create: async (record) => {
             await targetDb.create({ model: mut.resource, data: record, namespace });
@@ -172,55 +298,348 @@ export async function executePush(
             findOne: async () => targetDb.findOne({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], namespace }),
           }),
         });
-        if (mergeResult.ok) return { ok: true };
+        if (mergeResult.ok) {
+          const changeRecordData =
+            mergeResult.mode === "create" ? createData : updateData;
+          return {
+            ok: true,
+            changes: [{ resource: mut.resource, id: mut.id, op: "merge", record: { id: mut.id, ...changeRecordData } }],
+          };
+        }
         if (mergeResult.code === "NOT_FOUND") return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
         logger?.error("Push merge failed", { error: String(mergeResult.error), operation: mut.operation, resource: mut.resource, id: mut.id });
         return { ok: false, code: "INTERNAL", message: "Internal error", path: "$" };
       }
       case "replace": {
         const coercedData = applyDateCoercion(schema, mut.resource, mut.record || {}, logger);
-        await targetDb.upsert({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], create: { id: mut.id, ...coercedData }, update: coercedData, namespace, conflictTarget: "id" });
-        return { ok: true };
+        const strippedRecord = stripReadonlyCapabilityFields(coercedData, resolvedCapabilities);
+        const replaceData = injectCapabilityFieldsOnUpdate(
+          strippedRecord,
+          resolvedCapabilities,
+          actorId,
+        );
+        await targetDb.upsert({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], create: { id: mut.id, ...replaceData }, update: replaceData, namespace, conflictTarget: "id" });
+        return {
+          ok: true,
+          changes: [{ resource: mut.resource, id: mut.id, op: "replace", record: { id: mut.id, ...replaceData } }],
+        };
       }
       case "delete":
         await targetDb.delete({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], namespace });
-        return { ok: true };
+        return {
+          ok: true,
+          changes: [{ resource: mut.resource, id: mut.id, op: "delete", record: null }],
+        };
+      case "trash": {
+        if (!hasTrashCapability(resolvedCapabilities)) {
+          return {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.trash",
+            path: "operation",
+          };
+        }
+
+        const existing = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        if (!existing) {
+          return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
+        }
+
+        const trashPayload = injectCapabilityFieldsOnUpdate(
+          { trashedAt: Date.now(), trashedBy: actorId ?? null },
+          resolvedCapabilities,
+          actorId,
+        );
+        await targetDb.update({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          data: trashPayload,
+          namespace,
+        });
+        const updated = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        const changeRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mut.id,
+          ...(existing as Record<string, unknown>),
+          ...trashPayload,
+        };
+        return {
+          ok: true,
+          changes: [{ resource: mut.resource, id: mut.id, op: "merge", record: changeRecord }],
+        };
+      }
+      case "restore": {
+        if (!hasTrashCapability(resolvedCapabilities)) {
+          return {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.restore",
+            path: "operation",
+          };
+        }
+
+        const existing = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        if (!existing) {
+          return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
+        }
+
+        const existingRecord = existing as Record<string, unknown>;
+        const isCurrentlyTrashed =
+          existingRecord.trashedAt !== null && existingRecord.trashedAt !== undefined;
+        if (!isCurrentlyTrashed) {
+          return { ok: true, changes: [] };
+        }
+
+        const restorePayload = injectCapabilityFieldsOnUpdate(
+          { trashedAt: null, trashedBy: null },
+          resolvedCapabilities,
+          actorId,
+        );
+        await targetDb.update({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          data: restorePayload,
+          namespace,
+        });
+        const updated = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        const changeRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mut.id,
+          ...existingRecord,
+          ...restorePayload,
+        };
+        return {
+          ok: true,
+          changes: [{ resource: mut.resource, id: mut.id, op: "merge", record: changeRecord }],
+        };
+      }
+      case "archive": {
+        if (!hasArchivableCapability(resolvedCapabilities)) {
+          return {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.archive",
+            path: "operation",
+          };
+        }
+
+        const existing = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        if (!existing) {
+          return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
+        }
+
+        const archivePayload = injectCapabilityFieldsOnUpdate(
+          { isArchived: true },
+          resolvedCapabilities,
+          actorId,
+        );
+        await targetDb.update({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          data: archivePayload,
+          namespace,
+        });
+        const updated = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        const changeRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mut.id,
+          ...(existing as Record<string, unknown>),
+          ...archivePayload,
+        };
+        return {
+          ok: true,
+          changes: [{ resource: mut.resource, id: mut.id, op: "merge", record: changeRecord }],
+        };
+      }
+      case "unarchive": {
+        if (!hasArchivableCapability(resolvedCapabilities)) {
+          return {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.unarchive",
+            path: "operation",
+          };
+        }
+
+        const existing = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        if (!existing) {
+          return { ok: false, code: "NOT_FOUND", message: `Record not found: ${mut.id}`, path: "id" };
+        }
+
+        const unarchivePayload = injectCapabilityFieldsOnUpdate(
+          { isArchived: false },
+          resolvedCapabilities,
+          actorId,
+        );
+        await targetDb.update({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          data: unarchivePayload,
+          namespace,
+        });
+        const updated = await targetDb.findOne({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          namespace,
+        });
+        const changeRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mut.id,
+          ...(existing as Record<string, unknown>),
+          ...unarchivePayload,
+        };
+        return {
+          ok: true,
+          changes: [{ resource: mut.resource, id: mut.id, op: "merge", record: changeRecord }],
+        };
+      }
+      case "share": {
+        const shareResult = await executeShare(
+          targetDb,
+          mut as any,
+          resolvedCapabilities,
+          namespace,
+          actorId,
+        );
+        if (!shareResult.ok) {
+          return {
+            ok: false,
+            code: shareResult.code,
+            message: shareResult.message,
+            path: shareResult.path,
+          };
+        }
+        return {
+          ok: true,
+          changes: [
+            {
+              resource: getPermissionsTable(mut.resource),
+              id: String(shareResult.permissionRecord.id),
+              op: "upsert",
+              record: shareResult.permissionRecord,
+            },
+          ],
+        };
+      }
+      case "unshare": {
+        const unshareResult = await executeUnshare(
+          targetDb,
+          mut as any,
+          resolvedCapabilities,
+          namespace,
+          actorId,
+        );
+        if (!unshareResult.ok) {
+          return {
+            ok: false,
+            code: unshareResult.code,
+            message: unshareResult.message,
+            path: unshareResult.path,
+          };
+        }
+        if (!unshareResult.deleted) {
+          return { ok: true, changes: [] };
+        }
+        return {
+          ok: true,
+          changes: [
+            {
+              resource: getPermissionsTable(mut.resource),
+              id: unshareResult.changeId,
+              op: "delete",
+              record: null,
+            },
+          ],
+        };
+      }
       case "relate": {
-        const result = await executeRelate(targetDb, schema, mut, namespace);
-        return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message, path: result.path };
+        // JSY-001: pass actorId for relation capability field injection parity with direct mutation path
+        const result = await executeRelate(targetDb, schema, mut, namespace, actorId);
+        if (!result.ok) {
+          return { ok: false, code: result.code, message: result.message, path: result.path };
+        }
+        const changes: PendingChange[] = [];
+        for (const delta of extractRelationFkDeltas(mut, schema)) {
+          changes.push({ resource: delta.resource, id: delta.id, op: delta.op, record: delta.record });
+        }
+        // JSY-002: read back persisted join rows to include server-injected capability fields
+        for (const delta of await extractJoinDeltasFromDB(targetDb, mut, schema, namespace)) {
+          changes.push({
+            resource: delta.resource,
+            id: delta.id,
+            op: delta.op as "upsert" | "delete",
+            record: delta.record,
+          });
+        }
+        return { ok: true, changes };
       }
       case "modifyRelation": {
-        const result = await executeModifyRelation(targetDb, schema, mut, namespace);
-        return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message, path: result.path };
+        // JSY-001: pass actorId for relation capability field injection parity with direct mutation path
+        const result = await executeModifyRelation(targetDb, schema, mut, namespace, actorId);
+        if (!result.ok) {
+          return { ok: false, code: result.code, message: result.message, path: result.path };
+        }
+        const changes: PendingChange[] = [];
+        for (const delta of extractRelationFkDeltas(mut, schema)) {
+          changes.push({ resource: delta.resource, id: delta.id, op: delta.op, record: delta.record });
+        }
+        // JSY-002: read back persisted join rows to include server-injected capability fields
+        for (const delta of await extractJoinDeltasFromDB(targetDb, mut, schema, namespace)) {
+          changes.push({
+            resource: delta.resource,
+            id: delta.id,
+            op: delta.op as "upsert" | "delete",
+            record: delta.record,
+          });
+        }
+        return { ok: true, changes };
       }
       case "unrelate": {
         const result = await executeUnrelate(targetDb, schema, mut, namespace);
-        return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message, path: result.path };
+        if (!result.ok) {
+          return { ok: false, code: result.code, message: result.message, path: result.path };
+        }
+        const changes: PendingChange[] = [];
+        for (const delta of extractRelationFkDeltas(mut, schema)) {
+          changes.push({ resource: delta.resource, id: delta.id, op: delta.op, record: delta.record });
+        }
+        for (const delta of extractJoinDeltas(mut, schema)) {
+          changes.push({
+            resource: delta.resource,
+            id: delta.id,
+            op: delta.op as "upsert" | "delete",
+            record: delta.record,
+          });
+        }
+        return { ok: true, changes };
       }
       default:
         return { ok: false, code: "DFQL_UNSUPPORTED", message: `Unsupported DFQL feature: mutation.operation.${mut.operation}`, path: "operation" };
     }
-  }
-
-  /**
-   * Build pending change entries for a successful mutation.
-   */
-  function buildChangeEntries(mut: any): PendingChange[] {
-    const isRelationMutation = mut.operation === "relate" || mut.operation === "modifyRelation" || mut.operation === "unrelate";
-    const changes: PendingChange[] = [];
-    if (isRelationMutation) {
-      for (const delta of extractRelationFkDeltas(mut, schema)) {
-        changes.push({ resource: delta.resource, id: delta.id, op: delta.op, record: delta.record });
-      }
-      for (const delta of extractJoinDeltas(mut, schema)) {
-        changes.push({ resource: delta.resource, id: delta.id, op: delta.op as "upsert" | "delete", record: delta.record });
-      }
-    } else {
-      const changeRecord = mut.operation === "delete" ? null : { id: mut.id, ...applyDateCoercion(schema, mut.resource, mut.record || {}, logger) };
-      const changeOp = mut.operation === "delete" ? "delete" : mut.operation === "insert" ? "insert" : mut.operation === "merge" ? "merge" : "replace";
-      changes.push({ resource: mut.resource, id: mut.id, op: changeOp as "insert" | "merge" | "replace" | "delete", record: changeRecord });
-    }
-    return changes;
   }
 
   /**
@@ -291,10 +710,10 @@ export async function executePush(
           }
 
           // Build and record changes inside the same transaction
-          const changes = buildChangeEntries(mut);
+          const changes = opResult.changes;
           const txChangeTracking = changeTracking.withDb(txDb);
           for (const change of changes) {
-            const seq = await changeTracking.getNextServerSeq();
+            const seq = await takeNextServerSeq();
             latestSeq = Math.max(latestSeq, seq);
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
             // FIX-REL-002: retry within transaction
@@ -318,7 +737,7 @@ export async function executePush(
       }
     } else {
       // Non-transaction path: execute operation, then record changes separately (best-effort)
-      let opResult: { ok: true } | { ok: false; code: string; message: string; path: string };
+      let opResult: ExecuteMutationResult;
       try {
         opResult = await executeMutationOp(mut, db);
       } catch (error) {
@@ -328,11 +747,11 @@ export async function executePush(
 
       if (opResult.ok) {
         // Record changes (non-atomic — best-effort with retry)
-        const changes = buildChangeEntries(mut);
+        const changes = opResult.changes;
         let changeTrackingFailed = false;
         try {
           for (const change of changes) {
-            const seq = await changeTracking.getNextServerSeq();
+            const seq = await takeNextServerSeq();
             latestSeq = Math.max(latestSeq, seq);
             resourceSeqs[change.resource] = Math.max(resourceSeqs[change.resource] || 0, seq);
             await recordChangeWithRetry(changeTracking, {

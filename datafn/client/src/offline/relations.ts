@@ -8,7 +8,7 @@ import { getJoinStoreKey } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 
 // NormalizedRelation, normalizeRelationPayload, and findRelationBidirectional
-// are canonical in @datafn/core. Re-export for backward compatibility.
+// are canonical in @datafn/core and are re-exported here for convenience.
 export type { NormalizedRelation } from "@datafn/core";
 export { normalizeRelationPayload } from "@datafn/core";
 

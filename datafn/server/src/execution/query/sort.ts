@@ -5,8 +5,8 @@
 import {
   parseSortTerms as coreParseSort,
   sortRecords as coreSortRecords,
-  type SortTerm,
 } from "@datafn/core";
+import type { SortTerm } from "../../core-types.js";
 
 export type { SortTerm };
 

@@ -87,11 +87,11 @@ async def test_transact_atomic_rollback():
     }
     
     res = await handler({}, payload)
-    
-    # Should fail overall
-    assert res["ok"] is False
-    assert res["error"]["code"] == "DFQL_INVALID"
-    
+
+    # Envelope is ok (carries transaction result), inner result signals failure
+    assert res["ok"] is True
+    assert res["result"]["ok"] is False
+
     # Verify DB (Rollback)
     tasks = await db.find_many("tasks", [])
     assert len(tasks) == 0

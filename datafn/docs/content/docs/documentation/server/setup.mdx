@@ -39,13 +39,13 @@ DataFn supports both TypeScript (Node.js) and Python servers. Use the language t
 
     ```typescript
     import { createDatafnServer } from "@datafn/server";
-    import { createDrizzleAdapter } from "@superfunctions/db/drizzle";
+    import { drizzleAdapter } from "@superfunctions/db/adapters";
     import { ns } from "@datafn/core";
     import { schema } from "./schema";
 
     const server = await createDatafnServer({
       schema,
-      db: createDrizzleAdapter(drizzle),
+      db: drizzleAdapter({ db: drizzle, dialect: "postgres" }),
       plugins: [],
       debug: process.env.NODE_ENV !== "production",
       rest: true,
@@ -59,6 +59,8 @@ DataFn supports both TypeScript (Node.js) and Python servers. Use the language t
         maxSortFields: 10,
         maxAggregations: 20,
         maxIdLength: 255,
+        maxBatchSize: 500,
+        maxBatchQueryConcurrency: 20,
       },
       authorize: async (ctx, action, payload) => {
         return ctx.session?.authenticated === true;
@@ -100,7 +102,8 @@ DataFn supports both TypeScript (Node.js) and Python servers. Use the language t
     Use `create_datafn_server()` to initialize a DataFn server. It validates your schema and returns a dictionary with route handlers.
 
     ```python
-    from datafn import create_datafn_server, DatafnServerConfig
+    from datafn import create_datafn_server
+    from datafn.server import DatafnServerConfig
 
     schema = {
         "resources": [
@@ -188,12 +191,14 @@ DataFn supports both TypeScript (Node.js) and Python servers. Use the language t
 | `limits.maxSortFields` | `number` | `10` | Maximum sort fields per query. |
 | `limits.maxAggregations` | `number` | `20` | Maximum aggregation definitions per query. |
 | `limits.maxIdLength` | `number` | `255` | Maximum character length for record IDs. |
+| `limits.maxBatchSize` | `number` | `500` | Maximum batch size for `/datafn/push` and batch `/datafn/mutation`. |
+| `limits.maxBatchQueryConcurrency` | `number` | `20` | Maximum in-flight query concurrency for batch `/datafn/query`. |
 
 ### Features
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `plugins` | `DatafnPlugin[]` | `[]` | Server-side plugins (e.g., searchfn, softDelete). |
+| `plugins` | `DatafnPlugin[]` | `[]` | Server-side plugins (for example custom query/mutation hooks). |
 | `rest` | `boolean` | `false` | Enable REST endpoint wrappers. |
 | `getServerTime` | `() => number` | `Date.now` | Server time provider. Useful for testing. |
 | `retention` | `RetentionConfig` | `undefined` | Data retention for change log and idempotency tables. |

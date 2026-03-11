@@ -1,5 +1,6 @@
 import pytest
 from datafn.server import create_datafn_server, DatafnError
+from .mock_db import MockAdapter
 
 def test_tv_py_001_routes_exposed():
     """
@@ -11,9 +12,9 @@ def test_tv_py_001_routes_exposed():
         ],
         "relations": []
     }
-    
+
     # Pass config dict
-    result = create_datafn_server({"schema": schema})
+    result = create_datafn_server({"schema": schema, "db": MockAdapter()})
     
     routes = result["routes"].keys()
     

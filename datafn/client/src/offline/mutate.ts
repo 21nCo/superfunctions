@@ -11,6 +11,10 @@ import type { DatafnSchema } from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import { createClientError } from "../errors.js";
 import { getJoinStoreKey, normalizeRelationPayload, findRelationBidirectional } from "@datafn/core";
+import {
+  injectCapabilityFieldsForOptimisticRecord,
+  sanitizeCapabilityReadonlyFields,
+} from "../capability-fields.js";
 
 /**
  * Handle a mutation when remote is unavailable.
@@ -42,12 +46,13 @@ export async function handleOfflineMutation(
   const resource = mutation.resource as string;
   const id = mutation.id as string;
   const operation = mutation.operation as string;
-  const record = (mutation.record || {}) as Record<string, unknown>;
+  const sanitizedMutation = sanitizeCapabilityReadonlyFields(schema, mutation);
+  const record = ((sanitizedMutation.record || {}) as Record<string, unknown>);
 
   // 2. Validate mutation (no side effects, can throw)
   // This prevents invalid mutations from being added to changelog
   if (operation === "relate" || operation === "modifyRelation" || operation === "unrelate") {
-    await validateRelationMutation(storage, schema, mutation);
+    await validateRelationMutation(storage, schema, sanitizedMutation);
   }
 
   // 3. Append to changelog (after validation, before apply)
@@ -56,7 +61,7 @@ export async function handleOfflineMutation(
     await storage.changelogAppend({
       clientId,
       mutationId,
-      mutation,
+      mutation: sanitizedMutation,
       timestampMs,
       timestamp: new Date().toISOString(),
     });
@@ -71,21 +76,58 @@ export async function handleOfflineMutation(
 
   if (operation === "delete") {
     await storage.deleteRecord(resource, id);
+  } else if (operation === "trash") {
+    await storage.mergeRecord(resource, id, {
+      trashedAt: timestampMs,
+      trashedBy: null,
+    });
+  } else if (operation === "restore") {
+    await storage.mergeRecord(resource, id, {
+      trashedAt: null,
+      trashedBy: null,
+    });
+  } else if (operation === "archive") {
+    await storage.mergeRecord(resource, id, {
+      isArchived: true,
+    });
+  } else if (operation === "unarchive") {
+    await storage.mergeRecord(resource, id, {
+      isArchived: false,
+    });
   } else if (operation === "merge") {
     // Merge: Use atomic mergeRecord with one-level-deep merge
-    await storage.mergeRecord(resource, id, record);
+    const optimisticRecord = injectCapabilityFieldsForOptimisticRecord(
+      schema,
+      sanitizedMutation,
+      {
+        timestampMs,
+        actorId: clientId,
+      },
+    );
+    await storage.mergeRecord(resource, id, optimisticRecord);
   } else if (operation === "insert" || operation === "replace") {
     // Insert/Replace: Overwrite (simple upsert)
     // Ensure id matches mutation target
-    const toWrite = { ...record, id };
+    const existing =
+      operation === "replace" ? await storage.getRecord(resource, id) : null;
+    const optimisticRecord = injectCapabilityFieldsForOptimisticRecord(
+      schema,
+      sanitizedMutation,
+      {
+        timestampMs,
+        actorId: clientId,
+        existingRecord: existing,
+      },
+    );
+    const toWrite = { ...optimisticRecord, id };
     await storage.upsertRecord(resource, toWrite);
   } else if (operation === "relate") {
     // Handle relation mutations
-    await applyRelate(storage, schema, mutation);
+    await applyRelate(storage, schema, sanitizedMutation);
   } else if (operation === "modifyRelation") {
-    await applyModifyRelation(storage, schema, mutation);
+    await applyModifyRelation(storage, schema, sanitizedMutation);
   } else if (operation === "unrelate") {
-    await applyUnrelate(storage, schema, mutation);
+    await applyUnrelate(storage, schema, sanitizedMutation);
   }
 
   // 5. Return optimistic success result

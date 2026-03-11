@@ -100,7 +100,7 @@ if (affected === 0) {
 The adapter factory supports configurable isolation levels:
 
 ```typescript
-const adapter = createDrizzleAdapter({
+const adapter = drizzleAdapter({
   db,
   dialect: "postgres",
   transaction: {

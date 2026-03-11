@@ -51,11 +51,12 @@ graph TD
 DFQL covers:
 
 - [**Schema**](/docs/dfql/schema) — define your data model with typed resources, fields, indices, and relations.
+- [**Capabilities**](/docs/documentation/concepts/capabilities) — opt-in lifecycle and access behavior (`timestamps`, `audit`, `trash`, `archivable`, `shareable`).
 - [**Resources**](/docs/dfql/schema/resources) — declare collections of records with versioning, permissions, and index configuration.
 - [**Fields**](/docs/dfql/schema/fields) — configure field types, validation constraints, defaults, and encryption.
 - [**Relations**](/docs/dfql/schema/relations) — define one-to-many, many-to-many, and hierarchical tree relationships.
 - [**Queries**](/docs/dfql/queries) — read data with filters, sorting, pagination, field selection, and aggregations.
-- [**Mutations**](/docs/dfql/mutations) — insert, merge, update, and delete records.
+- [**Mutations**](/docs/dfql/mutations) — insert/merge/replace/delete plus capability operations (`trash`, `restore`, `archive`, `unarchive`, `share`, `unshare`).
 - [**Transactions**](/docs/dfql/transactions) — execute multiple operations atomically.
 
 ## Client
@@ -98,3 +99,13 @@ DataFn's [offline-first sync](/docs/documentation/sync/offline-first) model ensu
 ## Multi-Tenancy
 
 Row-level [namespace isolation](/docs/documentation/concepts/multi-tenancy) is enabled by default. Every record is tagged with a `__ns` column, and all queries are automatically scoped to the current namespace. Use `namespaceProvider` on the server and `namespace` on the client to configure isolation boundaries.
+
+## Capabilities
+
+Capabilities are DataFn's schema-level behavior switches. They control lifecycle fields, auto-filters, and API surface per resource.
+
+- `timestamps` + `audit` inject server-managed fields.
+- `trash` + `archivable` add lifecycle operations and query defaults.
+- `shareable` enables per-record permissions and access gating.
+
+See [Capabilities](/docs/documentation/concepts/capabilities) for full resolution rules and field ownership.

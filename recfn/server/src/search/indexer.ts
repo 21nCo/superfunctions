@@ -15,18 +15,20 @@ export interface IndexTranscriptInput {
 export function indexTranscript(
   input: IndexTranscriptInput,
   searchClient: SearchFnClient,
-): void {
-  searchClient.removeByRecording(input.recordingId);
+): Promise<void> {
+  return (async () => {
+    await searchClient.removeByRecording(input.recordingId);
 
-  const documents: TranscriptSearchDocument[] = input.segments.map((seg, i) => ({
-    segmentId: `${input.recordingId}::seg::${i}`,
-    recordingId: input.recordingId,
-    botId: input.botId,
-    participantId: seg.speakerId,
-    startTime: seg.startTime,
-    endTime: seg.endTime,
-    text: seg.text,
-  }));
+    const documents: TranscriptSearchDocument[] = input.segments.map((seg, i) => ({
+      segmentId: `${input.recordingId}::seg::${i}`,
+      recordingId: input.recordingId,
+      botId: input.botId,
+      participantId: seg.speakerId,
+      startTime: seg.startTime,
+      endTime: seg.endTime,
+      text: seg.text,
+    }));
 
-  searchClient.index(documents);
+    await searchClient.index(documents);
+  })();
 }

@@ -32,7 +32,7 @@ import { createDatafnClient } from "@datafn/client";
 const client = createDatafnClient({
   schema,
   sync: {
-    remote: "https://api.example.com",
+    remote: "https://api.example.com/datafn",
     pushInterval: 5000,       // Push every 5 seconds
     pushBatchSize: 100,       // Max mutations per push batch
     pushMaxRetries: 3,        // Retry failed pushes up to 3 times
@@ -51,7 +51,7 @@ WebSocket reconnection uses exponential backoff with jitter:
 ```typescript
 sync: {
   ws: true,
-  remote: "https://api.example.com",
+  remote: "https://api.example.com/datafn",
   wsReconnect: {
     enabled: true,            // Default: true
     baseDelayMs: 1000,        // Initial delay
@@ -73,7 +73,8 @@ The sync engine emits events through the client event bus at each phase:
 - `ws_connected` / `ws_disconnected` -- WebSocket lifecycle events.
 
 ```typescript
-client.events.on("sync_applied", (event) => {
+client.subscribe((event) => {
+  if (event.type !== "sync_applied") return;
   console.log(`Sync phase: ${event.context.phase}`);
   console.log(`Resources: ${event.context.resources}`);
 });
@@ -97,3 +98,15 @@ The sync engine automatically triggers pulls in response to:
 - **Online event** -- When the browser transitions from offline to online.
 - **WebSocket cursor message** -- When the server notifies of new changes.
 - **Post-push** -- After a successful push, if foreign changes are detected.
+
+## Manual Engine Controls
+
+The client also exposes explicit sync-engine control methods:
+
+```typescript
+await client.sync.start();        // Start engine lifecycle (clone/pull/push scheduling)
+client.sync.stop();               // Stop timers, listeners, and WS processing
+await client.sync.pullNow();      // Immediate incremental pull cycle
+await client.sync.cloneNow();     // Immediate clone cycle using hydration plan
+await client.sync.reconcileNow(); // Count-based drift detection + targeted re-clone
+```

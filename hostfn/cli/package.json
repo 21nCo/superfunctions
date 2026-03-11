@@ -1,6 +1,6 @@
 {
   "name": "hostfn",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "license": "MIT",
   "description": "Universal application deployment CLI",
   "type": "module",

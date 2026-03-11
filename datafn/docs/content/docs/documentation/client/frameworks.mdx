@@ -87,15 +87,15 @@ const completedCount = derived(todosStore, ($s) =>
 );
 ```
 
-### Deprecated Factory Overload
+### Factory Overload
 
-An older factory-based overload exists for backward compatibility:
+An additional factory-based overload is also available:
 
 ```typescript
 toSvelteStore(clientRef, (client) => client.todos.signal({ ... }));
 ```
 
-This is **no longer needed**. Use the direct signal form instead. The factory overload will be removed in the next major version.
+Use the direct signal form when you already have a stable signal instance. Use the factory overload when signal creation depends on a client reference that can change.
 
 ---
 

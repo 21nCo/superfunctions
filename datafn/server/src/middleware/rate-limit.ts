@@ -1,7 +1,7 @@
 /**
  * Rate Limiting Middleware
  * Implements RATE-001 through RATE-005: configurable per-endpoint rate limiting
- * with Redis-backed and in-memory fallback implementations.
+ * with Redis-backed and in-memory implementations.
  */
 
 import type { RedisAdapter } from "@superfunctions/db";
@@ -27,7 +27,7 @@ export class RedisRateLimiter implements RateLimiter {
     let count: number;
     // REL-008: Use atomic Lua script to prevent TTL race (crash between incr and expire).
     // If the Redis client exposes eval(), use a single atomic command.
-    // Fallback to non-atomic incr+set for clients that don't support eval.
+    // Use non-atomic incr+set when eval() is unavailable.
     const redisAny = this.redis as any;
     if (typeof redisAny.eval === "function") {
       // Lua: INCR key; if new key (count==1) set EXPIRE; return count
@@ -38,7 +38,7 @@ export class RedisRateLimiter implements RateLimiter {
         String(windowSeconds),
       );
     } else {
-      // Non-atomic fallback: tiny race window only on first request of a new window
+      // Non-atomic path: tiny race window only on first request of a new window
       count = await this.redis.incr(redisKey);
       if (count === 1) {
         await this.redis.set(redisKey, String(count), windowSeconds);

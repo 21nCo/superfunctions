@@ -230,8 +230,8 @@ When you run `datafn generate` without the `--schema` flag, the CLI automaticall
 
 1. `./schema.datafn.ts` (current directory)
 2. `./src/schema.datafn.ts` (source directory)
-3. `./schema.json` (JSON fallback)
-4. `./src/schema.json` (JSON fallback in src)
+3. `./schema.json` (JSON schema file)
+4. `./src/schema.json` (JSON schema file in src)
 
 The first file found is used.
 

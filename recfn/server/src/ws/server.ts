@@ -49,7 +49,7 @@ export class RecFnWebSocketServer {
       }
     });
 
-    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage, botId: string, deferred: boolean) => {
+    this.wss.on('connection', (ws: WebSocket, _req: IncomingMessage, botId: string, deferred: boolean) => {
       if (deferred) {
         // Wait for first message to authenticate
         const authTimeout = setTimeout(() => {
@@ -62,7 +62,7 @@ export class RecFnWebSocketServer {
             const data = JSON.parse(message.toString());
             if (data.type === 'auth' && data.token) {
               const res = await this.deps.validateApiKey(data.token);
-              if (res.ok) {
+              if (res) {
                 clearTimeout(authTimeout);
                 this.streamManager.addConnection(botId, ws);
                 

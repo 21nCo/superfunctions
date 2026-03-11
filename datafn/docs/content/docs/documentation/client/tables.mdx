@@ -1,124 +1,120 @@
 ---
 title: "Tables"
-description: "Per-resource API handles for queries and mutations."
+description: "Per-resource handles with capability-gated methods."
 ---
 
 ## Overview
 
-A `DatafnTable` is a per-resource handle that provides query, mutation, transaction, signal, and subscription methods. Every method automatically injects the `resource` name and `version` from your schema, so you never need to specify them manually.
+`DatafnTable` is a resource-scoped API object. It injects `resource` and `version` automatically and exposes query/mutation/signal/subscription methods.
+
+Capability-enabled resources also get extra lifecycle/sharing methods.
 
 ## Accessing a Table
 
-### table() Method
-
 ```typescript
-const todos = client.table("todos");
+const todosA = client.table("todos");
+const todosB = client.todos;
 ```
 
-### Property Accessor
-
-Table handles are also available as direct properties on the client, keyed by resource name:
-
-```typescript
-const todos = client.todos;
-```
-
-Both accessors return the same cached instance. Table handles have stable object identity -- calling `client.table("todos")` multiple times returns the same object.
+Both resolve to the same cached table handle.
 
 ## DatafnTable Interface
 
 ```typescript
 interface DatafnTable<S, Name, TRecord> {
-  /** Resource name from schema. */
   name: Name;
-
-  /** Resource version from schema. */
   version: number;
 
-  /** Execute a query scoped to this resource. */
   query(q: DfqlQueryFragment): Promise<unknown>;
-
-  /** Execute one or more mutations scoped to this resource. */
   mutate(m: DfqlMutationFragment | DfqlMutationFragment[]): Promise<unknown>;
+  delete(id: string): Promise<unknown>;
 
-  /** Execute a transaction. */
+  // Capability-gated methods
+  trash?: (id: string) => Promise<unknown>;
+  restore?: (id: string) => Promise<unknown>;
+  archive?: (id: string) => Promise<unknown>;
+  unarchive?: (id: string) => Promise<unknown>;
+  share?: (id: string, userId: string, level: string) => Promise<unknown>;
+  unshare?: (id: string, userId: string) => Promise<unknown>;
+  getPermissions?: (id: string) => Promise<Array<{
+    userId: string;
+    level: string;
+    grantedBy: string;
+    grantedAt: number;
+  }>>;
+
   transact(payload: DfqlTransact): Promise<unknown>;
-
-  /** Create a reactive signal for a query on this resource. */
   signal(q: DfqlQueryFragment, options?: { disableOptimistic?: boolean }): DatafnSignal<unknown>;
-
-  /** Subscribe to events scoped to this resource. */
   subscribe(handler: EventHandler, filter?: EventFilter): () => void;
 }
 ```
 
-## Auto-Merging
+## Capability-Gated Method Exposure
 
-When you call methods on a table handle, the handle merges `resource` and `version` into your payload. You only provide the query or mutation fragment:
+Methods are attached only when resolved capabilities permit them:
+
+| Method(s) | Requires capability |
+| --- | --- |
+| `trash`, `restore` | `trash` |
+| `archive`, `unarchive` | `archivable` |
+| `share`, `unshare`, `getPermissions` | `shareable` |
+
+This keeps API surface aligned with your schema.
+
+## Auto-Merged Resource/Version
 
 ```typescript
-// You write:
 await client.table("todos").query({
-  filters: { completed: { eq: false } },
+  filters: { completed: { $eq: false } },
   limit: 10,
 });
-
-// The table handle sends:
-// {
-//   resource: "todos",
-//   version: 1,
-//   filters: { completed: { eq: false } },
-//   limit: 10,
-// }
 ```
 
-The same applies to mutations:
+Sends:
 
 ```typescript
-// You write:
-await client.table("todos").mutate({
-  operation: "insert",
-  record: { title: "New todo", completed: false },
-});
-
-// The table handle sends:
-// {
-//   resource: "todos",
-//   version: 1,
-//   operation: "insert",
-//   id: "td:generated-uuid",   <-- auto-generated from idPrefix
-//   record: { title: "New todo", completed: false },
-// }
+{
+  resource: "todos",
+  version: 1,
+  filters: { completed: { $eq: false } },
+  limit: 10,
+}
 ```
+
+Same behavior applies to `mutate()`.
 
 ## Auto-Generated IDs
 
-For `insert` operations, if no `id` is provided, the table handle generates one using the resource's `idPrefix` from the schema. The default generator uses `crypto.randomUUID()` prefixed with `{idPrefix}:`. You can supply a custom generator via the `generateId` config option.
+For `insert` without `id`, table handles generate IDs using resource `idPrefix` + random suffix. You can override generation via `createDatafnClient({ generateId })`.
 
-## Scoped Subscriptions
+## Query Metadata for Capability Filters
 
-When you call `subscribe()` on a table handle, the `resource` filter is automatically set to the table's resource name:
+`query()` supports metadata flags used by capability auto-filters:
 
 ```typescript
-// Only receives events for the "todos" resource
-const unsubscribe = client.table("todos").subscribe((event) => {
-  console.log("Todo event:", event.type, event.ids);
+await client.table("todos").query({
+  metadata: {
+    includeTrashed: true,
+    includeArchived: true,
+  },
 });
 ```
 
-You can provide additional filters that are merged with the resource scope:
+## Scoped Subscriptions
+
+`table.subscribe()` always scopes events to the resource.
 
 ```typescript
 client.table("todos").subscribe(
-  (event) => { /* ... */ },
+  (event) => {
+    console.log(event.type, event.action, event.ids);
+  },
   { type: "mutation_applied", action: "delete" },
 );
 ```
 
-## Table Registry
+## Table Registry Guarantees
 
-The client creates table handles from your schema at initialization time. The registry ensures:
-
-- **Object identity**: The same handle instance is returned for repeated lookups.
-- **Schema validation**: Requesting a table for an unknown resource name throws a `DFQL_UNKNOWN_RESOURCE` error.
-- **Version binding**: Each handle is bound to the resource version declared in your schema.
+- stable object identity for repeated lookups,
+- unknown-resource lookups throw `DFQL_UNKNOWN_RESOURCE`,
+- each table is bound to the schema version declared for that resource.

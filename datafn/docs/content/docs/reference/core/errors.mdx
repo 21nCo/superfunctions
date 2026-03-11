@@ -10,6 +10,10 @@ All possible error codes.
 ```typescript
 type DatafnErrorCode =
   | "SCHEMA_INVALID"
+  | "INVALID_CAPABILITY"
+  | "INVALID_CAPABILITY_CONFIG"
+  | "CAPABILITY_FIELD_COLLISION"
+  | "CAPABILITY_DEPENDENCY"
   | "DFQL_INVALID"
   | "DFQL_UNKNOWN_RESOURCE"
   | "DFQL_UNKNOWN_FIELD"
@@ -27,6 +31,10 @@ type DatafnErrorCode =
 | Code | Description |
 |---|---|
 | `SCHEMA_INVALID` | Schema validation failed. |
+| `INVALID_CAPABILITY` | Capability name/value is invalid. |
+| `INVALID_CAPABILITY_CONFIG` | Capability config shape is invalid. |
+| `CAPABILITY_FIELD_COLLISION` | Declared field collides with capability-managed field. |
+| `CAPABILITY_DEPENDENCY` | A capability requires another capability (for example `shareable` requires `audit`). |
 | `DFQL_INVALID` | Malformed DFQL query or mutation. |
 | `DFQL_UNKNOWN_RESOURCE` | Referenced resource does not exist in schema. |
 | `DFQL_UNKNOWN_FIELD` | Referenced field does not exist on resource. |

@@ -37,6 +37,8 @@ interface DatafnServerConfig<TContext = any> {
     maxSortFields?: number;         // Default: 10
     maxAggregations?: number;       // Default: 20
     maxIdLength?: number;           // Default: 255
+    maxBatchSize?: number;          // Default: 500
+    maxBatchQueryConcurrency?: number; // Default: 20
   };
 
   /** Debug mode for verbose error messages. Default: true in non-production. */
@@ -162,6 +164,8 @@ interface WsManagerConfig {
 | `limits.maxSortFields` | 10 |
 | `limits.maxAggregations` | 20 |
 | `limits.maxIdLength` | 255 |
+| `limits.maxBatchSize` | 500 |
+| `limits.maxBatchQueryConcurrency` | 20 |
 | `debug` | `process.env.NODE_ENV !== "production"` |
 | `allowUnknownResources` | `false` |
 | `shutdownTimeoutMs` | 10000 |

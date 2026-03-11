@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  FallbackSequenceStore,
+  ChainedSequenceStore,
   DatabaseSequenceStore,
 } from "../src/execution/sync/sequence-store.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
@@ -120,9 +120,9 @@ describe("DI-001: executeModifyRelation wraps findOne + update in transaction", 
   });
 });
 
-// ─── DI-003: FallbackSequenceStore — no duplicate sequences on failover ───
+// ─── DI-003: ChainedSequenceStore — no duplicate sequences on failover ───
 
-describe("DI-003: FallbackSequenceStore prevents duplicate sequences on Redis→DB failover", () => {
+describe("DI-003: ChainedSequenceStore prevents duplicate sequences on Redis→DB failover", () => {
   it("TV-DI-003a: ensureMinSeq called with lastKnownPrimarySeq when primary fails", async () => {
     let primaryCalls = 0;
     const mockPrimary = {
@@ -142,7 +142,7 @@ describe("DI-003: FallbackSequenceStore prevents duplicate sequences on Redis→
     // Also make getNextN work so the fallback call succeeds
     vi.spyOn(dbStore, "getNextN").mockResolvedValue([101]);
 
-    const fallback = new FallbackSequenceStore(mockPrimary, dbStore);
+    const fallback = new ChainedSequenceStore(mockPrimary, dbStore);
 
     // First call: primary returns 100, lastKnownPrimarySeq[default] = 100
     const first = await fallback.getNextN("default", 1);
@@ -173,7 +173,7 @@ describe("DI-003: FallbackSequenceStore prevents duplicate sequences on Redis→
     const ensureMinSeqSpy = vi.spyOn(dbStore, "ensureMinSeq").mockResolvedValue();
     vi.spyOn(dbStore, "getNextN").mockResolvedValue([51]);
 
-    const fallback = new FallbackSequenceStore(mockPrimary, dbStore);
+    const fallback = new ChainedSequenceStore(mockPrimary, dbStore);
 
     // First call: healthy → primary returns 50
     await fallback.getNextN("default", 1);
@@ -195,7 +195,7 @@ describe("DI-003: FallbackSequenceStore prevents duplicate sequences on Redis→
     const ensureMinSeqSpy = vi.spyOn(dbStore, "ensureMinSeq").mockResolvedValue();
     vi.spyOn(dbStore, "getNextN").mockResolvedValue([1]);
 
-    const fallback = new FallbackSequenceStore(mockPrimary, dbStore);
+    const fallback = new ChainedSequenceStore(mockPrimary, dbStore);
 
     // First call immediately fails — no primary seq was ever tracked
     await fallback.getNextN("default", 1);

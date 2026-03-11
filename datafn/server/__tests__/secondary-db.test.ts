@@ -11,7 +11,7 @@ import {
   RedisSequenceStore,
   KVSequenceStore,
   DatabaseSequenceStore,
-  FallbackSequenceStore,
+  ChainedSequenceStore,
   createSequenceStore,
 } from "../src/execution/sync/sequence-store.js";
 
@@ -178,14 +178,14 @@ describe("SequenceStore implementations", () => {
     });
   });
 
-  describe("FallbackSequenceStore", () => {
+  describe("ChainedSequenceStore", () => {
     it("uses primary when healthy", async () => {
       const redis = createMockRedisAdapter();
       const db = memoryAdapter({ libraryNamespace: "datafn" });
 
       const primary = new RedisSequenceStore(redis);
       const fallback = new DatabaseSequenceStore(db);
-      const store = new FallbackSequenceStore(primary, fallback);
+      const store = new ChainedSequenceStore(primary, fallback);
 
       const seq = await store.getNext("test-namespace");
       expect(seq).toBe(1);
@@ -199,7 +199,7 @@ describe("SequenceStore implementations", () => {
 
       const primary = new RedisSequenceStore(redis);
       const fallback = new DatabaseSequenceStore(db);
-      const store = new FallbackSequenceStore(primary, fallback);
+      const store = new ChainedSequenceStore(primary, fallback);
 
       const seq = await store.getNext("test-namespace");
       expect(seq).toBe(1); // Falls back to database
@@ -212,7 +212,7 @@ describe("SequenceStore implementations", () => {
 
       const primary = new RedisSequenceStore(redis);
       const fallback = new DatabaseSequenceStore(db);
-      const store = new FallbackSequenceStore(primary, fallback);
+      const store = new ChainedSequenceStore(primary, fallback);
 
       const seq = await store.getNext("test-namespace");
       expect(seq).toBe(1); // Falls back to database
@@ -230,7 +230,7 @@ describe("SequenceStore implementations", () => {
         dbMapping: { serverseq: "redis" },
       });
 
-      expect(store).toBeInstanceOf(FallbackSequenceStore);
+      expect(store).toBeInstanceOf(ChainedSequenceStore);
     });
 
     it("creates KVSequenceStore when kv is configured", () => {
@@ -243,7 +243,7 @@ describe("SequenceStore implementations", () => {
         dbMapping: { serverseq: "kv" },
       });
 
-      expect(store).toBeInstanceOf(FallbackSequenceStore);
+      expect(store).toBeInstanceOf(ChainedSequenceStore);
     });
 
     it("creates DatabaseSequenceStore when db is configured or default", () => {

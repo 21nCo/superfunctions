@@ -131,7 +131,7 @@ export async function processTranscriptionJob(
         )).catch(() => {});
       }
       if (searchClient) {
-        indexTranscript(
+        await indexTranscript(
           { recordingId, botId: recording.botId, segments: sortedSegments },
           searchClient,
         );

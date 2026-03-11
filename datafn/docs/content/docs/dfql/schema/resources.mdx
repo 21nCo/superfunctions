@@ -1,11 +1,11 @@
 ---
 title: "Resources"
-description: "Define data resources with names, versions, and field configurations."
+description: "Define resources, permissions, and per-resource capabilities."
 ---
 
 ## DatafnResourceSchema
 
-A resource represents a collection of records (analogous to a database table). Each resource has a name, version, fields, optional indices, and optional permissions.
+A resource is a collection of records (similar to a table). It defines fields, indexing, permissions, and optional capability overrides.
 
 ```typescript
 type DatafnResourceSchema = {
@@ -13,6 +13,7 @@ type DatafnResourceSchema = {
   version: number;
   idPrefix?: string;
   isRemoteOnly?: boolean;
+  capabilities?: ResourceCapabilities;
   fields: DatafnFieldSchema[];
   indices?:
     | { base?: string[]; search?: string[]; vector?: string[] }
@@ -23,13 +24,48 @@ type DatafnResourceSchema = {
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `name` | `string` | Unique resource name. Used in queries, mutations, and API paths. |
-| `version` | `number` | Integer schema version. Increment when making breaking changes. |
-| `idPrefix` | `string` | Optional prefix for generated IDs. An `idPrefix` of `"tsk"` produces IDs like `tsk_abc123`. |
-| `isRemoteOnly` | `boolean` | When `true`, the resource is not synced to the client offline store. Queries always go to the server. |
-| `fields` | `DatafnFieldSchema[]` | Array of field definitions. Max 200 fields per resource. See [Fields](/docs/dfql/schema/fields). |
-| `indices` | object or `string[]` | Index configuration for query optimization. |
-| `permissions` | `DatafnPermissionsPolicy` | Field-level read/write access control. |
+| `name` | `string` | Unique resource name used in DFQL operations. |
+| `version` | `number` | Integer schema version for schema updates. |
+| `idPrefix` | `string` | Prefix used by default client ID generation. |
+| `isRemoteOnly` | `boolean` | Skip local hydration/offline storage for this resource. |
+| `capabilities` | `ResourceCapabilities` | Per-resource capability entries or global exclusions. |
+| `fields` | `DatafnFieldSchema[]` | Declared user fields (capability fields are injected automatically). |
+| `indices` | object or `string[]` | Query index configuration. |
+| `permissions` | `DatafnPermissionsPolicy` | Field-level read/write authorization policy. |
+
+## Resource Capabilities
+
+Resource capability declarations are resolved with schema-level capabilities.
+
+```typescript
+type ResourceCapabilities =
+  | CapabilityEntry[]
+  | { exclude: SimpleCapability[] };
+```
+
+### Additive declaration
+
+```typescript
+{
+  name: "tasks",
+  version: 1,
+  capabilities: ["archivable"],
+  fields: [...]
+}
+```
+
+### Exclusion declaration
+
+```typescript
+{
+  name: "logs",
+  version: 1,
+  capabilities: { exclude: ["trash"] },
+  fields: [...]
+}
+```
+
+Use exclusions when a capability is globally enabled but should be disabled for a specific resource.
 
 ## Defining a Resource
 
@@ -37,18 +73,18 @@ type DatafnResourceSchema = {
 import { defineSchema } from "@datafn/core";
 
 const schema = defineSchema({
+  capabilities: ["timestamps", "audit"],
   resources: [
     {
       name: "articles",
       version: 1,
       idPrefix: "art",
+      capabilities: ["trash", "archivable"],
       fields: [
         { name: "title", type: "string", required: true, maxLength: 500 },
         { name: "body", type: "string", required: true },
         { name: "publishedAt", type: "date", required: false },
         { name: "viewCount", type: "number", required: false, default: 0 },
-        { name: "tags", type: "array", required: false },
-        { name: "metadata", type: "json", required: false },
       ],
       indices: {
         base: ["title", "publishedAt"],
@@ -61,21 +97,21 @@ const schema = defineSchema({
 
 ## Indices
 
-Indices control how the database optimizes queries for the resource. There are three categories:
-
 | Category | Purpose |
 | --- | --- |
-| `base` | Standard B-tree indices for equality and range filters. |
-| `search` | Full-text search indices. |
-| `vector` | Vector similarity indices for embedding-based queries. |
+| `base` | Equality/range queries |
+| `search` | Full-text search |
+| `vector` | Vector similarity |
 
-You can use the shorthand array syntax to define base indices only:
+Shorthand form:
 
 ```typescript
-// Shorthand -- all entries become base indices
 indices: ["title", "publishedAt"]
+```
 
-// Equivalent expanded form
+Normalized form:
+
+```typescript
 indices: {
   base: ["title", "publishedAt"],
   search: [],
@@ -83,11 +119,9 @@ indices: {
 }
 ```
 
-All referenced field names must match declared fields on the resource. A type error (with `defineSchema`) or a validation error (with `validateSchema`) is raised for unknown field references.
+Index fields must match resource fields (including capability-injected fields after resolution).
 
 ## Permissions
-
-The `permissions` property defines field-level access control on the server.
 
 ```typescript
 type DatafnPermissionsPolicy = {
@@ -99,9 +133,9 @@ type DatafnPermissionsPolicy = {
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `read.fields` | `string[]` | Fields that can be selected and used in filters. |
-| `write.fields` | `string[]` | Fields that can be set via mutations. |
-| `ownerField` | `string` | Optional field name for owner-scoped authorization checks. |
+| `read.fields` | `string[]` | Fields allowed in select/filter/sort contexts. |
+| `write.fields` | `string[]` | Fields allowed in mutation records. |
+| `ownerField` | `string` | Optional field for owner-scoped authz logic. |
 
 ```typescript
 {
@@ -121,11 +155,9 @@ type DatafnPermissionsPolicy = {
 }
 ```
 
-In this example, `internalNotes` is excluded from both `read` and `write`, making it inaccessible through the DataFn API. The `ownerField` enables owner-scoped authorization so users can only modify their own records.
-
 ## Remote-Only Resources
 
-Setting `isRemoteOnly: true` tells the client not to sync this resource to the local offline store. All queries for this resource go directly to the server.
+`isRemoteOnly: true` keeps a resource out of local hydration/offline tables.
 
 ```typescript
 {
@@ -136,10 +168,13 @@ Setting `isRemoteOnly: true` tells the client not to sync this resource to the l
     { name: "action", type: "string", required: true },
     { name: "actor", type: "string", required: true },
     { name: "timestamp", type: "date", required: true },
-    { name: "payload", type: "json", required: false },
   ],
-  indices: { base: ["action", "actor", "timestamp"] },
 }
 ```
 
-This is useful for large or append-only datasets that do not benefit from client-side caching.
+Useful for large append-only or sensitive datasets that should stay server-only.
+
+## See Also
+
+- [Capabilities](/docs/documentation/concepts/capabilities)
+- [System Fields](/docs/dfql/schema/system-fields)

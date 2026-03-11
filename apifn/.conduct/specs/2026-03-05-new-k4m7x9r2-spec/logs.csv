@@ -12,17 +12,17 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-05T07:21:02Z,gpt-5-codex,CLI,execute,unknown-agent,PHASE_09,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_09-2026-03-05-z8m3k7r2-report.md
 2026-03-05T07:26:53Z,gpt-5-codex,CLI,execute,unknown-agent,PHASE_10,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_10-2026-03-05-k9m3r7q2-report.md
 2026-03-05T07:33:20Z,gpt-5-codex,CLI,execute,unknown-agent,PHASE_11,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_11-2026-03-05-r8m4k2q7-report.md
-2026-03-05T07:52:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_12,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_12-2026-03-05-t4k8m2r9-report.md
-2026-03-05T14:09:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_13,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_13-2026-03-05-m3k8r2q7-report.md
-2026-03-05T14:17:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_14,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_14-2026-03-05-q3k8m2r7-report.md
-2026-03-05T15:35:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_15,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_15-2026-03-05-r7k3m2q8-report.md
-2026-03-05T15:58:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_16,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_16-2026-03-05-k8m3r2q9-report.md
-2026-03-05T16:29:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_17,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_17-2026-03-05-m9k2r3q7-report.md
-2026-03-06T04:15:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_18,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_18-2026-03-06-r4k9m2q3-report.md
-2026-03-06T06:22:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_19,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_19-2026-03-06-q8k3m2r4-report.md
-2026-03-06T06:51:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_20,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_20-2026-03-06-k3m8r2q4-report.md
-2026-03-06T15:21:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_21,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_21-2026-03-06-k3m8r2q4-report.md
-2026-03-06T19:00:00Z,gemini-2.5-pro,Cursor,execute,unknown-agent,PHASE_22,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_22-2026-03-06-k3m8r2q4-report.md
+2026-03-05T07:52:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_12,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_12-2026-03-05-t4k8m2r9-report.md
+2026-03-05T14:09:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_13,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_13-2026-03-05-m3k8r2q7-report.md
+2026-03-05T14:17:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_14,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_14-2026-03-05-q3k8m2r7-report.md
+2026-03-05T15:35:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_15,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_15-2026-03-05-r7k3m2q8-report.md
+2026-03-05T15:58:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_16,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_16-2026-03-05-k8m3r2q9-report.md
+2026-03-05T16:29:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_17,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_17-2026-03-05-m9k2r3q7-report.md
+2026-03-06T04:15:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_18,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_18-2026-03-06-r4k9m2q3-report.md
+2026-03-06T06:22:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_19,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_19-2026-03-06-q8k3m2r4-report.md
+2026-03-06T06:51:00Z,gemini-2.5-pro (a: Claude Sonnet 4.6),Cursor (a: Antigravity),execute,unknown-agent,PHASE_20,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_20-2026-03-06-k3m8r2q4-report.md
+2026-03-06T15:21:00Z,gemini-2.5-pro (a: Gemini 3.1 pro),Cursor (a: Antigravity),execute,unknown-agent,PHASE_21,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_21-2026-03-06-k3m8r2q4-report.md
+2026-03-06T19:00:00Z,gemini-2.5-pro (a: Gemini 3.1 pro),Cursor (a: Antigravity),execute,unknown-agent,PHASE_22,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_22-2026-03-06-k3m8r2q4-report.md
 
 2026-03-06T13:59:26Z,gpt-5-codex,CLI,execute,unknown-agent,PHASE_23,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_23-2026-03-06-p7m3k2r9-report.md
 2026-03-06T14:05:48Z,gpt-5-codex,CLI,execute,unknown-agent,PHASE_24,apifn/.conduct/specs/2026-03-05-new-k4m7x9r2-spec/phase-reports/PHASE_24-2026-03-06-m4k8r2q7-report.md

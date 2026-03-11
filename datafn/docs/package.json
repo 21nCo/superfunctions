@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@21n/fonts": "^1.0.1",
+    "@superfunctions/docs-theme": "*",
     "@tailwindcss/postcss": "^4",
     "fumadocs-core": "^15",
     "fumadocs-mdx": "^11",

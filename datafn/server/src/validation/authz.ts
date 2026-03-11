@@ -3,7 +3,9 @@
  * Enforces read/write field policies and rejects unauthorized access with FORBIDDEN.
  */
 
-import type { DatafnSchema, DatafnResourceSchema, DatafnPermissionsPolicy } from "@datafn/core";
+import type { DatafnSchema, DatafnResourceSchema, DatafnPermissionsPolicy } from "../core-types.js";
+import type { Adapter } from "@superfunctions/db";
+import { resolveCapabilities, getCapabilityFields } from "@datafn/core";
 
 /**
  * Error result for authorization failures
@@ -24,6 +26,31 @@ export type AuthzOptions = {
   /** VAL-009: Debug mode — when false, strip field/schema details from error messages. Default: true. */
   debug?: boolean;
 };
+
+function getCapabilityFieldSets(
+  schema: DatafnSchema,
+  resource: DatafnResourceSchema,
+): {
+  capabilityFields: Set<string>;
+  readonlyCapabilityFields: Set<string>;
+} {
+  const resolvedCapabilities = resolveCapabilities(
+    schema.capabilities as any,
+    resource.capabilities as any,
+  );
+  const capabilityFieldDefs = getCapabilityFields(resolvedCapabilities as any);
+  const capabilityFields = new Set<string>();
+  const readonlyCapabilityFields = new Set<string>();
+
+  for (const fieldDef of capabilityFieldDefs) {
+    capabilityFields.add(fieldDef.name);
+    if (fieldDef.readonly) {
+      readonlyCapabilityFields.add(fieldDef.name);
+    }
+  }
+
+  return { capabilityFields, readonlyCapabilityFields };
+}
 
 /**
  * Validate that a query adheres to read permissions policy
@@ -56,6 +83,8 @@ export function validateQueryAuthz(
     return { ok: true };
   }
 
+  const { capabilityFields } = getCapabilityFieldSets(schema, resource);
+
   // Validate select fields
   if (query.select && Array.isArray(query.select)) {
     for (let i = 0; i < query.select.length; i++) {
@@ -66,16 +95,16 @@ export function validateQueryAuthz(
       const parts = token.split(".");
       const baseName = parts[0];
 
-      // id is always allowed (needed for identity/references)
+      // id and capability-managed fields are always readable
       if (baseName === "id") continue;
+      if (capabilityFields.has(baseName)) continue;
 
       // Check if baseName is a field (not a relation)
-      const systemFields = ["createdAt", "updatedAt", "createdBy", "updatedBy", "isArchived"];
       const isField = resource.fields.some((f) => f.name === baseName) ||
-                      systemFields.includes(baseName);
+                      capabilityFields.has(baseName);
 
       if (isField) {
-        // Check read policy — system fields respect the policy when one is defined
+        // Check read policy for non-capability fields
         const readFields = policy.read?.fields || [];
         if (!readFields.includes(baseName)) {
           return {
@@ -91,7 +120,12 @@ export function validateQueryAuthz(
 
   // Validate filter fields
   if (query.filters && typeof query.filters === "object") {
-    const filterFieldsResult = extractFieldsFromFilter(query.filters as Record<string, unknown>, resource, policy);
+    const filterFieldsResult = extractFieldsFromFilter(
+      query.filters as Record<string, unknown>,
+      resource,
+      policy,
+      capabilityFields,
+    );
     if (!filterFieldsResult.ok) {
       return filterFieldsResult;
     }
@@ -106,7 +140,7 @@ export function validateQueryAuthz(
       if (typeof def === "object" && def !== null && typeof def.field === "string") {
         const field = def.field;
         if (field === "*" || field === "id") continue;
-        if (!readFields.includes(field)) {
+        if (!capabilityFields.has(field) && !readFields.includes(field)) {
           return {
             ok: false,
             code: "FORBIDDEN",
@@ -123,7 +157,7 @@ export function validateQueryAuthz(
     for (let i = 0; i < query.groupBy.length; i++) {
       const field = query.groupBy[i];
       if (typeof field !== "string") continue;
-      if (field === "id") continue;
+      if (field === "id" || capabilityFields.has(field)) continue;
       if (!readFields.includes(field)) {
         return {
           ok: false,
@@ -137,7 +171,12 @@ export function validateQueryAuthz(
 
   // SEC-003: Validate having clause (recursive field extraction)
   if (query.having && typeof query.having === "object" && !Array.isArray(query.having)) {
-    const havingResult = extractFieldsFromFilter(query.having as Record<string, unknown>, resource, policy);
+    const havingResult = extractFieldsFromFilter(
+      query.having as Record<string, unknown>,
+      resource,
+      policy,
+      capabilityFields,
+    );
     if (!havingResult.ok) {
       return { ...havingResult, path: `having.${havingResult.path.replace(/^filters\./, "")}` };
     }
@@ -152,13 +191,13 @@ export function validateQueryAuthz(
       const parts = sortItem.split(":");
       const rawField = parts[0];
       const field = rawField.startsWith("-") ? rawField.slice(1) : rawField;
-      if (field === "id") continue;
+      if (field === "id" || capabilityFields.has(field)) continue;
       // Allow sorting by aggregation aliases
       if (query.aggregations && typeof query.aggregations === "object" && field in (query.aggregations as object)) {
         continue;
       }
       const isField = resource.fields.some((f) => f.name === field) ||
-                      ["createdAt", "updatedAt", "createdBy", "updatedBy", "isArchived"].includes(field);
+                      capabilityFields.has(field);
       if (isField && !readFields.includes(field)) {
         return {
           ok: false,
@@ -177,7 +216,7 @@ export function validateQueryAuthz(
       for (let i = 0; i < search.fields.length; i++) {
         const field = search.fields[i];
         if (typeof field !== "string") continue;
-        if (field === "id") continue;
+        if (field === "id" || capabilityFields.has(field)) continue;
         if (!readFields.includes(field)) {
           return {
             ok: false,
@@ -200,6 +239,7 @@ function extractFieldsFromFilter(
   filter: Record<string, unknown>,
   resource: DatafnResourceSchema,
   policy: DatafnPermissionsPolicy,
+  capabilityFields: Set<string>,
 ): { ok: true } | AuthzError {
   const readFields = policy.read?.fields || [];
 
@@ -209,7 +249,12 @@ function extractFieldsFromFilter(
       if (Array.isArray(value)) {
         for (const subFilter of value) {
           if (typeof subFilter === "object" && subFilter !== null) {
-            const result = extractFieldsFromFilter(subFilter as Record<string, unknown>, resource, policy);
+            const result = extractFieldsFromFilter(
+              subFilter as Record<string, unknown>,
+              resource,
+              policy,
+              capabilityFields,
+            );
             if (!result.ok) return result;
           }
         }
@@ -221,13 +266,13 @@ function extractFieldsFromFilter(
     const parts = key.split(".");
     const baseField = parts[0];
 
-    // id is always allowed for filtering
+    // id and capability-managed fields are always allowed for filtering
     if (baseField === "id") continue;
+    if (capabilityFields.has(baseField)) continue;
 
     // Check if it's a direct field (not a relation)
-    const systemFields = ["createdAt", "updatedAt", "createdBy", "updatedBy", "isArchived"];
     const isField = resource.fields.some((f) => f.name === baseField) ||
-                    systemFields.includes(baseField);
+                    capabilityFields.has(baseField);
 
     if (isField && !readFields.includes(baseField)) {
       return {
@@ -273,6 +318,8 @@ export function validateMutationAuthz(
     return { ok: true };
   }
 
+  const { readonlyCapabilityFields } = getCapabilityFieldSets(schema, resource);
+
   const writeFields = policy.write?.fields || [];
 
   // Validate record fields for insert/merge/replace operations
@@ -281,6 +328,8 @@ export function validateMutationAuthz(
     for (const fieldName of Object.keys(record)) {
       // id is a special case - always allowed for upsert/merge semantics
       if (fieldName === "id") continue;
+      // readonly capability fields are excluded from write policy checks
+      if (readonlyCapabilityFields.has(fieldName)) continue;
 
       // Check write policy
       if (!writeFields.includes(fieldName)) {
@@ -334,4 +383,84 @@ export function validateRelationAuthz(
   }
 
   return { ok: true };
+}
+
+export type ShareAccessLevel = "viewer" | "editor" | "owner";
+
+function getPermissionsTable(resource: string): string {
+  return `__datafn_permissions_${resource}`;
+}
+
+function getShareableCapability(resource: DatafnResourceSchema, schema: DatafnSchema):
+  | { shareable: { levels: string[]; default: "private" | "shared" } }
+  | undefined {
+  const resolved = resolveCapabilities(schema.capabilities as any, resource.capabilities as any);
+  return resolved.find(
+    (entry: unknown): entry is { shareable: { levels: string[]; default: "private" | "shared" } } =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "shareable" in (entry as Record<string, unknown>),
+  );
+}
+
+export function isPrivateShareableResource(
+  schema: DatafnSchema,
+  resourceName: string,
+): boolean {
+  const resource = schema.resources.find((r) => r.name === resourceName);
+  if (!resource) return false;
+  const capability = getShareableCapability(resource, schema);
+  return capability?.shareable.default === "private";
+}
+
+export async function resolveAccessLevel(
+  db: Adapter,
+  schema: DatafnSchema,
+  resource: string,
+  recordId: string,
+  actorId: string | undefined,
+  namespace: string,
+): Promise<ShareAccessLevel | null> {
+  if (!actorId) {
+    return null;
+  }
+
+  const resourceSchema = schema.resources.find((r) => r.name === resource);
+  if (!resourceSchema) {
+    return null;
+  }
+
+  const shareable = getShareableCapability(resourceSchema, schema);
+  if (!shareable) {
+    return null;
+  }
+
+  const record = await db.findOne({
+    model: resource,
+    where: [{ field: "id", operator: "eq", value: recordId }],
+    namespace,
+  });
+  if (!record) {
+    return null;
+  }
+
+  if ((record as Record<string, unknown>).createdBy === actorId) {
+    return "owner";
+  }
+
+  const permissionId = `${recordId}:${actorId}`;
+  const permission = await db.findOne({
+    model: getPermissionsTable(resource),
+    where: [{ field: "id", operator: "eq", value: permissionId }],
+    namespace,
+  });
+  if (!permission) {
+    return null;
+  }
+
+  const level = (permission as Record<string, unknown>).level;
+  if (level === "viewer" || level === "editor" || level === "owner") {
+    return level;
+  }
+  return null;
 }

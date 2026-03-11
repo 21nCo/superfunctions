@@ -3,11 +3,7 @@
  * Maps DatafnError to DatafnEnvelope responses
  */
 
-import type {
-  DatafnEnvelope,
-  DatafnError,
-  DatafnErrorCode,
-} from "@datafn/core";
+import type { DatafnEnvelope, DatafnError, DatafnErrorCode } from "../core-types.js";
 import { jsonResponse } from "./json.js";
 
 /**

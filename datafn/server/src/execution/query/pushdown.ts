@@ -9,8 +9,8 @@
  *                  Covers SCALE-003.
  */
 
-import type { DatafnSchema } from "@datafn/core";
-import { SYSTEM_FIELDS } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
+import { resolveCapabilities, getCapabilityFields } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { DFQLQuery, QueryResult } from "./dfql.js";
 import { convertDfqlFilters, convertDfqlSort } from "./planner.js";
@@ -19,6 +19,101 @@ import { computeNextCursor, applyCursorAfter } from "./pagination.js";
 import { materializeSelect } from "./select.js";
 import { DbDataStore } from "../db-store.js";
 import { DatafnExecutionError } from "../errors.js";
+
+export interface QueryMetadata {
+  includeTrashed?: boolean;
+  includeArchived?: boolean;
+  shareableAccessIds?: string[];
+}
+
+type QueryWithMetadata = DFQLQuery & {
+  metadata?: QueryMetadata;
+};
+
+function mergeAutoFilters(
+  existingFilters: Record<string, unknown> | undefined,
+  autoFilters: Record<string, unknown>[],
+): Record<string, unknown> | undefined {
+  if (autoFilters.length === 0) {
+    return existingFilters;
+  }
+  if (!existingFilters || Object.keys(existingFilters).length === 0) {
+    return autoFilters.length === 1 ? autoFilters[0] : { $and: autoFilters };
+  }
+  if (
+    Array.isArray(existingFilters.$and) &&
+    Object.keys(existingFilters).length === 1
+  ) {
+    return {
+      $and: [...(existingFilters.$and as Record<string, unknown>[]), ...autoFilters],
+    };
+  }
+  return { $and: [existingFilters, ...autoFilters] };
+}
+
+export function injectCapabilityAutoFilters(
+  query: QueryWithMetadata,
+  schema: DatafnSchema,
+): QueryWithMetadata {
+  const resource = schema.resources.find((r) => r.name === query.resource);
+  if (!resource) {
+    return query;
+  }
+
+  const resolvedCapabilities = resolveCapabilities(
+    schema.capabilities as any,
+    resource.capabilities as any,
+  );
+  const metadata = query.metadata ?? {};
+  const autoFilters: Record<string, unknown>[] = [];
+
+  if (
+    resolvedCapabilities.some((capability: unknown) => capability === "trash") &&
+    metadata.includeTrashed !== true
+  ) {
+    autoFilters.push({ trashedAt: { $in: [null, undefined] } });
+  }
+
+  if (
+    resolvedCapabilities.some((capability: unknown) => capability === "archivable") &&
+    metadata.includeArchived !== true
+  ) {
+    autoFilters.push({ isArchived: { $ne: true } });
+  }
+
+  const shareableCapability = resolvedCapabilities.find(
+    (capability: unknown): capability is { shareable: { levels: string[]; default: "private" | "shared" } } =>
+      typeof capability === "object" &&
+      capability !== null &&
+      "shareable" in (capability as Record<string, unknown>),
+  );
+  if (shareableCapability?.shareable.default === "private") {
+    const accessIds = Array.isArray(metadata.shareableAccessIds)
+      ? metadata.shareableAccessIds
+      : [];
+    if (accessIds.length === 0) {
+      autoFilters.push({ id: { $in: ["__datafn_no_access__"] } });
+    } else {
+      autoFilters.push({ id: { $in: accessIds } });
+    }
+  }
+
+  if (autoFilters.length === 0) {
+    return query;
+  }
+
+  const existingFilters =
+    query.filters &&
+    typeof query.filters === "object" &&
+    !Array.isArray(query.filters)
+      ? (query.filters as Record<string, unknown>)
+      : undefined;
+
+  return {
+    ...query,
+    filters: mergeAutoFilters(existingFilters, autoFilters),
+  };
+}
 
 /**
  * Execute a DFQL query classified as FULL_PUSHDOWN directly against the adapter.
@@ -133,21 +228,27 @@ async function pushdownCore(
   nextCursor: Record<string, unknown> | null;
   count: number | undefined;
 }> {
+  const queryWithAutoFilters = injectCapabilityAutoFilters(
+    query as QueryWithMetadata,
+    schema,
+  );
+
   // 1. Convert filters and sort -------------------------------------------
-  const whereClauses: WhereClause[] = query.filters
+  const whereClauses: WhereClause[] = queryWithAutoFilters.filters
     ? ((convertDfqlFilters(
-        query.filters,
-        query.resource,
+        queryWithAutoFilters.filters,
+        queryWithAutoFilters.resource,
         schema,
       ) ?? []) as WhereClause[])
     : [];
 
-  const orderBy = convertDfqlSort(query.sort);
-  const sortTerms = parseSortTerms(query.sort);
+  const orderBy = convertDfqlSort(queryWithAutoFilters.sort);
+  const sortTerms = parseSortTerms(queryWithAutoFilters.sort);
 
   // 2. Cursor validation ---------------------------------------------------
   const hasCursor =
-    query.cursor?.after != null || query.cursor?.before != null;
+    queryWithAutoFilters.cursor?.after != null ||
+    queryWithAutoFilters.cursor?.before != null;
 
   if (hasCursor && !validateSortForCursor(sortTerms)) {
     throw new DatafnExecutionError(
@@ -162,11 +263,11 @@ async function pushdownCore(
   // sorted row set; applying limit at adapter level can truncate rows that
   // should appear on later pages (TV-PUSHDOWN-008).
   const pushdownLimit =
-    !hasCursor && query.limit != null
-      ? query.limit + 1 // +1 to detect next page
+    !hasCursor && queryWithAutoFilters.limit != null
+      ? queryWithAutoFilters.limit + 1 // +1 to detect next page
       : undefined;
   // Offset only applies to non-cursor queries (cursor handles position)
-  const pushdownOffset = !hasCursor ? query.offset : undefined;
+  const pushdownOffset = !hasCursor ? queryWithAutoFilters.offset : undefined;
 
   // 4. Fetch from adapter -------------------------------------------------
   const rows: Record<string, unknown>[] = await db.findMany({
@@ -181,9 +282,9 @@ async function pushdownCore(
   // 5. Cursor pagination (in-memory on already-sorted adapter results) ----
   let records = rows;
 
-  if (query.cursor?.after) {
-    records = applyCursorAfter(records, query.cursor.after, sortTerms);
-  } else if (query.cursor?.before) {
+  if (queryWithAutoFilters.cursor?.after) {
+    records = applyCursorAfter(records, queryWithAutoFilters.cursor.after, sortTerms);
+  } else if (queryWithAutoFilters.cursor?.before) {
     const reversedRecords = [...records].reverse();
     const invertedSortTerms = sortTerms.map((t) => ({
       field: t.field,
@@ -191,21 +292,21 @@ async function pushdownCore(
     }));
     let workRecords = applyCursorAfter(
       reversedRecords,
-      query.cursor.before,
+      queryWithAutoFilters.cursor.before,
       invertedSortTerms,
     );
-    if (query.limit) {
-      workRecords = workRecords.slice(0, query.limit);
+    if (queryWithAutoFilters.limit) {
+      workRecords = workRecords.slice(0, queryWithAutoFilters.limit);
     }
     records = workRecords.reverse();
   }
 
   // 6. Compute nextCursor and trim to limit --------------------------------
-  const effectiveLimit = query.limit;
+  const effectiveLimit = queryWithAutoFilters.limit;
   let nextCursor: Record<string, unknown> | null = null;
 
   if (hasCursor) {
-    if (query.cursor?.after) {
+    if (queryWithAutoFilters.cursor?.after) {
       const sliceForCheck = effectiveLimit
         ? records.slice(0, effectiveLimit + 1)
         : records;
@@ -213,7 +314,7 @@ async function pushdownCore(
       if (effectiveLimit && records.length > effectiveLimit) {
         records = records.slice(0, effectiveLimit);
       }
-    } else if (query.cursor?.before && records.length > 0) {
+    } else if (queryWithAutoFilters.cursor?.before && records.length > 0) {
       const lastItem = records[records.length - 1];
       const cursorObj: Record<string, unknown> = {};
       for (const term of sortTerms) {
@@ -230,9 +331,9 @@ async function pushdownCore(
 
   // 7. Optional count -------------------------------------------------------
   let count: number | undefined;
-  if (query.count === true) {
+  if (queryWithAutoFilters.count === true) {
     count = await db.count({
-      model: query.resource,
+      model: queryWithAutoFilters.resource,
       where: whereClauses,
       namespace,
     });
@@ -255,8 +356,14 @@ function projectFieldsPushdown(
   const resourceSchema = schema.resources.find((r) => r.name === resource);
   if (!resourceSchema) return { id: record.id };
 
-  // LOW-018: Use shared SYSTEM_FIELDS constant from core instead of hardcoding
-  const baseFields = new Set<string>(SYSTEM_FIELDS);
+  const resolvedCapabilities = resolveCapabilities(
+    schema.capabilities as any,
+    resourceSchema.capabilities as any,
+  );
+  const baseFields = new Set<string>(["id"]);
+  for (const capabilityField of getCapabilityFields(resolvedCapabilities as any)) {
+    baseFields.add(capabilityField.name);
+  }
   for (const f of resourceSchema.fields) baseFields.add(f.name);
 
   let result: Record<string, unknown>;

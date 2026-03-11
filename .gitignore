@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+**/node_modules
 .pnp
 .pnp.js
 
@@ -78,7 +79,7 @@ venv
 
 # Sub-package lock files (keep root only)
 **/package-lock.json
-!package-lock.json
+!/package-lock.json
 .vercel
 
 .next/

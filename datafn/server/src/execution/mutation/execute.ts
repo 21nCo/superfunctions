@@ -2,17 +2,140 @@
  * Mutation execution logic
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import { randomUUID } from "crypto";
 import type { IdempotencyStore, MutationResult } from "../idempotency.js";
 import { type DFQLMutation, buildReplaceRecord } from "./dfql.js";
+import { resolveCapabilities } from "@datafn/core";
 import { executeRelate, executeModifyRelation, executeUnrelate, extractJoinDeltas, extractRelationFkDeltas } from "./relations.js";
 import { executeSchemaAwareMerge } from "./merge-decision.js";
+import { executeShare, executeUnshare, getPermissionsTable } from "./share.js";
 import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry } from "../sync/change-tracking.js";
 import { evaluateGuard } from "./guards.js";
-import { isSearchPlugin } from "../../plugins/searchfn.js";
 import type { DatafnLogger } from "../../logger.js";
+import { resolveAccessLevel } from "../../validation/authz.js";
+import type { SearchProvider } from "../../search-provider.js";
+
+const SEARCH_UPSERT_OPS = new Set(["insert", "merge", "replace", "trash", "restore", "archive", "unarchive"]);
+
+async function tryUpdateSearchIndex(
+  searchProvider: SearchProvider,
+  mutation: DFQLMutation,
+  logger?: DatafnLogger,
+): Promise<void> {
+  const op = mutation.operation === "delete" ? "delete" : "upsert";
+  const shouldIndex = op === "delete" || SEARCH_UPSERT_OPS.has(mutation.operation);
+  if (!shouldIndex) return;
+  try {
+    await searchProvider.updateIndices({
+      resource: mutation.resource,
+      records: [{ id: mutation.id, ...(mutation.record || {}) }],
+      operation: op,
+    });
+  } catch (e) {
+    logger?.error("Search index update failed (non-fatal)", {
+      error: String(e),
+      operation: "search-index-update",
+      resource: mutation.resource,
+    });
+  }
+}
+
+function hasSimpleCapability(
+  resolvedCapabilities: unknown[],
+  capability: "timestamps" | "audit" | "trash" | "archivable",
+): boolean {
+  return resolvedCapabilities.some((entry) => entry === capability);
+}
+
+function resolveCapabilitiesForResource(
+  schema: DatafnSchema,
+  resourceName: string,
+): unknown[] {
+  const resource = schema.resources.find((r) => r.name === resourceName);
+  if (!resource) return [];
+  return resolveCapabilities(
+    schema.capabilities as any,
+    resource.capabilities as any,
+  );
+}
+
+export function stripReadonlyCapabilityFields(
+  record: Record<string, unknown>,
+  resolvedCapabilities: unknown[],
+): Record<string, unknown> {
+  const stripped = { ...record };
+
+  if (hasSimpleCapability(resolvedCapabilities, "timestamps")) {
+    delete stripped.createdAt;
+    delete stripped.updatedAt;
+  }
+  if (hasSimpleCapability(resolvedCapabilities, "audit")) {
+    delete stripped.createdBy;
+    delete stripped.updatedBy;
+  }
+  if (hasSimpleCapability(resolvedCapabilities, "trash")) {
+    delete stripped.trashedAt;
+    delete stripped.trashedBy;
+  }
+
+  return stripped;
+}
+
+function injectCapabilityFieldsOnInsert(
+  record: Record<string, unknown>,
+  resolvedCapabilities: unknown[],
+  actorId?: string,
+): Record<string, unknown> {
+  const next = { ...record };
+  const now = Date.now();
+
+  if (hasSimpleCapability(resolvedCapabilities, "timestamps")) {
+    next.createdAt = now;
+    next.updatedAt = now;
+  }
+  if (hasSimpleCapability(resolvedCapabilities, "audit")) {
+    next.createdBy = actorId ?? null;
+    next.updatedBy = actorId ?? null;
+  }
+
+  return next;
+}
+
+function injectCapabilityFieldsOnUpdate(
+  record: Record<string, unknown>,
+  resolvedCapabilities: unknown[],
+  actorId?: string,
+): Record<string, unknown> {
+  const next = { ...record };
+
+  if (hasSimpleCapability(resolvedCapabilities, "timestamps")) {
+    next.updatedAt = Date.now();
+  }
+  if (hasSimpleCapability(resolvedCapabilities, "audit")) {
+    next.updatedBy = actorId ?? null;
+  }
+
+  return next;
+}
+
+function hasTrashCapability(resolvedCapabilities: unknown[]): boolean {
+  return resolvedCapabilities.some((entry) => entry === "trash");
+}
+
+function hasArchivableCapability(resolvedCapabilities: unknown[]): boolean {
+  return resolvedCapabilities.some((entry) => entry === "archivable");
+}
+
+function hasShareableCapability(resolvedCapabilities: unknown[]): boolean {
+  return resolvedCapabilities.some(
+    (entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "shareable" in (entry as Record<string, unknown>),
+  );
+}
 
 /**
  * REL-011 / DI-002: Core operation execution (operation switch + change tracking).
@@ -26,12 +149,22 @@ async function executeMutationCore(
   namespace: string,
   effectiveMutationId: string,
   changeTracking: ChangeTrackingService,
+  actorId?: string,
   logger?: DatafnLogger,
 ): Promise<MutationResult> {
+  const resolvedCapabilities = resolveCapabilitiesForResource(schema, mutation.resource);
   let opResult:
     | { ok: true }
     | { ok: false; code: string; message: string; path: string };
   let resolvedRecord: Record<string, unknown> | undefined;
+  let changeOverride:
+    | {
+        resource: string;
+        id: string;
+        op: "upsert" | "delete";
+        record: Record<string, unknown> | null;
+      }
+    | undefined;
   // EXE-008: flag to skip change tracking when deleting a non-existent record
   let skipChangeTracking = false;
 
@@ -39,11 +172,21 @@ async function executeMutationCore(
     switch (mutation.operation) {
       case "insert":
         try {
+          const strippedRecord = stripReadonlyCapabilityFields(
+            mutation.record || {},
+            resolvedCapabilities,
+          );
+          const insertRecord = injectCapabilityFieldsOnInsert(
+            strippedRecord,
+            resolvedCapabilities,
+            actorId,
+          );
           await db.create({
             model: mutation.resource,
-            data: { id: mutation.id, ...(mutation.record || {}) },
+            data: { id: mutation.id, ...insertRecord },
             namespace,
           });
+          resolvedRecord = insertRecord;
           opResult = { ok: true };
         } catch (error: any) {
           // EXE-010: Log original error for observability
@@ -65,7 +208,15 @@ async function executeMutationCore(
 
       case "merge":
         {
-          const mergeData = mutation.record || {};
+          const strippedRecord = stripReadonlyCapabilityFields(
+            mutation.record || {},
+            resolvedCapabilities,
+          );
+          const mergeData = injectCapabilityFieldsOnUpdate(
+            strippedRecord,
+            resolvedCapabilities,
+            actorId,
+          );
           const strictUpdateNotFound = db.capabilities?.operations?.strictUpdateNotFound === true;
           const mergeResult = await executeSchemaAwareMerge({
             schema,
@@ -100,6 +251,7 @@ async function executeMutationCore(
           });
 
           if (mergeResult.ok) {
+            resolvedRecord = mergeData;
             opResult = { ok: true };
           } else {
             if (mergeResult.code === "INTERNAL") {
@@ -130,7 +282,22 @@ async function executeMutationCore(
             opResult = { ok: false, code: "NOT_FOUND", message: `Record not found: ${mutation.id}`, path: "id" };
             break;
           }
-          const buildResult = buildReplaceRecord(schema, mutation.resource, existing, mutation.record || {});
+          const strippedRecord = stripReadonlyCapabilityFields(
+            mutation.record || {},
+            resolvedCapabilities,
+          );
+          const updateRecord = injectCapabilityFieldsOnUpdate(
+            strippedRecord,
+            resolvedCapabilities,
+            actorId,
+          );
+          const buildResult = buildReplaceRecord(
+            schema,
+            mutation.resource,
+            existing,
+            updateRecord,
+            resolvedCapabilities,
+          );
           if (!buildResult.ok) {
             opResult = { ok: false, code: buildResult.code, message: buildResult.message, path: buildResult.path };
             break;
@@ -166,13 +333,291 @@ async function executeMutationCore(
           // Record didn't exist — skip change tracking (no-op delete)
           skipChangeTracking = true;
         }
+        if (hasShareableCapability(resolvedCapabilities)) {
+          const permissionRows = await db.findMany({
+            model: getPermissionsTable(mutation.resource),
+            where: [{ field: "resourceId", operator: "eq", value: mutation.id }],
+            namespace,
+          });
+          for (const permissionRow of permissionRows) {
+            await db.delete({
+              model: getPermissionsTable(mutation.resource),
+              where: [{ field: "id", operator: "eq", value: permissionRow.id }],
+              namespace,
+            });
+          }
+        }
+        opResult = { ok: true };
+        break;
+      }
+
+      case "trash": {
+        if (!hasTrashCapability(resolvedCapabilities)) {
+          opResult = {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.trash",
+            path: "operation",
+          };
+          break;
+        }
+
+        const existing = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+
+        if (!existing) {
+          opResult = { ok: false, code: "NOT_FOUND", message: `Record not found: ${mutation.id}`, path: "id" };
+          break;
+        }
+
+        const trashPayload = injectCapabilityFieldsOnUpdate(
+          { trashedAt: Date.now(), trashedBy: actorId ?? null },
+          resolvedCapabilities,
+          actorId,
+        );
+
+        await db.update({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          data: trashPayload,
+          namespace,
+        });
+
+        const updated = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+        resolvedRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mutation.id,
+          ...existing,
+          ...trashPayload,
+        };
+        opResult = { ok: true };
+        break;
+      }
+
+      case "restore": {
+        if (!hasTrashCapability(resolvedCapabilities)) {
+          opResult = {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.restore",
+            path: "operation",
+          };
+          break;
+        }
+
+        const existing = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+
+        if (!existing) {
+          opResult = { ok: false, code: "NOT_FOUND", message: `Record not found: ${mutation.id}`, path: "id" };
+          break;
+        }
+
+        const existingRecord = existing as Record<string, unknown>;
+        const isCurrentlyTrashed =
+          existingRecord.trashedAt !== null && existingRecord.trashedAt !== undefined;
+
+        if (!isCurrentlyTrashed) {
+          skipChangeTracking = true;
+          opResult = { ok: true };
+          break;
+        }
+
+        const restorePayload = injectCapabilityFieldsOnUpdate(
+          { trashedAt: null, trashedBy: null },
+          resolvedCapabilities,
+          actorId,
+        );
+
+        await db.update({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          data: restorePayload,
+          namespace,
+        });
+
+        const updated = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+        resolvedRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mutation.id,
+          ...existingRecord,
+          ...restorePayload,
+        };
+        opResult = { ok: true };
+        break;
+      }
+
+      case "archive": {
+        if (!hasArchivableCapability(resolvedCapabilities)) {
+          opResult = {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.archive",
+            path: "operation",
+          };
+          break;
+        }
+
+        const existing = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+
+        if (!existing) {
+          opResult = { ok: false, code: "NOT_FOUND", message: `Record not found: ${mutation.id}`, path: "id" };
+          break;
+        }
+
+        const archivePayload = injectCapabilityFieldsOnUpdate(
+          { isArchived: true },
+          resolvedCapabilities,
+          actorId,
+        );
+
+        await db.update({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          data: archivePayload,
+          namespace,
+        });
+
+        const updated = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+        resolvedRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mutation.id,
+          ...(existing as Record<string, unknown>),
+          ...archivePayload,
+        };
+        opResult = { ok: true };
+        break;
+      }
+
+      case "unarchive": {
+        if (!hasArchivableCapability(resolvedCapabilities)) {
+          opResult = {
+            ok: false,
+            code: "DFQL_UNSUPPORTED",
+            message: "Unsupported DFQL feature: mutation.operation.unarchive",
+            path: "operation",
+          };
+          break;
+        }
+
+        const existing = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+
+        if (!existing) {
+          opResult = { ok: false, code: "NOT_FOUND", message: `Record not found: ${mutation.id}`, path: "id" };
+          break;
+        }
+
+        const unarchivePayload = injectCapabilityFieldsOnUpdate(
+          { isArchived: false },
+          resolvedCapabilities,
+          actorId,
+        );
+
+        await db.update({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          data: unarchivePayload,
+          namespace,
+        });
+
+        const updated = await db.findOne({
+          model: mutation.resource,
+          where: [{ field: "id", operator: "eq", value: mutation.id }],
+          namespace,
+        });
+        resolvedRecord = (updated as Record<string, unknown> | null) ?? {
+          id: mutation.id,
+          ...(existing as Record<string, unknown>),
+          ...unarchivePayload,
+        };
+        opResult = { ok: true };
+        break;
+      }
+
+      case "share": {
+        const shareResult = await executeShare(
+          db,
+          mutation as any,
+          resolvedCapabilities,
+          namespace,
+          actorId,
+        );
+        if (!shareResult.ok) {
+          opResult = {
+            ok: false,
+            code: shareResult.code,
+            message: shareResult.message,
+            path: shareResult.path,
+          };
+          break;
+        }
+        changeOverride = {
+          resource: getPermissionsTable(mutation.resource),
+          id: String(shareResult.permissionRecord.id),
+          op: "upsert",
+          record: shareResult.permissionRecord,
+        };
+        opResult = { ok: true };
+        break;
+      }
+
+      case "unshare": {
+        const unshareResult = await executeUnshare(
+          db,
+          mutation as any,
+          resolvedCapabilities,
+          namespace,
+          actorId,
+        );
+        if (!unshareResult.ok) {
+          opResult = {
+            ok: false,
+            code: unshareResult.code,
+            message: unshareResult.message,
+            path: unshareResult.path,
+          };
+          break;
+        }
+        if (!unshareResult.deleted) {
+          skipChangeTracking = true;
+        } else {
+          changeOverride = {
+            resource: getPermissionsTable(mutation.resource),
+            id: unshareResult.changeId,
+            op: "delete",
+            record: null,
+          };
+        }
         opResult = { ok: true };
         break;
       }
 
       case "relate":
         try {
-          opResult = await executeRelate(db, schema, mutation, namespace);
+          opResult = await executeRelate(db, schema, mutation, namespace, actorId);
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation relate failed", { error: String(e), operation: "relate", resource: mutation.resource });
@@ -182,7 +627,7 @@ async function executeMutationCore(
 
       case "modifyRelation":
         try {
-          opResult = await executeModifyRelation(db, schema, mutation, namespace);
+          opResult = await executeModifyRelation(db, schema, mutation, namespace, actorId);
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation modifyRelation failed", { error: String(e), operation: "modifyRelation", resource: mutation.resource });
@@ -253,22 +698,28 @@ async function executeMutationCore(
         }
       } else {
         const serverSeq = await changeTracking.getNextServerSeq();
-        const changeOp =
-          mutation.operation === "delete" ? "delete" :
-          mutation.operation === "insert" ? "insert" :
-          mutation.operation === "merge" ? "merge" :
-          "replace";
-        const changeRecord =
-          mutation.operation === "delete"
+        const changeOp = changeOverride
+          ? changeOverride.op
+          : mutation.operation === "delete" ? "delete" :
+            mutation.operation === "insert" ? "insert" :
+            mutation.operation === "trash" ? "merge" :
+            mutation.operation === "restore" ? "merge" :
+            mutation.operation === "archive" ? "merge" :
+            mutation.operation === "unarchive" ? "merge" :
+            mutation.operation === "merge" ? "merge" :
+            "replace";
+        const changeRecord = changeOverride
+          ? changeOverride.record
+          : mutation.operation === "delete"
             ? null
             : mutation.operation === "replace" && resolvedRecord !== undefined
               ? { id: mutation.id, ...resolvedRecord }
-              : { id: mutation.id, ...(mutation.record || {}) };
+              : { id: mutation.id, ...(resolvedRecord || mutation.record || {}) };
         // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
         await recordChangeWithRetry(changeTracking, {
           serverSeq,
-          resource: mutation.resource,
-          id: mutation.id,
+          resource: changeOverride?.resource ?? mutation.resource,
+          id: changeOverride?.id ?? mutation.id,
           op: changeOp,
           record: changeRecord,
         }, 2, logger);
@@ -293,7 +744,9 @@ export async function executeMutation(
   changeTracking: ChangeTrackingService,
   plugins: DatafnPlugin[] = [],
   namespace: string,
+  actorId?: string,
   logger?: DatafnLogger,
+  searchProvider?: SearchProvider,
 ): Promise<MutationResult> {
   // clientId and mutationId are optional. When absent, skip idempotency tracking.
   // EXE-009: Use crypto.randomUUID() for unpredictable anonymous mutation IDs
@@ -316,6 +769,12 @@ export async function executeMutation(
     "merge",
     "replace",
     "delete",
+    "trash",
+    "restore",
+    "archive",
+    "unarchive",
+    "share",
+    "unshare",
     "relate",
     "modifyRelation",
     "unrelate",
@@ -339,6 +798,56 @@ export async function executeMutation(
       await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
     }
     return result;
+  }
+
+  // PHASE_11: Shareable mutation authorization by access level.
+  const resolvedCapabilities = resolveCapabilitiesForResource(schema, mutation.resource);
+  if (hasShareableCapability(resolvedCapabilities) && mutation.operation !== "insert") {
+    const accessLevel = await resolveAccessLevel(
+      db,
+      schema,
+      mutation.resource,
+      mutation.id,
+      actorId,
+      namespace,
+    );
+    const isOwner = accessLevel === "owner";
+    const isEditor = accessLevel === "editor";
+    const isViewer = accessLevel === "viewer";
+
+    let allowed = false;
+    if (isOwner) {
+      allowed = true;
+    } else if (isEditor) {
+      allowed = mutation.operation !== "delete" &&
+        mutation.operation !== "share" &&
+        mutation.operation !== "unshare";
+    } else if (isViewer) {
+      allowed = false;
+    } else {
+      allowed = false;
+    }
+
+    if (!allowed) {
+      const result: MutationResult = {
+        ok: false,
+        mutationId: effectiveMutationId,
+        affectedIds: [],
+        errors: [
+          {
+            code: "FORBIDDEN",
+            message: "Forbidden",
+            path: "operation",
+            retryable: false,
+          },
+        ],
+        deduped: false,
+      };
+      if (mutation.clientId && mutation.mutationId) {
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, result);
+      }
+      return result;
+    }
   }
 
   // DI-002: Guard evaluation + operation MUST run in same transaction to prevent TOCTOU.
@@ -389,6 +898,7 @@ export async function executeMutation(
           namespace,
           effectiveMutationId,
           changeTracking.withDb(txDb),
+          actorId,
           logger,
         );
       });
@@ -422,18 +932,8 @@ export async function executeMutation(
     }
 
     if (txMutationResult) {
-      // Run search index updates outside the transaction (fail-soft)
-      if ((txMutationResult as MutationResult).ok) {
-        const searchPlugin = plugins.find(isSearchPlugin);
-        if (searchPlugin) {
-          try {
-            const op = mutation.operation === "delete" ? "delete" : "upsert";
-            const record = mutation.operation === "delete"
-              ? { id: mutation.id }
-              : { id: mutation.id, ...(mutation.record || {}) };
-            await searchPlugin.updateIndices({ resource: mutation.resource, records: [record as Record<string, unknown>], operation: op });
-          } catch (e) { logger?.error("Search index update failed", { error: String(e), operation: "searchIndexUpdate", resource: mutation.resource }); }
-        }
+      if (searchProvider && (txMutationResult as MutationResult).ok) {
+        await tryUpdateSearchIndex(searchProvider, mutation, logger);
       }
       if (mutation.clientId && mutation.mutationId) {
         await idempotencyStore.set(mutation.clientId, mutation.mutationId, txMutationResult as MutationResult);
@@ -487,28 +987,12 @@ export async function executeMutation(
     namespace,
     effectiveMutationId,
     changeTracking.withDb(db),
+    actorId,
     logger,
   );
 
-  // Index Updates (outside operation scope, fail-soft)
-  if (result.ok) {
-    const searchPlugin = plugins.find(isSearchPlugin);
-    if (searchPlugin) {
-      try {
-        const op = mutation.operation === "delete" ? "delete" : "upsert";
-        const record =
-          mutation.operation === "delete"
-            ? { id: mutation.id }
-            : { id: mutation.id, ...(mutation.record || {}) };
-        await searchPlugin.updateIndices({
-          resource: mutation.resource,
-          records: [record as Record<string, unknown>],
-          operation: op,
-        });
-      } catch (e) {
-        logger?.error("Search index update failed", { error: String(e), operation: "searchIndexUpdate", resource: mutation.resource });
-      }
-    }
+  if (searchProvider && result.ok) {
+    await tryUpdateSearchIndex(searchProvider, mutation, logger);
   }
 
   // Store for idempotency only when IDs were provided

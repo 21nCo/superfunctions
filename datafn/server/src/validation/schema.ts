@@ -3,18 +3,18 @@
  * Centralizes all schema-bounded lookups to eliminate duplication
  */
 
-import type {
-  DatafnSchema,
-  DatafnResourceSchema,
-  DatafnRelationSchema,
-} from "@datafn/core";
-import type { DatafnErrorCode } from "@datafn/core";
+import type { DatafnSchema, DatafnResourceSchema, DatafnRelationSchema } from "../core-types.js";
+import type { DatafnErrorCode } from "../core-types.js";
 import {
-  SYSTEM_FIELDS as CORE_SYSTEM_FIELDS,
-  READONLY_SYSTEM_FIELDS as CORE_READONLY_SYSTEM_FIELDS,
+  resolveCapabilities,
+  getCapabilityFields,
   buildSchemaIndex as buildCoreSchemaIndex,
-  type SchemaIndex as CoreSchemaIndex,
 } from "@datafn/core";
+
+interface CoreSchemaIndexLike {
+  resourcesByName: Map<string, DatafnResourceSchema>;
+  relationsFromResource: Map<string, DatafnRelationSchema[]>;
+}
 
 /**
  * Validation error type - compatible with DatafnError
@@ -23,6 +23,7 @@ export type ValidationError = {
   code: DatafnErrorCode;
   message: string;
   path: string;
+  details?: Record<string, unknown>;
 };
 
 /**
@@ -47,19 +48,10 @@ export function vErr(
   code: DatafnErrorCode,
   message: string,
   path: string,
+  details?: Record<string, unknown>,
 ): ValidationResult<never> {
-  return { ok: false, error: { code, message, path } };
+  return { ok: false, error: { code, message, path, details } };
 }
-
-/**
- * System fields that exist on all resources (imported from @datafn/core)
- */
-export const SYSTEM_FIELDS: ReadonlySet<string> = CORE_SYSTEM_FIELDS;
-
-/**
- * System fields that are read-only (clients cannot write) (imported from @datafn/core)
- */
-export const READONLY_SYSTEM_FIELDS: ReadonlySet<string> = CORE_READONLY_SYSTEM_FIELDS;
 
 /**
  * Server schema index — extends core's SchemaIndex with server-specific validation maps.
@@ -67,9 +59,9 @@ export const READONLY_SYSTEM_FIELDS: ReadonlySet<string> = CORE_READONLY_SYSTEM_
  * while the underlying core index provides richer Map/array structures.
  */
 export interface SchemaIndex
-  extends Omit<CoreSchemaIndex, "fieldsByResource" | "relationsByResource"> {
+  extends Omit<CoreSchemaIndexLike, "fieldsByResource" | "relationsByResource"> {
   schema: DatafnSchema;
-  /** All field names (schema-defined + SYSTEM_FIELDS) per resource. */
+  /** All field names (schema-defined + capability-injected + id) per resource. */
   fieldsByResource: Map<string, Set<string>>;
   /** Writable field names per resource. */
   writableFieldsByResource: Map<string, Set<string>>;
@@ -84,18 +76,29 @@ export interface SchemaIndex
  */
 export function buildSchemaIndex(schema: DatafnSchema): SchemaIndex {
   // Delegate to core for resourcesByName and relationsFromResource
-  const coreIndex = buildCoreSchemaIndex(schema);
+  const coreIndex = buildCoreSchemaIndex(schema) as unknown as CoreSchemaIndexLike;
 
   const fieldsByResource = new Map<string, Set<string>>();
   const writableFieldsByResource = new Map<string, Set<string>>();
   const relationsByResource = new Map<string, Set<string>>();
 
   for (const resource of schema.resources) {
-    // All fields (schema-defined + system fields)
-    const allFields = new Set<string>(SYSTEM_FIELDS);
+    const resolvedCapabilities = resolveCapabilities(
+      schema.capabilities as any,
+      resource.capabilities as any,
+    );
+    const capabilityFields = getCapabilityFields(resolvedCapabilities as any);
+    const allFields = new Set<string>();
     const writableFields = new Set<string>();
-    writableFields.add("id"); // id is writable on insert
-    writableFields.add("isArchived"); // isArchived is writable
+    allFields.add("id");
+    writableFields.add("id");
+
+    for (const capabilityField of capabilityFields) {
+      allFields.add(capabilityField.name);
+      if (!capabilityField.readonly) {
+        writableFields.add(capabilityField.name);
+      }
+    }
 
     for (const field of resource.fields) {
       allFields.add(field.name);

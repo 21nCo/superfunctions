@@ -18,8 +18,6 @@ export {
   getRelationTarget,
   getRelation,
   joinPath,
-  SYSTEM_FIELDS,
-  READONLY_SYSTEM_FIELDS,
 } from "./schema.js";
 
 export {

@@ -95,7 +95,11 @@ You can clone a subset of resources instead of the entire schema:
 
 ```typescript
 // Clone only specific resources
-await client.sync.clone(["todos", "projects"]);
+await client.sync.clone({
+  clientId: "client-abc-123",
+  tables: ["todos", "projects"],
+  includeJoins: true,
+});
 ```
 
 Resources marked as `isRemoteOnly` in the schema are excluded from clone operations.
@@ -109,8 +113,8 @@ When `includeJoins: true` (the default), clone also downloads join rows for many
 Clone emits a `sync_applied` event on success:
 
 ```typescript
-client.events.on("sync_applied", (event) => {
-  if (event.context.phase === "clone") {
+client.subscribe((event) => {
+  if (event.type === "sync_applied" && event.context.phase === "clone") {
     console.log("Cloned resources:", event.context.resources);
     console.log("Cursors:", event.context.cursors);
   }
@@ -120,8 +124,8 @@ client.events.on("sync_applied", (event) => {
 On failure, a `sync_failed` event is emitted with the error details:
 
 ```typescript
-client.events.on("sync_failed", (event) => {
-  if (event.context.phase === "clone") {
+client.subscribe((event) => {
+  if (event.type === "sync_failed" && event.context.phase === "clone") {
     console.error("Clone failed:", event.context.error.message);
   }
 });

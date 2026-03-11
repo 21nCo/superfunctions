@@ -63,11 +63,32 @@ interface DatafnSyncConfig {
   /** Max retry attempts per push round. Default: 3. */
   pushMaxRetries?: number;
 
+  /** Exponential backoff config for push retries. */
+  pushRetryBackoff?: {
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+    multiplier?: number;
+    jitterMs?: number;
+  };
+
+  /** Exponential backoff config for push interval when failures repeat. */
+  pushIntervalBackoff?: {
+    baseMultiplier?: number;
+    maxDelayMs?: number;
+    jitterMs?: number;
+  };
+
   /** Initial data clone strategy. */
   hydration?: DatafnHydrationConfig;
 
   /** WebSocket reconnection configuration. */
   wsReconnect?: DatafnWsReconnectConfig;
+
+  /** Pull batch size per request. Default: 200. */
+  pullBatchSize?: number;
+
+  /** Safety cap on pull catch-up loops. Default: 50. */
+  maxPullIterations?: number;
 
   /** Relay mutation events to other same-origin browser tabs. Default: false. */
   crossTab?: boolean;
@@ -133,6 +154,7 @@ interface DatafnRemoteAdapter {
   clone(payload: unknown): Promise<unknown>;
   pull(payload: unknown): Promise<unknown>;
   push(payload: unknown): Promise<unknown>;
+  reconcile(payload: unknown): Promise<unknown>;
 }
 ```
 

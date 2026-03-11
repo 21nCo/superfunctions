@@ -1,5 +1,3 @@
-import type { Participant, Segment } from 'recfn';
-
 export type WebSocketFrameType =
   | 'segment'
   | 'participant_joined'

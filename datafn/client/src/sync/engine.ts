@@ -12,7 +12,7 @@
 import type { DatafnStorageAdapter } from "../storage.js";
 import type { DatafnRemoteAdapter, DatafnSyncConfig } from "../client.js";
 import type { EventBus } from "../events/bus.js";
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin, SearchProvider } from "@datafn/core";
 import { enumerateJoinStoreKeys, getJoinStoreKey } from "@datafn/core";
 import {
   applyCloneResult,
@@ -43,6 +43,7 @@ function computeBackoffDelay(
 }
 
 export class SyncEngine {
+  private static readonly SEARCH_REBUILD_BATCH_SIZE = 1000;
   private inFlight = false;
   private pullInFlight = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -64,12 +65,14 @@ export class SyncEngine {
   };
   private plugins: DatafnPlugin[] = [];
   private getTimestamp: () => number;
+  private searchProvider?: SearchProvider;
   private wsReconnectAttempt = 0;
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private wsReconnectEnabled = true;
   private config?: DatafnSyncConfig;
   private pushConsecutiveFailures = 0;
   private pushIntervalBackoffActive = false;
+  private searchRebuildState: "idle" | "pending" | "running" | "failed" | "completed" = "idle";
 
   constructor(
     private storage: DatafnStorageAdapter,
@@ -80,6 +83,7 @@ export class SyncEngine {
     config?: DatafnSyncConfig,
     plugins?: DatafnPlugin[],
     getTimestamp?: () => number,
+    searchProvider?: SearchProvider,
   ) {
     this.config = config;
     this.pushBatchSize = config?.pushBatchSize ?? 100;
@@ -92,6 +96,7 @@ export class SyncEngine {
     this.hydrationPlan = config?.hydration;
     this.plugins = plugins || [];
     this.getTimestamp = getTimestamp || (() => Date.now());
+    this.searchProvider = searchProvider;
 
     if (config?.ws && config?.remote) {
       const remote = config.remote;
@@ -429,6 +434,99 @@ export class SyncEngine {
     }
   }
 
+  private emitSearchRebuildProgress(
+    stage: "pending" | "running" | "failed" | "completed",
+    indexedRecords: number,
+    totalRecords: number,
+    error?: { code: string; message: string },
+  ) {
+    const percent = totalRecords === 0 ? 100 : Math.min(100, Math.floor((indexedRecords / totalRecords) * 100));
+    if (stage === "failed") {
+      this.eventBus.emit({
+        type: "sync_failed",
+        timestampMs: this.getTimestamp(),
+        context: {
+          phase: "search-rebuild",
+          stage,
+          indexedRecords,
+          totalRecords,
+          percent,
+          error,
+        },
+      });
+      return;
+    }
+    this.eventBus.emit({
+      type: "sync_applied",
+      timestampMs: this.getTimestamp(),
+      context: {
+        phase: "search-rebuild",
+        stage,
+        indexedRecords,
+        totalRecords,
+        percent,
+      },
+    });
+  }
+
+  private scheduleSearchRebuild(resources: string[], attempt = 0) {
+    if (!this.searchProvider || resources.length === 0) return;
+    this.searchRebuildState = "pending";
+    this.emitSearchRebuildProgress("pending", 0, 0);
+    setTimeout(() => {
+      this.rebuildSearchIndices(resources, attempt).catch(() => {
+        // Failures are emitted in rebuildSearchIndices.
+      });
+    }, 0);
+  }
+
+  private async rebuildSearchIndices(resources: string[], attempt = 0): Promise<void> {
+    if (!this.searchProvider) return;
+
+    let totalRecords = 0;
+    for (const resource of resources) {
+      const records = await this.storage.listRecords(resource);
+      totalRecords += records.length;
+    }
+
+    this.searchRebuildState = "running";
+    this.emitSearchRebuildProgress("running", 0, totalRecords);
+
+    let indexedRecords = 0;
+    try {
+      for (const resource of resources) {
+        const records = await this.storage.listRecords(resource);
+        for (
+          let offset = 0;
+          offset < records.length;
+          offset += SyncEngine.SEARCH_REBUILD_BATCH_SIZE
+        ) {
+          const batch = records.slice(offset, offset + SyncEngine.SEARCH_REBUILD_BATCH_SIZE);
+          if (batch.length === 0) continue;
+          await this.searchProvider.updateIndices({
+            resource,
+            records: batch,
+            operation: "upsert",
+          });
+          indexedRecords += batch.length;
+          this.emitSearchRebuildProgress("running", indexedRecords, totalRecords);
+        }
+      }
+      this.searchRebuildState = "completed";
+      this.emitSearchRebuildProgress("completed", totalRecords, totalRecords);
+    } catch (error: any) {
+      this.searchRebuildState = "failed";
+      this.emitSearchRebuildProgress("failed", indexedRecords, totalRecords, {
+        code: error?.code || "INTERNAL",
+        message: error?.message || "Search rebuild failed",
+      });
+      // Allow retry without data loss: retry once asynchronously.
+      if (attempt < 1) {
+        this.scheduleSearchRebuild(resources, attempt + 1);
+      }
+    }
+  }
+
   /**
    * Clone specific resources and wait for completion
    * Implements HOOK-001 and EVT-003
@@ -457,15 +555,19 @@ export class SyncEngine {
 
       // Clone with pagination if configured
       const pageSize = this.getClonePageSize(tables[0]); // Use first table for now
+      const skipCloneIndexing = this.config?.skipCloneIndexing === true;
       let result: CloneResult;
       
       if (pageSize && pageSize < 1000) {
         // Use pagination
         for (const table of tables) {
-          await this.cloneTablePaginated(table, pageSize);
+          await this.cloneTablePaginated(table, pageSize, !skipCloneIndexing);
         }
         // Create a synthetic result for event emission
-        result = { ok: true, data: {}, cursors: {}, next: null };
+        result = { ok: true, data: {}, cursors: {}, next: {} };
+        if (this.searchProvider && skipCloneIndexing) {
+          this.scheduleSearchRebuild(tables);
+        }
       } else {
         // Clone all at once
         const response: any = await this.remote.clone(transformedPayload);
@@ -473,6 +575,21 @@ export class SyncEngine {
         if (response.ok && response.result?.ok) {
           result = response.result as CloneResult;
           await applyCloneResult(this.storage, result);
+          if (this.searchProvider) {
+            if (skipCloneIndexing) {
+              this.scheduleSearchRebuild(tables);
+            } else {
+              for (const [resource, records] of Object.entries(result.data)) {
+                if (records.length > 0) {
+                  try {
+                    await this.searchProvider.updateIndices({ resource, records, operation: "upsert" });
+                  } catch (e) {
+                    // fail-soft
+                  }
+                }
+              }
+            }
+          }
         } else {
           throw new Error(response.error?.message || "Clone rejected by server");
         }
@@ -549,7 +666,7 @@ export class SyncEngine {
         // Mark tables as failed, not stuck in hydrating
         for (const table of tables) {
           try {
-            await this.storage.setHydrationState(table, "failed");
+            await this.storage.setHydrationState(table, "notStarted");
           } catch {
             // Best-effort state update
           }
@@ -561,7 +678,7 @@ export class SyncEngine {
   /**
    * Clone a single table with pagination
    */
-  private async cloneTablePaginated(table: string, pageSize: number) {
+  private async cloneTablePaginated(table: string, pageSize: number, indexAfterPage: boolean) {
     let afterId: string | null = null;
     let hasMore = true;
 
@@ -578,7 +695,22 @@ export class SyncEngine {
       });
 
       if (response.ok && response.result?.ok) {
-        await applyCloneResult(this.storage, response.result as CloneResult);
+        const cloneResult = response.result as CloneResult;
+        await applyCloneResult(this.storage, cloneResult);
+        if (indexAfterPage && this.searchProvider) {
+          const records = cloneResult.data?.[table] ?? [];
+          if (records.length > 0) {
+            try {
+              await this.searchProvider.updateIndices({
+                resource: table,
+                records,
+                operation: "upsert",
+              });
+            } catch {
+              // fail-soft
+            }
+          }
+        }
         
         // Check if there are more pages
         const nextMarker = response.result.next?.[table];
@@ -729,6 +861,26 @@ export class SyncEngine {
         if (response.ok && response.result?.ok) {
           lastResult = response.result;
           await applyPullResult(this.storage, lastResult);
+          if (this.searchProvider && lastResult) {
+            try {
+              if (lastResult.records) {
+                for (const [resource, records] of Object.entries(lastResult.records as Record<string, unknown[]>)) {
+                  if ((records as unknown[]).length > 0) {
+                    await this.searchProvider.updateIndices({ resource, records: records as Record<string, unknown>[], operation: "upsert" });
+                  }
+                }
+              }
+              if (lastResult.deleted) {
+                for (const [resource, ids] of Object.entries(lastResult.deleted as Record<string, string[]>)) {
+                  for (const id of ids as string[]) {
+                    await this.searchProvider.updateIndices({ resource, records: [{ id }], operation: "delete" });
+                  }
+                }
+              }
+            } catch (e) {
+              // fail-soft
+            }
+          }
 
           hasMore = lastResult.hasMore === true;
           if (hasMore && lastResult.cursors) {
@@ -1043,7 +1195,7 @@ export class SyncEngine {
               setTimeout(() => this.pullNow(), 0);
             }
           } else {
-            // Legacy fallback: server did not return cursorBefore, use old comparison
+            // Server did not return cursorBefore; use cursor comparison.
             const serverSeq = parseInt(pushResult.cursor, 10);
             if (serverSeq > storedSeq) {
               setTimeout(() => this.pullNow(), 0);

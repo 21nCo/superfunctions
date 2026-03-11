@@ -3,8 +3,9 @@
  * Executes DFQL mutations with idempotency and guards
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
+import { resolveCapabilities } from "@datafn/core";
 import type {
   IdempotencyStore,
   MutationResult,
@@ -15,10 +16,14 @@ import { getBodyFromContext } from "../http/json.js";
 import { okResponse, errorResponse } from "../http/errors.js";
 import { ChangeTrackingService } from "../execution/sync/change-tracking.js";
 import { runBeforeMutation, runAfterMutation } from "../plugins/run-hooks.js";
-import { executeMutation } from "../execution/mutation/execute.js";
+import {
+  executeMutation,
+  stripReadonlyCapabilityFields,
+} from "../execution/mutation/execute.js";
 import { buildSchemaIndex, validateMutationBody } from "../validation/index.js";
 import { logRequest, redactSensitiveFields } from "../logging.js";
 import type { DatafnLogger } from "../logger.js";
+import type { SearchProvider } from "../search-provider.js";
 import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 import type { MutationValidationOpts } from "../validation/mutation.js";
 import { validateMutationAuthz, type AuthzOptions } from "../validation/authz.js";
@@ -37,14 +42,16 @@ export interface MutationHandlerOpts extends MutationValidationOpts {
  */
 export function createMutationHandler(
   validatedSchema: DatafnSchema,
+  extractNamespace: (ctx: any) => Promise<string>,
+  extractActorId?: (ctx: any) => Promise<string | undefined>,
   db?: Adapter, // Use Adapter instead of MemoryStore
   idempotencyStore?: IdempotencyStore,
   plugins: DatafnPlugin[] = [],
-  extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
   timingEmitter?: TimingEmitter | null,
   handlerOpts?: MutationHandlerOpts,
   logger?: DatafnLogger,
+  searchProvider?: SearchProvider,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
@@ -76,9 +83,60 @@ export function createMutationHandler(
         }
         // Use potentially transformed mutation from hooks
         const transformedBody = beforeHookResult.mutation;
+        const transformedMutationsForValidation = (
+          Array.isArray(transformedBody) ? transformedBody : [transformedBody]
+        ).map((mutation) => {
+          if (
+            typeof mutation !== "object" ||
+            mutation === null ||
+            Array.isArray(mutation)
+          ) {
+            return mutation;
+          }
+
+          const candidate = mutation as Record<string, unknown>;
+          const operation = candidate.operation;
+          if (
+            operation !== "insert" &&
+            operation !== "merge" &&
+            operation !== "replace"
+          ) {
+            return mutation;
+          }
+
+          const record = candidate.record;
+          if (
+            typeof record !== "object" ||
+            record === null ||
+            Array.isArray(record)
+          ) {
+            return mutation;
+          }
+
+          const resourceName = String(candidate.resource ?? "");
+          const resource = validatedSchema.resources.find(
+            (r) => r.name === resourceName,
+          );
+          if (!resource) return mutation;
+
+          const resolvedCapabilities = resolveCapabilities(
+            validatedSchema.capabilities as any,
+            resource.capabilities as any,
+          );
+          return {
+            ...candidate,
+            record: stripReadonlyCapabilityFields(
+              record as Record<string, unknown>,
+              resolvedCapabilities,
+            ),
+          };
+        });
+        const normalizedTransformedBody = Array.isArray(transformedBody)
+          ? transformedMutationsForValidation
+          : transformedMutationsForValidation[0];
 
         // PHASE_01: Validate mutations against schema BEFORE checking execution requirements
-        const validationResult = validateMutationBody(transformedBody, schemaIndex, {
+        const validationResult = validateMutationBody(normalizedTransformedBody, schemaIndex, {
           maxIdLength: handlerOpts?.maxIdLength,
           debug: handlerOpts?.debug,
         });
@@ -135,6 +193,7 @@ export function createMutationHandler(
 
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
+        const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
         // Create change tracking service with user/tenant namespace and optional sequence store
         const changeTracking = new ChangeTrackingService(db, namespace, sequenceStore);
@@ -146,14 +205,16 @@ export function createMutationHandler(
         timer?.startPhase("execute");
         for (const mut of transformedMutations) {
         const result = await executeMutation(
-            mut as DFQLMutation,
+            mut as unknown as DFQLMutation,
             validatedSchema,
             db,
             idempotencyStore,
             changeTracking,
             plugins,
             namespace,
+            actorId,
             logger,
+            searchProvider,
         );
         results.push(result);
         }

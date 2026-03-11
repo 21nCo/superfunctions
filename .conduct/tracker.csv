@@ -1,3 +1,8 @@
 id, desc, status, completedAt, completionDoc
 2026-01-29-audit-fix-k4j2q7b9-spec,Add Datafn clone up local-to-cloud upload to prevent data loss on signup,0,,
 2026-03-06-r7m2k9v4-issue,Fix remaining datafn audit findings (SEC-008 REL-002 SRV-005),1,2026-03-06T06:54:07Z,2026-03-06-r7m2k9v4-completion
+2026-03-06-m8k4x9p2-issue,Resolve datafn/server TypeScript compile break (TS2709 TS2554 TS18046 TS7006 TS1016),1,2026-03-06T18:42:44Z,2026-03-06-v8k3m2p9-completion
+2026-03-08-k8m3x7r2-issue,Remove active soft-delete plugin and stale soft-delete docs from datafn,1,2026-03-07T19:20:31Z,2026-03-08-n4p7k2m9-completion
+2026-03-07-m2q9x7p4-full-audit,Execute and resolve documentation parity findings from full DataFn docs audit,1,2026-03-07T19:29:10Z,2026-03-08-k7p2m9x4-completion
+2026-03-08-z4p7k2m9-issue,Fix SearchFn/DataFn audit findings from 2026-03-08-m4v9k2q7 full audit,1,2026-03-08T16:07:19Z,2026-03-08-y8k3m2p6-completion
+2026-03-08-k7m4x2p9-issue,Add search and searchfn plugin integration to example todo app (client + server),1,2026-03-09T06:31:47Z,2026-03-09-r8m4k2p7-completion

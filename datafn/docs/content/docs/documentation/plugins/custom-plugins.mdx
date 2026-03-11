@@ -236,7 +236,6 @@ const client = createDatafnClient({
   plugins: [
     createEmailNormalizerPlugin({ resources: ["users"] }),  // Transform first
     createMaxLimitPlugin(500),                               // Then enforce limits
-    createSoftDeletePlugin({ resources: ["todos"] }),        // Then soft-delete
   ],
 });
 ```

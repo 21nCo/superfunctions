@@ -11,10 +11,26 @@ import type {
   DfqlMutationFragment,
   DfqlTransact,
 } from "@datafn/core";
+import { resolveCapabilities } from "@datafn/core";
 import { createClientError } from "../errors.js";
 import type { EventHandler } from "../events/bus.js";
 import type { EventFilter } from "../events/filter.js";
 import type { SignalRegistry } from "../signals/querySignal.js";
+import {
+  buildTableOperationMutation,
+  buildShareMutation,
+  buildUnshareMutation,
+  type TableOperation,
+} from "../mutate.js";
+import {
+  buildGetPermissionsQuery,
+  type PermissionEntry,
+} from "../query.js";
+
+type QueryMetadata = {
+  includeTrashed?: boolean;
+  includeArchived?: boolean;
+};
 
 export interface DatafnTable<
   S extends DatafnSchema = DatafnSchema,
@@ -24,8 +40,16 @@ export interface DatafnTable<
   name: Name;
   version: number;
 
-  query(q: DfqlQueryFragment): Promise<unknown>;
+  query(q: DfqlQueryFragment & { metadata?: QueryMetadata }): Promise<unknown>;
   mutate(m: DfqlMutationFragment | DfqlMutationFragment[]): Promise<unknown>;
+  delete(id: string): Promise<unknown>;
+  trash?: (id: string) => Promise<unknown>;
+  restore?: (id: string) => Promise<unknown>;
+  archive?: (id: string) => Promise<unknown>;
+  unarchive?: (id: string) => Promise<unknown>;
+  share?: (id: string, userId: string, level: string) => Promise<unknown>;
+  unshare?: (id: string, userId: string) => Promise<unknown>;
+  getPermissions?: (id: string) => Promise<PermissionEntry[]>;
   transact(payload: DfqlTransact): Promise<unknown>;
   signal(q: DfqlQueryFragment, options?: { disableOptimistic?: boolean }): DatafnSignal<unknown>;
   subscribe(handler: EventHandler, filter?: EventFilter): () => void;
@@ -50,14 +74,30 @@ export function createTable<S extends DatafnSchema>(
   generateId: (params: { resource: string; idPrefix?: string }) => string,
   schema: S,
 ): DatafnTable<S, string> {
-  return {
+  const resource = schema.resources.find((r) => r.name === name);
+  const resolvedCapabilities = resource
+    ? resolveCapabilities(
+        schema.capabilities as any,
+        resource.capabilities as any,
+      )
+    : [];
+
+  const executeOperation = async (
+    operation: TableOperation,
+    id: string,
+  ): Promise<unknown> =>
+    client.mutate(buildTableOperationMutation(name, version, operation, id));
+
+  const table: DatafnTable<S, string> = {
     name,
     version,
 
     /**
      * Execute a query with resource/version merged (CLIENT-QUERY-001)
      */
-    async query(q: DfqlQueryFragment): Promise<unknown> {
+    async query(
+      q: DfqlQueryFragment & { metadata?: QueryMetadata },
+    ): Promise<unknown> {
       // Merge query fragment with table resource/version
       const fragment = (typeof q === "object" && q !== null ? q : {}) as Record<
         string,
@@ -134,13 +174,17 @@ export function createTable<S extends DatafnSchema>(
       return result;
     },
 
+    async delete(id: string): Promise<unknown> {
+      return executeOperation("delete", id);
+    },
+
     /**
      * Execute a transaction (CLIENT-TX-001)
      */
     async transact(payload: DfqlTransact): Promise<unknown> {
       // Delegate directly to client.transact without modification
       // Note: client.transact expects unknown but at runtime/logic level it handles it.
-      // Ideally client.transact should also be typed, but we'll cast if needed or rely on unknown compatibility.
+      // Ideally client.transact should also be typed; cast here to keep table API ergonomic.
       return client.transact(payload as any);
     },
 
@@ -181,4 +225,39 @@ export function createTable<S extends DatafnSchema>(
       return client.subscribe(handler, tableFilter);
     },
   };
+
+  if (resolvedCapabilities.some((capability) => capability === "trash")) {
+    table.trash = async (id: string): Promise<unknown> =>
+      executeOperation("trash", id);
+    table.restore = async (id: string): Promise<unknown> =>
+      executeOperation("restore", id);
+  }
+
+  if (resolvedCapabilities.some((capability) => capability === "archivable")) {
+    table.archive = async (id: string): Promise<unknown> =>
+      executeOperation("archive", id);
+    table.unarchive = async (id: string): Promise<unknown> =>
+      executeOperation("unarchive", id);
+  }
+
+  const hasShareableCapability = resolvedCapabilities.some(
+    (capability) =>
+      typeof capability === "object" &&
+      capability !== null &&
+      "shareable" in (capability as Record<string, unknown>),
+  );
+  if (hasShareableCapability) {
+    table.share = async (
+      id: string,
+      userId: string,
+      level: string,
+    ): Promise<unknown> =>
+      client.mutate(buildShareMutation(name, version, id, userId, level));
+    table.unshare = async (id: string, userId: string): Promise<unknown> =>
+      client.mutate(buildUnshareMutation(name, version, id, userId));
+    table.getPermissions = async (id: string): Promise<PermissionEntry[]> =>
+      client.query(buildGetPermissionsQuery(name, version, id)) as Promise<PermissionEntry[]>;
+  }
+
+  return table;
 }

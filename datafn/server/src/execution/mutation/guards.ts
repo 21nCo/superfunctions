@@ -1,5 +1,5 @@
 import type { Adapter } from "@superfunctions/db";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 import { evaluateFilter } from "../query/filters.js";
 import { GuardDataStore } from "./guard-store.js";
 import type { DatafnLogger } from "../../logger.js";

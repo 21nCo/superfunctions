@@ -43,7 +43,7 @@
   "dependencies": {
     "recfn": "*",
     "@superfunctions/http": "*",
-    "@searchfn/client": "*",
+    "@searchfn/adapters": "*",
     "recfn-deepgram": "*",
     "recfn-assemblyai": "*",
     "recfn-google-stt": "*"

@@ -137,6 +137,9 @@ export function createExtensionTransport(
     async push(payload: unknown) {
       return request("push", payload);
     },
+    async reconcile(payload: unknown) {
+      return request("reconcile", payload);
+    },
     // New Extension methods
     async subscribeRemote(filter?: unknown) {
       // We expect the result to be { ok: true, result: { subscriptionId: "..." } }

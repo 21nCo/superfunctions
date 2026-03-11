@@ -1,18 +1,37 @@
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 import type { DataStore } from "../store.js";
 import type { DFQLQuery, QueryResult, AggregateResult } from "./dfql.js";
 import { executeQuery } from "./execute.js";
-import type { SearchFnPlugin } from "../../plugins/searchfn.js";
+import type { SearchProvider } from "../../search-provider.js";
 import { DatafnExecutionError } from "../errors.js";
 import type { DatafnLogger } from "../../logger.js";
+import { NO_PROVIDER_NATIVE_UNSUPPORTED_MESSAGE } from "../search/native-fallback.js";
 
 const DEFAULT_SEARCH_CHUNK_SIZE = 1000;
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DatafnExecutionError(
+      "DFQL_ABORTED",
+      "Search request aborted",
+      "signal",
+    );
+  }
+}
 
 export async function executeSearchQuery(
   query: DFQLQuery,
   schema: DatafnSchema,
   store: DataStore,
-  searchPlugin: SearchFnPlugin,
+  searchProvider: SearchProvider | undefined,
+  resolveCandidates?: (params: {
+    resource: string;
+    query: string;
+    type?: "fullText" | "semantic";
+    fields?: string[];
+    limit?: number;
+    signal?: AbortSignal;
+  }) => Promise<string[]>,
   logger?: DatafnLogger,
 ): Promise<QueryResult | AggregateResult> {
   if (!query.search) {
@@ -22,14 +41,37 @@ export async function executeSearchQuery(
     );
   }
 
+  const signal = (query as unknown as { signal?: AbortSignal }).signal;
+  assertNotAborted(signal);
+
   // 1. Get candidates
-  const candidates = await searchPlugin.selectCandidates({
-    resource: query.resource,
-    query: query.search.query,
-    type: query.search.type,
-    fields: query.search.fields,
-    topK: query.search.topK,
-  });
+  const candidates = searchProvider
+    ? await searchProvider.search({
+        resource: query.resource,
+        query: query.search.query,
+        type: query.search.type,
+        fields: query.search.fields,
+        limit: query.search.topK,
+        signal,
+      })
+    : resolveCandidates
+      ? await resolveCandidates({
+          resource: query.resource,
+          query: query.search.query,
+          type: query.search.type,
+          fields: query.search.fields,
+          limit: query.search.topK,
+          signal,
+        })
+      : (() => {
+          throw new DatafnExecutionError(
+            "DFQL_UNSUPPORTED",
+            NO_PROVIDER_NATIVE_UNSUPPORTED_MESSAGE,
+            "search",
+          );
+        })();
+
+  assertNotAborted(signal);
 
   // 2. EXE-017: Process candidates in deterministic chunks instead of truncating
   if (candidates.length <= DEFAULT_SEARCH_CHUNK_SIZE) {

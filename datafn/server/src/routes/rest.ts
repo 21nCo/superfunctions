@@ -4,7 +4,7 @@
  * Provides schema-driven REST wrappers for DFQL query/mutation.
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../core-types.js";
 import { errorResponse } from "../http/errors.js";
 import { jsonResponse, getBodyFromContext } from "../http/json.js";
 import type { Route } from "@superfunctions/http";
@@ -40,6 +40,7 @@ const PATH_TRAVERSAL_ERROR = {
 // Use Record<string, any> or generic for execute callbacks
 type MutationExecutor = (m: unknown) => Promise<unknown>;
 type QueryExecutor = (q: unknown) => Promise<unknown>;
+type RestRouteContext<TContext> = TContext & { parsedBody?: unknown };
 
 export function createRestRoutes<TContext>(
   schema: DatafnSchema,
@@ -132,7 +133,7 @@ export function createRestRoutes<TContext>(
     {
       method: "POST",
       path: "/datafn/resources/:resource",
-      handler: async (req, ctx?: { parsedBody?: unknown }) => {
+      handler: async (req, ctx: RestRouteContext<TContext>) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
         const rawResource = pathParts[3] ?? "";
@@ -207,7 +208,7 @@ export function createRestRoutes<TContext>(
     {
       method: "PATCH",
       path: "/datafn/resources/:resource/:id",
-      handler: async (req, ctx?: { parsedBody?: unknown }) => {
+      handler: async (req, ctx: RestRouteContext<TContext>) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
         const rawResource = pathParts[3] ?? "";

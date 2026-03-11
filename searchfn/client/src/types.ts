@@ -1,80 +1,41 @@
-export type DocId = string | number;
+import type {
+  SearchAdapter,
+  SearchAdapterCapabilities,
+  IndexParams,
+  SearchParams,
+  SearchAllParams,
+  SearchAllResult,
+  InitializeParams,
+} from "@searchfn/adapters";
 
-export interface TermIdentifier {
-  field: string;
-  term: string;
-  chunk: number;
+export interface SearchClientDefaults {
+  limit?: number;
+  limitPerResource?: number;
+  fuzzy?: boolean | number;
 }
 
-export interface StoredPostingChunk {
-  key: TermIdentifier;
-  /**
-   * Binary payload representing encoded postings. Typically produced by
-   * the chunk serializer (delta encoded numeric IDs or JSON fallback).
-   */
-  payload: ArrayBuffer;
-  /**
-   * Encoding hint so we can avoid additional lookups when decoding.
-   */
-  encoding?: "delta-varint" | "json";
-  /**
-   * Term frequency metadata for scoring heuristics.
-   */
-  docFrequency: number;
-  /**
-   * Cached inverse document frequency to speed up scoring. Optional.
-   */
-  inverseDocumentFrequency?: number;
-  /**
-   * Optional telemetry for cache heuristics.
-   */
-  accessCount?: number;
-  lastAccessedAt?: number;
+export interface SearchClient {
+  initialize?(params: InitializeParams): Promise<void>;
+  index(params: IndexParams): Promise<void>;
+  search(params: SearchParams): Promise<Array<string | number>>;
+  searchAll(params: SearchAllParams): Promise<SearchAllResult[]>;
+  remove(params: { resource: string; ids: Array<string | number>; signal?: AbortSignal }): Promise<void>;
+  clear(resource: string, signal?: AbortSignal): Promise<void>;
+  dispose(): Promise<void>;
+  adapterInfo(): { name: string; capabilities?: SearchAdapterCapabilities };
 }
 
-export interface DocumentVectorRecord {
-  docId: DocId;
-  field: string;
-  /**
-   * Sparse vector represented as alternating index/value pairs.
-   */
-  vector: ArrayBuffer;
-  updatedAt: number;
+export interface SearchClientConfig {
+  adapter: SearchAdapter;
+  defaults?: SearchClientDefaults;
 }
 
-export interface StoredDocumentRecord {
-  docId: DocId;
-  payload: Record<string, unknown>;
-  updatedAt: number;
-}
-
-export interface MetadataRecord<TValue = unknown> {
-  key: string;
-  value: TValue;
-  updatedAt: number;
-}
-
-export interface StorageInitOptions {
-  dbName: string;
-  version: number;
-  chunkSize?: number;
-}
-
-export type TransactionMode = "readonly" | "readwrite";
-
-export interface StorageLogger {
-  debug: (message: string, context?: Record<string, unknown>) => void;
-  info: (message: string, context?: Record<string, unknown>) => void;
-  warn: (message: string, context?: Record<string, unknown>) => void;
-  error: (message: string, context?: Record<string, unknown>) => void;
-}
-
-export interface ChunkEncodeResult {
-  buffer: Uint8Array;
-  encoding: "delta-varint" | "json";
-}
-
-export interface ChunkDecodeResult {
-  postings: Array<number | string>;
-  encoding: "delta-varint" | "json";
-}
+export {
+  type SearchAdapter,
+  type SearchAdapterCapabilities,
+  type IndexParams,
+  type SearchParams,
+  type SearchAllParams,
+  type SearchAllResult,
+  type InitializeParams,
+} from "@searchfn/adapters";

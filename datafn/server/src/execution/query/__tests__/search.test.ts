@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { executeSearchQuery } from "../search.js";
-import type { SearchFnPlugin } from "../../../plugins/searchfn.js";
-import type { DatafnSchema } from "@datafn/core";
+import type { SearchProvider } from "../../../search-provider.js";
+import type { DatafnSchema } from "../../../core-types.js";
 import type { DataStore } from "../../store.js";
+import { DatafnExecutionError } from "../../errors.js";
 
 const mockSchema: DatafnSchema = {
   resources: [
@@ -29,19 +30,20 @@ const mockStore: DataStore = {
   getRecord: (res, id) =>
     res === "tasks" ? mockRecords.find((r) => r.id === id) || null : null,
   getJoinRows: () => [],
+  findRecords: (res, field, value) =>
+    (res === "tasks" ? mockRecords : []).filter((r) => r[field as keyof typeof r] === value),
 };
 
-const mockSearchPlugin = {
-  name: "searchfn",
-  runsOn: ["server"],
-  selectCandidates: vi.fn(),
+const mockSearchProvider: SearchProvider = {
+  name: "test-search",
+  search: vi.fn(),
   updateIndices: vi.fn(),
-} as unknown as SearchFnPlugin;
+};
 
 describe("executeSearchQuery", () => {
   it("should merge search candidates with filters", async () => {
-    // Setup plugin to return specific candidates
-    (mockSearchPlugin.selectCandidates as any).mockResolvedValue([
+    // Setup provider to return specific candidates
+    (mockSearchProvider.search as any).mockResolvedValue([
       "task-1",
       "task-3",
     ]);
@@ -57,15 +59,15 @@ describe("executeSearchQuery", () => {
       query,
       mockSchema,
       mockStore,
-      mockSearchPlugin,
+      mockSearchProvider,
     );
 
-    expect(mockSearchPlugin.selectCandidates).toHaveBeenCalledWith({
+    expect(mockSearchProvider.search).toHaveBeenCalledWith({
       resource: "tasks",
       query: "urgent",
       type: "fullText",
       fields: undefined,
-      topK: undefined,
+      limit: undefined,
     });
 
     // Expect implicit filter: status=active AND id IN ["task-1", "task-3"]
@@ -78,12 +80,50 @@ describe("executeSearchQuery", () => {
   it("should throw if search block is missing", async () => {
     const query = { resource: "tasks", version: 1 };
     await expect(
-      executeSearchQuery(query, mockSchema, mockStore, mockSearchPlugin),
+      executeSearchQuery(query, mockSchema, mockStore, mockSearchProvider),
     ).rejects.toThrow("executeSearchQuery called without search block");
   });
 
+  it("uses fallback candidate resolver when provider is unavailable", async () => {
+    const resolveCandidates = vi.fn().mockResolvedValue(["task-1"]);
+    const query = {
+      resource: "tasks",
+      version: 1,
+      search: { query: "urgent", type: "fullText" as const },
+    };
+
+    const result: any = await executeSearchQuery(
+      query,
+      mockSchema,
+      mockStore,
+      undefined,
+      resolveCandidates,
+    );
+
+    expect(resolveCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: "tasks", query: "urgent" }),
+    );
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].id).toBe("task-1");
+  });
+
+  it("throws canonical unsupported when neither provider nor fallback resolver is available", async () => {
+    const query = {
+      resource: "tasks",
+      version: 1,
+      search: { query: "urgent", type: "fullText" as const },
+    };
+
+    await expect(
+      executeSearchQuery(query, mockSchema, mockStore, undefined),
+    ).rejects.toMatchObject({
+      code: "DFQL_UNSUPPORTED",
+      message: "No search provider configured and DB adapter has no native search support",
+    } satisfies Partial<DatafnExecutionError>);
+  });
+
   it("should handle empty candidates", async () => {
-    (mockSearchPlugin.selectCandidates as any).mockResolvedValue([]);
+    (mockSearchProvider.search as any).mockResolvedValue([]);
 
     const query = {
       resource: "tasks",
@@ -95,7 +135,7 @@ describe("executeSearchQuery", () => {
       query,
       mockSchema,
       mockStore,
-      mockSearchPlugin,
+      mockSearchProvider,
     );
 
     expect(result.data).toHaveLength(0);
@@ -103,7 +143,7 @@ describe("executeSearchQuery", () => {
 
   it("should respect sort with search results", async () => {
     // Mock returns 1 and 3.
-    (mockSearchPlugin.selectCandidates as any).mockResolvedValue([
+    (mockSearchProvider.search as any).mockResolvedValue([
       "task-3",
       "task-1",
     ]);
@@ -119,7 +159,7 @@ describe("executeSearchQuery", () => {
       query,
       mockSchema,
       mockStore,
-      mockSearchPlugin,
+      mockSearchProvider,
     );
 
     expect(result.data).toHaveLength(2);

@@ -3,21 +3,41 @@ title: "Core Types"
 description: "Type definitions exported by @datafn/core."
 ---
 
-## DatafnSchema
+## Capability Types
 
-Top-level schema definition.
+```typescript
+type SimpleCapability = "timestamps" | "audit" | "trash" | "archivable";
+
+type AccessLevel = "viewer" | "editor" | "owner";
+
+type ShareableCapability = {
+  shareable: {
+    levels: AccessLevel[];
+    default: "private" | "shared";
+  };
+};
+
+type CapabilityEntry = SimpleCapability | ShareableCapability;
+
+type SchemaCapabilities = CapabilityEntry[];
+
+type ResourceCapabilities = CapabilityEntry[] | { exclude: SimpleCapability[] };
+
+type RelationSimpleCapability = "timestamps" | "audit";
+```
+
+## DatafnSchema
 
 ```typescript
 type DatafnSchema = {
+  capabilities?: SchemaCapabilities;
   resources: DatafnResourceSchema[];
   relations?: DatafnRelationSchema[];
-  namespaced?: boolean;          // default: true
+  namespaced?: boolean;
 };
 ```
 
 ## DatafnResourceSchema
-
-A single resource (table) definition.
 
 ```typescript
 type DatafnResourceSchema = {
@@ -25,6 +45,7 @@ type DatafnResourceSchema = {
   version: number;
   idPrefix?: string;
   isRemoteOnly?: boolean;
+  capabilities?: ResourceCapabilities;
   fields: DatafnFieldSchema[];
   indices?:
     | { base?: string[]; search?: string[]; vector?: string[] }
@@ -34,8 +55,6 @@ type DatafnResourceSchema = {
 ```
 
 ## DatafnFieldSchema
-
-A field within a resource.
 
 ```typescript
 type DatafnFieldSchema = {
@@ -59,8 +78,6 @@ type DatafnFieldSchema = {
 
 ## DatafnRelationSchema
 
-A relation between resources.
-
 ```typescript
 type DatafnRelationSchema = {
   from: string | string[];
@@ -77,12 +94,11 @@ type DatafnRelationSchema = {
   pathField?: string;
   joinTable?: string;
   joinColumns?: { from: string; to: string };
+  capabilities?: RelationSimpleCapability[];
 };
 ```
 
 ## DatafnEvent
-
-Event emitted by the client event bus.
 
 ```typescript
 interface DatafnEvent {
@@ -110,8 +126,6 @@ interface DatafnEvent {
 
 ## DatafnEventFilter
 
-Filter for subscribing to specific events.
-
 ```typescript
 type DatafnEventFilter = Partial<{
   type: DatafnEvent["type"] | Array<DatafnEvent["type"]>;
@@ -125,9 +139,7 @@ type DatafnEventFilter = Partial<{
 }>;
 ```
 
-## DatafnSignal\<T\>
-
-Reactive signal for query results.
+## `DatafnSignal<T>`
 
 ```typescript
 interface DatafnSignal<T> {
@@ -143,8 +155,6 @@ interface DatafnSignal<T> {
 
 ## DatafnPlugin
 
-Plugin interface for before/after hooks.
-
 ```typescript
 interface DatafnPlugin {
   name: string;
@@ -158,22 +168,7 @@ interface DatafnPlugin {
 }
 ```
 
-## DatafnLogger
-
-Pluggable logger interface.
-
-```typescript
-interface DatafnLogger {
-  info(message: string, context?: Record<string, unknown>): void;
-  warn(message: string, context?: Record<string, unknown>): void;
-  error(message: string, context?: Record<string, unknown>): void;
-  debug(message: string, context?: Record<string, unknown>): void;
-}
-```
-
 ## DatafnLimitsConfig
-
-Server-side enforcement limits.
 
 ```typescript
 type DatafnLimitsConfig = {
@@ -198,8 +193,6 @@ type DatafnLimitsConfig = {
 
 ## DatafnWsConfig
 
-WebSocket connection and heartbeat configuration.
-
 ```typescript
 type DatafnWsConfig = {
   maxConnections?: number;
@@ -210,8 +203,6 @@ type DatafnWsConfig = {
 ```
 
 ## DatafnPermissionsPolicy
-
-Authorization policy for a resource.
 
 ```typescript
 type DatafnPermissionsPolicy = {

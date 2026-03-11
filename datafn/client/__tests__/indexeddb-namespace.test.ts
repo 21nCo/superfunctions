@@ -13,8 +13,12 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 // Mock indexedDB before importing the adapter
 beforeAll(() => {
   // Minimal IDB mock to prevent constructor errors
+  const mockStore = {
+    createIndex: vi.fn(),
+    indexNames: { contains: () => false },
+  };
   const mockDb = {
-    createObjectStore: vi.fn(),
+    createObjectStore: vi.fn(() => mockStore),
     objectStoreNames: { contains: () => false },
     transaction: vi.fn(),
     close: vi.fn(),

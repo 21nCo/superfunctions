@@ -29,7 +29,7 @@ export async function executeLocalQuery(
   }
 
   const resource = query.resource as string;
-  let records: Record<string, unknown>[];
+  let records: Record<string, unknown>[] = [];
   let usedIndexedPath = false;
   // CLI-012: tracks whether the index fetch fully satisfied all filter conditions
   let filterFullySatisfied = false;
@@ -66,7 +66,7 @@ export async function executeLocalQuery(
     }
   }
 
-  // Fallback: full scan with deterministic ordering
+  // Scan path with deterministic ordering
   if (!usedIndexedPath) {
     records = await storage.listRecords(resource);
   }
@@ -183,4 +183,3 @@ function detectSingleFieldEq(
   
   return null;
 }
-

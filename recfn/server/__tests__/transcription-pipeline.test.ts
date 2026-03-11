@@ -289,7 +289,7 @@ describe('processTranscriptionJob', () => {
       { store, logger, asrRegistry: registry, searchClient },
     );
 
-    const results = searchClient.search('action items');
+    const results = await searchClient.search('action items');
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]?.document?.text).toContain('Action items');
   });

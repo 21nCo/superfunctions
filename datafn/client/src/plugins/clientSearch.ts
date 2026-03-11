@@ -302,7 +302,7 @@ function getSearchFields(resource: Record<string, unknown>): string[] | null {
     return null;
   }
 
-  // Handle legacy array format (treated as base indices, not search)
+  // Array indices are treated as base indices, not search indices.
   return null;
 }
 

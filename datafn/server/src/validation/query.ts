@@ -315,7 +315,7 @@ export function validateQuery(
     // SEC-016: Search query length cap
     const maxSearchQueryLength = limits?.maxSearchQueryLength ?? 1000;
     if (search.query.length > maxSearchQueryLength) {
-      return vErr("DFQL_INVALID", `Search query exceeds maximum length (${maxSearchQueryLength})`, "search.query");
+      return vErr("LIMIT_EXCEEDED", "Search query exceeds maximum length", "search.query");
     }
 
     if (search.type && !["fullText", "semantic"].includes(search.type as string)) {
@@ -853,7 +853,7 @@ export function validateQueryBody(
   index: SchemaIndex,
   opts: {
     maxLimit: number;
-    hasSearchPlugin: boolean;
+    hasSearchProvider: boolean;
     maxLikePatternLength?: number;
     maxSearchQueryLength?: number;
     /** VAL-002 */
@@ -891,14 +891,18 @@ export function validateQueryBody(
       if (typeof searchObj.query === "string") {
         const maxSearchQueryLength = opts.maxSearchQueryLength ?? 1000;
         if (searchObj.query.length > maxSearchQueryLength) {
-          return vErr("DFQL_INVALID", `Search query exceeds maximum length (${maxSearchQueryLength})`, "search.query");
+          return vErr("LIMIT_EXCEEDED", "Search query exceeds maximum length", "search.query");
         }
       }
     }
 
     // Check for search operation - require searchfn plugin
-    if (query.search && !opts.hasSearchPlugin) {
-      return vErr("DFQL_UNSUPPORTED", "DFQL search requires searchfn plugin", "search");
+    if (query.search && !opts.hasSearchProvider) {
+      return vErr(
+        "DFQL_UNSUPPORTED",
+        "No search provider configured and DB adapter has no native search support",
+        "search",
+      );
     }
 
     // Validate limits

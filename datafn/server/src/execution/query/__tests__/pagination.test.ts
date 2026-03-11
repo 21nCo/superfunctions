@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createDatafnServer } from "../../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../../core-types.js";
 
 // Schema for testing
 const schema: DatafnSchema = {
@@ -67,7 +67,7 @@ describe("PAGE-001: nextCursor Emission", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -90,7 +90,7 @@ describe("PAGE-001: nextCursor Emission", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -111,7 +111,7 @@ describe("PAGE-001: nextCursor Emission", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -173,7 +173,7 @@ describe("PAGE-002: Cursor Backwards Pagination", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -205,7 +205,7 @@ describe("PAGE-002: Cursor Backwards Pagination", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -235,7 +235,7 @@ describe("DETERM-003: Cursor Sort Validation", () => {
               cursor: { after: { createdAt: "...", id: "..." } }
             }),
           });
-          const res = await server.router.handle(req, {});
+          const res = await server.router.handle(req);
           expect(res.status).toBe(200);
     });
 
@@ -250,7 +250,7 @@ describe("DETERM-003: Cursor Sort Validation", () => {
               cursor: { after: { createdAt: "..." } }
             }),
           });
-          const res = await server.router.handle(req, {});
+          const res = await server.router.handle(req);
           const body = await res.json();
           
           expect(res.status).toBe(400);
@@ -273,7 +273,7 @@ describe("DETERM-003: Cursor Sort Validation", () => {
               cursor: { after: { id: "task-1" } }
             }),
           });
-          const res = await server.router.handle(req, {});
+          const res = await server.router.handle(req);
           const body = await res.json();
           
           expect(res.status).toBe(200);

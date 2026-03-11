@@ -10,10 +10,6 @@ import { readable } from "svelte/store";
  * A client reference that can notify subscribers when the underlying client
  * changes. Compatible with `{ subscribe: client.subscribeClient }` from a
  * unified `createDatafnClient`, or any Svelte writable store holding a client.
- *
- * @deprecated No longer needed. Signals from `createDatafnClient` are
- * lifecycle-aware via LiveSignals — they survive `switchContext()` and rebind
- * automatically. Use `toSvelteStore(signal)` instead.
  */
 export type ClientRef<C> = {
   subscribe(fn: (client: C) => void): () => void;
@@ -50,10 +46,6 @@ export function toSvelteStore<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T>;
 
 /**
  * Convert a DataFn signal factory to a reactive Svelte readable store.
- *
- * @deprecated Use the single-argument form `toSvelteStore(signal)` with
- * lifecycle-aware signals from `createDatafnClient`. This factory-based
- * overload will be removed in the next major version.
  *
  * Accepts a `clientRef` (anything with a `subscribe(fn)` API) and a
  * `signalFactory` that creates a new signal from the current client. The store

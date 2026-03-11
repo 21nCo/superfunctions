@@ -11,7 +11,7 @@ import type {
   DatafnHookContext,
 } from "@datafn/core";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { SearchFnPlugin } from "../src/plugins/searchfn.js";
+import type { SearchProvider } from "../src/search-provider.js";
 
 // Test schemas
 const taskSchema: DatafnSchema = {
@@ -55,11 +55,10 @@ function createForbiddenPlugin(): DatafnPlugin {
   };
 }
 
-function createSearchPlugin(): SearchFnPlugin {
+function createSearchProvider(): SearchProvider {
   return {
-    name: "searchfn",
-    runsOn: ["server"],
-    selectCandidates: async (params) => {
+    name: "test-search",
+    search: async (params) => {
       const { query } = params;
       const searchQuery = query?.toLowerCase() || "";
       const candidateIds = searchQuery.includes("beta")
@@ -170,7 +169,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
   });
 
   describe("TV-SEARCH-001: search delegation", () => {
-    it("should delegate search to plugin", async () => {
+    it("should delegate search to provider", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
       const schema: DatafnSchema = {
         resources: [
@@ -185,7 +184,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
       const server = await createDatafnServer({ allowUnknownResources: true,
         schema,
         db,
-        plugins: [createSearchPlugin()],
+        searchProvider: createSearchProvider(),
       });
 
       // Insert tasks
@@ -241,7 +240,7 @@ describe("Phase 10: Plugin Integration Tests", () => {
   });
 
   describe("TV-SEARCH-002: search gating", () => {
-    it("should reject search without searchfn plugin", async () => {
+    it("should reject search without searchProvider", async () => {
       const db = memoryAdapter({ libraryNamespace: "datafn" });
       const schema: DatafnSchema = {
         resources: [
@@ -256,7 +255,6 @@ describe("Phase 10: Plugin Integration Tests", () => {
       const server = await createDatafnServer({ allowUnknownResources: true,
         schema,
         db,
-        plugins: [], // No searchfn plugin
       });
 
       const response = await server.router.handle(

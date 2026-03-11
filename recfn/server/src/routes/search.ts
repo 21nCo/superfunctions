@@ -54,7 +54,7 @@ export function createSearchRoutes(deps: SearchRouteDeps): Route[] {
           );
         }
 
-        const results = searchClient.search(trimmed, { limit: limitNum, botId });
+        const results = await searchClient.search(trimmed, { limit: limitNum, botId });
 
         const enriched = await Promise.all(
           results.map(async (item) => {

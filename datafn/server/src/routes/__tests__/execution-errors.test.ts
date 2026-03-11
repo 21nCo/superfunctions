@@ -7,6 +7,10 @@ import { describe, it, expect } from "vitest";
 import { createDatafnServer } from "../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
+async function readJson(response: Response): Promise<Record<string, any>> {
+  return (await response.json()) as Record<string, any>;
+}
+
 // Fixture F1 schema for testing
 const fixtureF1Schema = {
   resources: [
@@ -57,11 +61,11 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
 
     // MUST return error, NOT empty results
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(false);
     // Unknown operator returns DFQL_UNSUPPORTED (unsupported feature)
     expect(body.error.code).toBe("DFQL_UNSUPPORTED");
@@ -101,8 +105,8 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
-    const body = await res.json();
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
 
     // MUST return error, NOT empty results
     if (res.status === 400 && !body.ok) {
@@ -140,11 +144,11 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
 
     // Should return error (likely INTERNAL), not empty results
     // Note: This might succeed if the adapter creates tables automatically
-    const body = await res.json();
+    const body = await readJson(res);
     if (!body.ok) {
       expect(body.error).toBeDefined();
       expect(body.error.code).toBeDefined();
@@ -177,10 +181,10 @@ describe("EXEC-001: Query Execution Error Surfacing", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
 
     // Valid query with zero matches MUST return ok:true with empty data
-    const body = await res.json();
+    const body = await readJson(res);
     
     // Either succeeds with empty data OR fails with proper error (not swallowed)
     if (body.ok) {
@@ -221,8 +225,8 @@ describe("EXEC-002: Mutation Execution Error Surfacing", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
-    const body = await res.json();
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
 
     // Validation errors return top-level error response (status 400)
     // OR execution errors return ok:true with result.ok:false

@@ -14,7 +14,6 @@ Each resource tracks its own hydration state:
 | `notStarted` | Resource has not been cloned yet |
 | `hydrating` | Clone is in progress |
 | `ready` | Resource is fully hydrated and available for local queries |
-| `failed` | Background clone failed (resource can be retried) |
 
 State transitions are validated. For example, a resource cannot transition from `ready` back to `notStarted`.
 
@@ -29,7 +28,7 @@ A hydration plan splits resources into two groups:
 const client = createDatafnClient({
   schema,
   sync: {
-    remote: "https://api.example.com",
+    remote: "https://api.example.com/datafn",
     hydration: {
       bootResources: ["users", "settings"],
       backgroundResources: ["auditLog", "analytics"],
@@ -84,17 +83,17 @@ You can observe hydration progress through the storage adapter:
 
 ```typescript
 const state = await storage.getHydrationState("todos");
-// "notStarted" | "hydrating" | "ready" | "failed"
+// "notStarted" | "hydrating" | "ready"
 ```
 
 ## Background Clone Failures
 
-If a background resource fails to clone, its state is set to `"failed"` and a `sync_failed` event is emitted. The resource remains unavailable for local queries and falls back to remote. You can trigger a re-clone by restarting the sync engine or calling clone manually.
+If a background resource fails to clone, a `sync_failed` event is emitted. You can trigger a re-clone by restarting the sync engine or calling clone manually.
 
 ```typescript
-client.events.on("sync_failed", (event) => {
-  if (event.context.operation === "background") {
-    console.warn("Background clone failed for:", event.context.tables);
+client.subscribe((event) => {
+  if (event.type === "sync_failed" && event.context.phase === "clone") {
+    console.warn("Background clone failed:", event.context.error?.message);
   }
 });
 ```

@@ -685,12 +685,12 @@
 ### CL-009
 - **ID**: CL-009
 - **Priority**: P2
-- **Statement**: `createSoftDeletePlugin` MUST be deprecated with a console warning directing users to the `trash` capability.
-- **Rationale**: Superseded by first-class trash.
+- **Statement**: `createSoftDeletePlugin` and plugin-based soft-delete docs MUST be removed in favor of capability-based `trash`/`restore`.
+- **Rationale**: Capability lifecycle is the single supported soft-delete model.
 - **Acceptance criteria**:
-  - Using `createSoftDeletePlugin` logs a deprecation warning
-  - Plugin still functions (not removed)
-  - Cannot use plugin on a resource that has trash capability (validation error)
+  - `@datafn/client` no longer exports `createSoftDeletePlugin`, `restore`, or `SoftDeleteConfig`
+  - `client/src/plugins/softDelete.ts` and plugin-specific tests are removed
+  - Docs no longer include `/documentation/plugins/soft-delete` page or related cross-links
 - **Test vectors**: TV-CL-009
 
 ---

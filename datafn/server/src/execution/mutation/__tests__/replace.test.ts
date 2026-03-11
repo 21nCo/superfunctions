@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createDatafnServer } from "../../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../../core-types.js";
 
 // Schema for testing
 const schema: DatafnSchema = {
@@ -10,15 +10,12 @@ const schema: DatafnSchema = {
       name: "tasks",
       version: 1,
       idPrefix: "task",
+      capabilities: ["timestamps", "audit"] as any,
       fields: [
         { name: "title", type: "string" as const, required: true },
         { name: "description", type: "string" as const, required: false },
         { name: "status", type: "string" as const, required: false, default: "active" },
         { name: "priority", type: "string" as const, required: false },
-        { name: "createdAt", type: "string" as const, required: false },
-        { name: "createdBy", type: "string" as const, required: false },
-        { name: "updatedAt", type: "string" as const, required: false },
-        { name: "updatedBy", type: "string" as const, required: false },
       ],
     },
   ],
@@ -74,7 +71,7 @@ describe("MUT-REPLACE-001: Replace Operation Semantics", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -108,7 +105,7 @@ describe("MUT-REPLACE-001: Replace Operation Semantics", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     await res.json();
 
     const task = await db.findOne({
@@ -146,7 +143,7 @@ describe("MUT-REPLACE-001: Replace Operation Semantics", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(404);
@@ -173,7 +170,7 @@ describe("MUT-REPLACE-001: Replace Operation Semantics", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     // Since validation happens before execution (PHASE_01), this might be caught there.
@@ -224,7 +221,7 @@ describe("MUT-REPLACE-001: Replace Operation Semantics", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);

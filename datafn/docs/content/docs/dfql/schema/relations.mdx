@@ -15,6 +15,7 @@ type DatafnRelationSchema = {
   relation?: string;
   inverse?: string;
   cache?: boolean;
+  capabilities?: Array<"timestamps" | "audit">;
   metadata?: Array<{
     name: string;
     type: "string" | "number" | "boolean" | "date" | "object" | "json";
@@ -34,6 +35,7 @@ type DatafnRelationSchema = {
 | `relation` | `string` | Optional name for the forward relation. |
 | `inverse` | `string` | Optional name for the inverse relation. |
 | `cache` | `boolean` | When `true`, enables relation caching for performance. |
+| `capabilities` | `Array<"timestamps" \| "audit">` | Server-managed capability fields on the join row (many-many only, explicit opt-in). |
 | `metadata` | `Array` | Extra fields stored on the join record (many-many only). |
 | `fkField` | `string` | Foreign key field name override for one-many / many-one. |
 | `pathField` | `string` | Materialized path field for htree relations. |
@@ -132,6 +134,62 @@ const schema = defineSchema({
 ```
 
 The `metadata` array defines additional columns on the join table. These fields are stored alongside the association and can be read when querying the relation.
+
+### Relation Capabilities
+
+Many-many relations support an optional `capabilities` field that enables server-managed lifecycle fields on the join row. Relation capabilities are **explicit opt-in** and apply **only to `many-many` relations**.
+
+Relation capabilities are independent from resource capabilities. Enabling `timestamps`/`audit` on a resource does not automatically enable relation capability fields on join rows.
+
+```typescript
+relations: [
+  {
+    from: "todos",
+    to: "categories",
+    type: "many-many",
+    relation: "tags",
+    capabilities: ["timestamps", "audit"],
+    metadata: [
+      { name: "addedOrder", type: "number" },
+    ],
+  },
+]
+```
+
+The two supported capability values are:
+
+| Capability | Fields injected | Description |
+| --- | --- | --- |
+| `timestamps` | `createdAt`, `updatedAt` | Epoch-ms timestamps set on create and update. |
+| `audit` | `createdBy`, `updatedBy` | Actor ID set from server context on create and update. |
+
+For the resource-level capability model, see [Capabilities](/docs/documentation/concepts/capabilities).
+
+When both are declared, canonical order is always `timestamps` first, then `audit`.
+
+#### Server-ownership and readonly stripping
+
+Relation capability fields are **server-managed**. Any client-supplied values for `createdAt`, `updatedAt`, `createdBy`, or `updatedBy` in a relation payload are **stripped before persistence** — they cannot be forged by the client.
+
+- On the **create path** (`relate` for a new pair): the server sets all enabled fields (`createdAt`, `updatedAt`, `createdBy`, `updatedBy`).
+- On the **update path** (`relate` for an existing pair, or `modifyRelation`): the server updates `updatedAt` and `updatedBy`, but preserves the original `createdAt` and `createdBy`.
+
+#### Behavior without relation capabilities
+
+Schemas that omit `capabilities` on a relation are **unaffected**. No extra columns are added to the join table, and no fields are injected at runtime. All existing `relate`, `modifyRelation`, and `unrelate` behavior is preserved unchanged.
+
+#### Schema update note
+
+Enabling `capabilities` on an existing relation changes the join-table schema by adding new columns. After updating your schema definition, regenerate schema output and apply database changes before deploying:
+
+```bash
+npx datafn generate          # regenerates datafn-schema.drizzle.ts and datafn-types.ts
+npx drizzle-kit push         # applies the new columns
+```
+
+#### Metadata collision detection
+
+Schema validation rejects metadata field names that collide with capability-managed field names. If you declare `capabilities: ["timestamps"]` and also declare a metadata field named `createdAt`, validation returns a `CAPABILITY_FIELD_COLLISION` error. Use distinct names for user-defined metadata fields.
 
 ### Hierarchical Tree (htree)
 

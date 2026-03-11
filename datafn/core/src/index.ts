@@ -4,6 +4,7 @@ export type {
   DatafnResourceSchema,
   DatafnFieldSchema,
   DatafnRelationSchema,
+  RelationSimpleCapability,
   DatafnEvent,
   DatafnEventFilter,
   DatafnSignal,
@@ -17,12 +18,29 @@ export type {
 // Re-export defineSchema helper
 export { defineSchema } from "./types.js";
 
+// Re-export capability types and helpers
+export type {
+  SimpleCapability,
+  AccessLevel,
+  ShareableCapability,
+  CapabilityEntry,
+  SchemaCapabilities,
+  ResourceCapabilities,
+} from "./capabilities.js";
+export {
+  CAPABILITY_FIELD_DEFS,
+  resolveCapabilities,
+  getCapabilityFields,
+  RELATION_CAPABILITY_FIELD_DEFS,
+  getRelationCapabilityFieldNames,
+} from "./capabilities.js";
+
 // Re-export error types and helpers
 export type { DatafnErrorCode, DatafnError, DatafnEnvelope } from "./errors.js";
 export { ok, err } from "./errors.js";
 
 // Re-export schema validation
-export { validateSchema, isNamespaced } from "./schema.js";
+export { validateSchema, isNamespaced, resolveRelationCapabilities } from "./schema.js";
 
 // Re-export namespace helper
 export { ns } from "./ns.js";
@@ -40,9 +58,6 @@ export { ensureBuiltinKv, kvId, KV_RESOURCE_NAME } from "./kv.js";
 
 // Re-export join store utilities
 export { getJoinStoreKey, getJoinTableName, enumerateJoinStoreKeys } from "./joins.js";
-
-// Re-export system field constants
-export { SYSTEM_FIELDS, READONLY_SYSTEM_FIELDS } from "./system-fields.js";
 
 // Re-export schema index utilities
 export {
@@ -97,3 +112,6 @@ export {
   runBeforeHook,
   runAfterHook,
 } from "./hooks.js";
+
+// Re-export search provider interface
+export type { SearchProvider } from "./search-provider.js";

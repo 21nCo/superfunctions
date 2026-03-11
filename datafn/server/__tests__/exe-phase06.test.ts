@@ -11,7 +11,7 @@ import type { DatafnSchema } from "@datafn/core";
 import type { DataStore, JoinRow } from "../src/execution/store.js";
 import { materializeSelect } from "../src/execution/query/select.js";
 import { executeSearchQuery } from "../src/execution/query/search.js";
-import type { SearchFnPlugin } from "../src/plugins/searchfn.js";
+import type { SearchProvider } from "../src/search-provider.js";
 import { DbDataStore } from "../src/execution/db-store.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
@@ -175,10 +175,10 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
     return createMockStore(records);
   }
 
-  function createMockSearchPlugin(candidateIds: string[]): SearchFnPlugin {
+  function createMockSearchProvider(candidateIds: string[]): SearchProvider {
     return {
-      name: "searchfn",
-      selectCandidates: vi.fn().mockResolvedValue(candidateIds),
+      name: "test-search",
+      search: vi.fn().mockResolvedValue(candidateIds),
       updateIndices: vi.fn().mockResolvedValue(undefined),
     };
   }
@@ -190,7 +190,7 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
       { length: totalCandidates },
       (_, i) => `doc:${i + 1}`,
     );
-    const plugin = createMockSearchPlugin(candidateIds);
+    const provider = createMockSearchProvider(candidateIds);
 
     const query = {
       resource: "doc",
@@ -199,7 +199,7 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
       search: { query: "test", type: "fullText" as const },
     };
 
-    const result = await executeSearchQuery(query, schema, store, plugin);
+    const result = await executeSearchQuery(query, schema, store, provider);
 
     // All 1500 candidates must appear in results (no truncation)
     expect((result as any).data.length).toBe(totalCandidates);
@@ -212,7 +212,7 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
       { length: totalCandidates },
       (_, i) => `doc:${i + 1}`,
     );
-    const plugin = createMockSearchPlugin(candidateIds);
+    const provider = createMockSearchProvider(candidateIds);
 
     const query = {
       resource: "doc",
@@ -221,7 +221,7 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
       search: { query: "test", type: "fullText" as const },
     };
 
-    const result = await executeSearchQuery(query, schema, store, plugin);
+    const result = await executeSearchQuery(query, schema, store, provider);
     const returnedIds = (result as any).data.map((r: any) => r.id);
 
     // Verify every candidate ID is in results — no missing 500
@@ -237,7 +237,7 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
       { length: totalCandidates },
       (_, i) => `doc:${i + 1}`,
     );
-    const plugin = createMockSearchPlugin(candidateIds);
+    const provider = createMockSearchProvider(candidateIds);
 
     const query = {
       resource: "doc",
@@ -246,7 +246,7 @@ describe("FIX-EXE-017: Search candidate chunking", () => {
       search: { query: "test", type: "fullText" as const },
     };
 
-    const result = await executeSearchQuery(query, schema, store, plugin);
+    const result = await executeSearchQuery(query, schema, store, provider);
     expect((result as any).data.length).toBe(totalCandidates);
   });
 });

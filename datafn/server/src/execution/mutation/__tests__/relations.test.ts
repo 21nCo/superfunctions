@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createDatafnServer } from "../../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../../core-types.js";
 
 // Schema for testing
 const schema: DatafnSchema = {
@@ -105,7 +105,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -136,7 +136,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -174,7 +174,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -209,7 +209,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
         relations: { tags: "tag-1" }
       }),
     });
-    const res1 = await server.router.handle(req1, {});
+    const res1 = await server.router.handle(req1);
     expect(res1.status).toBe(200);
 
     // Relate again — should be a no-op, not crash
@@ -226,7 +226,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
         relations: { tags: "tag-1" }
       }),
     });
-    const res2 = await server.router.handle(req2, {});
+    const res2 = await server.router.handle(req2);
     const body2 = await res2.json();
 
     expect(res2.status).toBe(200);
@@ -262,7 +262,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -309,7 +309,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -350,7 +350,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -400,7 +400,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(404);
@@ -450,7 +450,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -514,7 +514,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -558,7 +558,7 @@ describe("MUT-REL-001: Relation Mutations", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(404);

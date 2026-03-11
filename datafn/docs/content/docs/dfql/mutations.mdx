@@ -1,81 +1,109 @@
 ---
 title: "Mutations"
-description: "Create, update, and delete data with DFQL mutations."
+description: "DFQL write operations, including capability-aware lifecycle and sharing mutations."
 ---
 
-A DFQL mutation describes a write operation against a resource. Mutations support creating, updating, replacing, and deleting records, as well as managing relationships.
+A DFQL mutation is a write operation against a resource.
 
-## Mutation Structure
+## Mutation Shape
 
 ```typescript
 type DfqlMutation = {
-  resource: string;         // Target resource name
-  version: number;          // Schema version
-  operation: string;        // Operation type
-  id?: string | string[];   // Target record ID(s)
-  record?: Record<string, unknown>;   // Data for single operations
-  records?: Array<Record<string, unknown>>; // Data for batch operations
-  clientId?: string;        // Client identifier
-  mutationId?: string;      // Unique mutation ID for idempotency
-  context?: unknown;        // Arbitrary metadata passed to hooks/events
-  relations?: Record<string, unknown>;  // Relation payloads
-  if?: Record<string, unknown>;         // Guard clause (conditional execution)
-  cascade?: unknown;        // Cascade behavior for deletes
-  silent?: boolean;         // Suppress event emission
-  system?: boolean;         // Mark as system-initiated
-  debounceKey?: string;     // Debounce key for mutation coalescing
-  debounceMs?: number;      // Debounce delay in milliseconds
+  resource: string;
+  version: number;
+  operation: string;
+  id?: string | string[];
+  record?: Record<string, unknown>;
+  records?: Array<Record<string, unknown>>;
+  clientId?: string;
+  mutationId?: string;
+  context?: unknown;
+  relations?: Record<string, unknown>;
+  if?: Record<string, unknown>;
+  cascade?: unknown;
+  silent?: boolean;
+  system?: boolean;
+  debounceKey?: string;
+  debounceMs?: number;
+  shareWith?: { userId: string; level?: string };
 };
 ```
 
-## Operations
+In direct server requests, `id` is expected for mutation operations. When using table handles, IDs for `insert` can be auto-generated client-side.
+
+## Supported Operations
+
+### Core operations
+
+| Operation | Description |
+| --- | --- |
+| `insert` | Create a new record |
+| `merge` | Partial update (upsert semantics) |
+| `replace` | Replace full record contents |
+| `delete` | Hard-delete record |
+
+### Capability operations
+
+These are valid only when the target resource enables the required capability.
+
+| Operation | Requires capability | Description |
+| --- | --- | --- |
+| `trash` | `trash` | Mark record as trashed (`trashedAt`, `trashedBy`) |
+| `restore` | `trash` | Clear trash markers |
+| `archive` | `archivable` | Set `isArchived: true` |
+| `unarchive` | `archivable` | Set `isArchived: false` |
+| `share` | `shareable` | Grant user access level on a record |
+| `unshare` | `shareable` | Remove user access |
+
+### Relation operations
+
+| Operation | Description |
+| --- | --- |
+| `relate` | Create/update relation edges |
+| `modifyRelation` | Update relation metadata on existing edge |
+| `unrelate` | Remove relation edges |
+
+## Core Examples
 
 ### Insert
-
-Create a new record. The `id` field can be included in the record or omitted (server generates one).
 
 ```typescript
 {
   resource: "todos",
   version: 1,
   operation: "insert",
+  id: "td:1",
   record: {
     title: "Buy groceries",
     completed: false,
-    priority: 3,
   },
 }
 ```
 
 ### Merge
 
-Update an existing record by merging fields. Only the specified fields are updated; unspecified fields remain unchanged.
-
 ```typescript
 {
   resource: "todos",
   version: 1,
   operation: "merge",
-  id: "todo_1",
+  id: "td:1",
   record: {
     completed: true,
-    completedAt: Date.now(),
   },
 }
 ```
 
 ### Replace
 
-Replace an existing record entirely. All fields not included in the record are removed (except system fields).
-
 ```typescript
 {
   resource: "todos",
   version: 1,
   operation: "replace",
-  id: "todo_1",
+  id: "td:1",
   record: {
-    title: "Updated todo",
+    title: "Updated task",
     completed: false,
     priority: 1,
   },
@@ -84,164 +112,108 @@ Replace an existing record entirely. All fields not included in the record are r
 
 ### Delete
 
-Delete a record by ID.
-
 ```typescript
 {
   resource: "todos",
   version: 1,
   operation: "delete",
-  id: "todo_1",
+  id: "td:1",
 }
 ```
 
-Delete multiple records:
+## Capability Examples
+
+### Trash / Restore
+
+```typescript
+{ resource: "todos", version: 1, operation: "trash", id: "td:1" }
+{ resource: "todos", version: 1, operation: "restore", id: "td:1" }
+```
+
+### Archive / Unarchive
+
+```typescript
+{ resource: "todos", version: 1, operation: "archive", id: "td:1" }
+{ resource: "todos", version: 1, operation: "unarchive", id: "td:1" }
+```
+
+### Share / Unshare
 
 ```typescript
 {
-  resource: "todos",
+  resource: "documents",
   version: 1,
-  operation: "delete",
-  id: ["todo_1", "todo_2", "todo_3"],
+  operation: "share",
+  id: "doc:1",
+  shareWith: { userId: "user:alice", level: "editor" },
+}
+
+{
+  resource: "documents",
+  version: 1,
+  operation: "unshare",
+  id: "doc:1",
+  shareWith: { userId: "user:alice" },
 }
 ```
+
+## Readonly Capability Fields
+
+When `timestamps`, `audit`, or `trash` are enabled, the server strips client-provided values for readonly capability fields from `record`.
+
+Examples of stripped fields:
+
+- `createdAt`, `updatedAt`
+- `createdBy`, `updatedBy`
+- `trashedAt`, `trashedBy`
+
+Server-generated values are authoritative.
 
 ## Batch Mutations
 
-Use the `records` array for batch inserts:
+You can send arrays of mutations.
 
 ```typescript
-{
-  resource: "todos",
-  version: 1,
-  operation: "insert",
-  records: [
-    { title: "Task 1", completed: false },
-    { title: "Task 2", completed: false },
-    { title: "Task 3", completed: true },
-  ],
-}
+[
+  { resource: "todos", version: 1, operation: "insert", id: "td:1", record: { title: "First" } },
+  { resource: "todos", version: 1, operation: "insert", id: "td:2", record: { title: "Second" } },
+]
 ```
 
-## Guard Clause
+## Guard Clause (`if`)
 
-The `if` field provides conditional execution. The mutation only proceeds if the guard filter matches the current state of the target record. This is evaluated atomically on the server when the database adapter supports transactions.
+`if` enables conditional writes. The mutation executes only if the guard matches current row state.
 
 ```typescript
 {
   resource: "todos",
   version: 1,
   operation: "merge",
-  id: "todo_1",
+  id: "td:1",
   record: { status: "completed" },
-  if: {
-    status: "in_progress",
-  },
-}
-// Only updates if the current status is "in_progress"
-```
-
-The guard uses the same filter syntax as query filters. If the guard does not match, the mutation is rejected with a `GUARD_FAILED` error.
-
-## Relation Mutations
-
-Use the `relations` field to manage relationships alongside record mutations. See the [Relation Operations](/docs/dfql/schema/relations) page for full details.
-
-```typescript
-{
-  resource: "todos",
-  version: 1,
-  operation: "relate",
-  id: "todo_1",
-  relations: {
-    tags: ["tag_1", "tag_2"],
-  },
+  if: { status: "in_progress" },
 }
 ```
 
-### Relation Operations
-
-| Operation | Description |
-|---|---|
-| `relate` | Create or update relationships |
-| `modifyRelation` | Update metadata on existing join rows (many-many only) |
-| `unrelate` | Remove relationships |
-
-## Silent Mutations
-
-Set `silent: true` to suppress event emission and signal refresh. Useful for internal bookkeeping operations that should not trigger UI updates:
+## Silent, System, Context, Debounce
 
 ```typescript
 {
   resource: "todos",
   version: 1,
   operation: "merge",
-  id: "todo_1",
-  record: { lastSyncedAt: Date.now() },
-  silent: true,
+  id: "td:1",
+  record: { title: "Typing..." },
+  context: { source: "editor" },
+  silent: false,
+  system: false,
+  debounceKey: "td:1:title",
+  debounceMs: 1500,
 }
 ```
 
-## System Mutations
+## Related Docs
 
-Set `system: true` to mark a mutation as system-initiated. System mutations bypass certain user-facing constraints and propagate the `system` flag in event payloads:
-
-```typescript
-{
-  resource: "todos",
-  version: 1,
-  operation: "insert",
-  record: { title: "System-generated task" },
-  system: true,
-}
-```
-
-## Context
-
-The `context` field carries arbitrary metadata through the mutation lifecycle. It is passed to plugin hooks and included in emitted events:
-
-```typescript
-{
-  resource: "todos",
-  version: 1,
-  operation: "merge",
-  id: "todo_1",
-  record: { completed: true },
-  context: {
-    source: "keyboard-shortcut",
-    userId: "user_1",
-  },
-}
-```
-
-## Idempotency
-
-Set `mutationId` to enable server-side idempotency. If the same `mutationId` is sent twice within the TTL window, the server returns the cached result instead of executing the mutation again:
-
-```typescript
-{
-  resource: "todos",
-  version: 1,
-  operation: "insert",
-  record: { title: "Idempotent insert" },
-  mutationId: "mut_abc123",
-}
-```
-
-## Debouncing
-
-Set `debounceKey` to coalesce rapid mutations on the client. Only the last mutation within the debounce window is sent to the server:
-
-```typescript
-{
-  resource: "todos",
-  version: 1,
-  operation: "merge",
-  id: "todo_1",
-  record: { title: "Updated title" },
-  debounceKey: "todo_1_title",
-  debounceMs: 1500,  // Default: 1500ms
-}
-```
-
-Mutations with the same `debounceKey` are coalesced -- only the final mutation after the debounce interval elapses is executed.
+- [Capabilities](/docs/documentation/concepts/capabilities)
+- [System Fields](/docs/dfql/schema/system-fields)
+- [Relations](/docs/dfql/schema/relations)

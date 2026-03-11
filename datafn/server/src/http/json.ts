@@ -2,7 +2,7 @@
  * HTTP JSON utilities for parsing and responding
  */
 
-import type { DatafnError } from "@datafn/core";
+import type { DatafnError } from "../core-types.js";
 
 /**
  * Result type for safe JSON parsing
@@ -69,6 +69,6 @@ export async function getBodyFromContext(
     return { ok: true, data: ctx.parsedBody };
   }
 
-  // Fallback to parsing (for cases where withAuth wasn't used or body wasn't parsed)
+  // Parse directly when middleware context does not include a parsed body.
   return parseJsonBody(req);
 }

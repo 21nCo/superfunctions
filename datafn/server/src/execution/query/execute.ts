@@ -3,10 +3,10 @@
  * Orchestrates filter, sort, pagination, and select materialization
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { DataStore } from "../store.js";
-import type { DFQLQuery, QueryResult } from "./dfql.js";
+import type { AggregateResult, DFQLQuery, QueryResult } from "./dfql.js";
 import { evaluateFilter } from "./filters.js";
 import { parseSortTerms, sortRecords, validateSortForCursor } from "./sort.js";
 import { applyLimitOffset, applyCursorAfter, computeNextCursor } from "./pagination.js";
@@ -23,7 +23,7 @@ export function executeQuery(
   query: DFQLQuery,
   schema: DatafnSchema,
   store: DataStore,
-): QueryResult | { groups: any[]; nextCursor: null } {
+): QueryResult | AggregateResult {
   // Phase 15: Aggregate queries
   if (query.groupBy) {
     const resourceName = query.resource as string;
@@ -211,7 +211,7 @@ export function executeQuery(
   // Or if we hit end? No, `before` anchor is upper bound.
   // So for `before`, we can just compute cursor from last item.
   
-  let nextCursor = null;
+  let nextCursor: unknown = null;
   if (query.cursor?.before) {
       // If we have results, nextCursor is valid (points to anchor or beyond)
       if (records.length > 0) {
@@ -219,8 +219,11 @@ export function executeQuery(
           // Wait, `computeNextCursor` checks `length > limit`.
           // We can construct it manually.
           const lastItem = records[records.length - 1];
-          nextCursor = {};
-          for (const term of sortTerms) nextCursor[term.field] = lastItem[term.field];
+          const cursor: Record<string, unknown> = {};
+          for (const term of sortTerms) {
+            cursor[term.field] = lastItem[term.field];
+          }
+          nextCursor = cursor;
       }
   } else {
       // Forward pagination
@@ -265,7 +268,7 @@ export async function executeQueryWithStrategy(
   db: Adapter,
   namespace: string,
   store?: DataStore,
-): Promise<QueryResult | { groups: any[]; nextCursor: null }> {
+): Promise<QueryResult | AggregateResult> {
   const strategy = classifyQuery(query as unknown as Record<string, unknown>, schema);
 
   if (strategy === "FULL_PUSHDOWN") {

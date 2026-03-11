@@ -1,4 +1,4 @@
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 
 export type MergeDecisionMode = "update" | "create" | "not_found";
 

@@ -1,110 +1,119 @@
 ---
 title: "System Fields"
-description: "Built-in fields managed automatically by DataFn."
+description: "Capability-injected lifecycle fields and server ownership rules."
 ---
 
 ## Overview
 
-Every resource in DataFn automatically includes a set of system-managed fields. These fields are reserved names -- you do not declare them in your schema, and they cannot be overridden by user-defined fields.
+DataFn uses capability-resolved lifecycle fields per resource.
 
-## SYSTEM_FIELDS
+`id` always exists. Other lifecycle fields appear only when the corresponding capability is enabled.
 
-The following fields exist on every record:
+## Resource Lifecycle Fields
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `id` | `string` | Unique record identifier. Generated on insert. |
-| `createdAt` | `number` | Epoch milliseconds when the record was created. |
-| `updatedAt` | `number` | Epoch milliseconds when the record was last modified. |
-| `createdBy` | `string` | Identifier of the user or context that created the record. |
-| `updatedBy` | `string` | Identifier of the user or context that last modified the record. |
-| `isArchived` | `boolean` | Soft-delete flag. `false` by default. |
+| Field | Added by capability | Type | Client writable | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | always | `string` | yes (for explicit IDs) | Always present |
+| `createdAt` | `timestamps` | `date` | no | Set on insert |
+| `updatedAt` | `timestamps` | `date` | no | Set on insert/update |
+| `createdBy` | `audit` | `string` | no | Set from actor on insert |
+| `updatedBy` | `audit` | `string` | no | Set from actor on update |
+| `trashedAt` | `trash` | `date` | no | Set by `trash`, cleared by `restore` |
+| `trashedBy` | `trash` | `string` | no | Set by `trash`, cleared by `restore` |
+| `isArchived` | `archivable` | `boolean` | yes | Set by `archive`/`unarchive` or direct `merge` |
 
-```typescript
-import { SYSTEM_FIELDS } from "@datafn/core";
+## Ownership and Stripping
 
-// Set{"id", "createdAt", "updatedAt", "createdBy", "updatedBy", "isArchived"}
-console.log(SYSTEM_FIELDS);
-```
+For readonly lifecycle fields (`createdAt`, `updatedAt`, `createdBy`, `updatedBy`, `trashedAt`, `trashedBy`):
 
-## READONLY_SYSTEM_FIELDS
+- server values are authoritative,
+- client-supplied values are stripped before mutation execution,
+- stripping is capability-aware (only fields for enabled capabilities are stripped).
 
-A subset of system fields that are server-managed and cannot be written by clients:
+This applies to direct mutation routes and sync push routes.
 
-```typescript
-import { READONLY_SYSTEM_FIELDS } from "@datafn/core";
-
-// Set{"createdAt", "updatedAt", "createdBy", "updatedBy"}
-console.log(READONLY_SYSTEM_FIELDS);
-```
-
-These four fields are set automatically by the server on every insert and update. Any attempt to include them in a mutation payload is rejected.
-
-## ID Generation
-
-Record IDs are generated automatically on insert. When a resource defines an `idPrefix`, the generated ID uses that prefix:
+### Example
 
 ```typescript
-{
-  name: "tasks",
-  version: 1,
-  idPrefix: "tsk",
-  fields: [...]
-}
-```
-
-This produces IDs in the format `tsk_<random>`, for example `tsk_a1b2c3d4`. The prefix makes it easy to identify which resource a record belongs to when inspecting raw data.
-
-If no `idPrefix` is specified, a plain random ID is generated without a prefix.
-
-## isArchived and Soft Delete
-
-The `isArchived` field is intentionally not included in `READONLY_SYSTEM_FIELDS`. Clients can set and clear it directly, which makes it the built-in mechanism for soft deletes.
-
-```typescript
-// Soft-delete a record
-await client.mutation({
-  resource: "tasks",
-  action: "merge",
-  id: "tsk_a1b2c3d4",
-  data: { isArchived: true },
-});
-
-// Restore a soft-deleted record
-await client.mutation({
-  resource: "tasks",
-  action: "merge",
-  id: "tsk_a1b2c3d4",
-  data: { isArchived: false },
+await client.table("tasks").mutate({
+  operation: "insert",
+  record: {
+    title: "Write docs",
+    createdAt: 1, // ignored when timestamps capability is enabled
+  },
 });
 ```
 
-The `@datafn/client` package also provides a `createSoftDeletePlugin` that automatically filters out archived records from query results and converts delete mutations into archive operations:
+## Capability Operations and Fields
+
+Use capability operations instead of manually managing lifecycle fields:
 
 ```typescript
-import { createSoftDeletePlugin } from "@datafn/client";
+// trash capability
+await client.table("tasks").trash?.("tsk:1");
+await client.table("tasks").restore?.("tsk:1");
 
-const client = createDatafnClient({
-  schema,
-  plugins: [createSoftDeletePlugin()],
-  // ...
+// archivable capability
+await client.table("tasks").archive?.("tsk:1");
+await client.table("tasks").unarchive?.("tsk:1");
+```
+
+`delete` remains hard delete.
+
+## Query Defaults for Lifecycle Fields
+
+When capabilities are enabled:
+
+- `trash` auto-excludes rows where `trashedAt` is set,
+- `archivable` auto-excludes rows where `isArchived === true`.
+
+Override for specific queries:
+
+```typescript
+await client.table("tasks").query({
+  metadata: {
+    includeTrashed: true,
+    includeArchived: true,
+  },
 });
 ```
 
-## Date Storage
+## Date Storage Semantics
 
-The `createdAt` and `updatedAt` fields store dates as epoch milliseconds (Unix timestamp in ms). DataFn provides utility functions for conversion:
+`date` fields in DataFn accept ISO strings or epoch numbers. Capability date fields follow the same convention.
 
 ```typescript
 import { toEpochMs, fromEpochMs } from "@datafn/core";
 
-// Convert a Date to epoch milliseconds
 const epoch = toEpochMs(new Date("2025-01-15T10:30:00Z"));
-// => 1736934600000
-
-// Convert epoch milliseconds back to a Date
-const date = fromEpochMs(1736934600000);
-// => Date object
+const date = fromEpochMs(epoch);
 ```
 
-All `date` type fields in your schema follow the same convention -- ISO 8601 strings are accepted as input and converted to epoch milliseconds for storage.
+## Relation Capability Fields
+
+Many-many relation join rows can opt into relation capabilities (`timestamps`, `audit`) via `relations[].capabilities`.
+
+```typescript
+relations: [
+  {
+    from: "todos",
+    to: "categories",
+    type: "many-many",
+    relation: "tags",
+    capabilities: ["timestamps", "audit"],
+  },
+]
+```
+
+Join-row fields when enabled:
+
+| Field | Capability | Behavior |
+| --- | --- | --- |
+| `createdAt`, `updatedAt` | `timestamps` | Server-managed join-row timestamps |
+| `createdBy`, `updatedBy` | `audit` | Server-managed join-row actor attribution |
+
+Relation capability fields are also readonly from clients; client-provided values are stripped on `relate`/`modifyRelation` payloads.
+
+## Notes
+
+If you need app-controlled metadata with similar names, choose non-capability field names to avoid collisions.

@@ -17,11 +17,11 @@ The Drizzle adapter connects DataFn to PostgreSQL, MySQL, or SQLite databases us
 
 ```typescript
 import { drizzle } from "drizzle-orm/node-postgres";
-import { createDrizzleAdapter } from "@superfunctions/db";
+import { drizzleAdapter } from "@superfunctions/db/adapters";
 
 const db = drizzle(connectionString);
 
-const adapter = createDrizzleAdapter({
+const adapter = drizzleAdapter({
   db,
   dialect: "postgres",
   schema: drizzleSchema,          // Generated Drizzle schema
@@ -66,7 +66,7 @@ INSERT INTO todos (id, title, __ns) VALUES ('t1', 'Buy milk', 'tenant-abc');
 The DataFn CLI generates Drizzle schema files from your DataFn schema:
 
 ```bash
-datafn codegen drizzle --schema ./schema.ts --output ./drizzle-schema.ts
+datafn generate --adapter drizzle --database postgres --schema ./schema.datafn.ts --output ./
 ```
 
 This produces a Drizzle-compatible schema with:
@@ -74,7 +74,7 @@ This produces a Drizzle-compatible schema with:
 - Table definitions for each resource.
 - Column types mapped from DataFn field types.
 - The `__ns` column for namespace isolation.
-- System fields (`createdAt`, `updatedAt`, `createdBy`, `updatedBy`).
+- Capability-injected fields when enabled (for example `createdAt`, `updatedAt`, `createdBy`, `updatedBy`, `trashedAt`, `trashedBy`, `isArchived`).
 - Foreign key columns inferred from relations.
 - Join tables for many-many relations.
 
@@ -89,11 +89,12 @@ export const todos = pgTable("todos", {
   title: text("title").notNull(),
   status: text("status"),
   priority: integer("priority"),
-  isArchived: boolean("isArchived").default(false),
   createdAt: timestamp("createdAt"),
   updatedAt: timestamp("updatedAt"),
 });
 ```
+
+The exact capability columns are generated from your schema's resolved capabilities per resource.
 
 ## Internal Tables
 

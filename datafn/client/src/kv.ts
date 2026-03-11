@@ -84,7 +84,7 @@ export function createKvApi(deps: KvApiDeps): DatafnKvApi {
         }
       }
 
-      // Fallback to query (remote or local)
+      // Query path (remote or local)
       const result = (await kvTable.query({
         resource: KV_RESOURCE_NAME,
         version: 1,

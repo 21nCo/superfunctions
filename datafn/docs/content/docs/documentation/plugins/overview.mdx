@@ -80,11 +80,11 @@ const auditPlugin: DatafnPlugin = {
   },
 };
 
-const softDeletePlugin: DatafnPlugin = {
-  name: "soft-delete",
+const tenantScopePlugin: DatafnPlugin = {
+  name: "tenant-scope",
   runsOn: ["client"],  // Only runs on the client
-  beforeMutation(ctx, mutation) {
-    // Convert deletes to soft deletes
+  beforeQuery(ctx, query) {
+    // Add tenant scope at query time
   },
 };
 ```
@@ -94,13 +94,20 @@ const softDeletePlugin: DatafnPlugin = {
 ### Client
 
 ```typescript
-import { createDatafnClient, createSoftDeletePlugin } from "@datafn/client";
+import { createDatafnClient } from "@datafn/client";
+import type { DatafnPlugin } from "@datafn/core";
+
+const tenantScopePlugin: DatafnPlugin = {
+  name: "tenant-scope",
+  runsOn: ["client"],
+  beforeQuery(ctx, query) {
+    return query;
+  },
+};
 
 const client = createDatafnClient({
   schema,
-  plugins: [
-    createSoftDeletePlugin({ resources: ["todos"] }),
-  ],
+  plugins: [tenantScopePlugin],
 });
 ```
 
@@ -142,5 +149,5 @@ afterSync(ctx, payload, result, ...args) {
 
 ## Built-In Plugins
 
-- [Soft Delete](/docs/documentation/plugins/soft-delete) -- Convert hard deletes to soft deletes.
+- [Capabilities](/docs/documentation/concepts/capabilities) -- Schema-driven lifecycle and sharing model.
 - [Client Search](/docs/documentation/plugins/custom-plugins) -- Client-side full-text search.

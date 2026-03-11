@@ -29,7 +29,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Route[] {
     {
       method: 'POST',
       path: '/api/v1/webhooks',
-      handler: async (request: Request, ctx: RouteContext) => {
+      handler: async (request: Request, _ctx: RouteContext) => {
         const auth = await authenticate(request, validateApiKey);
 
         const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -80,7 +80,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Route[] {
     {
       method: 'GET',
       path: '/api/v1/webhooks',
-      handler: async (request: Request, ctx: RouteContext) => {
+      handler: async (request: Request, _ctx: RouteContext) => {
         const auth = await authenticate(request, validateApiKey);
         const webhooks = await store.listWebhooks(auth.namespace);
         const publicWebhooks = webhooks.map(({ secret: _s, ...rest }) => rest);

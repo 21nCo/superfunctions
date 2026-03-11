@@ -2,7 +2,7 @@
  * Observability: Structured logging and redaction
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "./core-types.js";
 import type { DatafnLogger } from "./logger.js";
 
 export function redactSensitiveFields(
@@ -50,7 +50,7 @@ export interface RequestLogMetadata {
 /**
  * Log a structured request record.
  *
- * FIX-LOG-002: Always routes through DatafnLogger — no console fallback.
+ * FIX-LOG-002: Always routes through DatafnLogger — no console path.
  * Server initialization guarantees a logger instance for all routes.
  * LOW-009: Context is passed as structured data instead of being serialized eagerly.
  */

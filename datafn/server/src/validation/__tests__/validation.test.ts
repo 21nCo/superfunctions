@@ -7,6 +7,10 @@ import { describe, it, expect } from "vitest";
 import { createDatafnServer } from "../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
+async function readJson(response: Response): Promise<Record<string, any>> {
+  return (await response.json()) as Record<string, any>;
+}
+
 // Fixture F1 schema for testing
 const fixtureF1Schema = {
   resources: [
@@ -80,10 +84,10 @@ describe("Query Validation - VALID-001", () => {
         body: JSON.stringify({ resource: "unknown_table", version: 1 }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_RESOURCE");
       expect(body.error.message).toBe("Unknown resource: unknown_table");
@@ -106,7 +110,7 @@ describe("Query Validation - VALID-001", () => {
         body: JSON.stringify({ resource: "task", version: 1 }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(200);
     });
   });
@@ -131,10 +135,10 @@ describe("Query Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
       expect(body.error.details.path).toBe("select[1]");
@@ -156,10 +160,10 @@ describe("Query Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
       expect(body.error.message).toBe("Unknown field: filters.unknown_field");
@@ -182,10 +186,10 @@ describe("Query Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
       expect(body.error.details.path).toBe("sort[0]");
@@ -207,16 +211,16 @@ describe("Query Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
       expect(body.error.details.path).toBe("omit[0]");
     });
 
-    it("accepts system fields in select", async () => {
+    it("rejects legacy system fields in select when capability is not enabled", async () => {
       const db = memoryAdapter();
       await db.initialize();
 
@@ -236,8 +240,13 @@ describe("Query Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
-      expect(res.status).toBe(200);
+      const res = await server.router.handle(req);
+      expect(res.status).toBe(400);
+
+      const body = await readJson(res);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
+      expect(body.error.details.path).toBe("select[1]");
     });
   });
 
@@ -261,10 +270,10 @@ describe("Query Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_RELATION");
       expect(body.error.details.path).toBe("select[1]");
@@ -289,7 +298,7 @@ describe("Query Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       if (res.status !== 200) console.log("Validation Select Fail:", await res.json());
       expect(res.status).toBe(200);
     });
@@ -321,10 +330,10 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_RESOURCE");
       expect(body.error.message).toBe("Unknown resource: unknown_table");
@@ -352,10 +361,10 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
       expect(body.error.message).toContain("unknown_field");
@@ -390,7 +399,7 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(200);
     });
   });
@@ -419,10 +428,10 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_RELATION");
       expect(body.error.message).toContain("unknown_relation");
@@ -451,10 +460,10 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
       expect(body.error.message).toContain("unknown_meta");
@@ -492,7 +501,7 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(200);
     });
   });
@@ -518,10 +527,10 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNSUPPORTED");
     });
@@ -545,10 +554,10 @@ describe("Mutation Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
 
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
       expect(body.error.message).toContain("record");
@@ -581,10 +590,10 @@ describe("Transact Validation - VALID-001", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(400);
 
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_UNKNOWN_RESOURCE");
   });
@@ -608,10 +617,10 @@ describe("Transact Validation - VALID-001", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(400);
 
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_UNKNOWN_RESOURCE");
   });
@@ -640,10 +649,10 @@ describe("Transact Validation - VALID-001", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(400);
 
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
   });
@@ -675,10 +684,10 @@ describe("Push Validation - VALID-001", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(400);
 
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_UNKNOWN_RESOURCE");
   });
@@ -702,9 +711,9 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
     });
@@ -727,7 +736,7 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       // Should not return 400 for unknown field
       expect(res.status).not.toBe(400);
     });
@@ -750,9 +759,9 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
     });
@@ -773,9 +782,9 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       // Should not fail with DFQL_UNKNOWN_FIELD
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.error?.code).not.toBe("DFQL_UNKNOWN_FIELD");
     });
   });
@@ -797,9 +806,9 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
     });
@@ -820,15 +829,15 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       // Should not fail with DFQL_INVALID due to pattern length
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.error?.code).not.toBe("DFQL_INVALID");
     });
   });
 
   describe("SEC-016: Search query length cap", () => {
-    it("TV-SEC-040: search query >1000 chars returns DFQL_INVALID", async () => {
+    it("TV-SEC-040: search query >1000 chars returns LIMIT_EXCEEDED", async () => {
       const server = await createDatafnServer({ allowUnknownResources: true,
         schema: fixtureF1Schema,
         limits: { maxLimit: 100 },
@@ -844,11 +853,12 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.ok).toBe(false);
-      expect(body.error.code).toBe("DFQL_INVALID");
+      expect(body.error.code).toBe("LIMIT_EXCEEDED");
+      expect(body.error.message).toBe("Search query exceeds maximum length");
     });
 
     it("SEC-016: search query <=1000 chars passes length check", async () => {
@@ -867,9 +877,9 @@ describe("Push Validation - VALID-001", () => {
         }),
       });
 
-      const res = await server.router.handle(req, {});
+      const res = await server.router.handle(req);
       // Should not fail specifically due to search query length
-      const body = await res.json();
+      const body = await readJson(res);
       expect(body.error?.code).not.toBe("DFQL_INVALID");
     });
   });
@@ -899,10 +909,10 @@ describe("Push Validation - VALID-001", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(400);
 
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_UNKNOWN_FIELD");
   });
@@ -932,9 +942,9 @@ describe("SRV-015: $or operator rejected at validation time", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_UNSUPPORTED");
     expect(body.error.message).toMatch(/\$or/);
@@ -958,8 +968,8 @@ describe("SRV-015: $or operator rejected at validation time", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
-    const body = await res.json();
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
     // $and is supported — should not return DFQL_UNSUPPORTED
     expect(body.error?.code).not.toBe("DFQL_UNSUPPORTED");
   });
@@ -984,9 +994,9 @@ describe("FIX-SRV-003: bounded concurrency batch query", () => {
       body: JSON.stringify(queries),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(true);
     expect(Array.isArray(body.result)).toBe(true);
     expect(body.result.length).toBe(25);
@@ -1007,9 +1017,9 @@ describe("FIX-SRV-003: bounded concurrency batch query", () => {
       body: JSON.stringify(queries),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson(res);
     expect(body.ok).toBe(true);
     await server.close();
   });
@@ -1033,8 +1043,8 @@ describe("FIX-SEC-008: Query prototype pollution validation", () => {
       body: bodyStr,
     });
 
-    const res = await server.router.handle(req, {});
-    const body = await res.json();
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
     expect(res.status).toBe(400);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_INVALID");
@@ -1055,8 +1065,8 @@ describe("FIX-SEC-008: Query prototype pollution validation", () => {
       body: bodyStr,
     });
 
-    const res = await server.router.handle(req, {});
-    const body = await res.json();
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
     expect(res.status).toBe(400);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_INVALID");
@@ -1077,8 +1087,8 @@ describe("FIX-SEC-008: Query prototype pollution validation", () => {
       body: bodyStr,
     });
 
-    const res = await server.router.handle(req, {});
-    const body = await res.json();
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
     expect(res.status).toBe(400);
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("DFQL_INVALID");
@@ -1102,8 +1112,8 @@ describe("FIX-SEC-008: Query prototype pollution validation", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
-    const body = await res.json();
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
   });

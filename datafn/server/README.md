@@ -26,7 +26,7 @@ npm install @datafn/server @datafn/core @superfunctions/db @superfunctions/http
 | **REST Endpoints** | Optional REST wrappers over DFQL (GET/POST/PATCH/DELETE) |
 | **WebSocket** | Real-time cursor broadcast for live updates |
 | **Plugins** | Hook into queries, mutations, and sync on the server side |
-| **Sequence Store** | Pluggable serverSeq backend: Database, Redis, KV, or fallback chain |
+| **Sequence Store** | Pluggable serverSeq backend: Database, Redis, KV, or chained store |
 | **Payload Limits** | Configurable max query limits, transaction steps, and payload size |
 | **KV Resource** | Built-in key-value resource auto-included in schema |
 
@@ -584,7 +584,7 @@ const server = await createDatafnServer({
 | `DatabaseSequenceStore` | Main DB | Simple deployments |
 | `RedisSequenceStore` | Redis | High throughput, atomic INCR |
 | `KVSequenceStore` | KV store | Serverless environments |
-| `FallbackSequenceStore` | Chain | Primary + fallback (e.g. Redis → DB) |
+| `ChainedSequenceStore` | Chain | Primary + database chain (e.g. Redis → DB) |
 
 ### createSequenceStore(config)
 
@@ -718,7 +718,7 @@ export {
   RedisSequenceStore,
   KVSequenceStore,
   DatabaseSequenceStore,
-  FallbackSequenceStore,
+  ChainedSequenceStore,
 }
 ```
 

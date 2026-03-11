@@ -10,7 +10,7 @@ DataFn supports cross-tab synchronization using the browser `BroadcastChannel` A
 ```typescript
 const client = createDatafnClient({
   schema,
-  crossTab: true,
+  sync: { crossTab: true },
 });
 ```
 
@@ -70,12 +70,12 @@ Valid event types:
 
 ## Cleanup
 
-The relay channel is closed when the client is stopped:
+The relay channel is closed when the client is destroyed:
 
 ```typescript
-client.stop(); // Closes BroadcastChannel and releases resources
+await client.destroy(); // Stops sync and closes BroadcastChannel resources
 ```
 
-## Environment Compatibility
+## Environment Support
 
 `BroadcastChannel` is available in all modern browsers. In environments where it is not available (such as server-side rendering or older browsers), the relay is silently disabled. No errors are thrown.

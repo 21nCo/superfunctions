@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createDatafnServer } from "../server.js";
 import { memoryAdapter } from "@superfunctions/db/testing";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../core-types.js";
 
 const testSchema: DatafnSchema = {
   version: 1,
@@ -45,7 +45,7 @@ describe("DFN-001: Server auto-wrapping on namespaceProvider", () => {
       body: JSON.stringify({ resource: "task" }),
     });
 
-    await server.router.handle(req, {});
+    await server.router.handle(req);
 
     // The adapter's findMany should have been called with __ns in where clause
     expect(findManySpy).toHaveBeenCalled();
@@ -74,7 +74,7 @@ describe("DFN-001: Server auto-wrapping on namespaceProvider", () => {
       body: JSON.stringify({ resource: "task" }),
     });
 
-    await server.router.handle(req, {});
+    await server.router.handle(req);
 
     // The adapter's findMany should NOT have __ns in where clause
     if (findManySpy.mock.calls.length > 0) {
@@ -108,7 +108,7 @@ describe("DFN-001: Server auto-wrapping on namespaceProvider", () => {
       body: JSON.stringify({ resource: "task" }),
     });
 
-    await server.router.handle(req, {});
+    await server.router.handle(req);
 
     // Should NOT have __ns filter even though namespaceProvider is present
     if (findManySpy.mock.calls.length > 0) {
@@ -142,7 +142,7 @@ describe("DFN-001: Server auto-wrapping on namespaceProvider", () => {
       body: JSON.stringify({ resource: "task" }),
     });
 
-    await server.router.handle(req, {});
+    await server.router.handle(req);
 
     // Should use custom column name
     expect(findManySpy).toHaveBeenCalled();

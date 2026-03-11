@@ -41,7 +41,7 @@ const server = await createDatafnServer({
 ```
 
 **Backends:**
-- `RedisRateLimiter` — uses atomic `INCR` with TTL (Lua script when available, non-atomic fallback otherwise).
+- `RedisRateLimiter` — uses atomic `INCR` with TTL (Lua script when available, non-atomic path otherwise).
 - `InMemoryRateLimiter` — Map-based, suitable for single-instance deployments. Automatically prunes expired windows.
 
 **Response on rejection:** `429 Too Many Requests`

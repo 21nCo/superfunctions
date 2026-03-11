@@ -1,5 +1,7 @@
 import { createDatafnClient, IndexedDbStorageAdapter, ns } from "@datafn/client";
 import type { DatafnPlugin } from "@datafn/core";
+import { IndexedDbAdapter } from "@searchfn/adapters";
+import { createSearchProvider } from "@searchfn/datafn-provider";
 import schema from "todo-app-server/schema";
 
 export { schema };
@@ -93,6 +95,15 @@ function makeSyncConfig(mode: AppMode) {
 
 const clientId = getOrCreateClientId();
 const namespace = ns("user", clientId);
+const searchProvider = createSearchProvider(
+  new IndexedDbAdapter({ dbName: "todo-app-search" }),
+  {
+    resourceFields: {
+      todos: ["text"],
+      categories: ["name"],
+    },
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Unified client — stable Proxy reference with built-in mode switching
@@ -104,6 +115,7 @@ export const client = createDatafnClient({
   namespace,
   storage: (ns) =>
     IndexedDbStorageAdapter.createForNamespace("todo-app", ns as string, undefined, schema),
+  searchProvider,
   plugins: [auditPlugin],
   sync: makeSyncConfig("sync"),
 });

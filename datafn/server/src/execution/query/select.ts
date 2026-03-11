@@ -2,7 +2,7 @@
  * Select token parsing and materialization
  */
 
-import type { DatafnSchema, DatafnRelationSchema } from "@datafn/core";
+import type { DatafnSchema, DatafnRelationSchema } from "../../core-types.js";
 import { parseSelectToken } from "@datafn/core";
 import type { DataStore } from "../store.js";
 
@@ -158,6 +158,11 @@ export function materializeSelect(
       if (Array.isArray(intermediateRecords)) {
         // EXE-014: Cache FK omit-set outside per-record loop
         const targetFkFieldsToOmit = getFkFieldsToOmit(schema, relation.to as string);
+        const nestedFkFieldsToOmit = new Set(targetFkFieldsToOmit);
+        if (relation.type === "one-many") {
+          const derivedFk = relation.inverse ? `${relation.inverse}Id` : "fkId";
+          nestedFkFieldsToOmit.add(relation.fkField || derivedFk);
+        }
         const targetEffectiveOmit = omit ? [...omit] : [];
 
         const newRecords = intermediateRecords.map((intermediateRecord) => {
@@ -186,7 +191,7 @@ export function materializeSelect(
           }
 
           // Explicitly remove FK fields from merged record before applying remaining omit
-          for (const fkField of targetFkFieldsToOmit) {
+          for (const fkField of nestedFkFieldsToOmit) {
             delete mergedRecord[fkField];
           }
 
@@ -195,8 +200,9 @@ export function materializeSelect(
         result[firstRelation] = newRecords;
       } else {
         // Single record (many-one)
+        const intermediateRecord = intermediateRecords as Record<string, unknown>;
         const nestedResult = materializeSelect(
-          intermediateRecords,
+          intermediateRecord,
           relation.to as string,
           [restToken],
           schema,
@@ -494,9 +500,11 @@ function expandRelation(
 
     // EXE-014: Use cached FK omit-set for target resource
     const targetFkFieldsToOmit = getFkFieldsToOmit(schema, relation.to as string);
+    const oneManyFkFieldsToOmit = new Set(targetFkFieldsToOmit);
+    oneManyFkFieldsToOmit.add(fkField);
     const targetEffectiveOmit = omit
-      ? [...omit, ...Array.from(targetFkFieldsToOmit)]
-      : Array.from(targetFkFieldsToOmit);
+      ? [...omit, ...Array.from(oneManyFkFieldsToOmit)]
+      : Array.from(oneManyFkFieldsToOmit);
 
     // Return full record for many-one
     const targetResource = schema.resources.find((r) => r.name === relation.to);

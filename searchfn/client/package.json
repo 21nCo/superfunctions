@@ -1,7 +1,7 @@
 {
   "name": "@searchfn/client",
-  "version": "0.2.0",
-  "description": "IndexedDB-backed full-text search engine with hybrid in-memory caching and FlexSearch-compatible adapters.",
+  "version": "0.3.0",
+  "description": "Thin search client over SearchAdapter for browser and server apps.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
@@ -34,10 +34,9 @@
   },
   "keywords": [
     "search",
-    "indexeddb",
     "full-text-search",
-    "browser",
-    "flexsearch"
+    "search-client",
+    "adapter"
   ],
   "author": "21n",
   "repository": {
@@ -52,6 +51,9 @@
     "access": "public"
   },
   "sideEffects": false,
+  "dependencies": {
+    "@searchfn/adapters": "file:../adapters"
+  },
   "superfunctions": {
     "initFunction": "searchFn",
     "schemaVersion": 1,

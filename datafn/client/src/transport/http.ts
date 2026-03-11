@@ -54,6 +54,14 @@ export class DefaultHttpTransport implements DatafnRemoteAdapter {
     return this.post("reconcile", payload);
   }
 
+  async search(payload: unknown): Promise<unknown> {
+    let signal: AbortSignal | undefined;
+    if (typeof payload === "object" && payload !== null && "signal" in payload) {
+      signal = (payload as any).signal;
+    }
+    return this.post("search", payload, signal);
+  }
+
   private async post(endpoint: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
     try {
       const response = await this.customFetch(`${this.baseUrl}/${endpoint}`, {
@@ -91,7 +99,7 @@ export class DefaultHttpTransport implements DatafnRemoteAdapter {
           ok: false,
           error: {
             code: "DFQL_ABORTED",
-            message: "Query aborted",
+            message: endpoint === "search" ? "Search request aborted" : "Query aborted",
             details: { path: "signal" },
           },
         };

@@ -2,8 +2,8 @@
  * DataFn client factory
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
-import { validateSchema, buildSchemaIndex } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin, SearchProvider } from "@datafn/core";
+import { validateSchema, buildSchemaIndex, evaluateFilter as coreEvaluateFilter } from "@datafn/core";
 import { EventBus, type EventHandler } from "./events/bus.js";
 import type { EventFilter } from "./events/filter.js";
 import { createClientError } from "./errors.js";
@@ -38,6 +38,7 @@ export interface DatafnRemoteAdapter {
   pull(payload: unknown): Promise<unknown>;
   push(payload: unknown): Promise<unknown>;
   reconcile(payload: unknown): Promise<unknown>; // Required for SYNC-007
+  search?(payload: unknown): Promise<unknown>;
 }
 
 export interface DatafnSyncConfig {
@@ -167,6 +168,11 @@ export interface DatafnSyncConfig {
    * Default: false (opt-in).
    */
   crossTab?: boolean;
+
+  /**
+   * Defer search indexing for initial clone and rebuild asynchronously after clone completion.
+   */
+  skipCloneIndexing?: boolean;
 }
 
 export interface DatafnClientConfig<S extends DatafnSchema> {
@@ -206,6 +212,11 @@ export interface DatafnClientConfig<S extends DatafnSchema> {
    * without adding dependencies to @datafn/client.
    */
   generateId?: (params: { resource: string; idPrefix?: string }) => string;
+
+  /**
+   * Optional search provider for client-side search query routing.
+   */
+  searchProvider?: SearchProvider;
 }
 
 /**
@@ -249,6 +260,8 @@ export type DatafnClient<S extends DatafnSchema> = {
   importData(data: unknown, options?: { triggerCloneUp?: boolean }): Promise<unknown>;
   /** Check storage health and verify hydration state consistency. */
   checkHealth(): Promise<{ ok: boolean; issues: string[]; action?: "none" | "reclone" }>;
+  /** Perform a cross-resource search using the configured search provider. */
+  search(params: unknown): Promise<unknown>;
   /**
    * Switch to a different configuration context (auth, sync mode, or storage).
    * Destroys the current underlying client and recreates it with merged config.
@@ -370,12 +383,20 @@ function _buildRawClient<S extends DatafnSchema>(
 
   // Ensure built-in KV resource exists in schema (KV-001)
   const schema = ensureBuiltinKv(validationResult.result);
+  // Optional plugin-level schema validation hook
+  for (const plugin of config.plugins || []) {
+    const validatePluginSchema = (plugin as unknown as Record<string, unknown>)
+      .validateSchema;
+    if (typeof validatePluginSchema === "function") {
+      (validatePluginSchema as (schema: DatafnSchema) => void)(schema);
+    }
+  }
   // Build O(1) schema index for offline query path (IDX-003)
   const schemaIndex = buildSchemaIndex(schema);
   const eventBus = new EventBus();
   const getTimestamp = config.getTimestamp || (() => Date.now());
 
-  // Create ID generator with default fallback (API-001)
+  // Create ID generator with built-in default strategy (API-001)
   const generateId =
     config.generateId ||
     (({ resource, idPrefix }: { resource: string; idPrefix?: string }) => {
@@ -490,6 +511,20 @@ function _buildRawClient<S extends DatafnSchema>(
   // Suppress unhandled rejection — the error is re-thrown when awaited in mutate/query.
   localOnlyInitPromise.catch(() => {});
 
+  // PROV-008: Initialize search provider at client startup when configured.
+  // This promise is awaited by query/mutate/search so init failures surface deterministically.
+  const searchProviderInitPromise = (async () => {
+    if (!config.searchProvider?.initialize) return;
+    const resources = schema.resources
+      .map((resource) => ({
+        name: resource.name,
+        searchFields: Array.isArray(resource.indices) ? [] : (resource.indices?.search ?? []),
+      }))
+      .filter((resource) => resource.searchFields.length > 0);
+    await config.searchProvider.initialize({ resources });
+  })();
+  searchProviderInitPromise.catch(() => {});
+
   // Resolve remote adapter (CFG-001)
   let remote: DatafnRemoteAdapter;
   let extensionSubscriptionManager: ExtensionSubscriptionManager | undefined;
@@ -596,6 +631,7 @@ function _buildRawClient<S extends DatafnSchema>(
       config.sync,
       config.plugins || [],
       getTimestamp,
+      config.searchProvider,
     );
   }
 
@@ -667,6 +703,28 @@ function _buildRawClient<S extends DatafnSchema>(
     }
   };
 
+  const assertSearchNotAborted = (signal?: AbortSignal) => {
+    if (signal?.aborted) {
+      throw createClientError(
+        "DFQL_ABORTED",
+        "Search request aborted",
+        { path: "signal" },
+      );
+    }
+  };
+
+  const applySearchSelect = (
+    record: Record<string, unknown>,
+    select?: string[],
+  ): Record<string, unknown> => {
+    if (!select || select.length === 0) return record;
+    const out: Record<string, unknown> = {};
+    for (const field of select) {
+      if (field in record) out[field] = record[field];
+    }
+    return out;
+  };
+
   // Create debouncer for mutation debouncing (DEB-001)
   const debouncerMap = new DebouncerMap();
 
@@ -698,6 +756,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async query(q: unknown | unknown[]) {
       guardDestroyed();
+      await searchProviderInitPromise;
       await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
       return executeQuery(
@@ -728,6 +787,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async mutate(mutation: unknown | unknown[]) {
       guardDestroyed();
+      await searchProviderInitPromise;
       await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
       return executeMutation(
@@ -809,8 +869,17 @@ function _buildRawClient<S extends DatafnSchema>(
       if (resolvedStorage) {
         await resolvedStorage.close();
       }
+
+      // 7. Dispose search provider (best-effort)
+      if (config.searchProvider?.dispose) {
+        try {
+          await config.searchProvider.dispose();
+        } catch {
+          // Best-effort cleanup: do not block destroy()
+        }
+      }
       
-      // 7. Set destroyed flag
+      // 8. Set destroyed flag
       destroyed = true;
     },
 
@@ -884,6 +953,176 @@ function _buildRawClient<S extends DatafnSchema>(
       }
       
       return importData(resolvedStorage, schema, sync, data, options);
+    },
+
+    async search(params: unknown): Promise<unknown> {
+      guardDestroyed();
+      await searchProviderInitPromise;
+
+      if (typeof params !== "object" || params === null || Array.isArray(params)) {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Search query must not be empty",
+          { path: "query" },
+        );
+      }
+
+      const raw = params as Record<string, unknown>;
+      if (typeof raw.query !== "string") {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Search query must not be empty",
+          { path: "query" },
+        );
+      }
+      const query = raw.query.trim();
+      if (query === "") {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Search query must not be empty",
+          { path: "query" },
+        );
+      }
+      if (query.length > 1000) {
+        throw createClientError(
+          "LIMIT_EXCEEDED",
+          "Search query exceeds maximum length",
+          { path: "query" },
+        );
+      }
+
+      if (raw.resources !== undefined) {
+        if (!Array.isArray(raw.resources)) {
+          throw createClientError(
+            "DFQL_INVALID",
+            "Invalid request: resources must be an array",
+            { path: "resources" },
+          );
+        }
+        if (raw.resources.length > 50) {
+          throw createClientError(
+            "LIMIT_EXCEEDED",
+            "Too many resources in search request",
+            { path: "resources" },
+          );
+        }
+      }
+
+      if (raw.filters !== undefined && (typeof raw.filters !== "object" || raw.filters === null || Array.isArray(raw.filters))) {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid request: filters must be an object",
+          { path: "filters" },
+        );
+      }
+
+      if (
+        raw.limit !== undefined &&
+        (typeof raw.limit !== "number" || !Number.isFinite(raw.limit) || raw.limit < 1)
+      ) {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid request: limit must be a positive number",
+          { path: "limit" },
+        );
+      }
+      if (
+        raw.limitPerResource !== undefined &&
+        (typeof raw.limitPerResource !== "number" || !Number.isFinite(raw.limitPerResource) || raw.limitPerResource < 1)
+      ) {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid request: limitPerResource must be a positive number",
+          { path: "limitPerResource" },
+        );
+      }
+
+      const limit = Math.min(
+        typeof raw.limit === "number" ? raw.limit : 50,
+        10_000,
+      );
+      const limitPerResource = Math.min(
+        typeof raw.limitPerResource === "number" ? raw.limitPerResource : limit,
+        1_000,
+      );
+      const signal = raw.signal as AbortSignal | undefined;
+      assertSearchNotAborted(signal);
+
+      const hasRemote = !!(config.sync?.remote || config.sync?.remoteAdapter);
+      const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+
+      if (hasRemote && !isOffline) {
+        if (typeof (remote as any).search === "function") {
+          return (remote as any).search({
+            ...raw,
+            query,
+            limit,
+            limitPerResource,
+            signal,
+          });
+        }
+        throw createClientError(
+          "DFQL_UNSUPPORTED",
+          "Remote adapter does not support search",
+          { path: "search" },
+        );
+      }
+
+      if (config.searchProvider?.searchAll) {
+        await storageValidationPromise;
+        await localOnlyInitPromise;
+        const candidates = await (config.searchProvider.searchAll as any)({
+          query,
+          resources: Array.isArray(raw.resources) ? (raw.resources as string[]) : undefined,
+          fields: Array.isArray(raw.fields) ? (raw.fields as string[]) : undefined,
+          limit,
+          limitPerResource,
+          signal,
+        });
+        assertSearchNotAborted(signal);
+
+        const filters =
+          typeof raw.filters === "object" && raw.filters !== null && !Array.isArray(raw.filters)
+            ? (raw.filters as Record<string, Record<string, unknown>>)
+            : undefined;
+        const select = Array.isArray(raw.select) ? (raw.select as string[]) : undefined;
+        const results: Array<{ id: string; resource: string; score: number; data: Record<string, unknown> }> = [];
+
+        for (const candidate of candidates) {
+          assertSearchNotAborted(signal);
+          const resource = String(candidate.resource);
+          const id = String(candidate.id);
+          let row: Record<string, unknown> | null = null;
+          if (resolvedStorage) {
+            row = await resolvedStorage.getRecord(resource, id);
+            if (!row) continue;
+            const resourceFilter = filters?.[resource];
+            if (resourceFilter && !coreEvaluateFilter(row, resourceFilter)) {
+              continue;
+            }
+          }
+          results.push({
+            id,
+            resource,
+            score: candidate.score,
+            data: row ? applySearchSelect(row, select) : {},
+          });
+        }
+
+        results.sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score;
+          if (a.resource !== b.resource) return a.resource < b.resource ? -1 : 1;
+          return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        });
+
+        return { results: results.slice(0, limit) };
+      }
+
+      throw createClientError(
+        "DFQL_UNSUPPORTED",
+        "Search unavailable offline without search provider",
+        { path: "search" },
+      );
     },
 
     /**

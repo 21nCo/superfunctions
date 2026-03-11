@@ -135,6 +135,18 @@ export function executeAggregateQuery(
 }
 
 function orderGroupedResults(groups: Record<string, unknown>[], sortTerms: Array<{ field: string; direction: string }>): Record<string, unknown>[] {
+  const compareUnknown = (a: unknown, b: unknown): number => {
+    if (a === b) return 0;
+    if (a == null) return -1;
+    if (b == null) return 1;
+    if (typeof a === "number" && typeof b === "number") {
+      return a < b ? -1 : 1;
+    }
+    const aText = String(a);
+    const bText = String(b);
+    return aText < bText ? -1 : aText > bText ? 1 : 0;
+  };
+
   // LOW-019: Use spread to avoid mutating the input array
   return [...groups].sort((a, b) => {
     for (const term of sortTerms) {
@@ -143,9 +155,9 @@ function orderGroupedResults(groups: Record<string, unknown>[], sortTerms: Array
       
       const valA = a[field];
       const valB = b[field];
-      
-      if (valA < valB) return -1 * direction;
-      if (valA > valB) return 1 * direction;
+      const cmp = compareUnknown(valA, valB);
+      if (cmp < 0) return -1 * direction;
+      if (cmp > 0) return 1 * direction;
     }
     return 0;
   });
@@ -173,10 +185,11 @@ function resolveValue(
   
   if (isField) {
       // Nested object traversal
-      let current = record;
+      let current: unknown = record;
       for (const part of parts) {
           if (current === null || current === undefined) return undefined;
-          current = current[part];
+          if (typeof current !== "object") return undefined;
+          current = (current as Record<string, unknown>)[part];
       }
       return current;
   }

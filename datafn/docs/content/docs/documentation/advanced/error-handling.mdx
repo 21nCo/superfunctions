@@ -165,8 +165,8 @@ try {
 Push errors are reported via events rather than exceptions:
 
 ```typescript
-client.events.on("sync_failed", (event) => {
-  if (event.context.phase === "push") {
+client.subscribe((event) => {
+  if (event.type === "sync_failed" && event.context.phase === "push") {
     console.error("Push failed after", event.context.attempts, "attempts");
     console.error("Error:", event.context.error.message);
   }

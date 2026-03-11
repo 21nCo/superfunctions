@@ -1,32 +1,53 @@
 ---
 title: "Mutation Execution"
-description: "Client mutation execution internals."
+description: "Client mutation pipeline, including capability sanitization and optimistic injection."
 ---
 
 ## Overview
 
-When you call `client.todos.insert(...)`, `client.todos.merge(...)`, or `client.todos.delete(...)`, the client executes a mutation pipeline with idempotency, offline support, and event emission.
+When you call `table.mutate(...)` (or table convenience methods like `trash`, `archive`, `share`), the client runs a mutation pipeline with hooks, codecs, offline routing, and event emission.
 
 ## Execution Flow
 
-1. **Generate mutationId** -- a unique mutation ID is generated for idempotency tracking.
+1. **Validate/enrich metadata** -- normalize context and mutation shape.
+2. **Run `beforeMutation` hooks** -- fail-closed.
+3. **Apply outbound date codec** -- date fields serialized consistently.
+4. **Sanitize readonly capability fields** -- strips server-owned fields from outbound payloads.
+5. **Route execution**:
+   - local-first/offline path when hydration and storage conditions are met,
+   - remote mutation call otherwise.
+6. **Optimistic capability injection** (local paths) -- inject lifecycle values for enabled capabilities to keep local state coherent.
+7. **Run `afterMutation` hooks** -- fail-open.
+8. **Emit events** -- `mutation_applied` or `mutation_rejected`.
 
-2. **Outbound date codec** -- date-typed fields in the mutation data are converted to epoch milliseconds using the schema field definitions.
+## Capability-Specific Client Behavior
 
-3. **beforeMutation hooks** -- all client-side plugins with `beforeMutation` are called. If any hook rejects, the mutation fails immediately (fail-closed).
+### Outbound stripping
 
-4. **Offline or remote execution**:
-   - **Online** -- the mutation is sent to the remote server. The response envelope is unwrapped.
-   - **Offline (offlinability enabled)** -- the mutation is appended to the local changelog via `storage.changelogAppend()`. The local storage is updated optimistically.
+For capability-enabled resources, client transport/changelog payloads strip readonly fields such as:
 
-5. **Unwrap** -- the response envelope is checked. On error, a `mutation_rejected` event is emitted.
+- `createdAt`, `updatedAt`
+- `createdBy`, `updatedBy`
+- `trashedAt`, `trashedBy`
 
-6. **Emit event** -- a `mutation_applied` event is emitted with the resource name, affected IDs, action, and fields.
+### Optimistic record enrichment
 
-7. **afterMutation hooks** -- all client-side plugins with `afterMutation` are called. Errors are logged but do not fail the mutation (fail-open).
+On local-first/offline writes, optimistic records are enriched with capability values:
 
-## DebouncerMap Integration
+- insert: create + update lifecycle fields
+- merge/replace: update lifecycle fields
 
-Mutations support debouncing for high-frequency operations (e.g., typing in a text field). When a `debounce` option is provided, the mutation is batched with other mutations to the same record and flushed after the debounce interval.
+This is local UX behavior; server still remains source of truth.
 
-The debouncer groups mutations by resource and record ID. When the debounce timer fires, the accumulated changes are merged into a single `merge` mutation and executed.
+## Debouncing
+
+Only `merge` mutations are debounced. Debounced entries update local storage immediately, then append coalesced changelog entries when the debounce window flushes.
+
+## Offline and Remote Routing
+
+When remote transport fails with a recognized transport error and storage is configured, mutations are handled through the offline queue path and scheduled for push.
+
+## Related
+
+- [Client Mutations](/docs/documentation/client/mutations)
+- [Capabilities](/docs/documentation/concepts/capabilities)

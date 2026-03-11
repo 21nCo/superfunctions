@@ -27,7 +27,7 @@ export function throwClientError(
 }
 
 /**
- * @deprecated Use `throwClientError` instead. This alias will be removed in the next major version.
+ * Alias for `throwClientError`.
  */
 export const createClientError: typeof throwClientError = throwClientError;
 /**

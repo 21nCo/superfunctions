@@ -4,9 +4,72 @@
  * Validates and normalizes DataFn schemas according to SCHEMA-001.
  */
 
-import type { DatafnSchema, DatafnResourceSchema } from "./types.js";
+import type { DatafnSchema, DatafnResourceSchema, RelationSimpleCapability } from "./types.js";
+import type {
+  CapabilityEntry,
+  ResourceCapabilities,
+  SchemaCapabilities,
+  ShareableCapability,
+  SimpleCapability,
+} from "./capabilities.js";
 import type { DatafnEnvelope } from "./errors.js";
 import { ok, err } from "./errors.js";
+import {
+  CAPABILITY_FIELD_DEFS,
+  getCapabilityFields,
+  getRelationCapabilityFieldNames,
+  resolveCapabilities,
+} from "./capabilities.js";
+
+const SIMPLE_CAPABILITIES: ReadonlySet<SimpleCapability> = new Set([
+  "timestamps",
+  "audit",
+  "trash",
+  "archivable",
+]);
+
+const SHAREABLE_LEVELS = new Set(["viewer", "editor", "owner"]);
+const SHAREABLE_DEFAULTS = new Set(["private", "shared"]);
+
+const RELATION_SIMPLE_CAPABILITIES: ReadonlySet<RelationSimpleCapability> = new Set([
+  "timestamps",
+  "audit",
+]);
+
+// Canonical ordering for relation capabilities (RCAP-004)
+const RELATION_CAPABILITY_CANONICAL_ORDER: RelationSimpleCapability[] = ["timestamps", "audit"];
+
+/**
+ * Resolves and validates relation capability declarations.
+ * Returns canonical ordered, deduplicated array, or error.
+ * - Returns ok([]) when capabilities is undefined.
+ * - Rejects non-array, non-string entries, and unknown capability values.
+ * - Returns deterministic canonical order: ["timestamps", "audit"] subset.
+ */
+export function resolveRelationCapabilities(
+  capabilities: unknown,
+): DatafnEnvelope<RelationSimpleCapability[]> {
+  if (capabilities === undefined) return ok([]);
+  if (!Array.isArray(capabilities)) {
+    return err("SCHEMA_INVALID", "Relation capabilities must be an array", {
+      path: "capabilities",
+    });
+  }
+  for (const entry of capabilities) {
+    if (typeof entry !== "string") {
+      return err("SCHEMA_INVALID", "Relation capability values must be strings", {
+        path: "capabilities",
+      });
+    }
+    if (!RELATION_SIMPLE_CAPABILITIES.has(entry as RelationSimpleCapability)) {
+      return err("INVALID_CAPABILITY", `Unknown relation capability "${entry}"`, {
+        path: "capabilities",
+      });
+    }
+  }
+  const declared = new Set(capabilities as RelationSimpleCapability[]);
+  return ok(RELATION_CAPABILITY_CANONICAL_ORDER.filter((cap) => declared.has(cap)));
+}
 
 /**
  * Resolve whether namespace isolation is enabled from a schema-like object.
@@ -47,6 +110,9 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
   }
 
   const s = schema as Record<string, unknown>;
+  const globalCapsResult = parseSchemaCapabilities(s.capabilities);
+  if (!globalCapsResult.ok) return globalCapsResult;
+  const globalCapabilities = globalCapsResult.result;
 
   // Check resources exists and is an array
   if (!s.resources || !Array.isArray(s.resources)) {
@@ -151,6 +217,35 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
       fieldNames.add(f.name);
     }
 
+    const resourceCapsResult = parseResourceCapabilities(r.capabilities);
+    if (!resourceCapsResult.ok) return resourceCapsResult;
+    const resolvedCapabilities = resolveCapabilities(
+      globalCapabilities,
+      resourceCapsResult.result,
+    );
+
+    if (hasShareable(resolvedCapabilities) && !hasCapability(resolvedCapabilities, "audit")) {
+      return err(
+        "CAPABILITY_DEPENDENCY",
+        `"shareable" capability requires "audit" capability`,
+        { path: `resources.${r.name}.capabilities` },
+      );
+    }
+
+    const collision = findCapabilityFieldCollision(fieldNames, resolvedCapabilities);
+    if (collision) {
+      return err(
+        "CAPABILITY_FIELD_COLLISION",
+        `Field "${collision.field}" on resource "${r.name}" collides with capability-injected field from "${collision.capability}"`,
+        { path: `resources.${r.name}.fields.${collision.field}` },
+      );
+    }
+
+    const injectedFields = getCapabilityFields(resolvedCapabilities);
+    for (const injectedField of injectedFields) {
+      fieldNames.add(injectedField.name);
+    }
+
     // Normalize indices
     let normalizedIndices: {
       base: string[];
@@ -189,6 +284,8 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
 
     normalizedResources.push({
       ...r,
+      capabilities: r.capabilities as DatafnResourceSchema["capabilities"],
+      fields: [...(r.fields as DatafnResourceSchema["fields"]), ...injectedFields],
       indices: normalizedIndices,
     } as DatafnResourceSchema);
   }
@@ -246,13 +343,170 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
         });
       }
     }
+
+    // RCAP-001, RCAP-002, RCAP-003: Validate relation capabilities if present
+    if (r.capabilities !== undefined) {
+      if (r.type !== "many-many") {
+        return err(
+          "SCHEMA_INVALID",
+          `Relation capabilities are only supported on many-many relations, got "${r.type}"`,
+          { path: "relations" },
+        );
+      }
+      const capResult = resolveRelationCapabilities(r.capabilities);
+      if (!capResult.ok) return capResult;
+
+      // RCAP-003: Detect collisions between relation metadata fields and injected capability fields
+      if (Array.isArray(r.metadata) && capResult.result.length > 0) {
+        const injectedNames = new Set(getRelationCapabilityFieldNames(capResult.result));
+        const relationName = typeof r.relation === "string" ? r.relation : "unknown";
+        for (const metaField of r.metadata as Array<Record<string, unknown>>) {
+          if (typeof metaField?.name === "string" && injectedNames.has(metaField.name)) {
+            return err(
+              "CAPABILITY_FIELD_COLLISION",
+              `Relation metadata field "${metaField.name}" on relation "${relationName}" collides with relation capability-injected field`,
+              { path: `relations.${relationName}.metadata.${metaField.name}` },
+            );
+          }
+        }
+      }
+    }
   }
 
   const namespaced = resolveNamespaced(s);
 
   return ok({
+    capabilities: globalCapabilities,
     resources: normalizedResources,
     relations: relations as DatafnSchema["relations"],
     namespaced,
   });
+}
+
+function parseSchemaCapabilities(
+  value: unknown,
+): DatafnEnvelope<SchemaCapabilities | undefined> {
+  if (value === undefined) return ok(undefined);
+  if (!Array.isArray(value)) {
+    return err("INVALID_CAPABILITY_CONFIG", "Schema capabilities must be an array", {
+      path: "capabilities",
+    });
+  }
+  return parseCapabilityArray(value, "capabilities");
+}
+
+function parseResourceCapabilities(
+  value: unknown,
+): DatafnEnvelope<ResourceCapabilities | undefined> {
+  if (value === undefined) return ok(undefined);
+  if (Array.isArray(value)) {
+    return parseCapabilityArray(value, "resources.capabilities");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      "Resource capabilities must be an array or { exclude: [...] }",
+      { path: "resources.capabilities" },
+    );
+  }
+  const obj = value as Record<string, unknown>;
+  if (!Array.isArray(obj.exclude)) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      "Resource capability exclusion must be { exclude: SimpleCapability[] }",
+      { path: "resources.capabilities.exclude" },
+    );
+  }
+  const excluded: SimpleCapability[] = [];
+  for (const cap of obj.exclude) {
+    if (typeof cap !== "string") {
+      return err("INVALID_CAPABILITY", "Capability name must be a string", {
+        path: "resources.capabilities.exclude",
+      });
+    }
+    if (!SIMPLE_CAPABILITIES.has(cap as SimpleCapability)) {
+      return err("INVALID_CAPABILITY", `Unknown capability "${cap}"`, {
+        path: "resources.capabilities.exclude",
+      });
+    }
+    excluded.push(cap as SimpleCapability);
+  }
+  return ok({ exclude: excluded });
+}
+
+function parseCapabilityArray(
+  input: unknown[],
+  path: string,
+): DatafnEnvelope<CapabilityEntry[]> {
+  const parsed: CapabilityEntry[] = [];
+  for (const entry of input) {
+    if (typeof entry === "string") {
+      if (entry === "shareable") {
+        return err(
+          "INVALID_CAPABILITY_CONFIG",
+          `"shareable" capability requires object config`,
+          { path },
+        );
+      }
+      if (!SIMPLE_CAPABILITIES.has(entry as SimpleCapability)) {
+        return err("INVALID_CAPABILITY", `Unknown capability "${entry}"`, { path });
+      }
+      parsed.push(entry as SimpleCapability);
+      continue;
+    }
+    if (isValidShareableCapability(entry)) {
+      parsed.push(entry);
+      continue;
+    }
+    return err("INVALID_CAPABILITY_CONFIG", "Invalid capability configuration", { path });
+  }
+
+  // VA-001: duplicate entries are deduplicated, not rejected
+  return ok(resolveCapabilities(parsed, undefined));
+}
+
+function isValidShareableCapability(entry: unknown): entry is ShareableCapability {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    return false;
+  }
+  const obj = entry as Record<string, unknown>;
+  if (!obj.shareable || typeof obj.shareable !== "object" || Array.isArray(obj.shareable)) {
+    return false;
+  }
+  const shareable = obj.shareable as Record<string, unknown>;
+  if (!Array.isArray(shareable.levels)) return false;
+  if (
+    shareable.levels.length === 0 ||
+    !shareable.levels.every((level) => typeof level === "string" && SHAREABLE_LEVELS.has(level))
+  ) {
+    return false;
+  }
+  if (typeof shareable.default !== "string" || !SHAREABLE_DEFAULTS.has(shareable.default)) {
+    return false;
+  }
+  return true;
+}
+
+function hasCapability(caps: CapabilityEntry[], capability: SimpleCapability): boolean {
+  return caps.some((cap) => cap === capability);
+}
+
+function hasShareable(caps: CapabilityEntry[]): boolean {
+  return caps.some((cap) => typeof cap === "object" && cap !== null && "shareable" in cap);
+}
+
+function findCapabilityFieldCollision(
+  userFieldNames: Set<string>,
+  resolvedCapabilities: CapabilityEntry[],
+): { field: string; capability: string } | null {
+  for (const cap of resolvedCapabilities) {
+    const key = typeof cap === "string" ? cap : "shareable";
+    const injectedDefs = CAPABILITY_FIELD_DEFS[key];
+    for (const field of injectedDefs) {
+      if (userFieldNames.has(field.name)) {
+        return { field: field.name, capability: key };
+      }
+    }
+  }
+  return null;
 }

@@ -115,7 +115,7 @@ end
 return c
 ```
 
-If the Redis client does not support `eval()`, a non-atomic fallback is used (INCR followed by SET with TTL on new keys).
+If the Redis client does not support `eval()`, the implementation uses an alternate non-atomic path (`INCR` + TTL set on new keys).
 
 ```typescript
 const server = await createDatafnServer({
@@ -132,7 +132,7 @@ const server = await createDatafnServer({
 
 ## In-Memory Backend
 
-When no Redis adapter is provided, rate limiting falls back to an in-memory implementation. This uses a `Map<string, { count, resetAt }>` structure with lazy cleanup via a periodic sweep (default: every 60 seconds).
+When no Redis adapter is provided, rate limiting uses an in-memory implementation. This uses a `Map<string, { count, resetAt }>` structure with lazy cleanup via a periodic sweep (default: every 60 seconds).
 
 The in-memory backend works for single-process deployments only. It does not share state across multiple server instances.
 

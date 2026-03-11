@@ -2,7 +2,7 @@
  * Transaction execution logic
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnErrorCode, DatafnSchema, DatafnPlugin } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore, MutationResult } from "./idempotency.js";
 import type { DFQLMutation } from "./mutation/dfql.js";
@@ -24,12 +24,12 @@ export interface TransactResult {
     ok: boolean;
     results: Array<any>;
     error?: {
-      code: string;
+      code: DatafnErrorCode;
       message: string;
     };
   };
   error?: {
-    code: string;
+    code: DatafnErrorCode;
     message: string;
     details?: any;
   };
@@ -162,7 +162,7 @@ export async function executeTransaction(
   }
 
   // Sequential execution: ONLY when db.transaction is undefined (memory adapter)
-  // REL-001: This branch is NOT a fallback from transaction failure
+  // REL-001: This branch is selected only when transactional adapters are unavailable
   // EXE-004: Query result cache within transaction scope (invalidated on mutation)
   const queryCache = new Map<string, any>();
   for (let i = 0; i < steps.length; i++) {

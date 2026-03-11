@@ -75,7 +75,7 @@ describe('Search API routes', () => {
       createdAt: new Date().toISOString(),
     }, 'ns_test');
 
-    indexTranscript(
+    await indexTranscript(
       { recordingId: 'rec_xyz789', botId: bot.id, segments: [{ speakerId: 'participant_1', startTime: 45000, endTime: 48000, text: 'Let me summarize the action items.', confidence: 0.94 }] },
       searchClient,
     );

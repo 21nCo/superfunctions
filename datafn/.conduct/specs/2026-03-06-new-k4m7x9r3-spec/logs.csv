@@ -1,2 +1,17 @@
 timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-06T18:00:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec
+2026-03-06T17:51:05Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_00,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_00-2026-03-06-n9k4x7-report.md
+2026-03-06T17:58:45Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_01,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_01-2026-03-06-t4m9k2-report.md
+2026-03-06T18:51:26Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_02,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_02-2026-03-07-q7m4x2-report.md
+2026-03-06T18:59:40Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_03,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_03-2026-03-07-m3k9p2-report.md
+2026-03-06T19:05:41Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_04,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_04-2026-03-07-r4m8k1-report.md
+2026-03-06T19:13:23Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_05,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_05-2026-03-07-p5m2k9-report.md
+2026-03-07T03:06:13Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_06,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_06-2026-03-07-t7n4k2-report.md
+2026-03-07T03:12:32Z,GPT-5 Codex,CLI,execute,unknown-agent,PHASE_07,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_07-2026-03-07-v4k8m2-report.md
+2026-03-07T03:22:36Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_08,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_08-2026-03-07-k8m2p4r-report.md
+2026-03-07T03:35:20Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_09,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_09-2026-03-07-n9k4p2r-report.md
+2026-03-07T03:48:47Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_10,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_10-2026-03-07-h3m9k2t-report.md
+2026-03-07T04:02:23Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_11,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_11-2026-03-07-q8m4t2n-report.md
+2026-03-07T04:06:19Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_12,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_12-2026-03-07-z4m8q2n-report.md
+2026-03-07T04:14:09Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_13,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_13-2026-03-07-r7m4q2n-report.md
+2026-03-07T04:35:07Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_14,datafn/.conduct/specs/2026-03-06-new-k4m7x9r3-spec/phase-reports/PHASE_14-2026-03-07-m9k4r2t-report.md

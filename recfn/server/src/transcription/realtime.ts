@@ -30,7 +30,7 @@ export class RealtimeTranscriptionPipeline {
       const segments = this.deps.asrAdapter.transcribeStream(audioStream, {
         language,
         diarize: true,
-      });
+      } as unknown as import('recfn').AsrOpts);
 
       for await (const segment of segments) {
         if (abortController.signal.aborted) {

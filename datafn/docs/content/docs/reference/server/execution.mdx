@@ -47,6 +47,8 @@ Fields and operators not supported by pushdown fall back to in-memory evaluation
 3. **Store operation** -- execute the create/update/delete against the data store.
 4. **Change tracking** -- record the mutation in the `__datafn_changes` internal table with a monotonic sequence number.
 
+Capability-enabled operations (`trash`, `restore`, `archive`, `unarchive`, `share`, `unshare`) flow through the same execution path with additional capability checks and field injection/stripping rules.
+
 ### Guard Store
 
 Validates field constraints at mutation time:
@@ -67,7 +69,7 @@ The `ChangeTrackingService` records every mutation as a change entry:
 {
   serverSeq: number;    // Monotonic sequence
   resource: string;
-  action: "insert" | "merge" | "delete";
+  action: "insert" | "merge" | "replace" | "delete";
   recordId: string;
   data: Record<string, unknown>;
   timestamp: number;
@@ -86,7 +88,7 @@ Generates monotonic sequence numbers for change tracking. Multiple backends:
 | `RedisSequenceStore` | Redis | Atomic `INCR` on a Redis key. Highest throughput. |
 | `KVSequenceStore` | KV Store | `incr()` on a KV key. |
 | `DatabaseSequenceStore` | Database | Row-level locking with `SELECT ... FOR UPDATE`. |
-| `FallbackSequenceStore` | In-memory | Atomic counter in process memory. Single-process only. |
+| Combined sequence chain | Primary + database chain | Coordinates primary sequence allocation with database continuity. |
 
 The `createSequenceStore` factory selects the implementation based on `dbMapping.serverseq`:
 

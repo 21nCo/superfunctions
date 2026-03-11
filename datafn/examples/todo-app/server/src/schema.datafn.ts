@@ -1,11 +1,13 @@
 import { defineSchema } from "@datafn/core";
 
 const schema = defineSchema({
+  capabilities: ["timestamps", "audit"],
   resources: [
     {
       name: "todos",
       version: 1,
       idPrefix: "todo",
+      capabilities: ["trash", "archivable"],
       fields: [
         { name: "id", type: "string", required: true, unique: true },
         {
@@ -24,18 +26,17 @@ const schema = defineSchema({
           max: 5,
           default: 3,
         },
-        { name: "createdAt", type: "date", required: true },
-        { name: "updatedAt", type: "date", required: true },
       ],
       indices: {
-        base: ["completed", "createdAt"],
+        base: ["completed"],
+        search: ["text"],
       },
       permissions: {
         read: {
-          fields: ["id", "text", "completed", "priority", "createdAt", "updatedAt"],
+          fields: ["id", "text", "completed", "priority"],
         },
         write: {
-          fields: ["text", "completed", "priority", "createdAt", "updatedAt"],
+          fields: ["text", "completed", "priority"],
         },
       },
     },
@@ -53,17 +54,17 @@ const schema = defineSchema({
           maxLength: 100,
         },
         { name: "color", type: "string", required: true, default: "#646cff" },
-        { name: "createdAt", type: "date", required: true },
       ],
       indices: {
         base: ["name"],
+        search: ["name"],
       },
       permissions: {
         read: {
-          fields: ["id", "name", "color", "createdAt"],
+          fields: ["id", "name", "color"],
         },
         write: {
-          fields: ["name", "color", "createdAt"],
+          fields: ["name", "color"],
         },
       },
     },
@@ -75,6 +76,9 @@ const schema = defineSchema({
       type: "many-many",
       relation: "tags",
       inverse: "todos",
+      // Opt-in to relation capabilities: adds server-managed createdAt, updatedAt,
+      // createdBy, updatedBy columns to the join table. Requires schema regen + migration.
+      capabilities: ["timestamps", "audit"] as any,
     },
   ],
 });

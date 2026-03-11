@@ -59,4 +59,9 @@ id, desc, status, completedAt, completionDoc
 2026-03-05-fix-q9m4k7r2-spec,Restore merge persistence correctness for KV first-write without regressing todo partial merges,1,2026-03-05T08:07:39Z,
 2026-03-05-525771eb-issue,Remove merge fallback read via strict adapter not-found contract with reliability guarantees,1,2026-03-05T14:14:06Z,2026-03-05-m2k7x9r4-completion
 2026-03-05-audit-fix-nv5royb4-spec,Close remaining open datafn audit findings from 2026-02-28 full audit,1,2026-03-06T00:45:00Z,
-2026-03-06-new-k4m7x9r3-spec,Schema capabilities system — timestamps/audit/trash/archivable/shareable with auto-injection and auto-filtering,0,,
+2026-03-06-new-k4m7x9r3-spec,Schema capabilities system — timestamps/audit/trash/archivable/shareable with auto-injection and auto-filtering,1,2026-03-07T04:35:07Z,
+2026-03-06-audit-fix-r7k9m4x3-spec,Bring Python server package to full non-capabilities parity with TypeScript server,1,2026-03-07T22:45:00Z,
+2026-03-07-y8m4k2p7-issue,Push rejects readonly capability fields causing sync failure,1,2026-03-07T05:38:17Z,2026-03-07-n6k4x9p2-completion
+2026-03-07-q8w2m4r9-full-audit,Execute audit remediation for q8w2m4r9 findings,1,2026-03-07T05:47:46Z,2026-03-07-v4m8k2p1-completion
+2026-03-07-k2m9x4p7-issue,KV push merge-create fails on missing createdAt in timestamps path,1,2026-03-07T06:00:15Z,2026-03-07-p4m8x2k7-completion
+2026-03-07-new-q7m3k9r2-spec,Add explicit many-many relation capabilities so join tables get server-managed timestamps and audit fields,1,2026-03-07T16:45:00Z,

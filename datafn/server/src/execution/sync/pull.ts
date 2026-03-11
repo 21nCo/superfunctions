@@ -2,30 +2,30 @@
  * Pull implementation - incremental updates since cursor using change tracking
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnErrorCode, DatafnSchema } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
 
-// Legacy global-cursor pull (TV-SYNC-004)
-export interface PullRequestLegacy {
+// Global-cursor pull (TV-SYNC-004)
+export interface PullRequestGlobalCursor {
   clientId: string;
   cursor: string;
   limit?: number;
 }
 
-export interface PullResultLegacy {
+export interface PullResultGlobalCursor {
   ok: boolean;
   changes: Array<{
     serverSeq: number;
     resource: string;
     id: string;
-    op: "upsert" | "delete";
+    op: "insert" | "merge" | "replace" | "upsert" | "delete";
     record: Record<string, unknown> | null;
   }>;
   nextCursor: string | null;
   error?: {
-    code: string;
+    code: DatafnErrorCode;
     message: string;
     details?: Record<string, unknown>;
   };
@@ -51,15 +51,15 @@ export interface PullResultCanonical {
   cursors: Record<string, string>;
   hasMore?: boolean; // CLIENT-PULL-001: true when changes were truncated
   error?: {
-    code: string;
+    code: DatafnErrorCode;
     message: string;
     details?: Record<string, unknown>;
   };
 }
 
 // Union type for request detection
-export type PullRequest = PullRequestLegacy | PullRequestCanonical;
-export type PullResult = PullResultLegacy | PullResultCanonical;
+export type PullRequest = PullRequestGlobalCursor | PullRequestCanonical;
+export type PullResult = PullResultGlobalCursor | PullResultCanonical;
 
 /**
  * Validate cursor is a base-10 integer string
@@ -69,15 +69,15 @@ function validateCursor(cursor: string): boolean {
 }
 
 /**
- * Detect request type: legacy (has `cursor` string) or canonical (has `cursors` object)
+ * Detect request type: global-cursor (has `cursor` string) or canonical (has `cursors` object)
  */
-function isLegacyPull(request: PullRequest): request is PullRequestLegacy {
+function isGlobalCursorPull(request: PullRequest): request is PullRequestGlobalCursor {
   return "cursor" in request && typeof (request as any).cursor === "string";
 }
 
 /**
  * Execute pull operation - return changes since cursor
- * Supports both legacy global-cursor and canonical per-table cursor protocols
+ * Supports both global-cursor and canonical per-table cursor protocols
  */
 export async function executePull(
   request: PullRequest,
@@ -98,27 +98,27 @@ export async function executePull(
         message: "Invalid DFQL: clientId must be string",
         details: { path: "clientId" },
       },
-    } as PullResultLegacy;
+    } as PullResultGlobalCursor;
   }
 
   // Route to appropriate implementation
-  if (isLegacyPull(request)) {
-    return executePullLegacy(request, schema, db, namespace, sequenceStore);
+  if (isGlobalCursorPull(request)) {
+    return executePullGlobalCursor(request, schema, db, namespace, sequenceStore);
   } else {
     return executePullCanonical(request as PullRequestCanonical, schema, db, namespace, sequenceStore, maxPullLimit);
   }
 }
 
 /**
- * Execute legacy global-cursor pull (TV-SYNC-004)
+ * Execute global-cursor pull (TV-SYNC-004)
  */
-async function executePullLegacy(
-  request: PullRequestLegacy,
+async function executePullGlobalCursor(
+  request: PullRequestGlobalCursor,
   schema: DatafnSchema,
   db: Adapter,
   namespace: string,
   sequenceStore?: SequenceStore,
-): Promise<PullResultLegacy> {
+): Promise<PullResultGlobalCursor> {
   // Validate cursor
   if (typeof request.cursor !== "string" || !validateCursor(request.cursor)) {
     return {

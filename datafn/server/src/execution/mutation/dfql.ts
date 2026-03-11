@@ -1,4 +1,5 @@
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
+import { resolveCapabilities } from "@datafn/core";
 
 /**
  * DFQL mutation type definitions
@@ -9,6 +10,12 @@ export type MutationOperation =
   | "merge"
   | "replace"
   | "delete"
+  | "trash"
+  | "restore"
+  | "archive"
+  | "unarchive"
+  | "share"
+  | "unshare"
   | "relate"
   | "modifyRelation"
   | "unrelate";
@@ -21,6 +28,7 @@ export interface DFQLMutation {
   mutationId: string;
   id: string;
   record?: Record<string, unknown>;
+  shareWith?: { userId: string; level?: string };
   if?: Record<string, unknown>; // Optimistic concurrency guard
   relations?: Record<string, unknown>; // Relation operations payload
 }
@@ -39,6 +47,7 @@ export function buildReplaceRecord(
   resourceName: string,
   existingRecord: Record<string, unknown>,
   newRecord: Record<string, unknown>,
+  resolvedCapabilities?: unknown[],
 ): {
   ok: true;
   record: Record<string, unknown>;
@@ -59,32 +68,31 @@ export function buildReplaceRecord(
   }
 
   const result: Record<string, unknown> = {};
-  const now = new Date().toISOString();
+  const caps =
+    resolvedCapabilities ??
+    resolveCapabilities(
+      schema.capabilities as any,
+      resource.capabilities as any,
+    );
+  const hasTimestamps = caps.some((entry: unknown) => entry === "timestamps");
+  const hasAudit = caps.some((entry: unknown) => entry === "audit");
 
   for (const field of resource.fields) {
     const key = field.name;
 
-    // System fields preservation/update
+    // ID and immutable capability fields are always preserved on replace.
     if (key === "id") {
       result[key] = existingRecord[key];
       continue;
     }
-    if (key === "createdAt") {
+    if (hasTimestamps && key === "createdAt") {
       result[key] = existingRecord[key];
       continue;
     }
-    if (key === "createdBy") {
+    if (hasAudit && key === "createdBy") {
       result[key] = existingRecord[key];
       continue;
     }
-    if (key === "updatedAt") {
-      result[key] = now;
-      continue;
-    }
-    // LOW-013: updatedBy is intentionally treated as a normal (clearable) field during replace.
-    // The caller should inject updatedBy into newRecord from auth context before calling
-    // buildReplaceRecord. If not provided, it is cleared to null ("replace" semantics).
-    // System fields that are always preserved: id, createdAt, createdBy, updatedAt (auto-set above).
 
     // Normal fields
     if (Object.prototype.hasOwnProperty.call(newRecord, key)) {

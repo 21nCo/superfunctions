@@ -3,13 +3,38 @@
  * Extracted from routes/query.ts — single responsibility: DFQL structural validation
  */
 
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 import type { SchemaIndex, QueryValidationLimits } from "../../validation/index.js";
 import { validateQueryBody as validateQueryBodyCore } from "../../validation/index.js";
+import { getCapabilityFields, resolveCapabilities } from "@datafn/core";
 
 export interface QueryRouteValidationOpts extends QueryValidationLimits {
   maxLimit: number;
-  hasSearchPlugin?: boolean;
+  hasSearchProvider: boolean;
+}
+
+function getResourceFieldNames(
+  schema: DatafnSchema,
+  resourceName: string,
+): Set<string> {
+  const resource = schema.resources.find((r) => r.name === resourceName);
+  const fields = new Set<string>(["id"]);
+  if (!resource) {
+    return fields;
+  }
+
+  const resolvedCapabilities = resolveCapabilities(
+    schema.capabilities as any,
+    resource.capabilities as any,
+  );
+  for (const capabilityField of getCapabilityFields(resolvedCapabilities as any)) {
+    fields.add(capabilityField.name);
+  }
+  for (const field of resource.fields) {
+    fields.add(field.name);
+  }
+
+  return fields;
 }
 
 /**
@@ -62,18 +87,7 @@ export function validateQuery(
     };
   }
 
-  // Collect all field names (base fields + system fields)
-  const fieldNames = new Set<string>();
-  for (const field of resource.fields) {
-    fieldNames.add(field.name);
-  }
-  // System fields
-  fieldNames.add("id");
-  fieldNames.add("createdAt");
-  fieldNames.add("updatedAt");
-  fieldNames.add("createdBy");
-  fieldNames.add("updatedBy");
-  fieldNames.add("isArchived");
+  const fieldNames = getResourceFieldNames(schema, resource.name);
 
   // Collect all relation names
   const relationNames = new Set<string>();
@@ -414,14 +428,7 @@ export function validateFilters(
   }
 
   // Build field/relation sets for this level
-  const fieldNames = new Set<string>();
-  for (const field of resource.fields) fieldNames.add(field.name);
-  fieldNames.add("id");
-  fieldNames.add("createdAt");
-  fieldNames.add("updatedAt");
-  fieldNames.add("createdBy");
-  fieldNames.add("updatedBy");
-  fieldNames.add("isArchived");
+  const fieldNames = getResourceFieldNames(schema, resource.name);
 
   const rules = schema.relations || [];
 
@@ -465,18 +472,15 @@ export function validateFilters(
             path: `filters.${key}`,
           };
         }
-        currentRes = rel.from === currentRes ? rel.to : rel.from;
+        const nextRes =
+          rel.from === currentRes
+            ? rel.to
+            : rel.from;
+        currentRes = Array.isArray(nextRes) ? nextRes[0] : nextRes;
       }
 
       const lastField = parts[parts.length - 1];
-      const targetResDef = schema.resources.find((r) => r.name === currentRes);
-      const targetFields = new Set<string>(
-        targetResDef?.fields.map((f) => f.name) || [],
-      );
-      targetFields.add("id");
-      targetFields.add("createdAt");
-      targetFields.add("updatedAt");
-      targetFields.add("isArchived");
+      const targetFields = getResourceFieldNames(schema, currentRes);
 
       if (!targetFields.has(lastField)) {
         return {
@@ -519,7 +523,10 @@ export function validateFilters(
             path: `filters.${key}`,
           };
         }
-        const targetRes = rel.from === resourceName ? rel.to : rel.from;
+        const relationTarget = rel.from === resourceName ? rel.to : rel.from;
+        const targetRes = Array.isArray(relationTarget)
+          ? relationTarget[0]
+          : relationTarget;
         const subFilter = ops[opKey];
         if (subFilter && typeof subFilter === "object") {
           const subErr = validateFilters(

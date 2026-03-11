@@ -1,86 +1,85 @@
 ---
 title: "Schema Utilities"
-description: "Schema validation and indexing functions."
+description: "Schema validation, capability resolution, and schema indexing helpers."
 ---
 
 ## defineSchema
 
-Type-safe schema builder that preserves literal types for field names and validates index entries against declared fields.
+Type-safe schema builder with literal-preserving inference for fields, indices, and capability declarations.
 
 ```typescript
 function defineSchema<const T extends {
+  readonly capabilities?: readonly CapabilityEntry[];
   readonly resources: readonly DatafnResourceBase[];
   readonly relations?: readonly DatafnRelationSchema[];
   readonly namespaced?: boolean;
 }>(schema: T): T & DatafnSchema;
 ```
 
-```typescript
-const schema = defineSchema({
-  resources: [
-    {
-      name: "todos",
-      version: 1,
-      fields: [
-        { name: "title", type: "string", required: true },
-      ],
-      indices: { base: ["title"] }, // type-checked against field names
-    },
-  ],
-});
-```
-
 ## validateSchema
 
-Validates an unknown value as a DataFn schema. Returns a `DatafnEnvelope<DatafnSchema>`.
+Validates unknown input as DataFn schema and returns `DatafnEnvelope<DatafnSchema>`.
 
 ```typescript
 function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema>;
 ```
 
-Normalization applied on success:
-- `indices: string[]` is converted to `{ base: string[], search: [], vector: [] }`.
-- `relations` defaults to `[]` if absent.
-- `namespaced` defaults to `true` unless explicitly `false`.
+Normalization on success:
+
+- capability declarations parsed and deduped,
+- resource fields expanded with capability-injected fields,
+- `indices: string[]` normalized to `{ base, search, vector }`,
+- `relations` defaults to `[]`,
+- `namespaced` defaults to `true`.
+
+## resolveCapabilities
+
+Resolve final capabilities for a resource from global + resource declarations.
+
+```typescript
+function resolveCapabilities(
+  globalCaps?: SchemaCapabilities,
+  resourceCaps?: ResourceCapabilities,
+): CapabilityEntry[];
+```
+
+## getCapabilityFields
+
+Return field definitions injected by resolved capabilities.
+
+```typescript
+function getCapabilityFields(resolvedCaps: CapabilityEntry[]): DatafnFieldSchema[];
+```
+
+## resolveRelationCapabilities
+
+Validate and canonicalize relation capability entries for `many-many` relations.
+
+```typescript
+function resolveRelationCapabilities(
+  capabilities: unknown,
+): DatafnEnvelope<RelationSimpleCapability[]>;
+```
 
 ## isNamespaced
-
-Checks whether namespace isolation is enabled for a schema. Uses `namespaced`, defaults to `true`.
 
 ```typescript
 function isNamespaced(schema: DatafnSchema): boolean;
 ```
 
-```typescript
-import { isNamespaced } from "@datafn/core";
-
-isNamespaced(schema); // true (default)
-```
+Checks whether namespace isolation is enabled (defaults `true`).
 
 ## ns
-
-Composable namespace string builder. Joins non-empty segments with `:` and throws if the result would be empty.
 
 ```typescript
 function ns(...segments: string[]): string;
 ```
 
-```typescript
-import { ns } from "@datafn/core";
-
-ns("org-acme", "user-123");  // "org-acme:user-123"
-ns("user-1");                // "user-1"
-ns("a", "", "b");            // "a:b"
-ns();                        // throws Error
-```
-
-Also re-exported from `@datafn/client`.
-
-Validation checks: resource structure, unique names, integer versions, unique field names, valid relation references, index field existence, and size limits (max 100 resources, max 200 fields per resource).
+Composable namespace string helper. Joins non-empty segments by `:` and throws for empty output.
 
 ## buildSchemaIndex
 
-Builds an indexed lookup structure from a validated schema for O(1) access to resources, fields, and relations.
+Builds indexed lookup structures for resources, fields, and relations.
 
 ```typescript
 function buildSchemaIndex(schema: DatafnSchema): SchemaIndex;
@@ -97,57 +96,22 @@ interface SchemaIndex {
 }
 ```
 
-- `resourcesByName` -- resource name to resource schema.
-- `fieldsByResource` -- resource name to field name to field schema.
-- `relationsByResource` -- all relations involving a resource (forward or inverse).
-- `relationsFromResource` -- relations where the resource is the `from` side.
-
-## Lookup Functions
-
-### getResource
+## Lookup helpers
 
 ```typescript
 function getResource(index: SchemaIndex, name: string): DatafnResourceSchema | undefined;
-```
-
-### getField
-
-```typescript
 function getField(index: SchemaIndex, resource: string, field: string): DatafnFieldSchema | undefined;
-```
-
-### getRelationsFrom
-
-Returns all relations where the resource is the `from` side.
-
-```typescript
 function getRelationsFrom(index: SchemaIndex, resource: string): DatafnRelationSchema[];
-```
-
-### getRelation
-
-Finds a specific relation by resource and relation name.
-
-```typescript
 function getRelation(index: SchemaIndex, fromResource: string, relationName: string): DatafnRelationSchema | undefined;
-```
-
-### getRelationTarget
-
-Returns the target resource name from a relation.
-
-```typescript
 function getRelationTarget(relation: DatafnRelationSchema): string;
-```
-
-### findRelationBidirectional
-
-Finds a relation by name in either direction. Checks both `relation` (forward) and `inverse` (reverse) names.
-
-```typescript
 function findRelationBidirectional(
   schema: DatafnSchema,
   resource: string,
   relationName: string,
 ): DatafnRelationSchema | undefined;
 ```
+
+## Related
+
+- [Capabilities](/docs/documentation/concepts/capabilities)
+- [Schema Definition](/docs/dfql/schema)

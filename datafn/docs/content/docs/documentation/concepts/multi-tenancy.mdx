@@ -135,7 +135,7 @@ const server = await createDatafnServer({
 The server resolves the namespace using this priority:
 
 1. **`namespaceProvider.getNamespace(ctx)`** -- If configured. Validates non-empty; throws `NAMESPACE_INVALID` on empty string.
-2. **Default: `"datafn"`** -- Fallback when no provider is configured.
+2. **Default: `"datafn"`** -- Used when no provider is configured.
 
 ### Actor ID Resolution
 
@@ -327,15 +327,18 @@ The namespace wrapper is applied to transaction child adapters as well. When you
 
 ```typescript
 // Namespace isolation works inside transactions
-await client.transact([
-  { resource: "tasks", action: "insert", data: { title: "Task A" } },
-  { resource: "tasks", action: "insert", data: { title: "Task B" } },
-]);
+await client.transact({
+  atomic: true,
+  steps: [
+    { mutation: { resource: "tasks", version: 1, operation: "insert", id: "tsk:a", record: { title: "Task A" } } },
+    { mutation: { resource: "tasks", version: 1, operation: "insert", id: "tsk:b", record: { title: "Task B" } } },
+  ],
+});
 // Both records are stamped with the current namespace
 ```
 
 ## Security
 
 - **Server-derived**: The namespace is always derived on the server via `namespaceProvider`. The client never supplies a namespace to the server. A compromised client cannot access another namespace's data.
-- **Empty validation**: An empty namespace string throws `NAMESPACE_INVALID`. There is no silent fallback when `namespaceProvider.getNamespace()` returns empty.
+- **Empty validation**: An empty namespace string throws `NAMESPACE_INVALID`.
 - **Error propagation**: If `namespaceProvider.getNamespace()` throws, the error propagates -- the server does not silently fall back to a default namespace.

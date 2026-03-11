@@ -13,9 +13,68 @@ import { isTransportError } from "./errors.js";
 import { handleOfflineMutation } from "./offline/mutate.js";
 import { runBeforeMutation, runAfterMutation } from "./plugins/run-hooks.js";
 import { serializeDateFields } from "./codecs/date.js";
+import {
+  injectCapabilityFieldsForOptimisticRecord,
+  sanitizeCapabilityReadonlyFields,
+} from "./capability-fields.js";
 
 import type { SyncEngine } from "./sync/engine.js";
 import type { DebouncerMap } from "./debounce.js";
+
+export type TableOperation =
+  | "delete"
+  | "trash"
+  | "restore"
+  | "archive"
+  | "unarchive";
+
+/**
+ * Build a table-scoped mutation payload for operation convenience methods.
+ */
+export function buildTableOperationMutation(
+  resource: string,
+  version: number,
+  operation: TableOperation,
+  id: string,
+): Record<string, unknown> {
+  return {
+    resource,
+    version,
+    operation,
+    id,
+  };
+}
+
+export function buildShareMutation(
+  resource: string,
+  version: number,
+  id: string,
+  userId: string,
+  level: string,
+): Record<string, unknown> {
+  return {
+    resource,
+    version,
+    operation: "share",
+    id,
+    shareWith: { userId, level },
+  };
+}
+
+export function buildUnshareMutation(
+  resource: string,
+  version: number,
+  id: string,
+  userId: string,
+): Record<string, unknown> {
+  return {
+    resource,
+    version,
+    operation: "unshare",
+    id,
+    shareWith: { userId },
+  };
+}
 
 /**
  * Generate a unique mutation ID
@@ -54,6 +113,22 @@ function applyDateCodecToMutation(
     // Propagate codec errors
     throw err;
   }
+}
+
+function sanitizeCapabilityFieldsInMutationPayload(
+  schema: DatafnSchema | undefined,
+  payload: unknown | unknown[],
+): unknown | unknown[] {
+  if (!schema) return payload;
+  if (Array.isArray(payload)) {
+    return payload.map((entry) =>
+      sanitizeCapabilityReadonlyFields(schema, entry as Record<string, unknown>),
+    );
+  }
+  return sanitizeCapabilityReadonlyFields(
+    schema,
+    payload as Record<string, unknown>,
+  );
 }
 
 /**
@@ -128,8 +203,11 @@ export async function executeMutation(
       } else {
         // This is a debounced merge mutation
         const mutationId = mutation.mutationId || generateMutationId();
+        const sanitizedMutation = schema
+          ? sanitizeCapabilityReadonlyFields(schema, mutation as Record<string, unknown>)
+          : mutation;
         const enrichedMutation = {
-          ...mutation,
+          ...sanitizedMutation,
           clientId,
           mutationId,
         };
@@ -140,12 +218,22 @@ export async function executeMutation(
           // Apply to local storage immediately (optimistic) - inline merge logic
           const resource = mutation.resource as string;
           const id = mutation.id as string;
-          const record = (mutation.record || {}) as Record<string, unknown>;
-
           const existing = await storage.getRecord(resource, id);
+          const optimisticRecord = schema
+            ? injectCapabilityFieldsForOptimisticRecord(
+                schema,
+                enrichedMutation as Record<string, unknown>,
+                {
+                  timestampMs: getTimestamp(),
+                  actorId: clientId,
+                  existingRecord: existing,
+                },
+              )
+            : (((enrichedMutation as any).record || {}) as Record<string, unknown>);
+
           const merged = existing
-            ? { ...existing, ...record }
-            : { ...record, id };
+            ? { ...existing, ...optimisticRecord }
+            : { ...optimisticRecord, id };
           merged.id = id;
           await storage.upsertRecord(resource, merged);
 
@@ -241,13 +329,18 @@ export async function executeMutation(
     }
   }
 
+  const capabilitySanitizedMutation = sanitizeCapabilityFieldsInMutationPayload(
+    schema,
+    codecAppliedMutation,
+  );
+
   // Local-first path (SYNC-MUT-001)
   // Only use local-first when hydration is ready to avoid data integrity issues
   // (e.g., editing a record that exists on remote but not yet synced locally)
   if (offlinability && storage && syncEngine) {
-    const mutations = Array.isArray(codecAppliedMutation)
-      ? codecAppliedMutation
-      : [codecAppliedMutation];
+    const mutations = Array.isArray(capabilitySanitizedMutation)
+      ? capabilitySanitizedMutation
+      : [capabilitySanitizedMutation];
 
     // Check hydration state for all mutations
     let allReady = true;
@@ -298,11 +391,11 @@ export async function executeMutation(
   }
 
   let result: unknown;
-  let fromOfflineFallback = false;
+  let usedOfflinePath = false;
 
   // If storage is available, enrich mutations before remote call
-  // so they're ready for offline fallback if remote fails
-  let mutationForRemote = codecAppliedMutation;
+  // so they're ready for offline handling if remote fails.
+  let mutationForRemote = capabilitySanitizedMutation;
   if (storage && clientId) {
     const mutations = Array.isArray(codecAppliedMutation)
       ? codecAppliedMutation
@@ -320,11 +413,11 @@ export async function executeMutation(
       : enriched[0];
   }
 
-  // Extract fallbackToIndividual option from first mutation if batch
-  let fallbackToIndividual = false;
+  // Extract retryIndividual option from first mutation if batch
+  let retryIndividualBatch = false;
   if (Array.isArray(mutationForRemote) && mutationForRemote.length > 0) {
     const firstMut = mutationForRemote[0] as any;
-    fallbackToIndividual = firstMut.fallbackToIndividual === true;
+    retryIndividualBatch = firstMut.retryIndividual === true;
   }
 
   try {
@@ -335,8 +428,8 @@ export async function executeMutation(
       ? await runAfterMutation(plugins, schema, mutationForRemote, result)
       : result;
   } catch (err: unknown) {
-    // BULK-001: If batch fails and fallbackToIndividual is true, retry each individually
-    if (fallbackToIndividual && Array.isArray(mutationForRemote) && clientId) {
+    // BULK-001: If batch fails and retryIndividual is true, retry each individually
+    if (retryIndividualBatch && Array.isArray(mutationForRemote) && clientId) {
       const results: any[] = [];
       for (const mutation of mutationForRemote) {
         try {
@@ -389,16 +482,16 @@ export async function executeMutation(
       return result;
     }
 
-    // REL-012: Do NOT emit rejection here if we are about to attempt offline fallback.
-    // Rejection is emitted only when we know there is no fallback (else branch below)
-    // or when the offline fallback itself fails.
+    // REL-012: Do NOT emit rejection here if we are about to attempt offline handling.
+    // Rejection is emitted only when no offline path is available (else branch below)
+    // or when offline handling itself fails.
 
     // Check if we can failover to offline handling
-    // OFF-001: Batch offline fallback
+    // OFF-001: Batch offline handling
     if (storage && schema && isTransportError(err)) {
       try {
         if (Array.isArray(mutationForRemote)) {
-          // Batch offline fallback: iterate through each mutation
+          // Batch offline handling: iterate through each mutation
           const results: any[] = [];
           for (const mutation of mutationForRemote) {
             try {
@@ -417,9 +510,9 @@ export async function executeMutation(
           }
           // Return aggregated batch results
           result = results;
-          fromOfflineFallback = true;
+          usedOfflinePath = true;
         } else {
-          // Single mutation offline fallback
+          // Single mutation offline handling
           const mutationToUse = mutationForRemote as Record<string, unknown>;
           result = await handleOfflineMutation(
             storage,
@@ -429,10 +522,10 @@ export async function executeMutation(
           );
           // REL-012: Emit applied here so only one event fires (no double-emit with final path)
           emitMutationEvents(eventBus, getTimestamp, mutationToUse, result);
-          fromOfflineFallback = true;
+          usedOfflinePath = true;
         }
       } catch (offlineErr) {
-        // REL-012: Offline fallback also failed — emit rejection now and rethrow
+        // REL-012: Offline path also failed — emit rejection now and rethrow
         if (!Array.isArray(mutationForRemote)) {
           emitRejectionForError(eventBus, getTimestamp, mutationForRemote as any, offlineErr);
         } else {
@@ -443,7 +536,7 @@ export async function executeMutation(
         throw offlineErr;
       }
     } else {
-      // REL-012: No offline fallback possible — emit rejection now and rethrow
+      // REL-012: No offline path available — emit rejection now and rethrow
       // CLIENT-EVENT-001: Emit mutation_rejected for thrown errors
       if (!Array.isArray(mutationForRemote)) {
         emitRejectionForError(
@@ -463,20 +556,20 @@ export async function executeMutation(
   }
 
   // Handle single mutation result
-  // REL-012: Skip final emit for offline fallback — events already emitted inside fallback
+  // REL-012: Skip final emit for offline path — events already emitted inside offline handling
   if (!Array.isArray(m)) {
-    if (!fromOfflineFallback) {
+    if (!usedOfflinePath) {
       emitMutationEvents(eventBus, getTimestamp, m as any, result as any);
     }
     return result;
   }
 
   // Handle batch mutation results
-  // REL-012: Skip final emit for offline fallback — events already emitted inside fallback loop
+  // REL-012: Skip final emit for offline path — events already emitted inside the offline loop
   const mutations = m as any[];
   const results = result as any[];
 
-  if (!fromOfflineFallback) {
+  if (!usedOfflinePath) {
     for (let i = 0; i < mutations.length; i++) {
       emitMutationEvents(eventBus, getTimestamp, mutations[i], results[i]);
     }

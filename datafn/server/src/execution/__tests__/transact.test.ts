@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createDatafnServer } from "../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
 
 // Schema for testing
 const schema: DatafnSchema = {
@@ -77,7 +77,7 @@ describe("TX-001: Atomic Transactions", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     // Since validation happens BEFORE execution in PHASE_01/06 updates, 
@@ -138,7 +138,7 @@ describe("TX-001: Atomic Transactions", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     // Execution failure returns 200 OK with result.ok: false
@@ -209,7 +209,7 @@ describe("TX-001: Atomic Transactions", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -255,7 +255,7 @@ describe("TX-001: Atomic Transactions", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -292,7 +292,7 @@ describe("TX-001: Atomic Transactions", () => {
       }),
     });
 
-    const res = await server.router.handle(req, {});
+    const res = await server.router.handle(req);
     const body = await res.json();
 
     expect(res.status).toBe(400);

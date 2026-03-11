@@ -11,7 +11,7 @@ import type {
   DatafnHookContext,
 } from "@datafn/core";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { SearchFnPlugin } from "../src/plugins/searchfn.js";
+import type { SearchProvider } from "../src/search-provider.js";
 
 // Default test schema with isArchived field for plugin tests
 const defaultSchema: DatafnSchema = {
@@ -77,14 +77,11 @@ function createThrowForbiddenPlugin(): DatafnPlugin {
   };
 }
 
-// Search plugin that filters candidates based on search query
-function createSearchPlugin(): SearchFnPlugin {
+function createSearchProvider(): SearchProvider {
   return {
-    name: "searchfn",
-    runsOn: ["server"],
-    selectCandidates: async (params) => {
+    name: "test-search",
+    search: async (params) => {
       const { query } = params;
-      // Mock search: "beta" matches task:t2
       if (query.includes("beta")) {
         return ["task:t2"];
       } else if (query.includes("alpha")) {
@@ -92,9 +89,7 @@ function createSearchPlugin(): SearchFnPlugin {
       }
       return [];
     },
-    updateIndices: async () => {
-      // Mock update
-    },
+    updateIndices: async () => {},
   };
 }
 
@@ -222,14 +217,13 @@ describe("Phase 10: Server Plugin Execution", () => {
     });
   });
 
-  describe("TV-SEARCH-001: With searchfn plugin, search is delegated", () => {
-    it("should delegate search to plugin and filter results", async () => {
+  describe("TV-SEARCH-001: With searchProvider, search is delegated", () => {
+    it("should delegate search to provider and filter results", async () => {
       const db = memoryAdapter({ namespace: "datafn" });
-      const plugins = [createSearchPlugin()];
       const server = await createDatafnServer({ allowUnknownResources: true,
         schema: dfqlSchema,
         db,
-        plugins,
+        searchProvider: createSearchProvider(),
       });
 
       // Insert two tasks
@@ -285,8 +279,8 @@ describe("Phase 10: Server Plugin Execution", () => {
     });
   });
 
-  describe("TV-SEARCH-002: Without searchfn plugin, search is rejected", () => {
-    it("should reject search queries when no searchfn plugin is installed", async () => {
+  describe("TV-SEARCH-002: Without searchProvider, search is rejected", () => {
+    it("should reject search queries when no searchProvider is configured", async () => {
       const result = await makeRequest(
         dfqlSchema,
         [], // No plugins
@@ -304,6 +298,50 @@ describe("Phase 10: Server Plugin Execution", () => {
       expect(result.ok).toBe(false);
       expect(result.error.code).toBe("DFQL_UNSUPPORTED");
       expect(result.error.message).toContain("search");
+    });
+  });
+
+  describe("TV-SEARCH-003: Without searchProvider, DB-native fallback is used when supported", () => {
+    it("should execute DFQL search via DB-native fallback", async () => {
+      const db = memoryAdapter({ namespace: "datafn" }) as any;
+      db.capabilities.operations.fulltext = true;
+      const server = await createDatafnServer({
+        allowUnknownResources: true,
+        schema: dfqlSchema,
+        db,
+      });
+
+      await server.router.handle(
+        new Request("http://localhost/datafn/mutation", {
+          method: "POST",
+          body: JSON.stringify({
+            resource: "task",
+            version: 1,
+            operation: "insert",
+            clientId: "client:1",
+            mutationId: "m-fallback",
+            id: "task:f1",
+            record: { title: "Fallback report" },
+          }),
+        }),
+      );
+
+      const response = await server.router.handle(
+        new Request("http://localhost/datafn/query", {
+          method: "POST",
+          body: JSON.stringify({
+            resource: "task",
+            version: 1,
+            select: ["id", "title"],
+            search: { query: "report", type: "fullText", fields: ["title"] },
+          }),
+        }),
+      );
+      const result: any = await response.json();
+
+      expect(result.ok).toBe(true);
+      expect(result.result.data).toHaveLength(1);
+      expect(result.result.data[0].id).toBe("task:f1");
     });
   });
 });

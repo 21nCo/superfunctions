@@ -6,7 +6,7 @@
 }
 
 :root {
-  font-family: "Inter", system-ui, -apple-system, Avenir, Helvetica, Arial,
+  font-family: "Twenty One Native", "Inter", system-ui, -apple-system, Avenir, Helvetica, Arial,
     sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -14,6 +14,8 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --search-todo-badge: #2f7ce5;
+  --search-category-badge: #2f9d74;
 }
 
 body {

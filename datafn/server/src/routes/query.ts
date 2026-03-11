@@ -7,25 +7,30 @@
  *   - query/execute.ts    — strategy classification + execution bridge
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
+import type { SearchProvider } from "../search-provider.js";
 import { getBodyFromContext } from "../http/json.js";
 import { errorResponse, okResponse } from "../http/errors.js";
 import {
   runBeforeQuery,
   runAfterQuery,
-  hasSearchPlugin,
 } from "../plugins/run-hooks.js";
 import { buildSchemaIndex } from "../validation/index.js";
 import { logRequest } from "../logging.js";
 import type { DatafnLogger } from "../logger.js";
 import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
-import { validateQueryAuthz } from "../validation/authz.js";
+import {
+  isPrivateShareableResource,
+  resolveAccessLevel,
+  validateQueryAuthz,
+} from "../validation/authz.js";
 import { runBounded } from "./query/batch-executor.js";
 import { executeSingleQuery } from "./query/execute.js";
 import { validateQueryBody } from "./query/validate.js";
+import { injectCapabilityAutoFilters, type QueryMetadata } from "../execution/query/pushdown.js";
 
-// Re-export for backward compatibility
+// Re-export query helpers for direct imports from routes/query.
 export { validateQuery, validateFilters } from "./query/validate.js";
 export { convertFiltersToWhere } from "./query/execute.js";
 export { runBounded } from "./query/batch-executor.js";
@@ -42,7 +47,10 @@ export interface QueryHandlerOpts {
   maxBatchQueryConcurrency?: number;
   allowUnknownResources?: boolean;
   debug?: boolean;
+  hasSearchProviderFallback?: boolean;
 }
+
+type QueryEnvelopeMetadata = QueryMetadata;
 
 /**
  * Create query validation + execution route handler
@@ -50,15 +58,56 @@ export interface QueryHandlerOpts {
 export function createQueryHandler(
   validatedSchema: DatafnSchema,
   maxLimit: number,
+  extractNamespace: (ctx: any) => Promise<string>,
+  extractActorId: ((ctx: any) => Promise<string | undefined>) | undefined,
   db?: Adapter,
   plugins: DatafnPlugin[] = [],
-  extractNamespace: (ctx: any) => Promise<string>,
+  searchProvider?: SearchProvider,
   timingEmitter?: TimingEmitter | null,
   handlerOpts?: QueryHandlerOpts,
   logger?: DatafnLogger,
 ) {
   // Build schema index once for efficient validation
   const schemaIndex = buildSchemaIndex(validatedSchema);
+
+  const getPermissionsTable = (resource: string) => `__datafn_permissions_${resource}`;
+
+  const resolveShareableAccessIds = async (
+    resource: string,
+    namespace: string,
+    actorId: string | undefined,
+  ): Promise<string[] | undefined> => {
+    if (!db || !isPrivateShareableResource(validatedSchema, resource)) {
+      return undefined;
+    }
+    if (!actorId) {
+      return [];
+    }
+    const [ownedRows, permissionRows] = await Promise.all([
+      db.findMany({
+        model: resource,
+        where: [{ field: "createdBy", operator: "eq", value: actorId }],
+        namespace,
+      }),
+      db.findMany({
+        model: getPermissionsTable(resource),
+        where: [{ field: "userId", operator: "eq", value: actorId }],
+        namespace,
+      }),
+    ]);
+    const ids = new Set<string>();
+    for (const row of ownedRows) {
+      if (typeof row.id === "string") {
+        ids.add(row.id);
+      }
+    }
+    for (const row of permissionRows) {
+      if (typeof row.resourceId === "string") {
+        ids.add(row.resourceId);
+      }
+    }
+    return [...ids];
+  };
 
     return async (req: Request, ctx?: { parsedBody?: unknown }): Promise<Response> => {
       const startTime = Date.now();
@@ -100,7 +149,7 @@ export function createQueryHandler(
         // Validate queries against schema using validation module
         const validationResult = validateQueryBody(transformedBody, schemaIndex, {
           maxLimit,
-          hasSearchPlugin: hasSearchPlugin(plugins),
+          hasSearchProvider: !!searchProvider || !!handlerOpts?.hasSearchProviderFallback,
           maxSelectTokens: handlerOpts?.maxSelectTokens,
           maxFilterKeysPerLevel: handlerOpts?.maxFilterKeysPerLevel,
           maxSortFields: handlerOpts?.maxSortFields,
@@ -139,6 +188,7 @@ export function createQueryHandler(
         // Execute queries
         if (db) {
           const namespace = await extractNamespace(ctx);
+          const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
           timer?.startPhase("plan");
           // FIX-SRV-003: Bounded concurrency — queue excess queries instead of rejecting
@@ -146,20 +196,95 @@ export function createQueryHandler(
           const queryTasks = transformedQueries.map((q) => () => {
               const queryStart = Date.now();
               const query = q as Record<string, unknown>;
-              return executeSingleQuery(
-                query,
-                validatedSchema,
-                db,
+              const metadata =
+                query.metadata &&
+                typeof query.metadata === "object" &&
+                !Array.isArray(query.metadata)
+                  ? (query.metadata as QueryEnvelopeMetadata)
+                  : undefined;
+              if (query.operation === "getPermissions") {
+                return (async () => {
+                  if (typeof query.id !== "string") {
+                    throw new Error("Invalid DFQL: id must be string");
+                  }
+                  const accessLevel = await resolveAccessLevel(
+                    db,
+                    validatedSchema,
+                    String(query.resource),
+                    query.id,
+                    actorId,
+                    namespace,
+                  );
+                  if (accessLevel !== "owner") {
+                    throw new Error("FORBIDDEN:getPermissions");
+                  }
+                  const rows = await db.findMany({
+                    model: getPermissionsTable(String(query.resource)),
+                    where: [{ field: "resourceId", operator: "eq", value: query.id }],
+                    namespace,
+                  });
+                  return rows.map((row) => ({
+                    userId: row.userId,
+                    level: row.level,
+                    grantedBy: row.grantedBy,
+                    grantedAt: row.grantedAt,
+                  }));
+                })().then((result) => {
+                  queryDurations.push(Date.now() - queryStart);
+                  return result;
+                });
+              }
+
+              return resolveShareableAccessIds(
+                String(query.resource),
                 namespace,
-                plugins,
-                logger,
-                timer,
-              ).then((result) => {
+                actorId,
+              ).then((shareableAccessIds) => {
+                const queryWithMetadata = {
+                  ...query,
+                  metadata: {
+                    ...(metadata ?? {}),
+                    ...(shareableAccessIds !== undefined ? { shareableAccessIds } : {}),
+                  } satisfies QueryEnvelopeMetadata,
+                };
+                const queryWithAutoFilters = injectCapabilityAutoFilters(
+                  queryWithMetadata as any,
+                  validatedSchema,
+                );
+                return executeSingleQuery(
+                  queryWithAutoFilters as unknown as Record<string, unknown>,
+                  validatedSchema,
+                  db,
+                  namespace,
+                  searchProvider,
+                  logger,
+                  timer,
+                );
+              }).then((result) => {
                 queryDurations.push(Date.now() - queryStart);
                 return result;
               });
           });
-          const results = await runBounded(queryTasks, concurrency);
+          let results: unknown[];
+          try {
+            results = await runBounded(queryTasks, concurrency);
+          } catch (error) {
+            if (error instanceof Error && error.message === "FORBIDDEN:getPermissions") {
+              return errorResponse({
+                code: "FORBIDDEN",
+                message: "Forbidden",
+                details: { path: "operation" },
+              }, 403);
+            }
+            if (error instanceof Error && error.message === "Invalid DFQL: id must be string") {
+              return errorResponse({
+                code: "DFQL_INVALID",
+                message: "Invalid DFQL: id must be string",
+                details: { path: "id" },
+              });
+            }
+            throw error;
+          }
 
           timer?.startPhase("materialize");
           let result = isBatch ? results : results[0];

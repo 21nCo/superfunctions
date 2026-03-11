@@ -5,22 +5,22 @@ description: "Get up and running with DataFn in minutes."
 
 ## Overview
 
-DataFn is a full-stack data management framework for TypeScript applications. It provides:
+DataFn is a full-stack data framework for TypeScript applications. It provides:
 
-- **Type-safe schemas** -- define your data model once, get validation and type inference everywhere.
-- **Offline-first sync** -- local-first reads and writes with automatic server reconciliation.
-- **Reactive signals** -- subscribe to query results that update in real time.
-- **DFQL query language** -- filter, sort, paginate, and aggregate with a structured JSON query format.
-- **Multi-tenancy** -- row-level namespace isolation enabled by default.
-- **Plugin system** -- extend behavior with hooks on queries, mutations, and sync phases.
+- **Schema-defined capabilities** -- opt-in lifecycle behaviors like `timestamps`, `audit`, `trash`, `archivable`, and `shareable`.
+- **Offline-first sync** -- local-first reads/writes with clone, pull, push, and reconcile.
+- **Reactive signals** -- query subscriptions that revalidate on local and remote changes.
+- **DFQL query language** -- structured queries, mutations, and transactions.
+- **Namespace isolation** -- row-level multi-tenancy enabled by default.
+- **Plugin hooks** -- pre/post lifecycle hooks on query, mutation, and sync flows.
 
 DataFn is composed of three packages:
 
 | Package | Purpose |
 | --- | --- |
-| `@datafn/core` | Schema types, validation, DFQL utilities, shared constants |
-| `@datafn/client` | Browser/Node client with offline storage, sync engine, and reactive signals |
-| `@datafn/server` | HTTP server with query, mutation, transact, sync, and REST endpoints |
+| `@datafn/core` | Schema types, validation, capabilities, DFQL utilities |
+| `@datafn/client` | Browser/Node client with local storage, sync engine, and reactive signals |
+| `@datafn/server` | HTTP server with query, mutation, transaction, and sync endpoints |
 
 ## Installation
 
@@ -28,30 +28,29 @@ DataFn is composed of three packages:
 npm install @datafn/core @datafn/client @datafn/server
 ```
 
-Install only the packages you need. `@datafn/core` is a peer dependency of both `@datafn/client` and `@datafn/server`.
+Install only what you need. `@datafn/core` is shared by both client and server.
 
 ## Quick Start
 
 ### 1. Define a Schema
 
-Use `defineSchema` from `@datafn/core` for full type safety. Index entries are constrained to declared field names at the type level.
-
 ```typescript
 import { defineSchema } from "@datafn/core";
 
 const schema = defineSchema({
+  capabilities: ["timestamps", "audit", "trash"],
   resources: [
     {
       name: "tasks",
       version: 1,
       idPrefix: "tsk",
+      capabilities: ["archivable"],
       fields: [
         { name: "title", type: "string", required: true },
         { name: "completed", type: "boolean", required: true, default: false },
-        { name: "dueDate", type: "date", required: false },
         { name: "priority", type: "number", required: false, min: 1, max: 5 },
       ],
-      indices: { base: ["title", "completed"] },
+      indices: { base: ["title", "completed", "priority"] },
     },
   ],
   relations: [],
@@ -60,80 +59,89 @@ const schema = defineSchema({
 
 ### 2. Create a Server
 
-`createDatafnServer` validates the schema at startup and returns a router you can mount on any HTTP framework.
-
 ```typescript
 import { createDatafnServer } from "@datafn/server";
-import { createDrizzleAdapter } from "@superfunctions/db/drizzle";
+import { drizzleAdapter } from "@superfunctions/db/adapters";
 
 const server = await createDatafnServer({
   schema,
-  db: createDrizzleAdapter(drizzleInstance),
-  rest: true, // enable REST endpoints
+  db: drizzleAdapter({ db: drizzleInstance, dialect: "postgres" }),
+  rest: true,
 });
 
-// Mount the router (example with Bun)
 Bun.serve({
   port: 3000,
   fetch: server.router.fetch,
 });
 ```
 
-The server exposes endpoints at `/datafn/query`, `/datafn/mutation`, `/datafn/transact`, `/datafn/clone`, `/datafn/pull`, `/datafn/push`, and `/datafn/status`. When `rest: true` is set, it also generates RESTful CRUD routes for each resource.
-
 ### 3. Create a Client
-
-The client connects to the server and provides offline-capable queries, mutations, and reactive signals.
 
 ```typescript
 import { createDatafnClient, MemoryStorageAdapter } from "@datafn/client";
 
 const client = createDatafnClient({
   schema,
+  clientId: "device-1",
+  storage: new MemoryStorageAdapter(),
   sync: {
-    remote: "http://localhost:3000",
+    remote: "http://localhost:3000/datafn",
     offlinability: true,
     ws: true,
   },
-  storage: () => new MemoryStorageAdapter(),
 });
 ```
 
 ### 4. Query and Mutate
 
 ```typescript
-// Insert a task
-await client.mutation({
-  resource: "tasks",
-  action: "insert",
-  data: { title: "Ship v1", completed: false, priority: 1 },
+// Insert
+await client.table("tasks").mutate({
+  operation: "insert",
+  record: { title: "Ship v1", completed: false, priority: 1 },
 });
 
-// Query tasks
-const result = await client.query({
-  resource: "tasks",
-  filter: { completed: { $eq: false } },
-  sort: ["-priority"],
+// Query
+const result = await client.table("tasks").query({
+  filters: { completed: { $eq: false } },
+  sort: ["priority:asc", "id:asc"],
   limit: 20,
 });
 
-// Reactive signal -- re-emits whenever the underlying data changes
-const signal = client.signal({
-  resource: "tasks",
-  filter: { completed: { $eq: false } },
+// Reactive signal
+const signal = client.table("tasks").signal({
+  filters: { completed: { $eq: false } },
 });
 
-signal.subscribe((tasks) => {
-  console.log("Active tasks:", tasks);
+signal.subscribe((value) => {
+  console.log("Active tasks:", value);
+});
+```
+
+### 5. Use Capability Operations
+
+```typescript
+// Available because "trash" is enabled
+await client.table("tasks").trash?.("tsk:1");
+await client.table("tasks").restore?.("tsk:1");
+
+// Available because "archivable" is enabled on tasks
+await client.table("tasks").archive?.("tsk:1");
+await client.table("tasks").unarchive?.("tsk:1");
+
+// Include archived/trashed rows explicitly
+await client.table("tasks").query({
+  metadata: { includeArchived: true, includeTrashed: true },
 });
 ```
 
 ## Next Steps
 
-- [Concepts Overview](/docs/documentation/concepts/overview) -- high-level introduction to the DataFn ecosystem.
-- [Schema](/docs/dfql/schema) -- data model definition and validation.
-- [Resources](/docs/dfql/schema/resources) -- resource configuration in detail.
-- [Fields](/docs/dfql/schema/fields) -- field types and constraints.
-- [Relations](/docs/dfql/schema/relations) -- defining relationships between resources.
-- [System Fields](/docs/dfql/schema/system-fields) -- built-in fields managed by DataFn.
-- [Multi-Tenancy](/docs/documentation/concepts/multi-tenancy) -- row-level namespace isolation.
+- [Concepts Overview](/docs/documentation/concepts/overview) -- architecture and data model.
+- [Capabilities](/docs/documentation/concepts/capabilities) -- capability declarations, field ownership, and operations.
+- [Schema](/docs/dfql/schema) -- full schema contract.
+- [Resources](/docs/dfql/schema/resources) -- resource-level config and capability overrides.
+- [System Fields](/docs/dfql/schema/system-fields) -- capability-injected lifecycle fields.
+- [Mutations](/docs/dfql/mutations) -- operation-level DFQL reference.
+- [Client Setup](/docs/documentation/client/setup) -- client runtime configuration.
+- [Server Setup](/docs/documentation/server/setup) -- server runtime configuration.

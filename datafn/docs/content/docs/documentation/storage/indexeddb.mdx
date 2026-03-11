@@ -110,7 +110,7 @@ The adapter provides a `healthCheck()` method that verifies:
 - The database is accessible.
 - All expected object stores exist.
 - The cursor store is readable.
-- No stuck migrations are detected.
+- No incomplete upgrade state is detected.
 
 ```typescript
 const { ok, issues } = await storage.healthCheck();

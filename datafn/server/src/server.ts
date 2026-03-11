@@ -4,6 +4,7 @@
  */
 
 import type { DatafnSchema, DatafnPlugin, RetentionConfig, RateLimitConfig, ObservabilityConfig } from "./core-types.js";
+import type { SearchProvider } from "./search-provider.js";
 import { validateSchema, ensureBuiltinKv, isNamespaced } from "@datafn/core";
 import { createRouter, type Router, type Route, type RouteHandler } from "@superfunctions/http";
 import type { Adapter, RedisAdapter, KVStoreAdapter, RowLevelNamespaceConfig } from "@superfunctions/db";
@@ -21,6 +22,13 @@ import {
   createReconcileHandler,
 } from "./routes/sync.js";
 import { createSeedHandler } from "./routes/seed.js";
+import { createSearchHandler } from "./routes/search.js";
+import { executeCrossResourceSearch } from "./execution/search/cross-resource.js";
+import {
+  executeDbNativeCrossResourceSearch,
+  hasDbNativeSearchSupport,
+  NO_PROVIDER_NATIVE_UNSUPPORTED_MESSAGE,
+} from "./execution/search/native-fallback.js";
 import { DbIdempotencyStore } from "./execution/idempotency-db.js";
 import { ChangeTrackingService } from "./execution/sync/change-tracking.js";
 import { errorResponse, errorToEnvelope } from "./http/errors.js";
@@ -36,6 +44,7 @@ import {
 } from "./middleware/rate-limit.js";
 import { createTimingEmitter, type TimingEmitter } from "./middleware/timing.js";
 import { createDefaultLogger, type DatafnLogger } from "./logger.js";
+import { DatafnExecutionError } from "./execution/errors.js";
 
 /**
  * Server configuration
@@ -62,7 +71,8 @@ export interface DatafnServerConfig<TContext = any> {
       | "clone"
       | "pull"
       | "push"
-      | "reconcile",
+      | "reconcile"
+      | "search",
     payload: unknown,
   ) => Promise<boolean> | boolean;
 
@@ -207,6 +217,12 @@ export interface DatafnServerConfig<TContext = any> {
    * LOG-001: Pluggable logger. Default: console-based (JSON in prod, pretty in dev).
    */
   logger?: DatafnLogger;
+
+  /**
+   * Optional search provider for full-text and semantic search queries.
+   * When provided, search queries are routed to this provider instead of requiring a searchfn plugin.
+   */
+  searchProvider?: SearchProvider;
 }
 
 /**
@@ -214,6 +230,12 @@ export interface DatafnServerConfig<TContext = any> {
  */
 export interface DatafnServer<TContext = any> {
   router: Router<TContext>;
+  search(
+    params: import("./execution/search/cross-resource.js").CrossResourceSearchParams & {
+      namespace?: string;
+    },
+    ctx?: TContext,
+  ): Promise<import("./execution/search/cross-resource.js").SearchResult>;
   websocketHandler: {
     /** SEC-001: addClient requires auth context. Reject unauthenticated connections with close code 4401 before calling. */
     /** SCA-005: Returns false (and closes with code 4503) when connection limits are exceeded. */
@@ -319,14 +341,14 @@ export async function createDatafnServer<TContext = any>(
     try {
       const healthy = await config.redis.isHealthy();
       if (!healthy) {
-        logger.warn("Redis adapter health check failed, will fallback to main database for secondary operations", { operation: "redis-health" });
+        logger.warn("Redis adapter health check failed, using main database for secondary operations", { operation: "redis-health" });
       }
     } catch (error) {
       logger.warn("Redis adapter health check error", { error: String(error), operation: "redis-health" });
     }
   }
 
-  // Create sequence store based on configuration (Redis/KV/DB fallback)
+  // Create sequence store based on configuration (Redis/KV/DB)
   const sequenceStore = createSequenceStore({
     db,
     redis: config.redis,
@@ -450,6 +472,7 @@ export async function createDatafnServer<TContext = any>(
       maxLimit: limits.maxLimit,
       maxTransactSteps: limits.maxTransactSteps,
       maxPayloadBytes: limits.maxPayloadBytes,
+      maxPullLimit: limits.maxPullLimit,
     },
     config.getServerTime,
     db,
@@ -458,9 +481,11 @@ export async function createDatafnServer<TContext = any>(
   const queryHandler = createQueryHandler(
     validatedSchema,
     limits.maxLimit,
+    extractNamespace,
+    extractActorId,
     db,
     config.plugins || [],
-    extractNamespace,
+    config.searchProvider,
     timingEmitter,
     {
       maxSelectTokens: limits.maxSelectTokens,
@@ -470,6 +495,7 @@ export async function createDatafnServer<TContext = any>(
       maxBatchQueryConcurrency: limits.maxBatchQueryConcurrency,
       allowUnknownResources,
       debug: debugMode,
+      hasSearchProviderFallback: hasDbNativeSearchSupport(db),
     },
     logger,
   );
@@ -481,10 +507,11 @@ export async function createDatafnServer<TContext = any>(
 
   const mutationHandler = createMutationHandler(
     validatedSchema,
+    extractNamespace,
+    extractActorId,
     db,
     idempotencyStore,
     config.plugins || [], // Pass plugins
-    extractNamespace,
     sequenceStore,
     timingEmitter,
     {
@@ -494,6 +521,7 @@ export async function createDatafnServer<TContext = any>(
       debug: debugMode,
     },
     logger,
+    config.searchProvider,
   );
 
   const transactHandler = createTransactHandler(
@@ -513,17 +541,17 @@ export async function createDatafnServer<TContext = any>(
 
   const cloneHandler = createCloneHandler(
     validatedSchema,
+    extractNamespace,
     db,
     config.plugins || [],
-    extractNamespace,
     sequenceStore,
     logger,
   );
   const pullHandler = createPullHandler(
     validatedSchema,
+    extractNamespace,
     db,
     config.plugins || [],
-    extractNamespace,
     sequenceStore,
     limits.maxPullLimit,
     timingEmitter,
@@ -531,9 +559,9 @@ export async function createDatafnServer<TContext = any>(
   );
   const reconcileHandler = createReconcileHandler(
     validatedSchema,
+    extractNamespace,
     db,
     config.plugins || [],
-    extractNamespace,
     sequenceStore,
     logger,
   );
@@ -543,10 +571,11 @@ export async function createDatafnServer<TContext = any>(
 
   const pushHandler = createPushHandler(
     validatedSchema,
+    extractNamespace,
+    extractActorId,
     db,
     idempotencyStore,
     config.plugins || [],
-    extractNamespace,
     sequenceStore,
     (seq, namespace) => wsManager.broadcastCursor(String(seq), namespace),
     timingEmitter,
@@ -559,6 +588,29 @@ export async function createDatafnServer<TContext = any>(
     logger,
   );
   const seedHandler = createSeedHandler(db, extractNamespace, logger);
+
+  const searchHandler = createSearchHandler(
+    validatedSchema,
+    extractNamespace,
+    db,
+    config.searchProvider,
+    logger,
+  );
+
+  // Initialize search provider if configured
+  if (config.searchProvider?.initialize) {
+    const resources = validatedSchema.resources
+      .map((r: import("./core-types.js").DatafnResourceSchema) => ({
+        name: r.name,
+        searchFields: Array.isArray(r.indices) ? [] : (r.indices?.search ?? []),
+      }))
+      .filter((resource: { name: string; searchFields: string[] }) => resource.searchFields.length > 0);
+    try {
+      await config.searchProvider.initialize({ resources });
+    } catch (error) {
+      throw new Error(`Search provider initialization failed: ${String(error)}`);
+    }
+  }
 
   // In-flight request tracking for graceful shutdown (REL-009)
   let inFlightCount = 0;
@@ -576,7 +628,8 @@ export async function createDatafnServer<TContext = any>(
     | "clone"
     | "pull"
     | "push"
-    | "reconcile";
+    | "reconcile"
+    | "search";
 
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
   const withAuth = (
@@ -713,6 +766,11 @@ export async function createDatafnServer<TContext = any>(
       path: "/datafn/seed",
       handler: withAuth("seed", seedHandler),
     },
+    {
+      method: "POST",
+      path: "/datafn/search",
+      handler: withAuth("search", searchHandler),
+    },
   ];
 
   // Register REST routes if config.rest is true
@@ -782,6 +840,15 @@ export async function createDatafnServer<TContext = any>(
       });
     }
 
+    // Dispose search provider
+    if (config.searchProvider?.dispose) {
+      try {
+        await config.searchProvider.dispose();
+      } catch (error) {
+        logger.error("Search provider dispose failed", { error: String(error), operation: "search-dispose" });
+      }
+    }
+
     // Clean up timers
     if (pruneInterval) {
       clearInterval(pruneInterval);
@@ -799,8 +866,72 @@ export async function createDatafnServer<TContext = any>(
   process.once("SIGTERM", sigHandler);
   process.once("SIGINT", sigHandler);
 
+  const serverSearch = async (
+    params: import("./execution/search/cross-resource.js").CrossResourceSearchParams & {
+      namespace?: string;
+    },
+    _ctx?: TContext,
+  ): Promise<import("./execution/search/cross-resource.js").SearchResult> => {
+    if (!db) {
+      throw new Error("Database is not configured");
+    }
+    const query = typeof params.query === "string" ? params.query.trim() : "";
+    if (query === "") {
+      throw new DatafnExecutionError(
+        "DFQL_INVALID",
+        "Search query must not be empty",
+        "query",
+      );
+    }
+    if (query.length > 1000) {
+      throw new DatafnExecutionError(
+        "LIMIT_EXCEEDED",
+        "Search query exceeds maximum length",
+        "query",
+      );
+    }
+    const limit = Math.min(params.limit ?? 50, 10_000);
+    const limitPerResource = Math.min(params.limitPerResource ?? limit, 1_000);
+    const namespace =
+      params.namespace && params.namespace.trim() !== ""
+        ? params.namespace
+        : await extractNamespace(_ctx as TContext);
+
+    const searchParams = {
+      ...params,
+      query,
+      limit,
+      limitPerResource,
+    };
+
+    if (config.searchProvider) {
+      return executeCrossResourceSearch(
+        searchParams,
+        config.searchProvider,
+        db,
+        validatedSchema,
+        namespace,
+        logger,
+      );
+    }
+    if (!hasDbNativeSearchSupport(db)) {
+      throw new DatafnExecutionError(
+        "DFQL_UNSUPPORTED",
+        NO_PROVIDER_NATIVE_UNSUPPORTED_MESSAGE,
+      );
+    }
+    return executeDbNativeCrossResourceSearch(
+      searchParams,
+      db,
+      validatedSchema,
+      namespace,
+      logger,
+    );
+  };
+
   return {
     router,
+    search: serverSearch,
     websocketHandler: {
       addClient: (client, authContext) => wsManager.addClient(client, authContext),
       removeClient: (client) => wsManager.removeClient(client),

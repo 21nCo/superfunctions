@@ -12,11 +12,59 @@ import { executeLocalQuery } from "./offline/query.js";
 import { runBeforeQuery, runAfterQuery } from "./plugins/run-hooks.js";
 import { parseQueryResultDates } from "./codecs/date.js";
 
+type QueryMetadata = {
+  includeTrashed?: boolean;
+  includeArchived?: boolean;
+};
+
+export type PermissionEntry = {
+  userId: string;
+  level: string;
+  grantedBy: string;
+  grantedAt: number;
+};
+
+export function buildGetPermissionsQuery(
+  resource: string,
+  version: number,
+  id: string,
+): Record<string, unknown> {
+  return {
+    resource,
+    version,
+    operation: "getPermissions",
+    id,
+  };
+}
+
+function normalizeQueryMetadata(
+  query: Record<string, unknown>,
+): Record<string, unknown> {
+  if (
+    !query.metadata ||
+    typeof query.metadata !== "object" ||
+    Array.isArray(query.metadata)
+  ) {
+    return query;
+  }
+
+  const metadata = query.metadata as Record<string, unknown>;
+  const normalizedMetadata: QueryMetadata = {
+    ...(metadata.includeTrashed === true ? { includeTrashed: true } : {}),
+    ...(metadata.includeArchived === true ? { includeArchived: true } : {}),
+  };
+
+  return {
+    ...query,
+    metadata: normalizedMetadata,
+  };
+}
+
 /**
  * Execute a query (single or batch) via the remote adapter or local storage.
  *
  * When storage is configured and table hydration state is 'ready', queries execute locally.
- * Otherwise, queries use remote fallback.
+ * Otherwise, queries execute via the remote adapter.
  *
  * @param remote - Remote adapter for server queries
  * @param q - Query or array of queries
@@ -36,17 +84,26 @@ export async function executeQuery<T = unknown>(
   const transformedQuery = schema
     ? await runBeforeQuery(plugins, schema, q)
     : q;
+  const normalizedQuery = Array.isArray(transformedQuery)
+    ? transformedQuery.map((entry) =>
+        typeof entry === "object" && entry !== null
+          ? normalizeQueryMetadata(entry as Record<string, unknown>)
+          : entry,
+      )
+    : typeof transformedQuery === "object" && transformedQuery !== null
+      ? normalizeQueryMetadata(transformedQuery as Record<string, unknown>)
+      : transformedQuery;
 
-  // If no storage configured, always use remote (backward compatible)
+  // If no storage is configured, always use remote execution.
   if (!storage) {
-    const response = await remote.query(transformedQuery);
+    const response = await remote.query(normalizedQuery);
     let result = unwrapRemoteSuccess<T | T[]>(response);
 
-    if (schema && Array.isArray(transformedQuery)) {
+    if (schema && Array.isArray(normalizedQuery)) {
       // REL-013: Apply inbound date codec per-query for batch queries (no-storage path)
       if (Array.isArray(result)) {
         result = (result as any[]).map((queryResult, i) => {
-          const query = (transformedQuery as any[])[i] as Record<string, unknown>;
+          const query = (normalizedQuery as any[])[i] as Record<string, unknown>;
           const resource = query?.resource as string;
           if (resource) {
             return parseQueryResultDates(schema, resource, queryResult);
@@ -54,9 +111,9 @@ export async function executeQuery<T = unknown>(
           return queryResult;
         }) as any;
       }
-    } else if (schema && !Array.isArray(transformedQuery)) {
+    } else if (schema && !Array.isArray(normalizedQuery)) {
       // Apply inbound date codec (CODEC-001)
-      const query = transformedQuery as Record<string, unknown>;
+      const query = normalizedQuery as Record<string, unknown>;
       const resource = query.resource as string;
       if (resource) {
         result = parseQueryResultDates(schema, resource, result) as T | T[];
@@ -65,21 +122,21 @@ export async function executeQuery<T = unknown>(
 
     // Run afterQuery hooks (fail-open)
     return schema
-      ? (runAfterQuery(plugins, schema, transformedQuery, result) as Promise<
+      ? (runAfterQuery(plugins, schema, normalizedQuery, result) as Promise<
           T | T[]
         >)
       : result;
   }
 
-  // For batch queries, always use remote fallback
-  if (Array.isArray(transformedQuery)) {
-    const response = await remote.query(transformedQuery);
+  // For batch queries, always use remote execution.
+  if (Array.isArray(normalizedQuery)) {
+    const response = await remote.query(normalizedQuery);
     let result = unwrapRemoteSuccess<T | T[]>(response);
 
     // REL-013: Apply inbound date codec per-query in batch path
     if (schema && Array.isArray(result)) {
       result = (result as any[]).map((queryResult, i) => {
-        const query = (transformedQuery as any[])[i] as Record<string, unknown>;
+        const query = (normalizedQuery as any[])[i] as Record<string, unknown>;
         const resource = query?.resource as string;
         if (resource) {
           return parseQueryResultDates(schema, resource, queryResult);
@@ -89,14 +146,14 @@ export async function executeQuery<T = unknown>(
     }
 
     return schema
-      ? (runAfterQuery(plugins, schema, transformedQuery, result) as Promise<
+      ? (runAfterQuery(plugins, schema, normalizedQuery, result) as Promise<
           T | T[]
         >)
       : result;
   }
 
   // Single query: check hydration state for local-first routing
-  const query = transformedQuery as Record<string, unknown>;
+  const query = normalizedQuery as Record<string, unknown>;
   const resource = query.resource as string;
 
   if (resource) {
@@ -104,7 +161,7 @@ export async function executeQuery<T = unknown>(
     const resourceDef = schema?.resources.find((r) => r.name === resource);
     if (resourceDef?.isRemoteOnly) {
       // Force remote execution for remote-only tables (SYNC-003)
-      const response = await remote.query(transformedQuery);
+      const response = await remote.query(normalizedQuery);
       let result = unwrapRemoteSuccess<T>(response);
       
       // Apply inbound date codec (CODEC-001)
@@ -116,7 +173,7 @@ export async function executeQuery<T = unknown>(
         ? (runAfterQuery(
             plugins,
             schema,
-            transformedQuery,
+            normalizedQuery,
             result,
           ) as Promise<T>)
         : result;
@@ -140,7 +197,7 @@ export async function executeQuery<T = unknown>(
     // In local-only mode (no remote), we'd use local even if hydrating
     // But since storage is present and we're here, we have a remote, so use it
     if (hydrationState === "hydrating") {
-      const response = await remote.query(transformedQuery);
+      const response = await remote.query(normalizedQuery);
       let result = unwrapRemoteSuccess<T>(response);
       
       // Apply inbound date codec (CODEC-001)
@@ -149,18 +206,18 @@ export async function executeQuery<T = unknown>(
       }
       
       return schema
-        ? (runAfterQuery(plugins, schema, transformedQuery, result) as Promise<T>)
+        ? (runAfterQuery(plugins, schema, normalizedQuery, result) as Promise<T>)
         : result;
     }
   }
 
-  // Remote fallback for: notStarted or missing resource
-  const response = await remote.query(transformedQuery);
+  // Remote execution for: notStarted or missing resource
+  const response = await remote.query(normalizedQuery);
   let result = unwrapRemoteSuccess<T>(response);
   
   // Apply inbound date codec (CODEC-001)
-  if (schema && !Array.isArray(transformedQuery)) {
-    const query = transformedQuery as Record<string, unknown>;
+  if (schema && !Array.isArray(normalizedQuery)) {
+    const query = normalizedQuery as Record<string, unknown>;
     const resource = query.resource as string;
     if (resource) {
       result = parseQueryResultDates(schema, resource, result) as T;
@@ -168,6 +225,6 @@ export async function executeQuery<T = unknown>(
   }
   
   return schema
-    ? (runAfterQuery(plugins, schema, transformedQuery, result) as Promise<T>)
+    ? (runAfterQuery(plugins, schema, normalizedQuery, result) as Promise<T>)
     : result;
 }

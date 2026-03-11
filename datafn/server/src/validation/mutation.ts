@@ -4,6 +4,7 @@
  */
 
 import type { SchemaIndex, ValidationResult, ValidationError } from "./schema.js";
+import { resolveCapabilities } from "@datafn/core";
 import {
   vOk,
   vErr,
@@ -32,6 +33,12 @@ const VALID_OPERATIONS = new Set([
   "merge",
   "replace",
   "delete",
+  "trash",
+  "restore",
+  "archive",
+  "unarchive",
+  "share",
+  "unshare",
   "relate",
   "modifyRelation",
   "unrelate",
@@ -138,6 +145,83 @@ export function validateMutation(
 
   // Validate id prefix if defined in schema
   const resource = resourceResult.result;
+  const resolvedCapabilities = resolveCapabilities(
+    index.schema.capabilities as any,
+    resource.capabilities as any,
+  );
+  const hasTrashCapability = resolvedCapabilities.some(
+    (capability: unknown) => capability === "trash",
+  );
+  const hasArchivableCapability = resolvedCapabilities.some(
+    (capability: unknown) => capability === "archivable",
+  );
+  const shareableCapability = resolvedCapabilities.find(
+    (capability: unknown): capability is { shareable: { levels: string[]; default: "private" | "shared" } } =>
+      typeof capability === "object" &&
+      capability !== null &&
+      "shareable" in (capability as Record<string, unknown>),
+  );
+
+  if ((m.operation === "trash" || m.operation === "restore") && !hasTrashCapability) {
+    return vErr(
+      "DFQL_UNSUPPORTED",
+      `Unsupported DFQL feature: mutation.operation.${m.operation}`,
+      `${basePath}.operation`,
+    );
+  }
+  if (
+    (m.operation === "archive" || m.operation === "unarchive") &&
+    !hasArchivableCapability
+  ) {
+    return vErr(
+      "DFQL_UNSUPPORTED",
+      `Unsupported DFQL feature: mutation.operation.${m.operation}`,
+      `${basePath}.operation`,
+    );
+  }
+  if ((m.operation === "share" || m.operation === "unshare") && !shareableCapability) {
+    return vErr(
+      "DFQL_UNSUPPORTED",
+      `Unsupported DFQL feature: mutation.operation.${m.operation}`,
+      `${basePath}.operation`,
+    );
+  }
+
+  if (m.operation === "share" || m.operation === "unshare") {
+    if (typeof m.shareWith !== "object" || m.shareWith === null || Array.isArray(m.shareWith)) {
+      return vErr(
+        "DFQL_INVALID",
+        "Invalid DFQL: shareWith must be object",
+        `${basePath}.shareWith`,
+      );
+    }
+    const shareWith = m.shareWith as Record<string, unknown>;
+    if (typeof shareWith.userId !== "string" || shareWith.userId.length === 0) {
+      return vErr(
+        "DFQL_INVALID",
+        "Invalid DFQL: shareWith.userId must be string",
+        `${basePath}.shareWith.userId`,
+      );
+    }
+    if (m.operation === "share" && shareWith.level !== undefined) {
+      if (typeof shareWith.level !== "string") {
+        return vErr(
+          "DFQL_INVALID",
+          "Invalid DFQL: shareWith.level must be string",
+          `${basePath}.shareWith.level`,
+        );
+      }
+      const allowedLevels = shareableCapability?.shareable.levels ?? [];
+      if (!allowedLevels.includes(shareWith.level)) {
+        return vErr(
+          "DFQL_INVALID",
+          `Invalid DFQL: shareWith.level must be one of [${allowedLevels.join(", ")}]`,
+          `${basePath}.shareWith.level`,
+        );
+      }
+    }
+  }
+
   if (resource.idPrefix && !m.id.startsWith(resource.idPrefix)) {
     return vErr(
       "DFQL_INVALID",

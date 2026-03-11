@@ -1,19 +1,19 @@
 {
   "name": "@searchfn/server",
   "version": "0.1.0",
-  "description": "Server SDK for SearchFn - Full text search for DataFn",
+  "description": "Server SDK for SearchFn - Thin HTTP transport over SearchAdapter",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
-    "test": "vitest"
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@superfunctions/http": "workspace:*",
-    "@superfunctions/db": "workspace:*",
-    "@datafn/core": "workspace:*"
+    "@superfunctions/http": "*",
+    "@searchfn/adapters": "file:../adapters"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

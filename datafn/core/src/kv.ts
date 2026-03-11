@@ -29,13 +29,13 @@ export function ensureBuiltinKv(schema: DatafnSchema): DatafnSchema {
   const existingKv = schema.resources.find((r) => r.name === KV_RESOURCE_NAME);
 
   if (existingKv) {
-    // Validate compatibility
+    // Validate schema shape
     if (existingKv.version !== 1) {
       throw new Error(
         `KV resource version mismatch: expected 1, got ${existingKv.version}`,
       );
     }
-    // KV resource already exists and is compatible
+    // KV resource already exists and matches the expected shape
     return schema;
   }
 

@@ -2,7 +2,7 @@
  * Sync endpoints: /datafn/clone, /datafn/pull, /datafn/push
  */
 
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore } from "../execution/idempotency.js";
 import type { SequenceStore } from "../execution/sync/sequence-store.js";
@@ -19,6 +19,8 @@ import { ExecutionTimer, type TimingEmitter } from "../middleware/timing.js";
 import { buildSchemaIndex, validatePushMutations } from "../validation/index.js";
 import { validateMutationAuthz } from "../validation/authz.js";
 import type { MutationValidationOpts } from "../validation/mutation.js";
+import { resolveCapabilities } from "@datafn/core";
+import { stripReadonlyCapabilityFields } from "../execution/mutation/execute.js";
 
 /**
  * Options for push handler (VAL-001, VAL-006–009)
@@ -34,9 +36,9 @@ export interface PushHandlerOpts extends MutationValidationOpts {
  */
 export function createCloneHandler(
   validatedSchema: DatafnSchema,
+  extractNamespace: (ctx: any) => Promise<string>,
   db?: Adapter,
   plugins: DatafnPlugin[] = [],
-  extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
   logger?: DatafnLogger,
 ) {
@@ -136,9 +138,9 @@ export function createCloneHandler(
  */
 export function createPullHandler(
   validatedSchema: DatafnSchema,
+  extractNamespace: (ctx: any) => Promise<string>,
   db?: Adapter,
   plugins: DatafnPlugin[] = [],
-  extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
   maxPullLimit?: number,
   timingEmitter?: TimingEmitter | null,
@@ -239,10 +241,11 @@ export function createPullHandler(
  */
 export function createPushHandler(
   validatedSchema: DatafnSchema,
+  extractNamespace: (ctx: any) => Promise<string>,
+  extractActorId: ((ctx: any) => Promise<string | undefined>) | undefined,
   db?: Adapter,
   idempotencyStore?: IdempotencyStore,
   plugins: DatafnPlugin[] = [],
-  extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
   onChange?: (seq: number, namespace: string) => void,
   timingEmitter?: TimingEmitter | null,
@@ -314,9 +317,58 @@ export function createPushHandler(
           );
         }
 
+        const transformedMutationsForValidation = payload.mutations.map(
+          (mutation: unknown) => {
+            if (
+              typeof mutation !== "object" ||
+              mutation === null ||
+              Array.isArray(mutation)
+            ) {
+              return mutation;
+            }
+
+            const candidate = mutation as Record<string, unknown>;
+            const operation = candidate.operation;
+            if (
+              operation !== "insert" &&
+              operation !== "merge" &&
+              operation !== "replace"
+            ) {
+              return mutation;
+            }
+
+            const record = candidate.record;
+            if (
+              typeof record !== "object" ||
+              record === null ||
+              Array.isArray(record)
+            ) {
+              return mutation;
+            }
+
+            const resourceName = String(candidate.resource ?? "");
+            const resource = validatedSchema.resources.find(
+              (r) => r.name === resourceName,
+            );
+            if (!resource) return mutation;
+
+            const resolvedCapabilities = resolveCapabilities(
+              validatedSchema.capabilities as any,
+              resource.capabilities as any,
+            );
+            return {
+              ...candidate,
+              record: stripReadonlyCapabilityFields(
+                record as Record<string, unknown>,
+                resolvedCapabilities,
+              ),
+            };
+          },
+        );
+
         // Validate all mutations against schema
         const schemaIndex = buildSchemaIndex(validatedSchema);
-        const validationResult = validatePushMutations(payload.mutations, schemaIndex, {
+        const validationResult = validatePushMutations(transformedMutationsForValidation, schemaIndex, {
           maxIdLength: handlerOpts?.maxIdLength,
           debug: handlerOpts?.debug,
         });
@@ -368,6 +420,7 @@ export function createPushHandler(
 
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
+        const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
         timer?.startPhase("execute");
         const result = await executePush(
@@ -378,6 +431,7 @@ export function createPushHandler(
         namespace,
         sequenceStore,
         onChange,
+        actorId,
         logger,
         );
 
@@ -436,9 +490,9 @@ export function createPushHandler(
  */
 export function createReconcileHandler(
   validatedSchema: DatafnSchema,
+  extractNamespace: (ctx: any) => Promise<string>,
   db?: Adapter,
   plugins: DatafnPlugin[] = [],
-  extractNamespace: (ctx: any) => Promise<string>,
   sequenceStore?: SequenceStore,
   logger?: DatafnLogger,
 ) {

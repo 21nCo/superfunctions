@@ -80,7 +80,7 @@ describe("DFQL select extensions (Phase 11)", () => {
         {},
       );
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.ok).toBe(false);
       expect(body.error).toEqual({
@@ -191,7 +191,7 @@ describe("DFQL select extensions (Phase 11)", () => {
         {},
       );
 
-      expect(res2.status).toBe(200);
+      expect(res2.status).toBe(400);
       const body2 = await res2.json();
       expect(body2.ok).toBe(false);
       expect(body2.error.code).toBe("DFQL_UNKNOWN_FIELD");

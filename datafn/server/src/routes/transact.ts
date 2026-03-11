@@ -1,4 +1,4 @@
-import type { DatafnSchema, DatafnPlugin } from "@datafn/core";
+import type { DatafnSchema, DatafnPlugin } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import type { IdempotencyStore } from "../execution/idempotency.js";
 import type { SequenceStore } from "../execution/sync/sequence-store.js";

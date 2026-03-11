@@ -504,7 +504,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
     vi.restoreAllMocks();
   });
 
-  it("TV-BULK-001: Batch with fallbackToIndividual retries individually on batch failure", async () => {
+  it("TV-BULK-001: Batch with retryIndividual retries individually on batch failure", async () => {
     const observedEvents: DatafnEvent[] = [];
 
     let mutationCallCount = 0;
@@ -568,7 +568,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: { title: "Task 1" },
         clientId: "client:1",
         mutationId: "m-1",
-        fallbackToIndividual: true, // BULK-001
+        retryIndividual: true, // BULK-001
       },
       {
         operation: "merge",
@@ -577,7 +577,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: { title: "Task 2" },
         clientId: "client:1",
         mutationId: "m-2",
-        fallbackToIndividual: true,
+        retryIndividual: true,
       },
       {
         operation: "merge",
@@ -586,7 +586,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: {},
         clientId: "client:1",
         mutationId: "m-invalid",
-        fallbackToIndividual: true,
+        retryIndividual: true,
       },
       {
         operation: "merge",
@@ -595,7 +595,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: { title: "Task 3" },
         clientId: "client:1",
         mutationId: "m-3",
-        fallbackToIndividual: true,
+        retryIndividual: true,
       },
       {
         operation: "merge",
@@ -604,7 +604,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: { title: "Task 4" },
         clientId: "client:1",
         mutationId: "m-4",
-        fallbackToIndividual: true,
+        retryIndividual: true,
       },
     ];
 
@@ -645,7 +645,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
     });
   });
 
-  it("TV-BULK-001N: Batch without fallbackToIndividual fails entirely", async () => {
+  it("TV-BULK-001N: Batch without retryIndividual fails entirely", async () => {
     const observedEvents: DatafnEvent[] = [];
 
     let mutationCallCount = 0;
@@ -672,7 +672,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
       observedEvents.push(event);
     });
 
-    // Execute batch mutation WITHOUT fallbackToIndividual
+    // Execute batch mutation WITHOUT retryIndividual
     const batchMutations = [
       {
         operation: "merge",
@@ -681,7 +681,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: { title: "Task 1" },
         clientId: "client:1",
         mutationId: "m-1",
-        // NO fallbackToIndividual flag
+        // NO retryIndividual flag
       },
       {
         operation: "merge",
@@ -754,7 +754,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
       observedEvents.push(event);
     });
 
-    // Execute batch mutation with fallbackToIndividual (but won't be needed)
+    // Execute batch mutation with retryIndividual (but won't be needed)
     const batchMutations = [
       {
         operation: "merge",
@@ -763,7 +763,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: { title: "Task 1" },
         clientId: "client:1",
         mutationId: "m-1",
-        fallbackToIndividual: true,
+        retryIndividual: true,
       },
       {
         operation: "merge",
@@ -772,7 +772,7 @@ describe("@datafn/client bulk mutation fallback (BULK-001)", () => {
         record: { title: "Task 2" },
         clientId: "client:1",
         mutationId: "m-2",
-        fallbackToIndividual: true,
+        retryIndividual: true,
       },
     ];
 

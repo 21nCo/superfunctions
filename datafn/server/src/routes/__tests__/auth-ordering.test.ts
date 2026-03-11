@@ -10,7 +10,11 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDatafnServer } from "../../server.js";
-import type { DatafnSchema } from "@datafn/core";
+import type { DatafnSchema } from "../../core-types.js";
+
+async function readJson(response: Response): Promise<Record<string, any>> {
+  return (await response.json()) as Record<string, any>;
+}
 
 // Simple test schema
 const testSchema: DatafnSchema = {
@@ -45,8 +49,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: "{invalid json}",
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       // MUST return DFQL_INVALID, NOT FORBIDDEN
       expect(body.ok).toBe(false);
@@ -71,8 +75,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: "not valid json at all",
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
@@ -93,8 +97,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: "{\"steps\": [",  // incomplete JSON
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
@@ -114,8 +118,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: "",
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
@@ -143,8 +147,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: validBody,
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("FORBIDDEN");
@@ -179,7 +183,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: validBody,
       });
 
-      await server.router.handle(request, {});
+      await server.router.handle(request);
 
       // Verify authorize was called with the parsed body (not null)
       expect(authorizeFn).toHaveBeenCalledWith(
@@ -217,8 +221,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: validBody,
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       // Should reach handler (may fail for other reasons like no DB, but not FORBIDDEN)
       // The important thing is authorize was called and didn't block
@@ -239,7 +243,7 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         method: "GET",
       });
 
-      await server.router.handle(request, {});
+      await server.router.handle(request);
 
       // Verify authorize was called with null payload (no body for GET)
       expect(authorizeFn).toHaveBeenCalledTimes(1);
@@ -261,8 +265,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         method: "GET",
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("FORBIDDEN");
@@ -288,8 +292,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: "{bad json",
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
@@ -309,8 +313,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: "[invalid",
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
@@ -330,8 +334,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: '{"clientId": }',
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
@@ -351,8 +355,8 @@ describe("AUTH-001: Invalid JSON Ordering", () => {
         body: "null null",
       });
 
-      const response = await server.router.handle(request, {});
-      const body = await response.json();
+      const response = await server.router.handle(request);
+      const body = await readJson(response);
 
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe("DFQL_INVALID");
