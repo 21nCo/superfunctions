@@ -52,9 +52,33 @@ export async function generateMetadata(props: {
   if (!page) notFound();
 
   const data = page.data as any;
+  const docsPath = params.slug?.length ? `/docs/${params.slug.join("/")}` : "/docs";
+  const image = "/opengraph-image";
 
   return {
     title: data.title,
     description: data.description,
+    alternates: {
+      canonical: docsPath,
+    },
+    openGraph: {
+      title: data.title,
+      description: data.description,
+      url: docsPath,
+      images: [
+        {
+          url: image,
+          width: 1200,
+          height: 630,
+          alt: `${data.title} | HostFn Docs`,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: data.title,
+      description: data.description,
+      images: [image],
+    },
   };
 }
