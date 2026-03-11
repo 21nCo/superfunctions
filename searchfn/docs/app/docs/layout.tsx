@@ -1,12 +1,15 @@
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
-import type { ReactNode } from "react";
 import { baseOptions } from "@/app/layout.config";
 import { source } from "@/lib/source";
 
-export default function Layout({ children }: { children: ReactNode }) {
+type DocsLayoutProps = Parameters<typeof DocsLayout>[0];
+
+export default function Layout({ children }: { children: DocsLayoutProps["children"] }) {
+  const pageTree = source.getPageTree() as Parameters<typeof DocsLayout>[0]["tree"];
+
   return (
     <DocsLayout
-      tree={source.getPageTree()}
+      tree={pageTree}
       {...baseOptions()}
       sidebar={{
         footer: (
