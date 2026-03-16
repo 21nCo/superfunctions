@@ -13,6 +13,11 @@ import type {
   StorageObjectStat,
   SignedUrlConstraints,
 } from '@superfunctions/storage';
+import {
+  assertMultipartParts,
+  createNotFoundError,
+  isNotFoundError,
+} from '@superfunctions/storage/internal/errors';
 
 export interface AzureStorageConfig {
   containerName: string;
@@ -112,11 +117,8 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
           lastModifiedAt: properties.lastModified?.toISOString(),
         };
       } catch (err: unknown) {
-        const error = err as { statusCode?: number; code?: string };
-        if (error.statusCode === 404 || error.code === 'BlobNotFound') {
-          const notFoundError = new Error('Object not found') as Error & { code: string };
-          notFoundError.code = 'STORAGE_NOT_FOUND';
-          throw notFoundError;
+        if (isNotFoundError(err, { statusCode: 404, stringCodes: ['BlobNotFound'] })) {
+          throw createNotFoundError();
         }
         throw err;
       }
@@ -259,11 +261,7 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
       uploadId: string;
       parts: Array<{ partNumber: number; etag: string }>;
     }): Promise<void> {
-      if (input.parts.length === 0) {
-        const error = new Error('No parts provided') as Error & { code: string };
-        error.code = 'STORAGE_MULTIPART_INVALID';
-        throw error;
-      }
+      assertMultipartParts(input.parts);
 
       // Verify uploadId
       const decodedKey = Buffer.from(input.uploadId, 'base64').toString('utf-8');

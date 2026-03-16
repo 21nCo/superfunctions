@@ -75,6 +75,40 @@ describe("TV-XSRV-001: executeCrossResourceSearch — basic cross-resource searc
 
     expect(result.results).toHaveLength(0);
   });
+
+  it("forwards prefix/fuzzy/fieldBoosts to provider.searchAll", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+    await db.create({ model: "tasks", data: { id: "t1", title: "alpha", status: "active" }, namespace: "datafn" });
+
+    const provider = makeProvider({
+      searchAll: vi.fn().mockResolvedValue([{ resource: "tasks", id: "t1", score: 0.9 }]),
+    });
+
+    await executeCrossResourceSearch(
+      {
+        query: "alpha",
+        resources: ["tasks"],
+        prefix: true,
+        fuzzy: 0.2,
+        fieldBoosts: { title: 2 },
+      },
+      provider,
+      db,
+      schema,
+      "datafn",
+    );
+
+    expect(provider.searchAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "alpha",
+        resources: ["tasks"],
+        prefix: true,
+        fuzzy: 0.2,
+        fieldBoosts: { title: 2 },
+      }),
+    );
+  });
 });
 
 describe("TV-XSRV-002: executeCrossResourceSearch — deleted records silently excluded", () => {

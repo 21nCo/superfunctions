@@ -1,48 +1,19 @@
 /**
  * Rate limiting middleware.
- * Per-IP sliding window. Returns 429 Too Many Requests on exceed.
  */
 
 import type { Middleware } from '@superfunctions/http';
+import {
+  createInMemoryKVStore,
+  createRateLimiter,
+  type KVStoreAdapter,
+} from '@superfunctions/middleware';
 import { createError, ErrorCode } from 'recfn';
 
-export interface RateLimitStore {
-  get(key: string): Promise<{ count: number; windowStart: number } | null>;
-  set(key: string, count: number, windowStart: number): Promise<void>;
-  increment(key: string, windowMs: number): Promise<{ count: number; windowStart: number }>;
-}
-
-class InMemoryRateLimitStore implements RateLimitStore {
-  private data = new Map<string, { count: number; windowStart: number }>();
-
-  async get(key: string): Promise<{ count: number; windowStart: number } | null> {
-    return this.data.get(key) ?? null;
-  }
-
-  async set(key: string, count: number, windowStart: number): Promise<void> {
-    this.data.set(key, { count, windowStart });
-  }
-
-  async increment(key: string, windowMs: number): Promise<{ count: number; windowStart: number }> {
-    const now = Date.now();
-    const entry = this.data.get(key);
-    if (!entry) {
-      const newEntry = { count: 1, windowStart: now };
-      this.data.set(key, newEntry);
-      return newEntry;
-    }
-    if (now - entry.windowStart >= windowMs) {
-      const newEntry = { count: 1, windowStart: now };
-      this.data.set(key, newEntry);
-      return newEntry;
-    }
-    entry.count++;
-    return entry;
-  }
-}
+export type RateLimitStore = KVStoreAdapter;
 
 export function createInMemoryRateLimitStore(): RateLimitStore {
-  return new InMemoryRateLimitStore();
+  return createInMemoryKVStore();
 }
 
 function getClientIp(request: Request): string {
@@ -70,11 +41,19 @@ export function createRateLimitMiddleware(
     store = createInMemoryRateLimitStore(),
   } = options;
 
-  return async (request: Request, _context: unknown, next: () => Promise<Response>) => {
-    const key = `ratelimit:${getClientIp(request)}`;
-    const { count } = await store.increment(key, windowMs);
+  const limiter = createRateLimiter({
+    windowMs,
+    maxRequests: requestsPerSecond,
+    algorithm: 'sliding-window',
+    persistence: store,
+    keyPrefix: 'recfn:ratelimit:',
+  });
 
-    if (count > requestsPerSecond) {
+  return async (request: Request, _context: unknown, next: () => Promise<Response>) => {
+    const key = `ip:${getClientIp(request)}`;
+    const { allowed } = await limiter.check({ key });
+
+    if (!allowed) {
       throw createError(
         ErrorCode.RATE_LIMIT_EXCEEDED,
         'Rate limit exceeded. Try again later.',

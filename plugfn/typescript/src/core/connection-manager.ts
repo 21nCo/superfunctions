@@ -1,27 +1,125 @@
+import { createHash } from 'node:crypto';
 import type {
   Connection,
+  Credentials,
+  DisconnectOptions,
+  EncryptedCredentials,
   GetAuthUrlOptions,
   HandleCallbackOptions,
   ListConnectionsOptions,
-  DisconnectOptions,
   OAuth2Credentials,
-  Credentials,
 } from '../types/connection.js';
 import { ConnectionStatus } from '../types/connection.js';
+import type { Adapter } from '../types/config.js';
 import type { Provider, OAuth2Config } from '../types/provider.js';
 import { AuthType } from '../types/provider.js';
 import type { Logger } from '../types/action.js';
 import { ConnectionStorage } from '../storage/connection-storage.js';
 import { SecureTokenStorage } from '../storage/token-storage.js';
-import { OAuthFlowHandler } from '../auth/oauth-flow.js';
-import { MemoryTokenStore } from '../auth/token-store.js';
+import {
+  type OAuthProviderDescriptor,
+  type OAuthTokenSet,
+} from '@superfunctions/oauth-core';
+import {
+  DefaultOAuthTokenHttpClient,
+  type OAuthTokenHttpClient,
+} from '@superfunctions/oauth-http';
+import { createOAuthFlowService, type OAuthFlowService } from '@superfunctions/oauth-flow';
+import {
+  AesGcmTokenCipher,
+  EncryptedTokenVault,
+  type OAuthStateRecord,
+  type OAuthStateStore,
+  type TokenKeyResolver,
+  type TokenRecord,
+  type TokenVault,
+} from '@superfunctions/oauth-storage';
+import { oauthProviderDescriptors } from '@superfunctions/oauth-providers';
 
-/**
- * Connection manager handles user connections to providers
- */
+const OAUTH_STATE_SYSTEM_USER = '__oauth_state_system__';
+const OAUTH_STATE_SYSTEM_PROVIDER = '__oauth_state_system__';
+const OAUTH_TOKEN_SYSTEM_USER = '__oauth_token_system__';
+const OAUTH_TOKEN_SYSTEM_PROVIDER = '__oauth_token_system__';
+const DEFAULT_TOKEN_KEY_REF = 'plugfn-key-v1';
+
+interface OAuthClientConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUris: string[];
+}
+
+export interface ConnectionManagerOAuthDependencies {
+  oauthFlowService: OAuthFlowService;
+  oauthStateStore: OAuthStateStore;
+  encryptedTokenVault: EncryptedTokenVault;
+  keyRef: string;
+}
+
+interface CreateConnectionManagerOAuthDependenciesInput {
+  adapter: Adapter;
+  providers: Map<string, Provider>;
+  integrationConfigs: Map<string, any>;
+  baseUrl: string;
+  encryptionKey: string;
+  tokenHttpClient?: OAuthTokenHttpClient;
+  now?: () => Date;
+}
+
+export class ConnectionSelectionError extends Error {
+  readonly code = 'CONNECTION_AMBIGUOUS';
+  readonly status = 409;
+
+  constructor(message = 'multiple active connections require explicit connectionId') {
+    super(message);
+    this.name = 'ConnectionSelectionError';
+  }
+}
+
+export function createConnectionManagerOAuthDependencies(
+  input: CreateConnectionManagerOAuthDependenciesInput
+): ConnectionManagerOAuthDependencies {
+  const now = input.now ?? (() => new Date());
+  const stateStore = new AdapterOAuthStateStore(input.adapter);
+  const tokenVaultStore = new AdapterTokenVault(input.adapter);
+  const tokenHttpClient = input.tokenHttpClient ?? new DefaultOAuthTokenHttpClient();
+  const encryptedTokenVault = new EncryptedTokenVault(
+    tokenVaultStore,
+    new AesGcmTokenCipher(createDefaultTokenKeyResolver(input.encryptionKey)),
+    () => now().toISOString()
+  );
+
+  const oauthProviderMap = createProviderDescriptorRegistry(input.providers);
+  const oauthClientConfigMap = createOAuthClientConfigMap(input.integrationConfigs, input.baseUrl);
+  const oauthRuntimeConfigMap = createDynamicOAuthRuntimeConfigMap(oauthClientConfigMap);
+  const oauthFlowService = createOAuthFlowService({
+    providers: oauthProviderMap,
+    providerRuntimeConfig: oauthRuntimeConfigMap,
+    stateStore,
+    tokenVault: encryptedTokenVault,
+    tokenHttpClient,
+    keyRef: DEFAULT_TOKEN_KEY_REF,
+    now,
+    identityHooks: {
+      onDisconnected: async ({ connectionId }) => {
+        await input.adapter.deleteConnection(connectionId);
+      },
+    },
+  });
+
+  return {
+    oauthFlowService,
+    oauthStateStore: stateStore,
+    encryptedTokenVault,
+    keyRef: DEFAULT_TOKEN_KEY_REF,
+  };
+}
+
 export class ConnectionManager {
-  private oauthHandler: OAuthFlowHandler;
-  private tokenStorage: SecureTokenStorage;
+  private readonly tokenStorage: SecureTokenStorage;
+  private readonly oauthFlowService: OAuthFlowService;
+  private readonly oauthStateStore: OAuthStateStore;
+  private readonly encryptedTokenVault: EncryptedTokenVault;
+  private readonly keyRef: string;
 
   constructor(
     private connectionStorage: ConnectionStorage,
@@ -29,15 +127,16 @@ export class ConnectionManager {
     private integrationConfigs: Map<string, any>,
     private baseUrl: string,
     encryptionKey: string,
-    private logger: Logger
+    private logger: Logger,
+    oauthDependencies: ConnectionManagerOAuthDependencies
   ) {
     this.tokenStorage = new SecureTokenStorage(encryptionKey);
-    this.oauthHandler = new OAuthFlowHandler(new MemoryTokenStore());
+    this.oauthFlowService = oauthDependencies.oauthFlowService;
+    this.oauthStateStore = oauthDependencies.oauthStateStore;
+    this.encryptedTokenVault = oauthDependencies.encryptedTokenVault;
+    this.keyRef = oauthDependencies.keyRef;
   }
 
-  /**
-   * Get OAuth authorization URL
-   */
   async getAuthUrl(options: GetAuthUrlOptions): Promise<string> {
     const provider = this.providers.get(options.provider);
     if (!provider) {
@@ -48,119 +147,73 @@ export class ConnectionManager {
       throw new Error(`Provider ${options.provider} does not support OAuth`);
     }
 
-    const config = this.integrationConfigs.get(options.provider);
-    if (!config) {
-      throw new Error(`Provider ${options.provider} not configured`);
-    }
-
-    const { url, state } = await this.oauthHandler.getAuthorizationUrl(
-      provider.auth.config as OAuth2Config,
-      {
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
-        redirectUri: options.redirectUri,
-        scopes: options.scopes || provider.auth.config.scopes,
-        state: options.state,
-      }
-    );
-
-    // Store state with user info
-    const stateData = {
+    const oauthConfig = provider.auth.config as OAuth2Config;
+    const result = await this.oauthFlowService.start({
+      providerId: options.provider,
+      tenantId: options.userId,
       userId: options.userId,
-      provider: options.provider,
       redirectUri: options.redirectUri,
-      scopes: options.scopes,
-      connectionName: options.connectionName,
-      timestamp: Date.now(),
-    };
-    
-    await this.oauthHandler['tokenStore'].set(
-      `oauth:state:${state}`,
-      JSON.stringify(stateData),
-      600000
-    );
+      scopes: options.scopes ?? oauthConfig.scopes,
+    });
 
     this.logger.info(`Generated auth URL for ${options.provider}`, { userId: options.userId });
-    return url;
+    return result.authorizationUrl;
   }
 
-  /**
-   * Handle OAuth callback and create connection
-   */
   async handleCallback(options: HandleCallbackOptions): Promise<Connection> {
-    // Verify state
-    const stateDataStr = await this.oauthHandler['tokenStore'].get(`oauth:state:${options.state}`);
-    if (!stateDataStr) {
-      throw new Error('Invalid or expired OAuth state');
+    const statePreview = await this.oauthStateStore.get(options.state);
+    if (!statePreview) {
+      throw new Error('OAuth state is invalid or expired');
     }
 
-    const stateData = JSON.parse(stateDataStr);
-    await this.oauthHandler['tokenStore'].delete(`oauth:state:${options.state}`);
-
-    const provider = this.providers.get(stateData.provider);
-    if (!provider) {
-      throw new Error(`Provider ${stateData.provider} not found`);
+    const providerId = options.provider ?? statePreview.providerId;
+    const redirectUri = options.redirectUri ?? statePreview.redirectUri;
+    if (!providerId || !redirectUri) {
+      throw new Error('OAuth state is invalid or expired');
     }
 
-    const config = this.integrationConfigs.get(stateData.provider);
-    if (!config) {
-      throw new Error(`Provider ${stateData.provider} not configured`);
-    }
+    const callbackResult = await this.oauthFlowService.handleCallback({
+      providerId,
+      code: options.code,
+      state: options.state,
+      redirectUri,
+    });
 
-    // Exchange code for token
-    const tokenResponse = await this.oauthHandler.exchangeCodeForToken(
-      provider.auth.config as OAuth2Config,
-      {
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
-        redirectUri: stateData.redirectUri,
-        scopes: stateData.scopes,
-      },
-      options.code
-    );
-
-    // Create credentials
-    const credentials: OAuth2Credentials = {
-      type: 'oauth2',
-      accessToken: tokenResponse.access_token,
-      refreshToken: tokenResponse.refresh_token,
-      expiresAt: tokenResponse.expires_in
-        ? new Date(Date.now() + tokenResponse.expires_in * 1000)
-        : undefined,
-      tokenType: tokenResponse.token_type,
-      scope: tokenResponse.scope,
-    };
-
-    // Encrypt and store connection
+    const credentials = this.toOAuth2Credentials(callbackResult.tokenSet);
     const connection = await this.connectionStorage.create({
-      userId: stateData.userId,
-      provider: stateData.provider,
-      name: stateData.connectionName,
+      userId: callbackResult.subject.userId,
+      provider: providerId,
+      name: options.connectionName,
       status: ConnectionStatus.Active,
       credentials: this.tokenStorage.encryptCredentials(credentials),
-      scopes: stateData.scopes,
+      scopes: statePreview.requestedScopes,
       expiresAt: credentials.expiresAt,
       connectedAt: new Date(),
     });
 
-    this.logger.info(`Connection created: ${stateData.provider}`, {
-      userId: stateData.userId,
-      connectionId: connection.id,
+    const persistedTokenRecord = await this.rebindTokenConnection(
+      callbackResult.connectionId,
+      connection.id
+    );
+
+    const updatedConnection = await this.connectionStorage.update(connection.id, {
+      credentials: toEncryptedCredentials(persistedTokenRecord),
+      expiresAt: credentials.expiresAt,
+      status: ConnectionStatus.Active,
     });
 
-    return connection;
+    this.logger.info(`Connection created: ${providerId}`, {
+      userId: callbackResult.subject.userId,
+      connectionId: updatedConnection.id,
+    });
+
+    return updatedConnection;
   }
 
-  /**
-   * List user connections
-   */
   async list(options: ListConnectionsOptions): Promise<Connection[]> {
     return this.connectionStorage.list(options.userId, options.provider, options.status);
   }
 
-  /**
-   * Get a specific connection
-   */
   async get(id: string): Promise<Connection> {
     const connection = await this.connectionStorage.get(id);
     if (!connection) {
@@ -169,35 +222,75 @@ export class ConnectionManager {
     return connection;
   }
 
-  /**
-   * Get connection by user and provider
-   */
   async getByUserAndProvider(userId: string, provider: string): Promise<Connection | null> {
     return this.connectionStorage.getByUserAndProvider(userId, provider);
   }
 
-  /**
-   * Disconnect (delete connection)
-   */
-  async disconnect(options: DisconnectOptions): Promise<void> {
+  async resolveConnectionForAction(options: {
+    userId: string;
+    provider: string;
+    connectionId?: string;
+  }): Promise<Connection | null> {
     if (options.connectionId) {
-      await this.connectionStorage.delete(options.connectionId);
-      this.logger.info(`Connection deleted: ${options.connectionId}`);
-    } else {
-      const connection = await this.connectionStorage.getByUserAndProvider(
-        options.userId,
-        options.provider
-      );
-      if (connection) {
-        await this.connectionStorage.delete(connection.id);
-        this.logger.info(`Connection deleted: ${connection.id}`);
-      }
+      return this.get(options.connectionId);
+    }
+
+    const activeConnections = await this.connectionStorage.list(
+      options.userId,
+      options.provider,
+      ConnectionStatus.Active
+    );
+
+    if (activeConnections.length === 0) {
+      return null;
+    }
+
+    if (activeConnections.length === 1) {
+      return activeConnections[0];
+    }
+
+    const sortedConnections = [...activeConnections].sort(compareConnectionPriority);
+    if (compareConnectionPriority(sortedConnections[0], sortedConnections[1]) === 0) {
+      throw new ConnectionSelectionError();
+    }
+
+    return sortedConnections[0];
+  }
+
+  async disconnect(options: DisconnectOptions): Promise<void> {
+    const targetConnection = options.connectionId
+      ? await this.connectionStorage.get(options.connectionId)
+      : await this.connectionStorage.getByUserAndProvider(options.userId, options.provider);
+
+    if (!targetConnection) {
+      return;
+    }
+
+    const provider = this.providers.get(targetConnection.provider);
+    if (!provider || provider.auth.type !== AuthType.OAuth2) {
+      await this.connectionStorage.delete(targetConnection.id);
+      this.logger.info(`Connection deleted: ${targetConnection.id}`);
+      return;
+    }
+
+    try {
+      await this.oauthFlowService.disconnect({
+        connectionId: targetConnection.id,
+        providerId: targetConnection.provider,
+        revokeRemote: true,
+        tokenTypeHint: 'access_token',
+      });
+      this.logger.info(`Connection deleted: ${targetConnection.id}`);
+    } catch (error) {
+      this.logger.warn('Disconnect completed with remote revoke failure', {
+        provider: targetConnection.provider,
+        connectionId: targetConnection.id,
+        error: (error as Error).message,
+      });
+      throw error;
     }
   }
 
-  /**
-   * Refresh OAuth token
-   */
   async refresh(connectionId: string): Promise<Connection> {
     const connection = await this.get(connectionId);
     const provider = this.providers.get(connection.provider);
@@ -206,47 +299,21 @@ export class ConnectionManager {
       throw new Error('Token refresh not supported for this provider');
     }
 
-    const credentials = this.tokenStorage.decryptCredentials(
-      connection.credentials
-    ) as OAuth2Credentials;
-
-    if (!credentials.refreshToken) {
-      throw new Error('No refresh token available');
+    const refreshedTokenSet = await this.oauthFlowService.refresh({
+      connectionId: connection.id,
+      providerId: connection.provider,
+      redirectUri: this.resolveRefreshRedirectUri(connection.provider),
+      scopes: connection.scopes ?? [],
+    });
+    const mergedCredentials = this.toOAuth2Credentials(refreshedTokenSet);
+    const tokenRecordEntry = await this.encryptedTokenVault.getTokenSetByConnection(connection.id);
+    if (!tokenRecordEntry) {
+      throw new Error(`OAuth token record missing for connection ${connection.id}`);
     }
 
-    const config = this.integrationConfigs.get(connection.provider);
-    if (!config) {
-      throw new Error(`Provider ${connection.provider} not configured`);
-    }
-
-    // Refresh the token
-    const tokenResponse = await this.oauthHandler.refreshAccessToken(
-      provider.auth.config as OAuth2Config,
-      {
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
-        redirectUri: `${this.baseUrl}/api/plugfn/callback`,
-        scopes: connection.scopes || [],
-      },
-      credentials.refreshToken
-    );
-
-    // Update credentials
-    const newCredentials: OAuth2Credentials = {
-      type: 'oauth2',
-      accessToken: tokenResponse.access_token,
-      refreshToken: tokenResponse.refresh_token || credentials.refreshToken,
-      expiresAt: tokenResponse.expires_in
-        ? new Date(Date.now() + tokenResponse.expires_in * 1000)
-        : undefined,
-      tokenType: tokenResponse.token_type,
-      scope: tokenResponse.scope,
-    };
-
-    // Update connection
     const updated = await this.connectionStorage.update(connection.id, {
-      credentials: this.tokenStorage.encryptCredentials(newCredentials),
-      expiresAt: newCredentials.expiresAt,
+      credentials: toEncryptedCredentials(tokenRecordEntry.record),
+      expiresAt: mergedCredentials.expiresAt,
       status: ConnectionStatus.Active,
     });
 
@@ -254,45 +321,47 @@ export class ConnectionManager {
     return updated;
   }
 
-  /**
-   * Get decrypted credentials for a connection
-   */
   async getCredentials(connectionId: string): Promise<Credentials> {
     const connection = await this.get(connectionId);
-    
-    // Check if expired and auto-refresh if needed
-    if (
-      connection.status === ConnectionStatus.Active &&
-      connection.expiresAt &&
-      new Date() >= connection.expiresAt
-    ) {
-      const refreshed = await this.refresh(connectionId);
-      return this.tokenStorage.decryptCredentials(refreshed.credentials);
+    const provider = this.providers.get(connection.provider);
+
+    if (provider?.auth.type === AuthType.OAuth2) {
+      if (
+        connection.status === ConnectionStatus.Active &&
+        connection.expiresAt &&
+        new Date() >= connection.expiresAt
+      ) {
+        const refreshedConnection = await this.refresh(connectionId);
+        const refreshedToken = await this.encryptedTokenVault.getTokenSetByConnection(refreshedConnection.id);
+        if (refreshedToken) {
+          return this.toOAuth2Credentials(refreshedToken.tokenSet);
+        }
+        return this.decryptLegacyCredentials(refreshedConnection);
+      }
+
+      const storedToken = await this.encryptedTokenVault.getTokenSetByConnection(connection.id);
+      if (storedToken) {
+        return this.toOAuth2Credentials(storedToken.tokenSet);
+      }
+
+      return this.decryptLegacyCredentials(connection);
     }
 
-    return this.tokenStorage.decryptCredentials(connection.credentials);
+    return this.decryptNonOAuthCredentials(connection);
   }
 
-  /**
-   * Mark connection as used (update lastUsedAt)
-   */
   async markUsed(connectionId: string): Promise<void> {
     await this.connectionStorage.updateLastUsed(connectionId);
   }
 
-  /**
-   * Check connection validity
-   */
   async isValid(connectionId: string): Promise<boolean> {
     try {
       const connection = await this.get(connectionId);
-      
       if (connection.status !== ConnectionStatus.Active) {
         return false;
       }
 
       if (connection.expiresAt && new Date() >= connection.expiresAt) {
-        // Try to refresh
         try {
           await this.refresh(connectionId);
           return true;
@@ -306,5 +375,512 @@ export class ConnectionManager {
       return false;
     }
   }
+
+  private resolveRefreshRedirectUri(providerId: string): string {
+    const integrationConfig = this.integrationConfigs.get(providerId);
+    if (integrationConfig && Array.isArray(integrationConfig.redirectUris) && integrationConfig.redirectUris[0]) {
+      return integrationConfig.redirectUris[0];
+    }
+
+    return `${this.baseUrl}/api/plugfn/callback`;
+  }
+
+  private toOAuth2Credentials(tokenSet: OAuthTokenSet): OAuth2Credentials {
+    return {
+      type: 'oauth2',
+      accessToken: tokenSet.accessToken,
+      refreshToken: tokenSet.refreshToken,
+      expiresAt: tokenSet.expiresAt ? new Date(tokenSet.expiresAt) : undefined,
+      tokenType: tokenSet.tokenType,
+      scope: tokenSet.scope,
+    };
+  }
+
+  private async rebindTokenConnection(
+    fromConnectionId: string,
+    toConnectionId: string
+  ): Promise<TokenRecord> {
+    const existing = await this.encryptedTokenVault.getTokenSetByConnection(fromConnectionId);
+    if (!existing) {
+      throw new Error(`OAuth token record missing for connection ${fromConnectionId}`);
+    }
+
+    const rewritten = await this.encryptedTokenVault.putTokenSet({
+      tokenId: existing.record.tokenId,
+      tenantId: existing.record.tenantId,
+      userId: existing.record.userId,
+      providerId: existing.record.providerId,
+      connectionId: toConnectionId,
+      tokenSet: existing.tokenSet,
+      keyRef: existing.record.keyRef || this.keyRef,
+      createdAt: existing.record.createdAt,
+      updatedAt: existing.record.updatedAt,
+      expiresAt: existing.record.expiresAt,
+    });
+
+    if (fromConnectionId !== toConnectionId) {
+      await this.encryptedTokenVault.deleteByConnection(fromConnectionId);
+    }
+
+    return rewritten;
+  }
+
+  private decryptLegacyCredentials(connection: Connection): Credentials {
+    return this.tokenStorage.decryptCredentials(connection.credentials);
+  }
+
+  private decryptNonOAuthCredentials(connection: Connection): Credentials {
+    try {
+      return this.tokenStorage.decryptCredentials(connection.credentials);
+    } catch (error) {
+      const integrationConfig = this.integrationConfigs.get(connection.provider);
+      if (integrationConfig?.type === 'api-key' && integrationConfig.apiKey) {
+        return {
+          type: 'api-key',
+          apiKey: integrationConfig.apiKey,
+        };
+      }
+
+      if (integrationConfig?.type === 'basic' && integrationConfig.username && integrationConfig.password) {
+        return {
+          type: 'basic',
+          username: integrationConfig.username,
+          password: integrationConfig.password,
+        };
+      }
+
+      if (integrationConfig?.type === 'jwt' && integrationConfig.privateKey) {
+        return {
+          type: 'jwt',
+          token: integrationConfig.privateKey,
+        };
+      }
+
+      throw error;
+    }
+  }
 }
 
+class AdapterOAuthStateStore implements OAuthStateStore {
+  constructor(private readonly adapter: Adapter) {}
+
+  async put(record: OAuthStateRecord): Promise<void> {
+    const connectionId = stateConnectionId(record.stateId);
+    const existing = await this.adapter.getConnection(connectionId);
+    if (!existing) {
+      await this.adapter.createConnection(buildStateConnectionRecord(record));
+      return;
+    }
+
+    await this.adapter.updateConnection(connectionId, {
+      metadata: {
+        oauthStateRecord: record,
+      },
+      updatedAt: new Date(),
+    });
+  }
+
+  async get(stateId: string): Promise<OAuthStateRecord | null> {
+    const stateConnection = await this.adapter.getConnection(stateConnectionId(stateId));
+    if (!stateConnection) {
+      return null;
+    }
+
+    return extractOAuthStateRecord(stateConnection);
+  }
+
+  async consume(stateId: string, consumedAt: string): Promise<OAuthStateRecord | null> {
+    const current = await this.get(stateId);
+    if (!current) {
+      return null;
+    }
+
+    if (current.consumedAt) {
+      return null;
+    }
+
+    if (Date.parse(current.expiresAt) <= Date.parse(consumedAt)) {
+      return null;
+    }
+
+    const consumedRecord: OAuthStateRecord = {
+      ...current,
+      consumedAt,
+    };
+
+    await this.put(consumedRecord);
+    return consumedRecord;
+  }
+
+  async deleteExpired(before: string): Promise<number> {
+    const entries = await this.adapter.listConnections(OAUTH_STATE_SYSTEM_USER, OAUTH_STATE_SYSTEM_PROVIDER);
+    let deleted = 0;
+
+    for (const entry of entries) {
+      const record = extractOAuthStateRecord(entry);
+      if (!record) {
+        continue;
+      }
+
+      if (Date.parse(record.expiresAt) < Date.parse(before)) {
+        await this.adapter.deleteConnection(stateConnectionId(record.stateId));
+        deleted += 1;
+      }
+    }
+
+    return deleted;
+  }
+}
+
+class AdapterTokenVault implements TokenVault {
+  constructor(private readonly adapter: Adapter) {}
+
+  async put(record: TokenRecord): Promise<void> {
+    const connectionId = tokenConnectionId(record.tokenId);
+    const existing = await this.adapter.getConnection(connectionId);
+    if (!existing) {
+      await this.adapter.createConnection(buildTokenConnectionRecord(record));
+      return;
+    }
+
+    await this.adapter.updateConnection(connectionId, {
+      metadata: {
+        oauthTokenRecord: record,
+      },
+      updatedAt: new Date(),
+    });
+  }
+
+  async get(tokenId: string): Promise<TokenRecord | null> {
+    const tokenConnection = await this.adapter.getConnection(tokenConnectionId(tokenId));
+    if (!tokenConnection) {
+      return null;
+    }
+
+    return extractTokenRecord(tokenConnection);
+  }
+
+  async getByConnection(connectionId: string): Promise<TokenRecord | null> {
+    const entries = await this.adapter.listConnections(OAUTH_TOKEN_SYSTEM_USER, OAUTH_TOKEN_SYSTEM_PROVIDER);
+    for (const entry of entries) {
+      const record = extractTokenRecord(entry);
+      if (record && record.connectionId === connectionId) {
+        return record;
+      }
+    }
+
+    return null;
+  }
+
+  async rotateKey(tokenId: string, newKeyRef: string): Promise<void> {
+    const current = await this.get(tokenId);
+    if (!current) {
+      return;
+    }
+
+    await this.put({
+      ...current,
+      keyRef: newKeyRef,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async deleteByConnection(connectionId: string): Promise<void> {
+    const record = await this.getByConnection(connectionId);
+    if (!record) {
+      return;
+    }
+
+    await this.adapter.deleteConnection(tokenConnectionId(record.tokenId));
+  }
+}
+
+function createProviderDescriptorRegistry(
+  providers: Map<string, Provider>
+): Record<string, OAuthProviderDescriptor> {
+  return new Proxy(
+    {},
+    {
+      get: (_target, property) => {
+        if (typeof property !== 'string') {
+          return undefined;
+        }
+        const provider = providers.get(property);
+        if (!provider || provider.auth.type !== AuthType.OAuth2) {
+          return undefined;
+        }
+        return buildOAuthProviderDescriptor(property, provider);
+      },
+      has: (_target, property) => {
+        if (typeof property !== 'string') {
+          return false;
+        }
+        const provider = providers.get(property);
+        return Boolean(provider && provider.auth.type === AuthType.OAuth2);
+      },
+      ownKeys: () => {
+        return [...providers.values()]
+          .filter((provider) => provider.auth.type === AuthType.OAuth2)
+          .map((provider) => provider.name);
+      },
+      getOwnPropertyDescriptor: (_target, property) => {
+        if (typeof property !== 'string') {
+          return undefined;
+        }
+        const provider = providers.get(property);
+        if (!provider || provider.auth.type !== AuthType.OAuth2) {
+          return undefined;
+        }
+        return {
+          configurable: true,
+          enumerable: true,
+          value: buildOAuthProviderDescriptor(property, provider),
+        };
+      },
+    }
+  ) as Record<string, OAuthProviderDescriptor>;
+}
+
+function createOAuthClientConfigMap(
+  integrationConfigs: Map<string, any>,
+  baseUrl: string
+): Record<string, OAuthClientConfig> {
+  const oauthClientConfigMap: Record<string, OAuthClientConfig> = {};
+
+  for (const [providerId, rawConfig] of integrationConfigs.entries()) {
+    if (
+      !rawConfig ||
+      typeof rawConfig.clientId !== 'string' ||
+      rawConfig.clientId.length === 0 ||
+      typeof rawConfig.clientSecret !== 'string' ||
+      rawConfig.clientSecret.length === 0
+    ) {
+      continue;
+    }
+
+    const configuredRedirectUris = Array.isArray(rawConfig.redirectUris)
+      ? rawConfig.redirectUris.filter((value: unknown): value is string => {
+          return typeof value === 'string' && value.length > 0;
+        })
+      : [];
+
+    const redirectUris =
+      configuredRedirectUris.length > 0
+        ? configuredRedirectUris
+        : [`${baseUrl}/api/plugfn/callback`];
+
+    oauthClientConfigMap[providerId] = {
+      clientId: rawConfig.clientId,
+      clientSecret: rawConfig.clientSecret,
+      redirectUris,
+    };
+  }
+
+  return oauthClientConfigMap;
+}
+
+function createDynamicOAuthRuntimeConfigMap(
+  oauthClientConfigMap: Record<string, OAuthClientConfig>
+): Record<string, { clientId: string; clientSecret: string; allowlistedRedirectUris?: string[] }> {
+  return new Proxy(
+    {},
+    {
+      get: (_target, property) => {
+        if (typeof property !== 'string') {
+          return undefined;
+        }
+        const config = oauthClientConfigMap[property];
+        if (!config) {
+          return undefined;
+        }
+        return {
+          clientId: config.clientId,
+          clientSecret: config.clientSecret,
+          allowlistedRedirectUris: [...config.redirectUris],
+        };
+      },
+      has: (_target, property) => {
+        if (typeof property !== 'string') {
+          return false;
+        }
+        return Boolean(oauthClientConfigMap[property]);
+      },
+      ownKeys: () => {
+        return Object.keys(oauthClientConfigMap);
+      },
+      getOwnPropertyDescriptor: (_target, property) => {
+        if (typeof property !== 'string') {
+          return undefined;
+        }
+        const config = oauthClientConfigMap[property];
+        if (!config) {
+          return undefined;
+        }
+        return {
+          configurable: true,
+          enumerable: true,
+          value: {
+            clientId: config.clientId,
+            clientSecret: config.clientSecret,
+            allowlistedRedirectUris: [...config.redirectUris],
+          },
+        };
+      },
+    }
+  ) as Record<string, { clientId: string; clientSecret: string; allowlistedRedirectUris?: string[] }>;
+}
+
+function buildOAuthProviderDescriptor(providerId: string, provider: Provider): OAuthProviderDescriptor {
+  const sharedDescriptor = (oauthProviderDescriptors as Record<string, OAuthProviderDescriptor | undefined>)[
+    providerId
+  ];
+  if (sharedDescriptor) {
+    return {
+      ...sharedDescriptor,
+      defaultScopes: [...sharedDescriptor.defaultScopes],
+      extraAuthParams: sharedDescriptor.extraAuthParams
+        ? { ...sharedDescriptor.extraAuthParams }
+        : undefined,
+    };
+  }
+
+  const oauthConfig = provider.auth.config as OAuth2Config;
+  const rawOAuthConfig = oauthConfig as unknown as Record<string, unknown>;
+  const rawTokenAuthMethod = rawOAuthConfig.tokenAuthMethod;
+  const tokenAuthMethod =
+    rawTokenAuthMethod === 'client_secret_basic' || rawTokenAuthMethod === 'client_secret_post'
+      ? rawTokenAuthMethod
+      : 'client_secret_post';
+
+  return {
+    id: providerId,
+    authorizationUrl: oauthConfig.authorizationUrl,
+    tokenUrl: oauthConfig.tokenUrl,
+    revocationUrl:
+      typeof rawOAuthConfig.revocationUrl === 'string'
+        ? (rawOAuthConfig.revocationUrl as string)
+        : undefined,
+    defaultScopes: [...oauthConfig.scopes],
+    supportsPkce: true,
+    supportsRefreshToken: true,
+    scopeSeparator: oauthConfig.scopeSeparator === ',' ? ',' : ' ',
+    tokenAuthMethod,
+  };
+}
+
+function createDefaultTokenKeyResolver(encryptionKey: string): TokenKeyResolver {
+  return async (keyRef: string): Promise<Buffer> => {
+    return createHash('sha256').update(`${keyRef}:${encryptionKey}`).digest();
+  };
+}
+
+function toEncryptedCredentials(record: TokenRecord): EncryptedCredentials {
+  return {
+    encrypted: record.encryptedPayload,
+    encryptedPayload: record.encryptedPayload,
+    keyRef: record.keyRef,
+    tokenId: record.tokenId,
+    schemaVersion: 'oauth-v1',
+    algorithm: 'aes-256-gcm',
+  };
+}
+
+function buildStateConnectionRecord(record: OAuthStateRecord): Connection {
+  const createdAt = new Date(record.createdAt);
+
+  return {
+    id: stateConnectionId(record.stateId),
+    userId: OAUTH_STATE_SYSTEM_USER,
+    provider: OAUTH_STATE_SYSTEM_PROVIDER,
+    status: ConnectionStatus.Active,
+    credentials: {
+      encrypted: 'system',
+      algorithm: 'internal',
+    },
+    metadata: {
+      oauthStateRecord: record,
+    },
+    connectedAt: createdAt,
+    createdAt,
+    updatedAt: new Date(),
+  };
+}
+
+function buildTokenConnectionRecord(record: TokenRecord): Connection {
+  const createdAt = new Date(record.createdAt);
+
+  return {
+    id: tokenConnectionId(record.tokenId),
+    userId: OAUTH_TOKEN_SYSTEM_USER,
+    provider: OAUTH_TOKEN_SYSTEM_PROVIDER,
+    status: ConnectionStatus.Active,
+    credentials: {
+      encrypted: record.encryptedPayload,
+      encryptedPayload: record.encryptedPayload,
+      keyRef: record.keyRef,
+      tokenId: record.tokenId,
+      schemaVersion: 'oauth-v1',
+      algorithm: 'aes-256-gcm',
+    },
+    metadata: {
+      oauthTokenRecord: record,
+    },
+    connectedAt: createdAt,
+    createdAt,
+    updatedAt: new Date(),
+  };
+}
+
+function extractOAuthStateRecord(entry: any): OAuthStateRecord | null {
+  const record = entry?.metadata?.oauthStateRecord;
+  return record ?? null;
+}
+
+function extractTokenRecord(entry: any): TokenRecord | null {
+  const record = entry?.metadata?.oauthTokenRecord;
+  return record ?? null;
+}
+
+function stateConnectionId(stateId: string): string {
+  return `oauth_state_${stateId}`;
+}
+
+function tokenConnectionId(tokenId: string): string {
+  return `oauth_token_${tokenId}`;
+}
+
+function compareConnectionPriority(a: Connection, b: Connection): number {
+  // Deterministic ordering: newest lastUsedAt, then newest connectedAt, then newest createdAt.
+  // Final tie-breaker is lexical connection id.
+  const priorityFields: Array<keyof Connection> = ['lastUsedAt', 'connectedAt', 'createdAt'];
+
+  for (const field of priorityFields) {
+    const timeDiff = toTimestamp(b[field]) - toTimestamp(a[field]);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+  }
+
+  if (a.id !== b.id) {
+    return a.id.localeCompare(b.id);
+  }
+
+  return 0;
+}
+
+function toTimestamp(value: unknown): number {
+  if (!value) {
+    return 0;
+  }
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  return 0;
+}

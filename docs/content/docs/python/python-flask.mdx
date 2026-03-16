@@ -1,0 +1,115 @@
+---
+title: Python Flask
+description: Run shared Superfunctions Python HTTP handlers inside Flask apps and Blueprints.
+---
+
+`superfunctions-flask` adapts the shared Python HTTP layer to Flask. It is for teams that want Flask's simplicity and Blueprint ecosystem without giving up portable handlers. Instead of binding every route directly to Flask request globals and response objects, you can keep your application logic on the shared `superfunctions.http` contract and let this package translate at the edge.
+
+That makes the package useful in two common external scenarios. First, a Flask application can standardize handler structure across several services without locking future code reuse to Flask internals. Second, a shared library can publish route handlers once and allow each host application to choose whether it mounts them in Flask or another framework adapter.
+
+## What It Is
+
+`superfunctions-flask` exposes adapter helpers for the shared Python HTTP primitives. `create_blueprint()` turns a list of shared `Route` objects into a Flask `Blueprint`, and `to_flask_handler()` wraps one shared handler so you can use it inside an existing Flask route declaration.
+
+Under the hood, the package converts Flask request data into the shared request protocol and maps shared `Response` objects back into Flask responses. Shared HTTP errors are also translated into consistent error payloads so your domain code can stay framework-neutral.
+
+## When To Use It
+
+Use this package when your application already runs on Flask and you want to avoid sprinkling Flask-specific request handling through your domain layer. It is a good fit for admin tools, internal APIs, webhook services, or migration projects where some code may later move into a shared package or another web stack.
+
+If you only need the common request and response contracts, start with [`python-core`](/docs/python/python-core). If your team is on ASGI and wants native FastAPI routing instead, use [`python-fastapi`](/docs/python/python-fastapi). If the same service also needs a portable persistence boundary, add [`python-sqlalchemy`](/docs/python/python-sqlalchemy).
+
+## Install
+
+```bash
+pip install superfunctions-flask sfns flask
+```
+
+## Quick Start
+
+For new services, the cleanest path is to define shared `Route` objects and let `create_blueprint()` register them in a Blueprint.
+
+```python
+from flask import Flask
+from superfunctions.http import HttpMethod, Response, Route
+from superfunctions_flask import create_blueprint
+
+
+async def get_workspace(request, context):
+    return Response(status=200, body={"workspaceId": context.params["id"]})
+
+
+app = Flask(__name__)
+api = create_blueprint(
+    [Route(method=HttpMethod.GET, path="/workspaces/<id>", handler=get_workspace)],
+    name="api",
+    url_prefix="/api",
+)
+app.register_blueprint(api)
+```
+
+If you are integrating incrementally into an existing Flask codebase, wrap one shared handler with `to_flask_handler()`.
+
+```python
+from flask import Flask
+from superfunctions.http import Response
+from superfunctions_flask import to_flask_handler
+
+
+app = Flask(__name__)
+
+
+async def healthcheck(request, context):
+    return Response(status=200, body={"status": "ok", "method": context.method})
+
+
+@app.route("/health", methods=["GET"])
+def health_route():
+    return to_flask_handler(healthcheck)()
+```
+
+## Core Concepts
+
+The first concept is request adaptation. Flask exposes request data differently from the shared handler contract, so the adapter normalizes path params, headers, body parsing, and query arguments into one `RouteContext` plus one request object shape.
+
+The second concept is Blueprint-level composition. `create_blueprint()` lets you group several shared routes under one prefix or module boundary, which is useful when your app organizes APIs by domain or feature area. That keeps the Flask glue thin and leaves the business code reusable.
+
+The third concept is incremental migration. Many Flask teams do not want to redesign their whole router at once. This package supports that by letting you mix wrapped handlers and existing Flask routes while you move toward one shared route model.
+
+## Real-World Example
+
+A realistic use case is an internal operations API that started as a Flask app but now needs to share some handlers with another service. By keeping the handler contract portable, the team can reuse the same route logic in different deployments without copying Flask-specific code.
+
+```python
+from flask import Flask
+from superfunctions.http import ForbiddenError, Response
+from superfunctions_flask import to_flask_handler
+
+
+async def get_admin_report(request, context):
+    role = context.headers.get("x-role")
+    if role != "admin":
+        raise ForbiddenError("Admin access required")
+
+    return Response(status=200, body={"report": "daily-summary"})
+
+
+app = Flask(__name__)
+
+
+@app.route("/admin/report", methods=["GET"])
+def admin_report():
+    return to_flask_handler(get_admin_report)()
+```
+
+That pattern keeps Flask where it belongs, at the HTTP boundary, and keeps the rest of the service easier to share, test, and move.
+
+## Related Packages
+
+- [`python-core`](/docs/python/python-core) for the shared handler, response, and error types.
+- [`python-fastapi`](/docs/python/python-fastapi) if you need the same handler style in FastAPI.
+- [Middleware & Runtime](/docs/middleware-runtime) if your Flask service also needs queues, error envelopes, or webhook-related runtime concerns.
+
+## Troubleshooting
+
+If a wrapped handler raises event-loop errors, check whether the surrounding Flask environment is mixing additional async execution helpers with this adapter. If route parameters do not show up in `context.params`, verify that the Flask path declaration and the shared route path use matching names. If a migration from native Flask feels noisy, adopt `to_flask_handler()` first for new endpoints and move older Blueprints to shared `Route` objects only after the handler layer is stable.

@@ -7,3 +7,5 @@ id, desc, status, completedAt, completionDoc
 2026-03-08-z4p7k2m9-issue,Fix SearchFn/DataFn audit findings from 2026-03-08-m4v9k2q7 full audit,1,2026-03-08T16:07:19Z,2026-03-08-y8k3m2p6-completion
 2026-03-08-k7m4x2p9-issue,Add search and searchfn plugin integration to example todo app (client + server),1,2026-03-09T06:31:47Z,2026-03-09-r8m4k2p7-completion
 2026-03-11-m7q2k9p4-issue,Fix @datafn/docs Vercel build failure after shared docs-theme styling reuse,1,2026-03-11T12:02:27Z,2026-03-11-m7q2k9p4-completion
+2026-03-12-audit-fix-o4u9k2m7-spec,Consolidate OAuth and reusable shared infrastructure and publish complete root shared-package docs,1,2026-03-12T19:11:53Z,
+2026-03-15-fix-ifnaigab-spec,Rebuild root Superfunctions docs into a beginner-first category-organized external docs site for the ecosystem and shared packages,0,,

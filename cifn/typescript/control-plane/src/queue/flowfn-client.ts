@@ -1,4 +1,5 @@
 import type { JobSpec } from '../pipeline/types.js';
+import { MemoryQueueAdapter as SharedMemoryQueueAdapter } from '@superfunctions/queue';
 
 export interface JobPayload {
   runId: string;
@@ -17,37 +18,6 @@ export interface QueueClient {
   size(queueName: string): number;
 }
 
-export class MemoryQueueClient implements QueueClient {
-  private queues = new Map<string, JobPayload[]>();
-
-  async enqueue(queueName: string, payload: JobPayload): Promise<void> {
-    const queue = this.queues.get(queueName) ?? [];
-    queue.push(payload);
-    this.queues.set(queueName, queue);
-  }
-
-  async dequeue(queueName: string): Promise<JobPayload | null> {
-    const queue = this.queues.get(queueName);
-    if (!queue || queue.length === 0) return null;
-    return queue.shift()!;
-  }
-
-  async dequeueMatching(queueName: string, matcher: (payload: JobPayload) => boolean): Promise<JobPayload | null> {
-    const queue = this.queues.get(queueName);
-    if (!queue || queue.length === 0) return null;
-    const index = queue.findIndex(matcher);
-    if (index === -1) return null;
-    const [payload] = queue.splice(index, 1);
-    return payload ?? null;
-  }
-
-  peek(queueName: string): JobPayload[] {
-    return [...(this.queues.get(queueName) ?? [])];
-  }
-
-  size(queueName: string): number {
-    return this.queues.get(queueName)?.length ?? 0;
-  }
-}
+export class MemoryQueueClient extends SharedMemoryQueueAdapter<JobPayload> implements QueueClient {}
 
 export const DEFAULT_QUEUE_NAME = 'cifn:jobs';

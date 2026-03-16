@@ -1,6 +1,8 @@
 ---
 title: "Error Types"
 description: "Error codes and envelope types."
+audience: reference
+applies_to: typescript
 ---
 
 ## DatafnErrorCode
@@ -20,6 +22,9 @@ type DatafnErrorCode =
   | "DFQL_UNKNOWN_RELATION"
   | "DFQL_UNSUPPORTED"
   | "DFQL_ABORTED"
+  | "DFQL_SHARE_SCOPE_INVALID"
+  | "DFQL_PRINCIPAL_INVALID"
+  | "DFQL_CROSS_NS_SHARE_FORBIDDEN"
   | "LIMIT_EXCEEDED"
   | "FORBIDDEN"
   | "NOT_FOUND"
@@ -41,6 +46,9 @@ type DatafnErrorCode =
 | `DFQL_UNKNOWN_RELATION` | Referenced relation does not exist. |
 | `DFQL_UNSUPPORTED` | Unsupported DFQL operator or feature. |
 | `DFQL_ABORTED` | Transaction aborted. |
+| `DFQL_SHARE_SCOPE_INVALID` | Share scope is invalid. Thrown when `scope` is not `"record"` or `"resource"`, when a record-scope share is missing `id`, or when a resource-scope share includes `id`. |
+| `DFQL_PRINCIPAL_INVALID` | Principal identifier is invalid. Thrown when `shareWith.principalId` is empty, when both `principalId` and `userId` are provided with conflicting values, or when neither is provided. |
+| `DFQL_CROSS_NS_SHARE_FORBIDDEN` | Cross-namespace sharing is disabled. Thrown when attempting to share with a principal outside the current namespace on a resource with `crossNsShareable: false`. |
 | `LIMIT_EXCEEDED` | Server-side limit exceeded. |
 | `FORBIDDEN` | Authorization denied. |
 | `NOT_FOUND` | Record not found. |

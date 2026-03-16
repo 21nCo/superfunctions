@@ -54,7 +54,9 @@ SearchFn is composed of four packages:
 | Package | Purpose |
 | --- | --- |
 | `@searchfn/core` | Built-in search engine — text pipeline, inverted index, BM25 scoring, fuzzy matching, stemming |
-| `@searchfn/adapters` | Adapter contract and implementations — Memory and IndexedDB use the built-in engine; Postgres, Meilisearch, and Elasticsearch/OpenSearch delegate to external backends |
+| `@searchfn/adapter-contracts` | Shared adapter interface and request/response types |
+| `@searchfn/adapter-memory` / `@searchfn/adapter-indexeddb` | Built-in engine adapters (in-process + browser-persistent) |
+| `@searchfn/adapter-postgres` / `@searchfn/adapter-meilisearch` / `@searchfn/adapter-elasticsearch` / `@searchfn/adapter-opensearch` | External backend adapters |
 | `@searchfn/client` | Client with validation, defaults, and convenience constructors |
 | `@searchfn/server` | HTTP server with authorization, structured logging, and secret redaction |
 | `@searchfn/datafn-provider` | Bridge that maps any SearchAdapter into a DataFn SearchProvider |

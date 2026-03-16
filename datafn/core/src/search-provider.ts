@@ -6,6 +6,9 @@ export interface SearchProvider {
     type?: "fullText" | "semantic";
     fields?: string[];
     limit?: number;
+    prefix?: boolean;
+    fuzzy?: boolean | number;
+    fieldBoosts?: Record<string, number>;
     signal?: AbortSignal;
   }): Promise<string[]>;
   searchAll?(params: {
@@ -14,6 +17,9 @@ export interface SearchProvider {
     fields?: string[];
     limit?: number;
     limitPerResource?: number;
+    prefix?: boolean;
+    fuzzy?: boolean | number;
+    fieldBoosts?: Record<string, number>;
     signal?: AbortSignal;
   }): Promise<Array<{ resource: string; id: string; score: number }>>;
   updateIndices(params: {

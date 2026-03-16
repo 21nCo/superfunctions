@@ -20,6 +20,7 @@ import { executeSchemaAwareMerge } from "../mutation/merge-decision.js";
 import { stripReadonlyCapabilityFields } from "../mutation/execute.js";
 import { executeShare, executeUnshare, getPermissionsTable } from "../mutation/share.js";
 import type { DatafnLogger } from "../../logger.js";
+import { validateShareableOperationAccess } from "../../validation/authz.js";
 
 export interface PushRequest {
   clientId: string;
@@ -524,6 +525,7 @@ export async function executePush(
           resolvedCapabilities,
           namespace,
           actorId,
+          logger,
         );
         if (!shareResult.ok) {
           return {
@@ -552,6 +554,7 @@ export async function executePush(
           resolvedCapabilities,
           namespace,
           actorId,
+          logger,
         );
         if (!unshareResult.ok) {
           return {
@@ -694,6 +697,26 @@ export async function executePush(
         errors.push({ mutationId: mut.mutationId, code: cached.errors[0].code, message: cached.errors[0].message, path: cached.errors[0].path || "$" });
       }
       batchLocalSeen.set(batchKey, cached.ok);
+      continue;
+    }
+
+    const shareableAuthz = await validateShareableOperationAccess({
+      db,
+      schema,
+      resource: mut.resource,
+      operation: mut.operation,
+      id: typeof mut.id === "string" ? mut.id : undefined,
+      actorId,
+      namespace,
+      requireActorForPrivate: true,
+    });
+    if (!shareableAuthz.ok) {
+      await recordMutationFailure(
+        mut,
+        shareableAuthz.code,
+        shareableAuthz.message,
+        shareableAuthz.path,
+      );
       continue;
     }
 

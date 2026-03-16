@@ -1,6 +1,8 @@
 ---
 title: "Mutations"
 description: "DFQL write operations, including capability-aware lifecycle and sharing mutations."
+audience: reference
+applies_to: both
 ---
 
 A DFQL mutation is a write operation against a resource.
@@ -25,7 +27,8 @@ type DfqlMutation = {
   system?: boolean;
   debounceKey?: string;
   debounceMs?: number;
-  shareWith?: { userId: string; level?: string };
+  scope?: "record" | "resource";
+  shareWith?: { principalId: string; level?: string };
 };
 ```
 
@@ -139,13 +142,15 @@ These are valid only when the target resource enables the required capability.
 
 ### Share / Unshare
 
+#### Record-level share (default)
+
 ```typescript
 {
   resource: "documents",
   version: 1,
   operation: "share",
   id: "doc:1",
-  shareWith: { userId: "user:alice", level: "editor" },
+  shareWith: { principalId: "user:alice", level: "editor" },
 }
 
 {
@@ -153,9 +158,35 @@ These are valid only when the target resource enables the required capability.
   version: 1,
   operation: "unshare",
   id: "doc:1",
-  shareWith: { userId: "user:alice" },
+  shareWith: { principalId: "user:alice" },
 }
 ```
+
+#### Resource-level scope grant
+
+When `supportsScopeGrants` is enabled on the shareable capability, you can grant access to all records in a resource:
+
+```typescript
+{
+  resource: "documents",
+  version: 1,
+  operation: "share",
+  scope: "resource",
+  shareWith: { principalId: "team:engineering", level: "viewer" },
+}
+```
+
+The `scope` field accepts `"record"` (default) or `"resource"`. When `scope` is `"resource"`, omit `id` — the grant applies to all records in the resource namespace.
+
+#### `shareWith` fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `principalId` | `string` | **(recommended)** Target principal in `type:id` format (e.g. `"user:alice"`, `"team:ops"`). |
+| `userId` | `string` | **(deprecated)** Legacy field. Canonicalized to `principalId` at runtime (`"alice"` becomes `"user:alice"`). Emits a deprecation warning. |
+| `level` | `string` | Access level from the capability's `levels` array. Defaults to `"viewer"` if omitted on `share`. |
+
+> **Migration note:** `shareWith.userId` is accepted for backward compatibility but triggers a deprecation warning. Update all call sites to use `shareWith.principalId`.
 
 ## Readonly Capability Fields
 

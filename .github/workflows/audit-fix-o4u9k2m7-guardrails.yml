@@ -1,0 +1,25 @@
+name: audit-fix-o4u9k2m7-guardrails
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run check:duplication
+      - run: npm -w docs run build
+      - run: npm -w docs run check:coverage
+      - run: npm -w docs run check:snippets
+      - run: npm -w docs run check:links
+      - run: npm run gate:audit-fix-o4u9k2m7
+      - run: npx turbo run build --filter=docs --filter=@superfunctions/oauth-flow

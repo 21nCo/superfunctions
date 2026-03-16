@@ -1,166 +1,189 @@
 # PlugFn TypeScript SDK
 
-> Self-hosted integration platform for TypeScript/JavaScript applications
-
-Full-featured TypeScript SDK for building integrations with 75+ APIs.
+PlugFn is a TypeScript integration runtime for Finatron and Fellotron workloads, including shared OAuth flows, email provider adapters, workflow execution, and policy-enforced delivery controls.
 
 ## Installation
 
 ```bash
 npm install @superfunctions/plugfn @superfunctions/db @superfunctions/http
-
-# Install framework adapter (choose one)
-npm install @superfunctions/http-express
-npm install @superfunctions/http-hono
-npm install @superfunctions/http-fastify
-npm install @superfunctions/http-next
 ```
 
 ## Quick Start
 
-### 1. Initialize PlugFn
-
-```typescript
+```ts
 import { plugFn } from '@superfunctions/plugfn';
-import { drizzleAdapter } from '@superfunctions/db/adapters';
-import { githubProvider } from '@superfunctions/plugfn/providers';
+import {
+  gmailProvider,
+  outlookProvider,
+  yahooProvider,
+  icloudProvider,
+  imapSmtpProvider,
+  forwardingProvider,
+  managedMailProvider,
+} from '@superfunctions/plugfn/providers';
 
 const plug = plugFn({
   database: adapter,
   auth: authProvider,
-  baseUrl: 'https://myapp.com',
-  encryptionKey: process.env.ENCRYPTION_KEY,
+  baseUrl: 'https://app.example.com',
+  encryptionKey: process.env.ENCRYPTION_KEY!,
   integrations: {
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      scopes: ['repo', 'issues', 'user']
-    }
-  }
+    gmail: {
+      type: 'oauth2',
+      clientId: process.env.GMAIL_CLIENT_ID!,
+      clientSecret: process.env.GMAIL_CLIENT_SECRET!,
+      redirectUris: ['https://app.example.com/oauth/callback'],
+    },
+    outlook: {
+      type: 'oauth2',
+      clientId: process.env.MS_CLIENT_ID!,
+      clientSecret: process.env.MS_CLIENT_SECRET!,
+      redirectUris: ['https://app.example.com/oauth/callback'],
+    },
+  },
 });
 
-plug.providers.register(githubProvider);
+plug.providers.register(gmailProvider);
+plug.providers.register(outlookProvider);
+plug.providers.register(yahooProvider);
+plug.providers.register(icloudProvider);
+plug.providers.register(imapSmtpProvider);
+plug.providers.register(forwardingProvider);
+plug.providers.register(managedMailProvider);
 ```
 
-### 2. Execute Actions
+## Canonical DB Adapter Contract
 
-```typescript
-// Execute an action
-const issue = await plug.github['issues.create']({
-  userId: 'user-123',
-  params: {
-    owner: 'myorg',
-    repo: 'myrepo',
-    title: 'Bug report',
-    body: 'Something is broken'
-  }
-});
-```
+PlugFn expects a database adapter contract anchored to `@superfunctions/db` types.
+PlugFn-specific storage helpers (`createConnection`, `listConnections`, etc.) can be provided on top
+of that shared adapter base.
 
-### 3. Mount HTTP Endpoints
+## Shared OAuth Foundation
 
-#### With Express
+PlugFn consumes shared OAuth packages:
 
-```typescript
+- `@superfunctions/oauth-core`
+- `@superfunctions/oauth-http`
+- `@superfunctions/oauth-storage`
+- `@superfunctions/oauth-providers`
+
+This keeps OAuth state, callback validation, token exchange/refresh, and revocation behavior aligned with `authfn` social sign-in.
+
+## HTTP Router Mounting (Shared Abstractions)
+
+PlugFn routes should be mounted through `@superfunctions/http` and adapter packages.
+
+### Express
+
+```ts
 import express from 'express';
+import { createExpressAdapter } from '@superfunctions/http-express';
+import { createRouter } from '@superfunctions/http';
 import { createPlugFnRouter } from '@superfunctions/plugfn/router';
-import { toExpress } from '@superfunctions/http-express';
 
 const app = express();
-app.use(express.json());
-
-const router = createPlugFnRouter(plug);
-app.use('/api/plugfn', toExpress(router));
-
-app.listen(3000);
+const httpAdapter = createExpressAdapter(app);
+const router = createRouter({ routes: createPlugFnRouter(plug) });
+httpAdapter.mount(router, '/api/plugfn');
 ```
 
-#### With Hono
+### Fastify
 
-```typescript
-import { Hono } from 'hono';
+```ts
+import Fastify from 'fastify';
+import { createFastifyAdapter } from '@superfunctions/http-fastify';
+import { createRouter } from '@superfunctions/http';
 import { createPlugFnRouter } from '@superfunctions/plugfn/router';
-import { toHono } from '@superfunctions/http-hono';
+
+const app = Fastify();
+const httpAdapter = createFastifyAdapter(app);
+const router = createRouter({ routes: createPlugFnRouter(plug) });
+httpAdapter.mount(router, '/api/plugfn');
+```
+
+### Hono
+
+```ts
+import { Hono } from 'hono';
+import { createHonoAdapter } from '@superfunctions/http-hono';
+import { createRouter } from '@superfunctions/http';
+import { createPlugFnRouter } from '@superfunctions/plugfn/router';
 
 const app = new Hono();
-
-const router = createPlugFnRouter(plug);
-app.route('/api/plugfn', toHono(router));
-
-export default app;
+const httpAdapter = createHonoAdapter(app);
+const router = createRouter({ routes: createPlugFnRouter(plug) });
+httpAdapter.mount(router, '/api/plugfn');
 ```
 
-#### With Fastify
+## Provider and Policy Notes
 
-```typescript
-import Fastify from 'fastify';
-import { createPlugFnRouter } from '@superfunctions/plugfn/router';
-import { toFastify } from '@superfunctions/http-fastify';
+Required mail adapters include `gmail`, `outlook`, `yahoo`, `icloud`, `imap-smtp`, `forwarding`, and `managed-mail`.
 
-const fastify = Fastify();
+Policy guardrails are enforced before outbound provider calls. This includes scope constraints, blocked operations, managed-mailbox opt-in requirements, and finance-risk acknowledgments.
 
-const router = createPlugFnRouter(plug);
-fastify.register(toFastify(router), { prefix: '/api/plugfn' });
+## Security Controls
 
-await fastify.listen({ port: 3000 });
-```
+PlugFn exports security primitives for production operations:
 
-## Features
+- `retention`: retention policies and sweep orchestration.
+- `export-delete`: portable export and cascading deletion across lifecycle stores.
+- `redaction`: log/metric redaction and leak assertions.
+- `isolation-guards`: tenant/user scope enforcement and cross-tenant denial.
+- `e2ee-mode`: explicit managed-mailbox security mode metadata and escrow recovery audit events.
 
-- ✅ **Type-safe**: Full TypeScript with auto-complete
-- ✅ **OAuth built-in**: Complete OAuth 2.0 flow
-- ✅ **Webhooks**: Real-time event handling
-- ✅ **Workflows**: Chain actions together
-- ✅ **5 providers**: GitHub, Slack, Discord, Linear, Stripe
-- ✅ **Framework-agnostic**: Works with Express, Hono, Fastify, Next.js, SvelteKit
-- ✅ **Testing utilities**: Mock providers and workflows
+## Managed Mailbox E2EE Modes
 
-## HTTP Endpoints
+Supported modes:
 
-Once mounted, the following endpoints are available:
+- `non-recoverable`: server-side recovery disabled.
+- `escrow-recoverable`: server-side recovery allowed with explicit audited operations.
 
-- `GET /callback` - OAuth callback handler
-- `POST /webhooks/:provider/:event` - Webhook receiver
-- `GET /providers` - List available providers
-- `GET /connections` - List user connections
-- `POST /connections/auth` - Get OAuth authorization URL
-- `POST /connections/disconnect` - Disconnect a connection
-- `GET /workflows` - List workflows
-- `GET /metrics` - Get execution metrics
+Security mode metadata must be explicit per mailbox.
 
-## Documentation
+## HTTP Surface
 
-- [Implementation Guide](./IMPLEMENTATION.md)
-- [Status & Roadmap](./STATUS.md)
-- [Changelog](./CHANGELOG.md)
-- [Examples](./examples/)
-- [API Reference](../docs/api-reference/)
+Typical routes exposed by the PlugFn router include:
 
-## Examples
+- `GET /providers`
+- `GET /connections`
+- `POST /connections/auth`
+- `POST /connections/disconnect`
+- `POST /webhooks/:provider/:event`
+- `GET /workflows`
+- `GET /metrics`
 
-See the [`examples/`](./examples/) directory for:
-- Basic usage
-- Complete workflows
-- Express server integration
-- Testing examples
+## Legacy OAuth Path Compatibility
+
+Legacy import path `plugfn/auth/oauth-flow` remains available for one minor release and emits:
+
+- warning code: `DEPRECATED_PATH`
+- replacement: `@superfunctions/oauth-flow`
+- removal target: `plugfn@0.2.0`
+
+Migration mapping:
+
+| Legacy path | Replacement |
+| --- | --- |
+| `plugfn/auth/oauth-flow` | `@superfunctions/oauth-flow` + `@superfunctions/oauth-http` + `@superfunctions/oauth-storage` |
+| `plugfn/auth/token-store` | `@superfunctions/oauth-storage` token vault APIs |
+
+## Operations Runbooks
+
+Runbooks are maintained under `/plugfn/docs/runbooks/`:
+
+- OAuth incident response
+- Provider throttling spikes
+- Webhook security failures
+- Mail delivery incidents
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
-
-# Build
 npm run build
-
-# Test
-npm test
-
-# Development mode
-npm run dev
+npm test -- --run
+npm run type-check
 ```
 
 ## License
 
 Apache-2.0
-

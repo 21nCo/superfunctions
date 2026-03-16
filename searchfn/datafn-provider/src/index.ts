@@ -1,4 +1,4 @@
-import type { SearchAdapter } from "@searchfn/adapters";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import type { SearchProvider } from "@datafn/core";
 
 export type { SearchProvider };
@@ -49,6 +49,9 @@ export function createSearchProvider(
         query: request.query,
         fields: request.fields,
         limit: request.limit ?? 50,
+        fuzzy: request.fuzzy,
+        prefix: request.prefix,
+        fieldBoosts: request.fieldBoosts,
         signal: request.signal,
       } as any);
       return ids.map((id) => String(id));
@@ -79,6 +82,9 @@ export function createSearchProvider(
           fields: request.fields,
           limit: request.limit,
           limitPerResource: request.limitPerResource,
+          fuzzy: request.fuzzy,
+          prefix: request.prefix,
+          fieldBoosts: request.fieldBoosts,
           signal: request.signal,
         } as any);
         return results.map((r) => ({
@@ -108,6 +114,9 @@ export function createSearchProvider(
               query: request.query,
               fields: request.fields,
               limit: limitPerResource,
+              fuzzy: request.fuzzy,
+              prefix: request.prefix,
+              fieldBoosts: request.fieldBoosts,
               signal: request.signal,
             } as any);
             return ids.map((id, index) => ({

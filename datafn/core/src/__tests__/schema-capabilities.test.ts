@@ -141,6 +141,161 @@ describe("validateSchema capability integration", () => {
     expect(merged.ok).toBe(true);
   });
 
+  it("rejects shareable with invalid visibilityDefault", () => {
+    const result = validateSchema({
+      resources: [
+        {
+          name: "docs",
+          version: 1,
+          capabilities: [
+            "audit",
+            {
+              shareable: {
+                levels: ["viewer", "editor", "owner"],
+                default: "private",
+                visibilityDefault: "cross-shared",
+              },
+            },
+          ],
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_CAPABILITY_CONFIG");
+      expect(result.error.message).toContain("visibilityDefault");
+    }
+  });
+
+  it("rejects shareable when both default and visibilityDefault are omitted", () => {
+    const result = validateSchema({
+      resources: [
+        {
+          name: "docs",
+          version: 1,
+          capabilities: [
+            "audit",
+            {
+              shareable: {
+                levels: ["viewer", "editor", "owner"],
+              },
+            },
+          ],
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_CAPABILITY_CONFIG");
+      expect(result.error.message).toContain("shareable.default");
+      expect(result.error.message).toContain("visibilityDefault");
+    }
+  });
+
+  it("rejects shareable with non-boolean supportsScopeGrants", () => {
+    const result = validateSchema({
+      resources: [
+        {
+          name: "docs",
+          version: 1,
+          capabilities: [
+            "audit",
+            {
+              shareable: {
+                levels: ["viewer", "editor", "owner"],
+                default: "private",
+                supportsScopeGrants: "yes",
+              },
+            },
+          ],
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_CAPABILITY_CONFIG");
+      expect(result.error.message).toContain("supportsScopeGrants");
+    }
+  });
+
+  it("rejects shareable with invalid relationInheritance config", () => {
+    const result = validateSchema({
+      resources: [
+        {
+          name: "docs",
+          version: 1,
+          capabilities: [
+            "audit",
+            {
+              shareable: {
+                levels: ["viewer", "editor", "owner"],
+                default: "private",
+                relationInheritance: {
+                  enabled: true,
+                  relations: [123],
+                },
+              },
+            },
+          ],
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("INVALID_CAPABILITY_CONFIG");
+      expect(result.error.message).toContain("relationInheritance.relations");
+    }
+  });
+
+  it("accepts shareable with SPV2 extension fields", () => {
+    const result = validateSchema({
+      resources: [
+        {
+          name: "docs",
+          version: 1,
+          capabilities: [
+            "audit",
+            {
+              shareable: {
+                levels: ["viewer", "editor", "owner"],
+                default: "private",
+                visibilityDefault: "ns",
+                supportsScopeGrants: true,
+                crossNsShareable: true,
+                principalMode: "opaque-id",
+                relationInheritance: {
+                  enabled: true,
+                  relations: ["items"],
+                  requireRelateConsent: false,
+                },
+              },
+            },
+          ],
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const caps = result.result.resources[0].capabilities as any[];
+      const shareable = caps.find((entry) => typeof entry === "object" && entry && "shareable" in entry) as any;
+      expect(shareable.shareable.visibilityDefault).toBe("ns");
+      expect(shareable.shareable.supportsScopeGrants).toBe(true);
+      expect(shareable.shareable.crossNsShareable).toBe(true);
+      expect(shareable.shareable.principalMode).toBe("opaque-id");
+      expect(shareable.shareable.relationInheritance.requireRelateConsent).toBe(false);
+    }
+  });
+
   it("TV-VA-001: deduplicates duplicate capabilities without error", () => {
     const result = validateSchema({
       capabilities: ["timestamps", "timestamps"],

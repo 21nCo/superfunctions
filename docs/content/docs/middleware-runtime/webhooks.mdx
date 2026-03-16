@@ -1,0 +1,109 @@
+---
+title: Webhooks
+description: Sign, verify, and deliver webhook payloads with predictable retry behavior and external-friendly examples.
+---
+
+`@superfunctions/webhooks` is for the two runtime jobs that show up in almost every integration surface: proving that a webhook payload is authentic and delivering outbound events with bounded retries. The package gives you a small set of helpers rather than a framework-specific webhook server, which makes it useful whether you are receiving partner callbacks in an API route or sending your own events to customer endpoints.
+
+For external library authors, that small API surface is the main benefit. You can expose webhook signing or delivery behavior from your package without assuming Express, Fastify, or any internal queue runtime. Application teams get the same benefit in reverse: they can plug the helpers into the HTTP or worker stack they already run.
+
+## What It Is
+
+`@superfunctions/webhooks` exports three main runtime helpers. `signWebhookPayload()` produces an HMAC signature for a payload string. `verifyWebhookSignature()` validates an inbound signature using timing-safe comparison and supports optional prefixes such as `sha256=`. `deliverWebhook()` sends a JSON payload with optional signing headers and retries failed requests using a bounded backoff strategy.
+
+The package is intentionally focused on transport concerns. It does not own your event schema, your queue, or your HTTP server. That makes it a good building block when you want webhook behavior to stay portable and explicit.
+
+## When To Use It
+
+Use this package when you either publish outbound webhook events or accept inbound signed callbacks from another system. Typical cases include SaaS event notifications, billing-provider callbacks, CI or deployment events, and internal service-to-service notifications that still need signature verification.
+
+If your application only fires internal function calls and never crosses a trust boundary, you may not need dedicated webhook helpers. The package becomes most valuable when another team, customer, or vendor must verify what you send or when you must verify what they send to you.
+
+## Install
+
+```bash
+npm install @superfunctions/webhooks
+```
+
+## Quick Start
+
+The inbound path usually starts with signing rules that must match the provider you are integrating with.
+
+```ts
+import { signWebhookPayload, verifyWebhookSignature } from "@superfunctions/webhooks";
+
+const payload = JSON.stringify({ event: "invoice.paid", id: "evt_123" });
+const secret = "whsec_your_shared_secret";
+
+const signature = signWebhookPayload(payload, secret, {
+  prefix: "sha256=",
+});
+
+const trusted = verifyWebhookSignature(payload, signature, secret, {
+  prefix: "sha256=",
+});
+```
+
+If you are writing reusable integration code, keep the payload model yours and use the helper only for the cryptographic step.
+
+```ts
+import { verifyWebhookSignature } from "@superfunctions/webhooks";
+
+export function verifyPartnerEvent(body: string, headerValue: string, secret: string) {
+  return verifyWebhookSignature(body, headerValue, secret, {
+    algorithm: "sha256",
+    prefix: "sha256=",
+  });
+}
+```
+
+## Core Concepts
+
+The first concept is payload canonicalization. The signing helpers work on a string, so you should verify the exact raw payload body that crossed the network. If you parse JSON and then re-stringify it with different spacing or key order, the signature can change even though the semantic payload looks the same.
+
+The second concept is explicit delivery policy. `deliverWebhook()` records every attempt and returns structured attempt metadata. That is useful operationally because the caller can decide whether to log, requeue, or alert based on the same result object instead of inferring behavior from thrown exceptions alone.
+
+The third concept is compatibility. Prefixes, algorithm selection, header naming, and retry counts are all configurable so the package can fit partner conventions without becoming vendor-specific.
+
+## Real-World Example
+
+A common outside-world pattern is an outbound event publisher that sends customer webhooks from a worker. The worker wants to sign the payload, retry transient failures a few times, and capture every attempt for later logging or queue-based retry decisions.
+
+```ts
+import { deliverWebhook } from "@superfunctions/webhooks";
+
+type CustomerWebhook = {
+  type: "account.created" | "account.updated";
+  accountId: string;
+};
+
+export async function sendCustomerWebhook(url: string, event: CustomerWebhook) {
+  const result = await deliverWebhook(
+    {
+      url,
+      payload: event,
+      secret: "whsec_your_shared_secret",
+      signatureHeader: "X-Customer-Signature",
+    },
+    {
+      maxRetries: 3,
+      initialDelayMs: 500,
+      maxDelayMs: 2_000,
+    },
+  );
+
+  return result;
+}
+```
+
+That result can feed directly into [`queue`](/docs/middleware-runtime/queue) for delayed redelivery or into [`metrics`](/docs/middleware-runtime/metrics) for success and failure tracking. On the receiving side, the same event flow usually sits behind [`http`](/docs/http/http) or another adapter-backed route.
+
+## Related Packages
+
+- [`queue`](/docs/middleware-runtime/queue) if failed webhook deliveries should be retried asynchronously outside the request path.
+- [`metrics`](/docs/middleware-runtime/metrics) if you want delivery attempt counts, latency, or error classes emitted to your telemetry system.
+- [`http`](/docs/http/http) if inbound webhook verification needs to happen inside a shared request router.
+
+## Troubleshooting
+
+If verification always fails, first check whether you are validating the raw body bytes and whether the expected prefix is present in the header value. If outbound deliveries keep failing, inspect the `attempts` array before increasing retries; repeated 4xx responses usually indicate a payload or authentication problem rather than a retry-worthy outage. When signatures mismatch across environments, also confirm that both sides agree on the algorithm and encoding settings.

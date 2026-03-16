@@ -1,0 +1,108 @@
+---
+title: OAuth HTTP
+description: Exchange, refresh, and revoke OAuth tokens with a transport layer that stays separate from core flow logic.
+---
+
+`@superfunctions/oauth-http` is the transport layer for OAuth token operations. It is the package that knows how to call token endpoints, apply provider token-auth methods, normalize provider failures, and retry transient upstream problems. That separation is important because it keeps your core OAuth logic focused on state and policy while all “talk to the provider over HTTP” concerns stay in one package.
+
+If you are building a full install flow, you may never call this package directly because [`oauth-flow`](/docs/authentication/oauth-flow) can use it under the hood. It becomes valuable when you need explicit control over token exchange, refresh behavior, revocation cleanup, retry strategy, or fetch implementation. For platform teams and library authors, it is the clean boundary between an OAuth state machine and a provider HTTP client.
+
+## What It Is
+
+`@superfunctions/oauth-http` exports the `OAuthTokenHttpClient` interface together with a default implementation, retry helpers, and normalized error types. The main class is `DefaultOAuthTokenHttpClient`, which performs code exchange, refresh-token exchange, and token revocation. The package also exports `disconnectWithRevoke`, a helper for workflows that should attempt provider revocation first but still clean up local records if the upstream revoke call fails.
+
+## When To Use It
+
+Use this package when you already have provider descriptors and state handling but want a reusable, provider-neutral token client. It is the right choice for custom OAuth orchestrators, background workers that refresh tokens out of band, and services that need deterministic retry rules for provider rate limits or transient failures. If you want the whole lifecycle in one place, `oauth-flow` is usually a faster starting point.
+
+## Install
+
+```bash
+npm install @superfunctions/oauth-http @superfunctions/oauth-core @superfunctions/oauth-providers
+```
+
+## Quick Start
+
+The default client uses the provider descriptor to determine how to send client credentials and how to normalize the response.
+
+```ts
+import { DefaultOAuthTokenHttpClient } from "@superfunctions/oauth-http";
+import { getOAuthProviderDescriptor } from "@superfunctions/oauth-providers";
+
+const github = getOAuthProviderDescriptor("github");
+const client = new DefaultOAuthTokenHttpClient();
+
+const tokens = await client.exchangeToken({
+  provider: github,
+  grantType: "authorization_code",
+  clientId: process.env.GITHUB_CLIENT_ID!,
+  clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+  code: "oauth-code",
+  redirectUri: "https://app.example/oauth/github/callback",
+});
+```
+
+The same client can refresh tokens or revoke them when the provider supports revocation.
+
+```ts
+await client.revokeToken({
+  provider: github,
+  clientId: process.env.GITHUB_CLIENT_ID!,
+  clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+  token: "refresh-token-or-access-token",
+  tokenTypeHint: "access_token",
+});
+```
+
+## Core Concepts
+
+There are three transport concerns this package handles for you. First, it maps the provider descriptor into the correct request shape, including `client_secret_post` versus `client_secret_basic` authentication. Second, it normalizes provider responses so your orchestration layer can work with one `OAuthTokenEndpointResponse` shape instead of a different JSON or form-encoded payload for each provider. Third, it applies retry logic through `decideRetry()` and the default exponential backoff policy, which is especially useful for 429 and 5xx failures.
+
+The error model is also part of the value. `OAuthHttpError` gives you stable codes such as `OAUTH_TOKEN_EXCHANGE_FAILED`, `OAUTH_TOKEN_REFRESH_FAILED`, and `PROVIDER_RATE_LIMITED`, so callers can react without parsing provider-specific response bodies.
+
+## Real-World Example
+
+An external integration platform often wants to revoke the remote token, delete the local token record, and remove the connection object as a single workflow. `disconnectWithRevoke` captures that pattern without pretending provider revocation is always reliable.
+
+```ts
+import {
+  DefaultOAuthTokenHttpClient,
+  disconnectWithRevoke,
+  type OAuthHttpError,
+} from "@superfunctions/oauth-http";
+import { getOAuthProviderDescriptor } from "@superfunctions/oauth-providers";
+
+const github = getOAuthProviderDescriptor("github");
+const client = new DefaultOAuthTokenHttpClient();
+
+await disconnectWithRevoke(client, {
+  revokeSupported: true,
+  revokeRequest: {
+    provider: github,
+    clientId: process.env.GITHUB_CLIENT_ID!,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+    token: "access-token",
+  },
+  deleteLocalTokenRecord: async () => {
+    /* delete token row */
+  },
+  deleteConnectionRecord: async () => {
+    /* delete app connection row */
+  },
+  onRevocationFailure(error: OAuthHttpError) {
+    console.error("provider revoke failed", error.code);
+  },
+});
+```
+
+That workflow is a good fit when your product treats local cleanup as the source of truth and remote revocation as best effort. It also highlights why `oauth-http` is useful even if you eventually graduate to [`oauth-flow`](/docs/authentication/oauth-flow): the transport layer stays reusable in workers, cron jobs, and cleanup paths that do not need the full lifecycle service.
+
+## Related Packages
+
+- [`oauth-core`](/docs/authentication/oauth-core) for provider descriptors, state rules, and callback validation.
+- [`oauth-flow`](/docs/authentication/oauth-flow) for a higher-level lifecycle service that uses token transport internally.
+- [HTTP](/docs/http/http) if you also need to expose OAuth endpoints through a framework-agnostic request layer.
+
+## Troubleshooting
+
+If token exchange fails immediately, verify the provider descriptor matches the provider you are calling and that the configured client authentication method is accepted by that token endpoint. If retries are not behaving the way you expect, inspect whether the upstream status is actually retryable; only 429 and 5xx responses trigger retries by default. If revocation fails but local cleanup succeeds, treat that as a provider-side cleanup problem, not a storage bug in your application.

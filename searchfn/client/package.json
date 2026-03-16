@@ -52,7 +52,9 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "@searchfn/adapters": "file:../adapters"
+    "@searchfn/adapter-contracts": "file:../adapter-contracts",
+    "@searchfn/adapter-memory": "file:../adapter-memory",
+    "@searchfn/adapter-indexeddb": "file:../adapter-indexeddb"
   },
   "superfunctions": {
     "initFunction": "searchFn",

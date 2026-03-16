@@ -1,4 +1,4 @@
-import { MemoryAdapter } from '@searchfn/adapters';
+import { MemoryAdapter } from '@searchfn/adapter-memory';
 
 export interface TranscriptSearchDocument {
   segmentId?: string;

@@ -3,6 +3,8 @@
  * Load from env: RECFN_MAX_*, RECFN_RATE_LIMIT_*.
  */
 
+import { readIntEnvOrDefault } from '@superfunctions/config';
+
 export interface RecFnLimitsConfig {
   maxConcurrentBots: number;
   maxRecordingDurationMs: number;
@@ -21,7 +23,7 @@ export interface RecFnRateLimitConfig {
 
 export const DEFAULT_LIMITS: RecFnLimitsConfig = {
   maxConcurrentBots: 100,
-  maxRecordingDurationMs: 8 * 60 * 60 * 1000, // 8 hours
+  maxRecordingDurationMs: 8 * 60 * 60 * 1000,
   maxTranscriptSegments: 100_000,
   maxWebSocketConnectionsPerBot: 50,
   maxWebhooksPerNamespace: 20,
@@ -36,10 +38,11 @@ export const DEFAULT_RATE_LIMIT: RecFnRateLimitConfig = {
 };
 
 function envInt(name: string, defaultVal: number): number {
-  const v = process.env[name];
-  if (v === undefined || v === '') return defaultVal;
-  const n = parseInt(v, 10);
-  return isNaN(n) ? defaultVal : n;
+  // Deterministic fallback strategy for malformed/out-of-range env values.
+  return readIntEnvOrDefault(name, {
+    defaultValue: defaultVal,
+    min: 1,
+  });
 }
 
 export function loadLimitsConfig(): RecFnLimitsConfig {

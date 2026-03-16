@@ -161,4 +161,47 @@ describe("PROV-012: deferred clone indexing and rebuild lifecycle", () => {
 
     await client.destroy();
   });
+
+  it("applies local mutation index update while deferred clone indexing is enabled", async () => {
+    const storage = new MemoryStorageAdapter();
+    const remote = makeRemoteCloneAdapter([]);
+    const updateIndices = vi.fn().mockResolvedValue(undefined);
+
+    await storage.setHydrationState("tasks", "hydrating");
+    await storage.setHydrationState("tasks", "ready");
+
+    const client = createDatafnClient({
+      schema,
+      clientId: "rebuild-local-mutation-client",
+      storage,
+      searchProvider: {
+        name: "provider",
+        search: vi.fn().mockResolvedValue([]),
+        searchAll: vi.fn().mockResolvedValue([]),
+        updateIndices,
+      },
+      sync: {
+        mode: "sync",
+        remoteAdapter: remote,
+        offlinability: true,
+        skipCloneIndexing: true,
+      },
+    });
+
+    const result: any = await client.tasks.mutate({
+      operation: "insert",
+      id: "t-local-1",
+      record: { title: "Local insert" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(updateIndices).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: "tasks",
+        operation: "upsert",
+      }),
+    );
+
+    await client.destroy();
+  });
 });

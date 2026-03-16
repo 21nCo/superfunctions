@@ -6,12 +6,14 @@ import type {
   SearchAllParams,
   SearchAllResult,
   InitializeParams,
-} from "@searchfn/adapters";
+} from "@searchfn/adapter-contracts";
 
 export interface SearchClientDefaults {
   limit?: number;
   limitPerResource?: number;
   fuzzy?: boolean | number;
+  prefix?: boolean;
+  fieldBoosts?: Record<string, number>;
 }
 
 export interface SearchClient {
@@ -38,4 +40,4 @@ export {
   type SearchAllParams,
   type SearchAllResult,
   type InitializeParams,
-} from "@searchfn/adapters";
+} from "@searchfn/adapter-contracts";

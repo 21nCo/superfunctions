@@ -135,3 +135,76 @@ export function createResourceAuthMiddleware<TSession extends AuthSession>(
     return next();
   };
 }
+
+/**
+ * Extract a bearer token from an Authorization header value.
+ * Returns null for missing or malformed headers.
+ */
+export function extractBearerTokenFromHeader(header: string | null | undefined): string | null {
+  if (!header) {
+    return null;
+  }
+
+  const match = header.trim().match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const token = match[1].trim();
+  return token.length > 0 ? token : null;
+}
+
+/**
+ * Extract a bearer token from request headers.
+ */
+export function extractBearerToken(
+  request: Request,
+  options?: {
+    headerName?: string;
+  }
+): string | null {
+  const headerName = options?.headerName ?? 'Authorization';
+  return extractBearerTokenFromHeader(request.headers.get(headerName));
+}
+
+export interface BearerAuthMiddlewareOptions<TSession> {
+  validateToken: (token: string, request: Request) => Promise<TSession | null> | TSession | null;
+  contextKey?: string;
+  headerName?: string;
+  skipPaths?: string[];
+}
+
+/**
+ * Create reusable bearer-auth middleware with pluggable token validation.
+ */
+export function createBearerAuthMiddleware<TSession>(
+  options: BearerAuthMiddlewareOptions<TSession>
+) {
+  const contextKey = options.contextKey ?? 'auth';
+  const headerName = options.headerName ?? 'Authorization';
+  const skipPaths = options.skipPaths ?? [];
+
+  return async (
+    request: Request,
+    context: Record<string, unknown>,
+    next: () => Promise<Response>
+  ): Promise<Response> => {
+    const url = new URL(request.url);
+    if (skipPaths.some((path) => url.pathname === path || url.pathname.endsWith(path))) {
+      return next();
+    }
+
+    const token = extractBearerToken(request, { headerName });
+    if (!token) {
+      throw new AuthenticationError('Missing or invalid Authorization header');
+    }
+
+    const session = await options.validateToken(token, request);
+    if (!session) {
+      throw new AuthenticationError('Invalid bearer token');
+    }
+
+    context[contextKey] = session;
+    return next();
+  };
+}

@@ -16,6 +16,12 @@
     score: number;
     data: Record<string, unknown>;
   };
+  const SEARCH_OPTIONS = {
+    prefix: true,
+    fuzzy: 0.2,
+    fieldBoosts: { text: 2, name: 1 },
+    source: "auto" as const,
+  };
 
   // ── Mode toggle (sync vs local-only) ──────────────────────────────────
   let currentMode: AppMode = "sync";
@@ -392,6 +398,7 @@
         query,
         resources: ["todos", "categories"],
         limit: 20,
+        ...SEARCH_OPTIONS,
         select: ["id", "text", "completed", "priority", "name", "color"],
         signal: controller.signal,
       });

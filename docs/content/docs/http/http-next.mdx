@@ -1,0 +1,102 @@
+---
+title: HTTP Next
+description: Export shared Superfunctions route handlers from Next.js App Router files so your HTTP logic stays portable beyond one Next.js app.
+---
+
+`@superfunctions/http-next` is the adapter for Next.js App Router projects that want to keep HTTP behavior portable. Next.js gives you file-based route handlers, deployment flexibility, and a strong full-stack application model. This adapter lets you keep those benefits while avoiding a situation where every endpoint is permanently tied to one `route.ts` implementation style.
+
+That portability matters more than it may seem at first. Many teams start by writing API endpoints directly in Next.js and later want to share the same behavior with another service, an edge worker, or a package consumed by several apps. With this adapter, the shared router owns the request logic and the Next route file only exports the methods that Next expects.
+
+## What It Is
+
+`@superfunctions/http-next` converts a router from [`@superfunctions/http`](/docs/http/http) into the object of method exports that the Next.js App Router expects. In practice, you create the shared router once and then export `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, and `HEAD` from a `route.ts` file using `toNextHandlers(router)`.
+
+This makes the route file intentionally small. Next.js still owns file placement and runtime configuration, but the handler logic itself remains in the shared HTTP layer.
+
+## When To Use It
+
+Use this adapter when you are building API endpoints in a Next.js App Router project and want those handlers to stay reusable. It is especially useful when you have several route files that should share one router definition or when you expect some behavior to move outside Next.js later.
+
+Use the table below to compare:
+
+| Choose this adapter when | Consider another adapter when |
+| --- | --- |
+| Your app already uses App Router `route.ts` files | You run a long-lived Node server in Express or Fastify |
+| You want to export HTTP methods from one shared router | You want a lighter fetch-native framework outside Next.js, which points to [`http-hono`](/docs/http/http-hono) |
+| You want portability without giving up Next.js deployment and file-based routing | You are working in SvelteKit route files instead |
+
+## Install
+
+```bash
+npm install @superfunctions/http @superfunctions/http-next next react react-dom
+```
+
+## Quick Start
+
+Create the shared router and export the Next.js method handlers from your route file.
+
+```ts
+import { createRouter } from "@superfunctions/http";
+import { toNextHandlers } from "@superfunctions/http-next";
+
+const router = createRouter({
+  basePath: "/api",
+  routes: [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async () => Response.json({ ok: true }),
+    },
+  ],
+});
+
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } =
+  toNextHandlers(router);
+```
+
+## Core Concepts
+
+The first Next-specific concept is that App Router endpoints are file-based. This adapter does not replace that convention; it works with it. Your `route.ts` file remains the place where Next discovers the endpoint, but the actual request behavior can live in a shared router module instead of being reimplemented inline.
+
+The second concept is base-path alignment. When your route lives under `/api`, the shared router often benefits from a matching `basePath: "/api"` so that route matching inside the portable layer remains consistent with the public URL Next exposes. Keeping that mapping explicit is usually easier to debug than relying on path assumptions.
+
+The third concept is runtime portability. The route file may be Next-specific, but the router it exports does not have to be. That is the main design advantage of this adapter for larger systems.
+
+## Real-World Example
+
+Imagine a team maintaining a shared commerce API used by several web surfaces. One surface is a Next.js storefront, but the underlying HTTP behavior should also be reusable in another service. The team can keep the router in a shared module and let the Next route file only adapt it for App Router exports.
+
+```ts
+import { createRouter } from "@superfunctions/http";
+import { toNextHandlers } from "@superfunctions/http-next";
+
+const commerceRouter = createRouter({
+  basePath: "/api",
+  routes: [
+    {
+      method: "GET",
+      path: "/products/:id",
+      handler: async (_request, context) =>
+        Response.json({
+          productId: context.params.id,
+          channel: "next-storefront",
+        }),
+    },
+  ],
+});
+
+export const { GET } = toNextHandlers(commerceRouter);
+```
+
+The important part is not the size of the example. It is the architecture: the Next route file stays tiny, while the shared router becomes the reusable unit that can move somewhere else if the product surface changes.
+
+## Related Packages
+
+- [`http`](/docs/http/http) for the portable router contract used by this adapter.
+- [`http-hono`](/docs/http/http-hono) if you are comparing Next.js routes with another fetch-native deployment path.
+- [`http-sveltekit`](/docs/http/http-sveltekit) if your team supports more than one route-file framework.
+- [`oauth-http`](/docs/authentication/oauth-http) if your Next endpoints also need OAuth request and callback handling.
+
+## Troubleshooting
+
+If requests never reach your handler, first check whether the `route.ts` file is in the correct App Router location. If route matching behaves unexpectedly, confirm that your router `basePath` matches the public path exposed by the Next route file. If a handler starts depending on Next-only utilities, consider moving that framework-specific behavior into a tiny wrapper and keeping the shared router focused on portable request handling. That pattern preserves the main reason to use this adapter in the first place.

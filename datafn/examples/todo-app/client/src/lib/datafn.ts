@@ -1,6 +1,6 @@
 import { createDatafnClient, IndexedDbStorageAdapter, ns } from "@datafn/client";
 import type { DatafnPlugin } from "@datafn/core";
-import { IndexedDbAdapter } from "@searchfn/adapters";
+import { IndexedDbAdapter } from "@searchfn/adapter-indexeddb";
 import { createSearchProvider } from "@searchfn/datafn-provider";
 import schema from "todo-app-server/schema";
 
@@ -95,13 +95,25 @@ function makeSyncConfig(mode: AppMode) {
 
 const clientId = getOrCreateClientId();
 const namespace = ns("user", clientId);
+const SEARCH_RESOURCE_FIELDS: Record<string, string[]> = {
+  todos: ["text"],
+  categories: ["name"],
+};
+const SEARCH_DEFAULTS = {
+  prefix: true,
+  fuzzy: 0.2,
+  fieldBoosts: {
+    text: 2,
+    name: 1,
+  },
+};
 const searchProvider = createSearchProvider(
-  new IndexedDbAdapter({ dbName: "todo-app-search" }),
+  new IndexedDbAdapter({
+    dbName: "todo-app-search",
+    defaults: SEARCH_DEFAULTS,
+  }),
   {
-    resourceFields: {
-      todos: ["text"],
-      categories: ["name"],
-    },
+    resourceFields: SEARCH_RESOURCE_FIELDS,
   },
 );
 

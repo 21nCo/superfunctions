@@ -1,0 +1,105 @@
+---
+title: Docs Theme
+description: Reuse the shared Superfunctions Fumadocs layout primitives in your own docs applications.
+---
+
+`@superfunctions/docs-theme` is a lightweight package for teams building documentation sites and wanting a shared layout shell instead of re-creating the same root HTML structure, nav configuration, and docs-site defaults in every app. It is aimed at React and Fumadocs users who want a small amount of reusable infrastructure, not a full CMS or design system.
+
+The value for external consumers is speed and consistency. If you are publishing several package docs sites, internal platform docs, or a public developer portal, you can keep the boring layout wiring in one place and focus the rest of your code on content, routing, and docs-specific UI. That is especially helpful when a small docs platform team supports multiple products but wants a consistent structure and repository link pattern across them.
+
+## What It Is
+
+`@superfunctions/docs-theme` exports a `DocsRootLayout` React component plus `createBaseLayoutOptions()`. Together, those helpers give you a shared HTML and body shell plus a predictable way to define a docs nav title, docs URL, and GitHub repository link. The package also publishes shared CSS tokens so several docs apps can align on the same visual foundation.
+
+This package is intentionally narrow. It does not generate your docs content tree, manage search, or decide your sidebar structure. It provides the root-level primitives you can compose with Fumadocs and Next.js when you want a clean starting point.
+
+## When To Use It
+
+Use `@superfunctions/docs-theme` when you are maintaining more than one docs app or when you want a reusable base layout instead of copying root HTML and nav setup across projects. It is a good fit for docs platform teams, open-source maintainers with several packages, or product groups that want a shared docs shell while leaving each app's content model independent.
+
+If you only need the shared content taxonomy or package docs strategy, use the docs site itself as the reference and skip the package. Reach for the package when reusable code, not just reusable guidance, is the goal.
+
+## Install
+
+```bash
+npm install @superfunctions/docs-theme fumadocs-ui react
+```
+
+## Quick Start
+
+Use `DocsRootLayout` as the outer shell for your docs app's root layout so every page starts from the same body structure.
+
+```tsx
+import type { ReactNode } from "react";
+import { DocsRootLayout } from "@superfunctions/docs-theme";
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <DocsRootLayout lang="en" bodyClassName="flex min-h-screen flex-col">
+      {children}
+    </DocsRootLayout>
+  );
+}
+```
+
+Then create shared layout options for your docs navigation and repository link.
+
+```ts
+import { createBaseLayoutOptions } from "@superfunctions/docs-theme";
+
+export const baseOptions = () =>
+  createBaseLayoutOptions(
+    "Acme Platform Docs",
+    {
+      user: "acme",
+      repo: "platform-docs",
+      branch: "main",
+    },
+    "/docs",
+  );
+```
+
+## Core Concepts
+
+The first concept is reusable root layout. `DocsRootLayout` keeps the outer HTML and body wiring consistent across docs apps, including language selection and body-level styling. That helps platform teams avoid subtle layout drift between repositories.
+
+The second concept is config-by-function. `createBaseLayoutOptions()` lets you define nav identity and repository metadata in one small helper rather than hand-building that object in every docs app. The resulting object is easy to pass into a Fumadocs layout.
+
+The third concept is narrow scope. This package is not trying to own your page tree or content authoring model. It gives you the pieces most likely to be duplicated, then gets out of the way.
+
+## Real-World Example
+
+A strong outside-world use case is an organization with one design system, one backend platform, and one integration product, each with a separate docs app. The team wants every app to share a root shell and nav conventions without collapsing all docs into one repository.
+
+```tsx
+import { DocsLayout } from "fumadocs-ui/layouts/docs";
+import { DocsRootLayout, createBaseLayoutOptions } from "@superfunctions/docs-theme";
+
+const baseOptions = createBaseLayoutOptions(
+  "Acme Integrations",
+  { user: "acme", repo: "integrations-docs", branch: "main" },
+  "/docs",
+);
+
+export default function Layout({ children, tree }: { children: React.ReactNode; tree: any }) {
+  return (
+    <DocsRootLayout>
+      <DocsLayout tree={tree} {...baseOptions}>
+        {children}
+      </DocsLayout>
+    </DocsRootLayout>
+  );
+}
+```
+
+That pattern keeps the docs shell shared while leaving each product free to own its own routes, categories, and content strategy. It is a small package, but it removes repeated boilerplate from every new docs app.
+
+## Related Packages
+
+- [`cli`](/docs/tooling/cli) if the same team also supports command-line tooling around shared packages.
+- [Getting Started](/docs/getting-started) if you want to compare the package's reusable shell to the content strategy used in this root docs site.
+- [`http`](/docs/http/http) if your docs app also documents framework adapters and you want to keep presentation separate from content contracts.
+
+## Troubleshooting
+
+If your docs app renders but nav links look wrong, check the `docsUrl` and repository metadata passed into `createBaseLayoutOptions()`. If body styling does not apply as expected, verify whether your app is overriding the layout's `bodyClassName` or `bodyStyle` downstream. If you find yourself adding page-tree logic into this package, that is usually a sign the concern belongs in your app rather than in the shared theme layer.

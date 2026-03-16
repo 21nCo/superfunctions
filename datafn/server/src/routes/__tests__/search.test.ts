@@ -430,3 +430,103 @@ describe("TV-VLIM-006: filter complexity caps", () => {
     expect(body.error.message).toBe("Search filters exceed allowed complexity");
   });
 });
+
+describe("TV-SRV-002: search option validation and forwarding", () => {
+  it("forwards prefix/fuzzy/fieldBoosts to provider.searchAll", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+    await db.create({
+      model: "tasks",
+      data: { id: "t-opt", title: "option test", status: "active" },
+      namespace: "datafn",
+    });
+    const provider = makeSearchProvider({
+      searchAll: vi.fn().mockResolvedValue([{ resource: "tasks", id: "t-opt", score: 0.9 }]),
+    });
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      db,
+      searchProvider: provider,
+    });
+
+    const req = new Request("http://localhost/datafn/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: "option",
+        prefix: true,
+        fuzzy: 0.2,
+        fieldBoosts: { title: 2 },
+      }),
+    });
+
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
+
+    expect(body.ok).toBe(true);
+    expect((provider.searchAll as any).mock.calls[0][0]).toMatchObject({
+      prefix: true,
+      fuzzy: 0.2,
+      fieldBoosts: { title: 2 },
+    });
+  });
+
+  it("rejects non-boolean prefix with canonical error", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      db,
+      searchProvider: makeSearchProvider(),
+    });
+
+    const req = new Request("http://localhost/datafn/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "test", prefix: "true" }),
+    });
+
+    const res = await server.router.handle(req);
+    const body = await readJson(res);
+
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_INVALID");
+    expect(body.error.message).toBe("Invalid request: prefix must be boolean");
+    expect(body.error.details.path).toBe("prefix");
+  });
+
+  it("rejects invalid fuzzy and fieldBoosts values with path-specific errors", async () => {
+    const db = memoryAdapter();
+    await db.initialize();
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      db,
+      searchProvider: makeSearchProvider(),
+    });
+
+    const fuzzyReq = new Request("http://localhost/datafn/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "test", fuzzy: -1 }),
+    });
+    const fuzzyRes = await server.router.handle(fuzzyReq);
+    const fuzzyBody = await readJson(fuzzyRes);
+    expect(fuzzyBody.ok).toBe(false);
+    expect(fuzzyBody.error.code).toBe("DFQL_INVALID");
+    expect(fuzzyBody.error.details.path).toBe("fuzzy");
+
+    const boostReq = new Request("http://localhost/datafn/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "test", fieldBoosts: { title: "2" } }),
+    });
+    const boostRes = await server.router.handle(boostReq);
+    const boostBody = await readJson(boostRes);
+    expect(boostBody.ok).toBe(false);
+    expect(boostBody.error.code).toBe("DFQL_INVALID");
+    expect(boostBody.error.details.path).toBe("fieldBoosts.title");
+  });
+});

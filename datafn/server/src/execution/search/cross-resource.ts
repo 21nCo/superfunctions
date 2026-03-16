@@ -22,6 +22,9 @@ export interface CrossResourceSearchParams {
   fields?: string[];
   limit?: number;
   limitPerResource?: number;
+  prefix?: boolean;
+  fuzzy?: boolean | number;
+  fieldBoosts?: Record<string, number>;
   filters?: Record<string, Record<string, unknown>>;
   select?: string[];
   signal?: AbortSignal;
@@ -103,6 +106,9 @@ export async function executeCrossResourceSearch(
     fields: params.fields,
     limit,
     limitPerResource,
+    prefix: params.prefix,
+    fuzzy: params.fuzzy,
+    fieldBoosts: params.fieldBoosts,
     signal: params.signal,
   });
 

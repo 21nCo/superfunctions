@@ -18,7 +18,10 @@ import type { TriggerHandler } from '../types/trigger.js';
 import type { Workflow, WorkflowStats, ListWorkflowsOptions } from '../types/workflow.js';
 
 import { ProviderRegistry } from './provider-registry.js';
-import { ConnectionManager } from './connection-manager.js';
+import {
+  ConnectionManager,
+  createConnectionManagerOAuthDependencies,
+} from './connection-manager.js';
 import { ActionExecutor } from './action-executor.js';
 import { WorkflowEngine } from './workflow-engine.js';
 import { WebhookHandler } from '../webhooks/webhook-handler.js';
@@ -103,14 +106,24 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     providerRegistry.markConfigured(providerName);
   }
 
+  const providerMap = providerRegistry['providers'] as Map<string, Provider>;
+  const oauthFlowDependencies = createConnectionManagerOAuthDependencies({
+    adapter: config.database,
+    providers: providerMap,
+    integrationConfigs,
+    baseUrl: config.baseUrl,
+    encryptionKey: config.encryptionKey,
+  });
+
   // Initialize managers
   const connectionManager = new ConnectionManager(
     connectionStorage,
-    providerRegistry['providers'],
+    providerMap,
     integrationConfigs,
     config.baseUrl,
     config.encryptionKey,
-    logger
+    logger,
+    oauthFlowDependencies
   );
 
   const actionExecutor = new ActionExecutor(
@@ -230,4 +243,3 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     },
   }) as PlugFn;
 }
-

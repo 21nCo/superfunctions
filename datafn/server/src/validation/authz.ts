@@ -6,6 +6,13 @@
 import type { DatafnSchema, DatafnResourceSchema, DatafnPermissionsPolicy } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import { resolveCapabilities, getCapabilityFields } from "@datafn/core";
+import { canonicalizeActorPrincipal, resolveEffectivePrincipals } from "../execution/auth/principal-resolver.js";
+import { resolveEffectiveLevel, type AccessGrant } from "../execution/auth/access-resolver.js";
+import {
+  getSpv2MigrationRuntimeConfig,
+  resolveAccessLevelFromLegacyV1,
+  resolveDualReadAccessDecision,
+} from "../execution/migration/spv2.js";
 
 /**
  * Error result for authorization failures
@@ -52,6 +59,51 @@ function getCapabilityFieldSets(
   return { capabilityFields, readonlyCapabilityFields };
 }
 
+function getReadFields(policy: DatafnPermissionsPolicy | undefined): string[] {
+  return policy?.read?.fields || [];
+}
+
+function getResourceSchema(
+  schema: DatafnSchema,
+  resourceName: string,
+): DatafnResourceSchema | undefined {
+  return schema.resources.find((resource) => resource.name === resourceName);
+}
+
+function canReadField(
+  schema: DatafnSchema,
+  resource: DatafnResourceSchema,
+  field: string,
+): boolean {
+  if (field === "id") {
+    return true;
+  }
+  const { capabilityFields } = getCapabilityFieldSets(schema, resource);
+  if (capabilityFields.has(field)) {
+    return true;
+  }
+  return getReadFields(resource.permissions).includes(field);
+}
+
+function resolveRelationTargetResource(
+  schema: DatafnSchema,
+  sourceResource: string,
+  relationName: string,
+): string | null {
+  if (!Array.isArray(schema.relations)) {
+    return null;
+  }
+  for (const relation of schema.relations) {
+    if (relation.from === sourceResource && relation.relation === relationName) {
+      return relation.to as string;
+    }
+    if (relation.to === sourceResource && relation.inverse === relationName) {
+      return relation.from as string;
+    }
+  }
+  return null;
+}
+
 /**
  * Validate that a query adheres to read permissions policy
  */
@@ -85,35 +137,51 @@ export function validateQueryAuthz(
 
   const { capabilityFields } = getCapabilityFieldSets(schema, resource);
 
-  // Validate select fields
+  // Validate select fields (including nested relation target fields)
   if (query.select && Array.isArray(query.select)) {
     for (let i = 0; i < query.select.length; i++) {
       const token = query.select[i];
       if (typeof token !== "string") continue;
+      if (token === "*") continue;
 
-      // Parse token to extract field name (ignore relation directives like .*, .#)
       const parts = token.split(".");
-      const baseName = parts[0];
+      let currentResourceName = resource.name;
 
-      // id and capability-managed fields are always readable
-      if (baseName === "id") continue;
-      if (capabilityFields.has(baseName)) continue;
+      for (let segmentIndex = 0; segmentIndex < parts.length; segmentIndex++) {
+        const segment = parts[segmentIndex];
+        const isLastSegment = segmentIndex === parts.length - 1;
+        const isDirective = segment === "*" || segment === "#" || segment === "*#";
 
-      // Check if baseName is a field (not a relation)
-      const isField = resource.fields.some((f) => f.name === baseName) ||
-                      capabilityFields.has(baseName);
+        if (isDirective && isLastSegment) {
+          break;
+        }
 
-      if (isField) {
-        // Check read policy for non-capability fields
-        const readFields = policy.read?.fields || [];
-        if (!readFields.includes(baseName)) {
+        const relationTarget = resolveRelationTargetResource(
+          schema,
+          currentResourceName,
+          segment,
+        );
+        if (relationTarget) {
+          currentResourceName = relationTarget;
+          continue;
+        }
+
+        const currentResource = getResourceSchema(schema, currentResourceName);
+        if (!currentResource) {
+          break;
+        }
+
+        if (!canReadField(schema, currentResource, segment)) {
           return {
             ok: false,
             code: "FORBIDDEN",
-            message: "Authorization denied",
+            message: "Read access denied",
             path: `select[${i}]`,
           };
         }
+
+        // Field segment terminates traversal.
+        break;
       }
     }
   }
@@ -387,8 +455,24 @@ export function validateRelationAuthz(
 
 export type ShareAccessLevel = "viewer" | "editor" | "owner";
 
-function getPermissionsTable(resource: string): string {
-  return `__datafn_permissions_${resource}`;
+const GLOBAL_PERMISSIONS_TABLE = "__datafn_permissions_global";
+const PRINCIPAL_MEMBERSHIPS_TABLE = "__datafn_principal_memberships";
+const PRINCIPAL_HIERARCHY_TABLE = "__datafn_principal_hierarchy";
+
+function isGrantActive(row: Record<string, unknown>): boolean {
+  return row.revokedAt === undefined || row.revokedAt === null;
+}
+
+function normalizeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function canonicalizePrincipalFromUserId(value: string): string {
+  return value.includes(":") ? value : `user:${value}`;
 }
 
 function getShareableCapability(resource: DatafnResourceSchema, schema: DatafnSchema):
@@ -411,6 +495,112 @@ export function isPrivateShareableResource(
   if (!resource) return false;
   const capability = getShareableCapability(resource, schema);
   return capability?.shareable.default === "private";
+}
+
+async function resolveAccessLevelFromV2(
+  db: Adapter,
+  resource: string,
+  recordId: string,
+  actorId: string,
+  namespace: string,
+): Promise<ShareAccessLevel | null> {
+  const principalResult = await resolveEffectivePrincipals({
+    namespace,
+    actorId,
+    store: {
+      getDirectMemberships: async ({ namespace: actorNamespace, actorId: actor }) => {
+        const rows = await db.findMany({
+          model: PRINCIPAL_MEMBERSHIPS_TABLE,
+          where: [{ field: "actorId", operator: "eq", value: actor }],
+          namespace: actorNamespace,
+        });
+        return rows
+          .map((row) => row as Record<string, unknown>)
+          .filter((row) => isGrantActive(row))
+          .map((row) =>
+            typeof row.principalId === "string" ? row.principalId : "",
+          )
+          .filter((principalId) => principalId.length > 0);
+      },
+      getHierarchyParents: async ({ namespace: actorNamespace, principalIds }) => {
+        const edges: Array<{ principalId: string; parentPrincipalId: string }> = [];
+        for (const principalId of principalIds) {
+          const rows = await db.findMany({
+            model: PRINCIPAL_HIERARCHY_TABLE,
+            where: [{ field: "principalId", operator: "eq", value: principalId }],
+            namespace: actorNamespace,
+          });
+          for (const row of rows) {
+            const edge = row as Record<string, unknown>;
+            if (!isGrantActive(edge)) {
+              continue;
+            }
+            if (
+              typeof edge.principalId === "string" &&
+              typeof edge.parentPrincipalId === "string"
+            ) {
+              edges.push({
+                principalId: edge.principalId,
+                parentPrincipalId: edge.parentPrincipalId,
+              });
+            }
+          }
+        }
+        return edges;
+      },
+    },
+  });
+
+  const grants: AccessGrant[] = [];
+  for (const principalId of principalResult.effectivePrincipals) {
+    const rows = await db.findMany({
+      model: GLOBAL_PERMISSIONS_TABLE,
+      where: [
+        { field: "resourceType", operator: "eq", value: resource },
+        { field: "resourceNs", operator: "eq", value: namespace },
+        { field: "principalId", operator: "eq", value: principalId },
+      ],
+      namespace,
+    });
+
+    for (const row of rows) {
+      const grant = row as Record<string, unknown>;
+      if (!isGrantActive(grant)) {
+        continue;
+      }
+      const level = grant.level;
+      if (level !== "viewer" && level !== "editor" && level !== "owner") {
+        continue;
+      }
+
+      const grantKind =
+        grant.grantKind === "scope" || grant.resourceId === null
+          ? "scope"
+          : grant.grantKind === "relation_inherited"
+            ? "relation_inherited"
+            : "record";
+
+      grants.push({
+        principalId,
+        level,
+        grantKind,
+        resourceId:
+          typeof grant.resourceId === "string" ? grant.resourceId : null,
+        sourceRef:
+          typeof grant.sourceRef === "string" ? grant.sourceRef : null,
+      });
+    }
+  }
+
+  const effective = resolveEffectiveLevel({
+    resourceId: recordId,
+    effectivePrincipals: principalResult.effectivePrincipals,
+    grants,
+  });
+  if (effective.effectiveLevel) {
+    return effective.effectiveLevel;
+  }
+  return null;
 }
 
 export async function resolveAccessLevel(
@@ -444,23 +634,130 @@ export async function resolveAccessLevel(
     return null;
   }
 
-  if ((record as Record<string, unknown>).createdBy === actorId) {
+  const recordObject = record as Record<string, unknown>;
+  const actorPrincipal = canonicalizeActorPrincipal(actorId);
+  const createdByValue = normalizeNonEmptyString(recordObject.createdBy);
+  if (
+    createdByValue &&
+    (createdByValue === actorId ||
+      canonicalizePrincipalFromUserId(createdByValue) === actorPrincipal)
+  ) {
     return "owner";
   }
 
-  const permissionId = `${recordId}:${actorId}`;
-  const permission = await db.findOne({
-    model: getPermissionsTable(resource),
-    where: [{ field: "id", operator: "eq", value: permissionId }],
-    namespace,
-  });
-  if (!permission) {
-    return null;
+  const readMode = getSpv2MigrationRuntimeConfig().readMode;
+  if (readMode === "v1") {
+    return await resolveAccessLevelFromLegacyV1({
+      db,
+      namespace,
+      resource,
+      recordId,
+      actorId,
+    });
   }
 
-  const level = (permission as Record<string, unknown>).level;
-  if (level === "viewer" || level === "editor" || level === "owner") {
-    return level;
+  const v2Level = await resolveAccessLevelFromV2(
+    db,
+    resource,
+    recordId,
+    actorId,
+    namespace,
+  );
+  if (readMode === "v2") {
+    return v2Level;
   }
-  return null;
+
+  const v1Level = await resolveAccessLevelFromLegacyV1({
+    db,
+    namespace,
+    resource,
+    recordId,
+    actorId,
+  });
+  return resolveDualReadAccessDecision({
+    v1Level,
+    v2Level,
+  }).level;
+}
+
+export async function validateShareableOperationAccess(input: {
+  db: Adapter;
+  schema: DatafnSchema;
+  resource: string;
+  operation: string;
+  id?: string;
+  actorId: string | undefined;
+  namespace: string;
+  requireActorForPrivate?: boolean;
+}): Promise<{ ok: true } | AuthzError> {
+  const resourceSchema = getResourceSchema(input.schema, input.resource);
+  if (!resourceSchema) {
+    return { ok: true };
+  }
+
+  const shareable = getShareableCapability(resourceSchema, input.schema);
+  if (!shareable) {
+    return { ok: true };
+  }
+
+  if (
+    input.requireActorForPrivate &&
+    !input.actorId &&
+    shareable.shareable.default === "private" &&
+    input.operation !== "insert"
+  ) {
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Actor required for private shareable operation",
+      path: "operation",
+    };
+  }
+
+  if (
+    input.operation === "insert" ||
+    input.operation === "share" ||
+    input.operation === "unshare"
+  ) {
+    return { ok: true };
+  }
+
+  if (typeof input.id !== "string" || input.id.length === 0) {
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Authorization denied",
+      path: "operation",
+    };
+  }
+
+  const accessLevel = await resolveAccessLevel(
+    input.db,
+    input.schema,
+    input.resource,
+    input.id,
+    input.actorId,
+    input.namespace,
+  );
+
+  const isOwner = accessLevel === "owner";
+  const isEditor = accessLevel === "editor";
+  const allowed = isOwner
+    ? true
+    : isEditor
+      ? input.operation !== "delete" &&
+        input.operation !== "share" &&
+        input.operation !== "unshare"
+      : false;
+
+  if (!allowed) {
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Authorization denied",
+      path: "operation",
+    };
+  }
+
+  return { ok: true };
 }

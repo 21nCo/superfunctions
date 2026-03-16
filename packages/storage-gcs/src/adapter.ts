@@ -1,5 +1,6 @@
 import { Storage, GetSignedUrlConfig } from '@google-cloud/storage';
 import type { StorageAdapter, StorageAdapterCapabilities, StorageObjectStat, SignedUrlConstraints } from '@superfunctions/storage';
+import { createNotFoundError, isNotFoundError } from '@superfunctions/storage/internal/errors';
 
 export interface GCSStorageConfig {
   bucket: string;
@@ -47,11 +48,8 @@ export function createGCSStorageAdapter(config: GCSStorageConfig): StorageAdapte
           lastModifiedAt: metadata.updated || metadata.timeCreated,
         };
       } catch (err: unknown) {
-        const error = err as { code?: number };
-        if (error.code === 404) {
-          const notFoundError = new Error('Object not found') as Error & { code: string };
-          notFoundError.code = 'STORAGE_NOT_FOUND';
-          throw notFoundError;
+        if (isNotFoundError(err, { numericCodes: [404] })) {
+          throw createNotFoundError();
         }
         throw err;
       }
@@ -156,9 +154,7 @@ export function createGCSStorageAdapter(config: GCSStorageConfig): StorageAdapte
       try {
         const [exists] = await file.exists();
         if (!exists) {
-          const notFoundError = new Error('Object not found') as Error & { code: string };
-          notFoundError.code = 'STORAGE_NOT_FOUND';
-          throw notFoundError;
+          throw createNotFoundError();
         }
       } catch (err: unknown) {
         if (err instanceof Error && 'code' in err && err.code === 'STORAGE_NOT_FOUND') {
@@ -183,10 +179,8 @@ export function createGCSStorageAdapter(config: GCSStorageConfig): StorageAdapte
             controller.close();
           });
           gcstream.on('error', (err) => {
-            if (err && 'code' in err && err.code === 404) {
-              const notFoundError = new Error('Object not found') as Error & { code: string };
-              notFoundError.code = 'STORAGE_NOT_FOUND';
-              controller.error(notFoundError);
+            if (isNotFoundError(err, { numericCodes: [404] })) {
+              controller.error(createNotFoundError());
             } else {
               controller.error(err);
             }

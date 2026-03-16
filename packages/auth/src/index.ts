@@ -24,4 +24,7 @@ export {
 export {
   createAuthMiddleware,
   createResourceAuthMiddleware,
+  createBearerAuthMiddleware,
+  extractBearerToken,
+  extractBearerTokenFromHeader,
 } from './middleware.js';

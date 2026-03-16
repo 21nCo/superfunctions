@@ -1,6 +1,8 @@
 ---
 title: "Client Configuration"
 description: "Full configuration reference for createDatafnClient."
+audience: reference
+applies_to: typescript
 ---
 
 ## DatafnClientConfig
@@ -29,6 +31,9 @@ interface DatafnClientConfig {
 
   /** Custom ID generator for insert operations. */
   generateId?: (params: { resource: string; idPrefix?: string }) => string;
+
+  /** Optional search provider for client-side search query routing. */
+  searchProvider?: SearchProvider;
 }
 ```
 
@@ -159,3 +164,43 @@ interface DatafnRemoteAdapter {
 ```
 
 Each method returns a `DatafnEnvelope` as a plain object.
+
+## SearchProvider
+
+Optional search provider for local-first, client-side search query routing. When configured, DFQL `search` blocks and `client.search()` calls execute against the provider locally instead of routing to the server.
+
+```typescript
+interface SearchProvider {
+  readonly name: string;
+  search(params: SearchParams): Promise<string[]>;
+  searchAll?(params: SearchAllParams): Promise<Array<{ resource: string; id: string; score: number }>>;
+  updateIndices(params: UpdateIndicesParams): Promise<void>;
+  initialize?(config: { resources: Array<{ name: string; searchFields: string[] }> }): Promise<void>;
+  dispose?(): Promise<void>;
+}
+```
+
+At client initialization, `searchProvider.initialize()` is called with resource/searchFields mappings from the schema. During mutations, `searchProvider.updateIndices()` keeps the local index current. At query time, `searchProvider.search()` resolves candidate IDs that are injected into the DFQL filter pipeline.
+
+See the full [SearchProvider interface reference](/docs/reference/core/search-provider) for method signatures and parameter types.
+
+The recommended way to create a search provider is with `@searchfn/datafn-provider`:
+
+```typescript
+import { createSearchProvider } from "@searchfn/datafn-provider";
+import { IndexedDbAdapter } from "@searchfn/adapter-indexeddb";
+
+const searchProvider = createSearchProvider(
+  new IndexedDbAdapter({ dbName: "my-app-search" }),
+  { resourceFields: { tasks: ["title", "description"] } },
+);
+
+const client = createDatafnClient({
+  schema,
+  clientId,
+  storage,
+  searchProvider,
+});
+```
+
+See [Search](/docs/dfql/search#setting-up-a-search-provider) for the full setup guide.

@@ -1,6 +1,8 @@
 ---
 title: Idempotency
 description: Prevent duplicate mutations with idempotency tracking.
+audience: guide
+applies_to: both
 ---
 
 DataFn deduplicates mutations using a `(clientId, mutationId)` pair. When the same mutation is received more than once (due to retries, network issues, or duplicate pushes), the server returns the cached result instead of re-executing the mutation.

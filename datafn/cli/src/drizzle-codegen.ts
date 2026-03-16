@@ -35,7 +35,7 @@ export function generateDrizzleSchema(
   const resources = [...schema.resources].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  const permissionTables: string[] = [];
+  const shareableResources: string[] = [];
 
   const nsEnabled = isNamespaced(schema);
 
@@ -52,12 +52,38 @@ export function generateDrizzleSchema(
       schema.capabilities,
       resource.capabilities,
     );
-    const capabilityFieldNames = new Set(
-      getCapabilityFields(resolvedCapabilities).map((field) => field.name),
+    const hasShareable = resolvedCapabilities.some(
+      (capability) =>
+        typeof capability === "object" &&
+        capability !== null &&
+        "shareable" in capability,
     );
-    const capabilityFields = getCapabilityFields(resolvedCapabilities).filter(
+    if (hasShareable) {
+      shareableResources.push(resource.name);
+    }
+
+    const resolvedCapabilityFields = getCapabilityFields(resolvedCapabilities);
+    const capabilityFieldNames = new Set(
+      resolvedCapabilityFields.map((field) => field.name),
+    );
+    const capabilityFields = resolvedCapabilityFields.filter(
       (field) => !fields.some((userField) => userField.name === field.name),
     );
+    if (hasShareable) {
+      // Compatibility fallback: older core builds may not inject `visibility` yet.
+      capabilityFieldNames.add("visibility");
+      if (!fields.some((field) => field.name === "visibility")) {
+        capabilityFields.push({
+          name: "visibility",
+          type: "string",
+          required: false,
+          nullable: true,
+          readonly: true,
+          default: null,
+        });
+      }
+    }
+
     const hasBaseIndices =
       resource.indices &&
       typeof resource.indices === "object" &&
@@ -83,7 +109,7 @@ export function generateDrizzleSchema(
       lines.push(`  ${field.name}: ${colDef},`);
     }
 
-    const needsIndexCallback = hasBaseIndices || nsEnabled;
+    const needsIndexCallback = hasBaseIndices || nsEnabled || hasShareable;
 
     if (needsIndexCallback) {
       usedImports.add("index");
@@ -101,24 +127,30 @@ export function generateDrizzleSchema(
           );
         }
       }
+      if (hasShareable) {
+        // PERF-001: optimize private/shared query paths.
+        lines.push(`  index("idx_${tableName}_visibility").on(table.visibility),`);
+        lines.push(
+          `  index("idx_${tableName}_created_by_visibility").on(table.createdBy, table.visibility),`,
+        );
+      }
       lines.push(`]);`);
     } else {
       lines.push(`});`);
     }
     lines.push("");
-
-    const hasShareable = resolvedCapabilities.some(
-      (capability) => typeof capability === "object" && capability !== null && "shareable" in capability,
-    );
-    if (hasShareable) {
-      permissionTables.push(resource.name);
-    }
   }
 
-  for (const resourceName of permissionTables) {
-    const permissionsTableName = `__datafn_permissions_${resourceName}`;
-    const varName = sanitizeVarName(permissionsTableName);
-    tableExports.push(varName);
+  if (shareableResources.length > 0) {
+    const permissionsTableName = "__datafn_permissions_global";
+    const membershipsTableName = "__datafn_principal_memberships";
+    const hierarchyTableName = "__datafn_principal_hierarchy";
+
+    const permissionsVarName = sanitizeVarName(permissionsTableName);
+    const membershipsVarName = sanitizeVarName(membershipsTableName);
+    const hierarchyVarName = sanitizeVarName(hierarchyTableName);
+
+    tableExports.push(permissionsVarName, membershipsVarName, hierarchyVarName);
 
     usedImports.add(tableConstructor);
     usedImports.add("text");
@@ -128,22 +160,86 @@ export function generateDrizzleSchema(
     usedImports.add("index");
 
     lines.push(
-      `export const ${varName} = ${tableConstructor}("${permissionsTableName}", {`,
+      `export const ${permissionsVarName} = ${tableConstructor}("${permissionsTableName}", {`,
     );
-    lines.push(`  __ns: text("__ns").notNull(),`);
     lines.push(`  id: text("id").notNull(),`);
-    lines.push(`  resourceId: text("resource_id").notNull(),`);
-    lines.push(`  userId: text("user_id").notNull(),`);
+    lines.push(`  resourceType: text("resource_type").notNull(),`);
+    lines.push(`  resourceNs: text("resource_ns").notNull(),`);
+    lines.push(`  resourceId: text("resource_id"),`);
+    lines.push(`  principalId: text("principal_id").notNull(),`);
     lines.push(`  level: text("level").notNull(),`);
+    lines.push(`  grantKind: text("grant_kind").notNull(),`);
+    lines.push(`  sourceRef: text("source_ref"),`);
     lines.push(`  grantedBy: text("granted_by").notNull(),`);
     lines.push(`  grantedAt: bigint("granted_at", { mode: "number" }).notNull(),`);
+    lines.push(`  revokedAt: bigint("revoked_at", { mode: "number" }),`);
     lines.push(`}, (table) => [`);
-    lines.push(`  primaryKey({ columns: [table.__ns, table.id] }),`);
+    lines.push(`  primaryKey({ columns: [table.id] }),`);
     lines.push(
-      `  uniqueIndex("${permissionsTableName}___ns_resource_id_user_id_idx").on(table.__ns, table.resourceId, table.userId),`,
+      `  uniqueIndex("${permissionsTableName}_resource_record_idx").on(table.resourceType, table.resourceNs, table.resourceId, table.principalId),`,
     );
     lines.push(
-      `  index("idx_${permissionsTableName}___ns_user_id").on(table.__ns, table.userId),`,
+      `  uniqueIndex("${permissionsTableName}_scope_idx").on(table.resourceType, table.resourceNs, table.principalId, table.grantKind),`,
+    );
+    lines.push(`  index("idx_perm_principal").on(table.principalId),`);
+    lines.push(
+      `  index("idx_perm_resource_ns_principal").on(table.resourceNs, table.principalId),`,
+    );
+    lines.push(
+      `  index("idx_perm_resource_lookup").on(table.resourceType, table.resourceNs, table.resourceId),`,
+    );
+    lines.push(
+      `  index("idx_perm_active_lookup").on(table.resourceType, table.resourceNs, table.principalId, table.revokedAt),`,
+    );
+    lines.push(`]);`);
+    lines.push("");
+
+    lines.push(
+      `export const ${membershipsVarName} = ${tableConstructor}("${membershipsTableName}", {`,
+    );
+    lines.push(`  id: text("id").notNull(),`);
+    lines.push(`  namespace: text("namespace").notNull(),`);
+    lines.push(`  actorId: text("actor_id").notNull(),`);
+    lines.push(`  principalId: text("principal_id").notNull(),`);
+    lines.push(`  grantedAt: bigint("granted_at", { mode: "number" }).notNull(),`);
+    lines.push(`  revokedAt: bigint("revoked_at", { mode: "number" }),`);
+    lines.push(`}, (table) => [`);
+    lines.push(`  primaryKey({ columns: [table.id] }),`);
+    lines.push(
+      `  uniqueIndex("${membershipsTableName}_namespace_actor_principal_idx").on(table.namespace, table.actorId, table.principalId),`,
+    );
+    lines.push(`  index("idx_membership_actor").on(table.namespace, table.actorId),`);
+    lines.push(
+      `  index("idx_membership_principal").on(table.namespace, table.principalId),`,
+    );
+    lines.push(
+      `  index("idx_membership_active").on(table.namespace, table.actorId, table.revokedAt),`,
+    );
+    lines.push(`]);`);
+    lines.push("");
+
+    lines.push(
+      `export const ${hierarchyVarName} = ${tableConstructor}("${hierarchyTableName}", {`,
+    );
+    lines.push(`  id: text("id").notNull(),`);
+    lines.push(`  namespace: text("namespace").notNull(),`);
+    lines.push(`  principalId: text("principal_id").notNull(),`);
+    lines.push(`  parentPrincipalId: text("parent_principal_id").notNull(),`);
+    lines.push(`  createdAt: bigint("created_at", { mode: "number" }).notNull(),`);
+    lines.push(`  revokedAt: bigint("revoked_at", { mode: "number" }),`);
+    lines.push(`}, (table) => [`);
+    lines.push(`  primaryKey({ columns: [table.id] }),`);
+    lines.push(
+      `  uniqueIndex("${hierarchyTableName}_namespace_principal_parent_idx").on(table.namespace, table.principalId, table.parentPrincipalId),`,
+    );
+    lines.push(
+      `  index("idx_hierarchy_principal").on(table.namespace, table.principalId),`,
+    );
+    lines.push(
+      `  index("idx_hierarchy_parent").on(table.namespace, table.parentPrincipalId),`,
+    );
+    lines.push(
+      `  index("idx_hierarchy_active").on(table.namespace, table.principalId, table.revokedAt),`,
     );
     lines.push(`]);`);
     lines.push("");

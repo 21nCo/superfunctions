@@ -33,6 +33,7 @@ export interface RequestConfig {
   headers?: Record<string, string>;
   params?: Record<string, any>;
   timeout?: number;
+  bodyEncoding?: 'json' | 'form' | 'raw';
 }
 
 export interface HttpResponse<T = any> {
@@ -124,4 +125,3 @@ export interface BatchAction {
  * Batch action result
  */
 export type BatchResult = ActionResult;
-

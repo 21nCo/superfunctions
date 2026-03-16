@@ -2,11 +2,215 @@ from typing import Any, Dict, List, Optional, Set
 from .envelope import DatafnError
 from .validation import SchemaIndex
 
+GLOBAL_PERMISSIONS_TABLE = "__datafn_permissions_global"
+PRINCIPAL_MEMBERSHIPS_TABLE = "__datafn_principal_memberships"
+PRINCIPAL_HIERARCHY_TABLE = "__datafn_principal_hierarchy"
+
+_LEVEL_RANK = {"viewer": 1, "editor": 2, "owner": 3}
+
+
+def normalize_non_empty_string(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed if trimmed else None
+
+
+def canonicalize_principal_from_user_id(user_id: str) -> str:
+    return user_id if ":" in user_id else f"user:{user_id}"
+
+
+def canonicalize_actor_principal(actor_id: str) -> str:
+    normalized = normalize_non_empty_string(actor_id)
+    if not normalized:
+        return "user:"
+    return canonicalize_principal_from_user_id(normalized)
+
+
+def get_actor_id_from_context(ctx: Any) -> Optional[str]:
+    if not isinstance(ctx, dict):
+        return None
+    actor = (
+        ctx.get("actorId")
+        or ctx.get("actor_id")
+        or ctx.get("userId")
+        or ctx.get("user_id")
+    )
+    return normalize_non_empty_string(actor)
+
+
+def get_shareable_capability(resource_def: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    capabilities = resource_def.get("capabilities", [])
+    if not isinstance(capabilities, list):
+        return None
+    for capability in capabilities:
+        if isinstance(capability, dict) and isinstance(capability.get("shareable"), dict):
+            return capability["shareable"]
+    return None
+
+
+def is_private_shareable_resource(resource_def: Dict[str, Any]) -> bool:
+    shareable = get_shareable_capability(resource_def)
+    if not shareable:
+        return False
+    return shareable.get("default") == "private"
+
+
+def is_grant_active(row: Dict[str, Any]) -> bool:
+    return row.get("revokedAt") is None
+
+
+async def resolve_effective_principals(
+    db: Any,
+    namespace: str,
+    actor_id: str,
+) -> List[str]:
+    actor_principal = canonicalize_actor_principal(actor_id)
+    effective: Set[str] = {actor_id, actor_principal}
+
+    # Direct memberships
+    for actor_candidate in {actor_id, actor_principal}:
+        try:
+            rows = await db.find_many(
+                PRINCIPAL_MEMBERSHIPS_TABLE,
+                where=[{"field": "actorId", "operator": "eq", "value": actor_candidate}],
+                namespace=namespace,
+            )
+        except Exception:
+            rows = []
+        for row in rows:
+            principal_id = normalize_non_empty_string(row.get("principalId"))
+            if principal_id and is_grant_active(row):
+                effective.add(principal_id)
+
+    # Hierarchy expansion (best-effort; absent tables are tolerated)
+    frontier = list(effective)
+    visited: Set[str] = set()
+    max_depth = 16
+    depth = 0
+
+    while frontier and depth < max_depth:
+        depth += 1
+        next_frontier: List[str] = []
+        for principal_id in frontier:
+            if principal_id in visited:
+                continue
+            visited.add(principal_id)
+            try:
+                parent_rows = await db.find_many(
+                    PRINCIPAL_HIERARCHY_TABLE,
+                    where=[{"field": "principalId", "operator": "eq", "value": principal_id}],
+                    namespace=namespace,
+                )
+            except Exception:
+                parent_rows = []
+            for row in parent_rows:
+                parent = normalize_non_empty_string(row.get("parentPrincipalId"))
+                if not parent or not is_grant_active(row):
+                    continue
+                if parent not in effective:
+                    effective.add(parent)
+                    next_frontier.append(parent)
+        frontier = next_frontier
+
+    return sorted(effective)
+
+
+async def resolve_access_level(
+    db: Any,
+    schema_index: SchemaIndex,
+    resource_name: str,
+    record_id: str,
+    actor_id: Optional[str],
+    namespace: str = "datafn",
+) -> Optional[str]:
+    if not actor_id:
+        return None
+
+    resource_def = schema_index.resources_by_name.get(resource_name)
+    if not resource_def:
+        return None
+
+    if not is_private_shareable_resource(resource_def):
+        return "owner"
+
+    record = await db.find_one(
+        resource_name,
+        [{"field": "id", "operator": "eq", "value": record_id}],
+        namespace=namespace,
+    )
+    if not record:
+        return None
+
+    actor_principal = canonicalize_actor_principal(actor_id)
+    created_by = normalize_non_empty_string(record.get("createdBy"))
+    if created_by and (
+        created_by == actor_id
+        or canonicalize_principal_from_user_id(created_by) == actor_principal
+    ):
+        return "owner"
+
+    principals = await resolve_effective_principals(db, namespace, actor_id)
+    best_level: Optional[str] = None
+    for principal_id in principals:
+        rows = await db.find_many(
+            GLOBAL_PERMISSIONS_TABLE,
+            where=[
+                {"field": "resourceType", "operator": "eq", "value": resource_name},
+                {"field": "resourceNs", "operator": "eq", "value": namespace},
+                {"field": "principalId", "operator": "eq", "value": principal_id},
+            ],
+            namespace=namespace,
+        )
+        for row in rows:
+            if not is_grant_active(row):
+                continue
+            level = row.get("level")
+            if level not in _LEVEL_RANK:
+                continue
+            grant_resource_id = row.get("resourceId")
+            if grant_resource_id is not None and grant_resource_id != record_id:
+                continue
+            if best_level is None or _LEVEL_RANK[level] > _LEVEL_RANK[best_level]:
+                best_level = level
+
+    return best_level
+
+
+async def is_record_visible(
+    db: Any,
+    schema_index: SchemaIndex,
+    resource_name: str,
+    record: Dict[str, Any],
+    actor_id: Optional[str],
+    namespace: str = "datafn",
+) -> bool:
+    resource_def = schema_index.resources_by_name.get(resource_name)
+    if not resource_def:
+        return False
+    if not is_private_shareable_resource(resource_def):
+        return True
+    if not actor_id:
+        return False
+    record_id = normalize_non_empty_string(record.get("id"))
+    if not record_id:
+        return False
+    level = await resolve_access_level(
+        db,
+        schema_index,
+        resource_name,
+        record_id,
+        actor_id,
+        namespace=namespace,
+    )
+    return level is not None
+
 
 def validate_query_authz(
     query: Dict[str, Any],
     resource_name: str,
     index: SchemaIndex,
+    allow_unknown_resources: bool = False,
 ) -> Optional[DatafnError]:
     """
     Validate field-level read authorization on a query.
@@ -19,6 +223,12 @@ def validate_query_authz(
 
     permissions = resource_def.get("permissions")
     if not permissions:
+        if is_private_shareable_resource(resource_def) and not allow_unknown_resources:
+            return DatafnError(
+                code="FORBIDDEN",
+                message="Python parity violation",
+                details={"path": "python.authz"},
+            )
         return None
 
     read_perms = permissions.get("read")
@@ -95,6 +305,7 @@ def validate_mutation_authz(
     mutation: Dict[str, Any],
     resource_name: str,
     index: SchemaIndex,
+    allow_unknown_resources: bool = False,
 ) -> Optional[DatafnError]:
     """
     Validate field-level write authorization on a mutation.
@@ -106,6 +317,12 @@ def validate_mutation_authz(
 
     permissions = resource_def.get("permissions")
     if not permissions:
+        if is_private_shareable_resource(resource_def) and not allow_unknown_resources:
+            return DatafnError(
+                code="FORBIDDEN",
+                message="Python parity violation",
+                details={"path": "python.authz"},
+            )
         return None
 
     write_perms = permissions.get("write")

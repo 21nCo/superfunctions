@@ -53,7 +53,7 @@ graph TD
         BM[BM25 Scoring]
     end
 
-    subgraph Adapters ["@searchfn/adapters"]
+    subgraph Adapters ["Adapter Packages (@searchfn/adapter-*)"]
         MA["MemoryAdapter"]
         IA["IndexedDbAdapter"]
         PA["PostgresAdapter"]
@@ -81,7 +81,8 @@ graph TD
 | Layer | Package | Responsibility |
 | --- | --- | --- |
 | Engine | `@searchfn/core` | Text pipeline, inverted index, BM25 scoring, fuzzy matching, stemming |
-| Adapters | `@searchfn/adapters` | Adapter contract + implementations. Memory and IndexedDB use the built-in engine; Postgres, Meilisearch, and ES/OS delegate to external backends. |
+| Contracts | `@searchfn/adapter-contracts` | Shared `SearchAdapter` contract, request/response params, and capability types |
+| Adapters | `@searchfn/adapter-memory`, `@searchfn/adapter-indexeddb`, `@searchfn/adapter-postgres`, `@searchfn/adapter-meilisearch`, `@searchfn/adapter-elasticsearch`, `@searchfn/adapter-opensearch` | Adapter implementations. Memory and IndexedDB use the built-in engine; Postgres, Meilisearch, and ES/OS delegate to external backends. |
 | Client | `@searchfn/client` | Validates inputs, applies defaults, and delegates to an adapter |
 | Server | `@searchfn/server` | Validates HTTP requests, runs authorization, delegates to an adapter, and returns canonical response envelopes |
 | Integration | `@searchfn/datafn-provider` | Maps a `SearchAdapter` into a DataFn `SearchProvider` |

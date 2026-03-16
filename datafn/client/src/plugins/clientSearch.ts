@@ -1,27 +1,31 @@
 /**
- * Client-Side Search Plugin (SRCH-001)
- * 
- * Provides offline full-text search via a client-side search plugin using MiniSearch.
- * Builds search indices from schema `indices.search` fields at clone/pull time,
- * updates indices on local mutations, and routes queries with `search` field to local index.
+ * Client-side search plugin.
+ *
+ * Legacy MiniSearch-only mode remains for compatibility when no provider is configured,
+ * but provider-backed mode is the preferred path.
  */
 
-import type { DatafnPlugin, DatafnHookContext, DatafnSchema } from "@datafn/core";
+import type {
+  DatafnPlugin,
+  DatafnHookContext,
+  DatafnSchema,
+  SearchProvider,
+} from "@datafn/core";
 import type { DatafnStorageAdapter } from "../storage.js";
 import MiniSearch from "minisearch";
 
 export interface ClientSearchConfig {
   /**
-   * Optional field-specific boost weights for search relevance.
-   * Higher boost values give more weight to matches in those fields.
-   * Example: { title: 2, description: 1 }
+   * Legacy MiniSearch-only boost map.
+   * Deprecated when `searchProvider` is configured.
    */
   boost?: Record<string, number>;
-  
-  /**
-   * Optional storage adapter (if not provided via context)
-   */
+
+  /** Optional storage adapter (if not provided via sync payload). */
   storage?: DatafnStorageAdapter;
+
+  /** Preferred provider-backed search/index implementation. */
+  searchProvider?: SearchProvider;
 }
 
 interface SearchIndexEntry {
@@ -29,50 +33,90 @@ interface SearchIndexEntry {
   fields: string[];
 }
 
+type ParsedSearch = {
+  query: string;
+  type?: "fullText" | "semantic";
+  fields?: string[];
+  limit?: number;
+  prefix?: boolean;
+  fuzzy?: boolean | number;
+  fieldBoosts?: Record<string, number>;
+};
+
+const UPSERT_MUTATION_OPERATIONS = new Set([
+  "insert",
+  "merge",
+  "replace",
+  "upsert",
+  "trash",
+  "restore",
+  "archive",
+  "unarchive",
+]);
+
 /**
- * Create a client-side search plugin
- * 
- * @param options - Search configuration
- * @returns DatafnPlugin instance
+ * Create a client-side search plugin.
  */
 export function createClientSearchPlugin(options?: ClientSearchConfig): DatafnPlugin {
   const indices = new Map<string, SearchIndexEntry>();
   const boost = options?.boost;
   let storage: DatafnStorageAdapter | undefined = options?.storage;
+  const searchProvider = options?.searchProvider;
+
+  if (searchProvider && boost) {
+    console.warn(
+      "[client-search] deprecated legacy MiniSearch boost is ignored when provider mode is enabled",
+    );
+  }
 
   return {
     name: "client-search",
     runsOn: ["client"],
 
-    /**
-     * afterSync hook: Rebuild indices after clone/pull
-     */
-    async afterSync(ctx: DatafnHookContext, phase: string, payload: unknown, result: unknown) {
-      // Store storage adapter from context if available
-      const ctxStorage = (payload as any)?.storage as DatafnStorageAdapter | undefined;
+    async afterSync(ctx: DatafnHookContext, phase: string, payload: unknown, _result: unknown) {
+      const ctxStorage = (payload as { storage?: DatafnStorageAdapter } | null)?.storage;
       if (ctxStorage) {
         storage = ctxStorage;
       }
 
-      // Rebuild indices after clone or pull
-      if (phase === "clone" || phase === "pull") {
+      if (phase !== "clone" && phase !== "pull") {
+        return;
+      }
+
+      if (searchProvider) {
         if (!storage) {
-          console.warn("[client-search] No storage adapter available, skipping index rebuild");
+          console.warn("[client-search] No storage adapter available, skipping provider index rebuild");
           return;
         }
-        await rebuildIndices(ctx.schema, storage, indices, boost);
+        await rebuildProviderIndices(ctx.schema, storage, searchProvider);
+        return;
       }
+
+      if (!storage) {
+        console.warn("[client-search] No storage adapter available, skipping index rebuild");
+        return;
+      }
+
+      await rebuildIndices(ctx.schema, storage, indices);
     },
 
-    /**
-     * afterMutation hook: Update indices on local mutations
-     */
-    async afterMutation(ctx: DatafnHookContext, m: unknown | unknown[], result: unknown) {
+    async afterMutation(_ctx: DatafnHookContext, m: unknown | unknown[], _result: unknown) {
+      if (searchProvider) {
+        if (Array.isArray(m)) {
+          for (const mutation of m) {
+            await updateProviderIndex(searchProvider, mutation, storage);
+          }
+          return;
+        }
+
+        await updateProviderIndex(searchProvider, m, storage);
+        return;
+      }
+
       if (!storage) {
         return;
       }
 
-      // Handle batch mutations
       if (Array.isArray(m)) {
         for (const mutation of m) {
           await updateIndex(indices, mutation, storage);
@@ -80,107 +124,282 @@ export function createClientSearchPlugin(options?: ClientSearchConfig): DatafnPl
         return;
       }
 
-      // Handle single mutation
       await updateIndex(indices, m, storage);
     },
 
-    /**
-     * beforeQuery hook: Route search queries to local index when hydrated
-     */
-    async beforeQuery(ctx: DatafnHookContext, q: unknown) {
-      // Handle batch queries - pass through
+    async beforeQuery(_ctx: DatafnHookContext, q: unknown) {
       if (Array.isArray(q)) {
         return q;
       }
 
       const query = q as Record<string, unknown>;
       const resource = query.resource as string | undefined;
-      const searchTerm = query.search as string | undefined;
+      const parsedSearch = parseSearchInput(query.search);
 
-      // Only transform queries with search field
-      if (!searchTerm || !resource) {
+      if (!resource || !parsedSearch) {
         return query;
       }
 
-      // Check if we have an index for this resource
-      const indexEntry = indices.get(resource);
-      if (!indexEntry) {
-        // No index available, let query fall through to remote
-        return query;
-      }
+      if (searchProvider) {
+        if (storage) {
+          const hydrationState = await storage.getHydrationState(resource);
+          if (hydrationState !== "ready") {
+            return query;
+          }
+        }
 
-      // Check hydration state - only use local index if hydrated
-      if (storage) {
-        const hydrationState = await storage.getHydrationState(resource);
-        if (hydrationState !== "ready") {
-          // Not hydrated, fall back to remote
+        try {
+          const providerIds = await (searchProvider.search as any)({
+            resource,
+            query: parsedSearch.query,
+            type: parsedSearch.type,
+            fields: parsedSearch.fields,
+            limit: parsedSearch.limit,
+            prefix: parsedSearch.prefix,
+            fuzzy: parsedSearch.fuzzy,
+            fieldBoosts: parsedSearch.fieldBoosts,
+            signal: query.signal as AbortSignal | undefined,
+          });
+          const candidateIds = dedupeIds(providerIds);
+          return withCandidateFilter(query, candidateIds);
+        } catch (error) {
+          console.error("[client-search] Provider search failed:", error);
           return query;
         }
       }
 
-      // Execute search on local index
+      const indexEntry = indices.get(resource);
+      if (!indexEntry) {
+        return query;
+      }
+
+      if (storage) {
+        const hydrationState = await storage.getHydrationState(resource);
+        if (hydrationState !== "ready") {
+          return query;
+        }
+      }
+
       try {
-        // Build search options
-        const searchOptions: any = {
-          fuzzy: 0.2, // Allow fuzzy matching with 20% tolerance
-          prefix: true, // Enable prefix matching for partial words
+        const searchOptions: {
+          fuzzy?: boolean | number;
+          prefix?: boolean;
+          boost?: Record<string, number>;
+        } = {
+          fuzzy: parsedSearch.fuzzy ?? 0.2,
+          prefix: parsedSearch.prefix ?? true,
         };
-        
-        // Add boost if configured
-        if (boost) {
+
+        if (parsedSearch.fieldBoosts) {
+          searchOptions.boost = parsedSearch.fieldBoosts;
+        } else if (boost) {
           searchOptions.boost = boost;
         }
-        
-        const searchResults = indexEntry.index.search(searchTerm, searchOptions);
 
-        // Extract IDs from search results
-        const candidateIds = searchResults.map((r) => r.id as string);
+        const searchResults = indexEntry.index.search(parsedSearch.query, searchOptions);
+        const candidateIds = dedupeIds(
+          searchResults.map((result) => String((result as { id?: unknown }).id ?? "")),
+        );
 
-        // Inject candidate IDs into query for filtering
-        // This is a private field used by query execution to filter results
         return {
           ...query,
           _searchCandidateIds: candidateIds,
         };
       } catch (error) {
         console.error("[client-search] Search failed:", error);
-        // On error, fall back to remote
         return query;
       }
     },
   };
 }
 
-/**
- * Rebuild all search indices from storage
- */
-async function rebuildIndices(
+function withCandidateFilter(
+  query: Record<string, unknown>,
+  candidateIds: string[],
+): Record<string, unknown> {
+  const idFilter = { id: { in: candidateIds } };
+  const filters = query.filters;
+
+  if (isPlainObject(filters) && Object.keys(filters).length > 0) {
+    return {
+      ...query,
+      filters: {
+        $and: [filters, idFilter],
+      },
+      _searchCandidateIds: candidateIds,
+    };
+  }
+
+  return {
+    ...query,
+    filters: idFilter,
+    _searchCandidateIds: candidateIds,
+  };
+}
+
+function dedupeIds(ids: unknown[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  for (const value of ids) {
+    if (typeof value !== "string" || value.length === 0) {
+      continue;
+    }
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    output.push(value);
+  }
+
+  return output;
+}
+
+function parseSearchInput(search: unknown): ParsedSearch | null {
+  if (typeof search === "string") {
+    const query = search.trim();
+    return query.length > 0 ? { query } : null;
+  }
+
+  if (!isPlainObject(search)) {
+    return null;
+  }
+
+  const query = typeof search.query === "string" ? search.query.trim() : "";
+  if (query.length === 0) {
+    return null;
+  }
+
+  const parsed: ParsedSearch = { query };
+
+  if (search.type === "fullText" || search.type === "semantic") {
+    parsed.type = search.type;
+  }
+
+  if (Array.isArray(search.fields)) {
+    parsed.fields = search.fields.filter((entry): entry is string => typeof entry === "string");
+  }
+
+  if (typeof search.limit === "number" && Number.isFinite(search.limit)) {
+    parsed.limit = search.limit;
+  }
+
+  if (typeof search.prefix === "boolean") {
+    parsed.prefix = search.prefix;
+  }
+
+  if (
+    typeof search.fuzzy === "boolean" ||
+    (typeof search.fuzzy === "number" && Number.isFinite(search.fuzzy))
+  ) {
+    parsed.fuzzy = search.fuzzy;
+  }
+
+  if (isPlainObject(search.fieldBoosts)) {
+    parsed.fieldBoosts = search.fieldBoosts as Record<string, number>;
+  }
+
+  return parsed;
+}
+
+/** Rebuild provider indices from storage records for searchable resources. */
+async function rebuildProviderIndices(
   schema: DatafnSchema,
   storage: DatafnStorageAdapter,
-  indices: Map<string, SearchIndexEntry>,
-  boost?: Record<string, number>,
+  searchProvider: SearchProvider,
 ): Promise<void> {
-  // Clear existing indices
-  indices.clear();
-
-  // Build index for each resource with indices.search defined
   for (const resource of schema.resources) {
-    const searchFields = getSearchFields(resource);
+    const searchFields = getSearchFields(resource as unknown as Record<string, unknown>);
     if (!searchFields || searchFields.length === 0) {
       continue;
     }
 
     try {
-      // Create MiniSearch index
+      const records = await storage.listRecords(resource.name);
+      if (records.length === 0) {
+        continue;
+      }
+      await searchProvider.updateIndices({
+        resource: resource.name,
+        records,
+        operation: "upsert",
+      });
+    } catch (error) {
+      console.error(`[client-search] Failed provider index rebuild for ${resource.name}:`, error);
+    }
+  }
+}
+
+async function updateProviderIndex(
+  searchProvider: SearchProvider,
+  mutation: unknown,
+  storage?: DatafnStorageAdapter,
+): Promise<void> {
+  if (!isPlainObject(mutation)) {
+    return;
+  }
+
+  const resource = typeof mutation.resource === "string" ? mutation.resource : undefined;
+  const operation = typeof mutation.operation === "string" ? mutation.operation : undefined;
+  const id = typeof mutation.id === "string" ? mutation.id : undefined;
+
+  if (!resource || !operation || !id) {
+    return;
+  }
+
+  try {
+    if (operation === "delete") {
+      await searchProvider.updateIndices({
+        resource,
+        records: [{ id }],
+        operation: "delete",
+      });
+      return;
+    }
+
+    if (!UPSERT_MUTATION_OPERATIONS.has(operation)) {
+      return;
+    }
+
+    const storedRecord = storage ? await storage.getRecord(resource, id) : null;
+    const mutationRecord = isPlainObject(mutation.record) ? mutation.record : null;
+    const record = storedRecord ?? (mutationRecord ? { ...mutationRecord, id } : null);
+
+    if (!record) {
+      return;
+    }
+
+    await searchProvider.updateIndices({
+      resource,
+      records: [record],
+      operation: "upsert",
+    });
+  } catch (error) {
+    console.error(`[client-search] Failed provider index update for ${resource}:`, error);
+  }
+}
+
+/** Rebuild all legacy MiniSearch indices from storage. */
+async function rebuildIndices(
+  schema: DatafnSchema,
+  storage: DatafnStorageAdapter,
+  indices: Map<string, SearchIndexEntry>,
+): Promise<void> {
+  indices.clear();
+
+  for (const resource of schema.resources) {
+    const searchFields = getSearchFields(resource as unknown as Record<string, unknown>);
+    if (!searchFields || searchFields.length === 0) {
+      continue;
+    }
+
+    try {
       const index = new MiniSearch({
         fields: searchFields,
-        storeFields: [], // Don't store full documents, just IDs
+        storeFields: [],
       });
 
-      // Load all records from storage
       const records = await storage.listRecords(resource.name);
-
-      // Index each record
       for (const record of records) {
         const doc = buildSearchDocument(record, searchFields);
         if (doc) {
@@ -188,37 +407,29 @@ async function rebuildIndices(
         }
       }
 
-      // Store index
       indices.set(resource.name, {
         index,
         fields: searchFields,
       });
-
-      console.log(
-        `[client-search] Built index for ${resource.name}: ${records.length} documents, ${searchFields.length} fields`,
-      );
     } catch (error) {
       console.error(`[client-search] Failed to build index for ${resource.name}:`, error);
     }
   }
 }
 
-/**
- * Update search index on mutation
- */
+/** Update legacy MiniSearch index on mutation. */
 async function updateIndex(
   indices: Map<string, SearchIndexEntry>,
   mutation: unknown,
   storage: DatafnStorageAdapter,
 ): Promise<void> {
-  if (!mutation || typeof mutation !== "object") {
+  if (!isPlainObject(mutation)) {
     return;
   }
 
-  const m = mutation as Record<string, unknown>;
-  const resource = m.resource as string | undefined;
-  const operation = m.operation as string | undefined;
-  const id = m.id as string | undefined;
+  const resource = typeof mutation.resource === "string" ? mutation.resource : undefined;
+  const operation = typeof mutation.operation === "string" ? mutation.operation : undefined;
+  const id = typeof mutation.id === "string" ? mutation.id : undefined;
 
   if (!resource || !id) {
     return;
@@ -226,7 +437,6 @@ async function updateIndex(
 
   const indexEntry = indices.get(resource);
   if (!indexEntry) {
-    // No index for this resource
     return;
   }
 
@@ -235,48 +445,41 @@ async function updateIndex(
       case "insert":
       case "merge":
       case "replace": {
-        // Fetch updated record from storage
         const record = await storage.getRecord(resource, id);
         if (!record) {
-          // Record was deleted or doesn't exist
           if (indexEntry.index.has(id)) {
             indexEntry.index.remove(id);
           }
           return;
         }
 
-        // Build search document
         const doc = buildSearchDocument(record, indexEntry.fields);
         if (!doc) {
           return;
         }
 
-        // Remove old version if exists
         try {
           if (indexEntry.index.has(id)) {
             indexEntry.index.remove(id);
           }
-        } catch (e) {
-          // Record might not exist in index yet, that's OK
+        } catch {
+          // no-op: index entry may not exist yet
         }
 
-        // Add new version
         indexEntry.index.add(doc);
         break;
       }
 
       case "delete": {
-        // Remove from index
         try {
           indexEntry.index.discard(id);
-        } catch (e) {
-          // Record might not exist in index, that's OK
+        } catch {
+          // no-op: index entry may not exist
         }
         break;
       }
 
       default:
-        // Unknown operation, ignore
         break;
     }
   } catch (error) {
@@ -284,16 +487,12 @@ async function updateIndex(
   }
 }
 
-/**
- * Extract search fields from resource schema
- */
 function getSearchFields(resource: Record<string, unknown>): string[] | null {
   const indices = resource.indices;
   if (!indices) {
     return null;
   }
 
-  // Handle object format: { search: [...] }
   if (typeof indices === "object" && !Array.isArray(indices)) {
     const search = (indices as Record<string, unknown>).search;
     if (Array.isArray(search)) {
@@ -302,13 +501,9 @@ function getSearchFields(resource: Record<string, unknown>): string[] | null {
     return null;
   }
 
-  // Array indices are treated as base indices, not search indices.
   return null;
 }
 
-/**
- * Build a search document from a record
- */
 function buildSearchDocument(
   record: Record<string, unknown>,
   fields: string[],
@@ -320,21 +515,30 @@ function buildSearchDocument(
 
   const doc: Record<string, unknown> = { id };
 
-  // Extract searchable fields
   for (const field of fields) {
     const value = record[field];
-    if (value !== undefined && value !== null) {
-      // Convert to string for indexing
-      if (typeof value === "string") {
-        doc[field] = value;
-      } else if (typeof value === "number" || typeof value === "boolean") {
-        doc[field] = String(value);
-      } else if (typeof value === "object") {
-        // For objects/arrays, stringify for search
-        doc[field] = JSON.stringify(value);
-      }
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    if (typeof value === "string") {
+      doc[field] = value;
+      continue;
+    }
+
+    if (typeof value === "number" || typeof value === "boolean") {
+      doc[field] = String(value);
+      continue;
+    }
+
+    if (typeof value === "object") {
+      doc[field] = JSON.stringify(value);
     }
   }
 
   return doc;
+}
+
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

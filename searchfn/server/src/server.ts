@@ -1,5 +1,5 @@
 import { createRouter, type Router, type Route } from "@superfunctions/http";
-import type { SearchAdapter } from "@searchfn/adapters";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import { errorResponse, parseJsonBody } from "./http/errors.js";
 import { DEFAULT_LIMITS, type ServerLimits } from "./http/validation.js";
 import { statusHandler, type ServerHealthSnapshot } from "./routes/status.js";

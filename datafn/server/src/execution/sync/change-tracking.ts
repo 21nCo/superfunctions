@@ -424,6 +424,108 @@ export class ChangeTrackingService {
   }
 
   /**
+   * Get global changes after `sinceSeq` filtered to a set of resources.
+   * Used by actor-feed sync logic to process permissions/membership/hierarchy updates.
+   */
+  async getChangesForResourcesSince(params: {
+    resources: string[];
+    sinceSeq: number;
+    limit?: number;
+  }): Promise<ChangeEntry[]> {
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+    if (!Array.isArray(params.resources) || params.resources.length === 0) {
+      return [];
+    }
+    try {
+      const rows = await this.db.internal.findMany(
+        "__datafn_changes",
+        [
+          { field: "namespace", op: "eq", value: this.namespace },
+          { field: "server_seq", op: "gt", value: params.sinceSeq },
+        ],
+        { orderBy: "server_seq" },
+      );
+      const resourceSet = new Set(params.resources);
+      const filtered = rows
+        .filter((row) => resourceSet.has(String(row.resource ?? "")))
+        .map((change) => ({
+          namespace: this.namespace,
+          serverSeq: change.server_seq as number,
+          resource: change.resource as string,
+          id: change.record_id as string,
+          op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
+          record: change.record ? JSON.parse(change.record as string) : null,
+        }));
+      if (typeof params.limit === "number" && params.limit > 0) {
+        return filtered.slice(0, params.limit);
+      }
+      return filtered;
+    } catch (error) {
+      this.logger?.error("Failed to get resource-filtered changes", {
+        error: String(error),
+        operation: "getChangesForResourcesSince",
+        resource: "__datafn_changes",
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get latest change entry for a resource/id at or before a given serverSeq.
+   */
+  async getLatestChangeForRecord(params: {
+    resource: string;
+    id: string;
+    atOrBeforeSeq?: number;
+  }): Promise<ChangeEntry | null> {
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+    try {
+      const where: Array<{ field: string; op: string; value: unknown }> = [
+        { field: "namespace", op: "eq", value: this.namespace },
+        { field: "resource", op: "eq", value: params.resource },
+        { field: "record_id", op: "eq", value: params.id },
+      ];
+      if (typeof params.atOrBeforeSeq === "number") {
+        where.push({
+          field: "server_seq",
+          op: "lte",
+          value: params.atOrBeforeSeq,
+        });
+      }
+      const rows = await this.db.internal.findMany(
+        "__datafn_changes",
+        where,
+        { orderBy: "-server_seq", limit: 1 },
+      );
+      const change = rows[0];
+      if (!change) {
+        return null;
+      }
+      return {
+        namespace: this.namespace,
+        serverSeq: change.server_seq as number,
+        resource: change.resource as string,
+        id: change.record_id as string,
+        op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
+        record: change.record ? JSON.parse(change.record as string) : null,
+      };
+    } catch (error) {
+      this.logger?.error("Failed to get latest change for record", {
+        error: String(error),
+        operation: "getLatestChangeForRecord",
+        resource: params.resource,
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Delete change entries older than retentionDays for this namespace.
    * Returns the number of rows deleted.
    */

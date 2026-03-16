@@ -43,10 +43,21 @@
   "dependencies": {
     "recfn": "*",
     "@superfunctions/http": "*",
-    "@searchfn/adapters": "*",
+    "@superfunctions/webhooks": "*",
+    "@superfunctions/metrics": "*",
+    "@superfunctions/config": "*",
+    "@superfunctions/auth": "*",
+    "@superfunctions/middleware": "*",
+    "@superfunctions/oauth-flow": "*",
+    "@superfunctions/oauth-http": "*",
+    "@superfunctions/oauth-storage": "*",
+    "@searchfn/adapter-memory": "*",
     "recfn-deepgram": "*",
     "recfn-assemblyai": "*",
-    "recfn-google-stt": "*"
+    "recfn-google-stt": "*",
+    "@superfunctions/envelope": "*",
+    "@superfunctions/errors": "*",
+    "@superfunctions/queue": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

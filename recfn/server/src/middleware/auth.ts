@@ -1,3 +1,7 @@
+import {
+  createBearerAuthMiddleware as createSharedBearerAuthMiddleware,
+  extractBearerToken as extractSharedBearerToken,
+} from '@superfunctions/auth';
 import { ErrorCode, RecFnError } from 'recfn';
 
 export interface AuthResult {
@@ -10,10 +14,13 @@ export type ValidateApiKey = (
 ) => Promise<AuthResult | null> | AuthResult | null;
 
 export function extractBearerToken(request: Request): string | null {
-  const header = request.headers.get('Authorization');
-  if (!header) return null;
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1] : null;
+  return extractSharedBearerToken(request);
+}
+
+export function createBearerAuthMiddleware(validateApiKey: ValidateApiKey) {
+  return createSharedBearerAuthMiddleware<AuthResult>({
+    validateToken: async (token) => validateApiKey(token),
+  });
 }
 
 export async function authenticate(

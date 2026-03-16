@@ -53,7 +53,20 @@ function applyOmit(
  */
 function isNestedSelectToken(token: string): boolean {
   const parts = token.split(".");
-  return parts.length > 2;
+  if (parts.length <= 1) {
+    return false;
+  }
+  if (parts.length === 2) {
+    const child = parts[1];
+    return child !== "*" && child !== "#" && child !== "*#";
+  }
+  return true;
+}
+
+function isMaterializedRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -147,10 +160,9 @@ export function materializeSelect(
       // Check if we already have records for this relation
       const existingRecords = result[firstRelation];
 
-      // Expand first level relation if not already done
-      const intermediateRecords =
-        existingRecords ||
-        expandRelationToRecords(record, relation, schema, store);
+      // Always expand from source records so successive nested tokens (e.g. items.id + items.title)
+      // do not lose fields when earlier tokens projected only partial child objects.
+      const intermediateRecords = expandRelationToRecords(record, relation, schema, store);
 
       if (!intermediateRecords) continue;
 
@@ -459,7 +471,7 @@ function expandRelationToRecords(
         );
         return relatedRecord;
       })
-      .filter((r) => r !== null) as Record<string, unknown>[];
+      .filter(isMaterializedRecord);
   }
 
   if (relation.type === "one-many") {
@@ -553,7 +565,7 @@ function expandRelation(
           }
           return applyOmit(result, omit);
         })
-        .filter((r) => r !== null);
+        .filter(isMaterializedRecord);
     } else {
       // Return array of related records with $relation_metadata
       return sortedJoins
@@ -589,7 +601,7 @@ function expandRelation(
 
           return applyOmit(result, omit);
         })
-        .filter((r) => r !== null);
+        .filter(isMaterializedRecord);
     }
   }
 

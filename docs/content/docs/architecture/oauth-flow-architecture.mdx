@@ -1,0 +1,53 @@
+---
+title: oauth-flow-architecture
+description: Composition of oauth-core/http/storage/providers/testing/flow and legacy migration path.
+---
+
+## Workflow
+
+```mermaid
+sequenceDiagram
+  participant App
+  participant Flow as oauth-flow
+  participant Core as oauth-core
+  participant HTTP as oauth-http
+  participant Store as oauth-storage
+  App->>Flow: start(provider, user)
+  Flow->>Core: create auth request + state
+  Core->>Store: persist state/token metadata
+  App->>Flow: callback(code, state)
+  Flow->>HTTP: exchange code for token
+  HTTP-->>Flow: token response
+  Flow->>Store: upsert token set
+  Flow-->>App: connected result
+```
+
+## Legacy Migration
+
+Legacy path: `plugfn/auth/oauth-flow` and function-local orchestrations.
+
+Current path: `@superfunctions/oauth-flow` + `@superfunctions/oauth-http` + `@superfunctions/oauth-storage`.
+
+## External Consumer Example
+
+```ts
+import { createOAuthFlowService } from "@superfunctions/oauth-flow";
+```
+
+## Superfunction Consumer Example
+
+```ts
+import { createOAuthFlowService } from "@superfunctions/oauth-flow";
+// used by authfn and plugfn wrappers internally
+```
+
+## Security Caveats
+
+- Require strict state verification and PKCE for public clients.
+- Never emit tokens in logs or metrics events.
+- Reject dynamic redirect URIs outside allowlist.
+
+## Operational Caveats
+
+- Ensure deterministic provider/runtime config loading across environments.
+- Emit request IDs and provider IDs for start/callback/refresh/disconnect events.

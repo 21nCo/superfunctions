@@ -1,10 +1,14 @@
 """Core type definitions for authfn Python SDK."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 from pydantic import BaseModel, Field
 
-from superfunctions.db import Adapter as DatabaseAdapter
+from superfunctions.db import (
+    Adapter as DatabaseAdapter,
+    OrderBy as OrderByClause,
+    WhereClause,
+)
 
 
 class ApiKeySession(BaseModel):

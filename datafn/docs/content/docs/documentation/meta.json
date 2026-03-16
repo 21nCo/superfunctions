@@ -7,6 +7,8 @@
     "client",
     "server",
     "sync",
+    "migrations",
+    "use-cases",
     "storage",
     "plugins",
     "database",

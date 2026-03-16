@@ -1,5 +1,6 @@
-import { MemoryAdapter, IndexedDbAdapter } from "@searchfn/adapters";
-import type { SearchAdapterConfig, IndexedDbAdapterOptions } from "@searchfn/adapters";
+import { MemoryAdapter } from "@searchfn/adapter-memory";
+import { IndexedDbAdapter, type IndexedDbAdapterOptions } from "@searchfn/adapter-indexeddb";
+import type { SearchAdapterConfig } from "@searchfn/adapter-contracts";
 import { createSearchClient } from "./client";
 import type { SearchClient, SearchClientDefaults } from "./types";
 

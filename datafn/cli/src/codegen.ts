@@ -1,5 +1,5 @@
 import {
-  type DatafnSchema,
+  type DatafnFieldSchema,
   validateSchema,
   unwrapEnvelope,
   RELATION_CAPABILITY_FIELD_DEFS,
@@ -43,11 +43,29 @@ export function generateTypes(schemaInput: unknown): string {
     const fields = [...resource.fields].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
+    const hasShareable =
+      Array.isArray(resource.capabilities) &&
+      resource.capabilities.some(
+        (cap) => typeof cap === "object" && cap !== null && "shareable" in cap,
+      );
+    if (hasShareable && !fields.some((field) => field.name === "visibility")) {
+      // Compatibility fallback: ensure visibility exists for share-enabled resources.
+      fields.push({
+        name: "visibility",
+        type: "string",
+        required: false,
+        nullable: true,
+        readonly: true,
+      });
+      fields.sort((a, b) => a.name.localeCompare(b.name));
+    }
 
     for (const field of fields) {
-      const tsType = mapFieldType(field.type);
-      const optional = field.required ? "" : "?";
-      lines.push(`  ${field.name}${optional}: ${tsType};`);
+      const effectiveField =
+        hasShareable && field.name === "visibility"
+          ? { ...field, readonly: true, nullable: true }
+          : field;
+      lines.push(`  ${renderInterfaceField(effectiveField)}`);
     }
 
     lines.push("}");
@@ -79,7 +97,7 @@ export function generateTypes(schemaInput: unknown): string {
     if (hasMetadata) {
       const sortedMeta = [...rel.metadata!].sort((a, b) => a.name.localeCompare(b.name));
       for (const meta of sortedMeta) {
-        const tsType = mapFieldType(meta.type);
+        const tsType = mapFieldType(meta.type, false);
         lines.push(`  ${meta.name}: ${tsType};`);
       }
     }
@@ -91,8 +109,8 @@ export function generateTypes(schemaInput: unknown): string {
       );
       for (const cap of canonicalCaps) {
         for (const fieldDef of RELATION_CAPABILITY_FIELD_DEFS[cap]) {
-          const tsType = mapFieldType(fieldDef.type);
-          lines.push(`  ${fieldDef.name}?: ${tsType};`);
+          const tsType = mapFieldType(fieldDef.type, fieldDef.nullable === true);
+          lines.push(`  readonly ${fieldDef.name}?: ${tsType};`);
         }
       }
     }
@@ -134,7 +152,20 @@ function toPascalCase(str: string): string {
   return str.replace(/(^|_)(\w)/g, (_all, _sep, char) => char.toUpperCase());
 }
 
-function mapFieldType(type: string): string {
+function renderInterfaceField(field: DatafnFieldSchema): string {
+  const tsType = mapFieldType(field.type, field.nullable === true);
+  const optional = field.required ? "" : "?";
+  const readonly = field.readonly ? "readonly " : "";
+  return `${readonly}${field.name}${optional}: ${tsType};`;
+}
+
+function mapFieldType(type: string, nullable: boolean): string {
+  const baseType = mapBaseType(type);
+  if (!nullable) return baseType;
+  return `${baseType} | null`;
+}
+
+function mapBaseType(type: string): string {
   switch (type) {
     case "string":
       return "string";

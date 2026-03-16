@@ -239,6 +239,44 @@ Execute DFQL queries with full filtering, sorting, pagination, and relation expa
 }
 ```
 
+### POST /datafn/search
+
+Execute cross-resource search through the configured server `searchProvider`.
+
+**Request:**
+
+```json
+{
+  "query": "test",
+  "resources": ["tasks", "projects"],
+  "limit": 20,
+  "prefix": true,
+  "fuzzy": 0.2,
+  "fieldBoosts": { "title": 2, "name": 1 }
+}
+```
+
+**Response:**
+
+```json
+{
+  "ok": true,
+  "result": {
+    "results": [
+      { "resource": "tasks", "id": "task:1", "score": 12.34, "data": {} }
+    ]
+  }
+}
+```
+
+Search option parity with client paths:
+
+- `prefix` enables prefix matching.
+- `fuzzy` enables fuzzy matching.
+- `fieldBoosts` applies field-level weighting.
+
+These options are validated at route/query boundaries and forwarded to provider execution.
+
 **Aggregation queries:**
 
 ```json

@@ -9,7 +9,7 @@ Use `createSearchClient()` to create a search client. The client validates input
 
 ```typescript
 import { createSearchClient } from "@searchfn/client";
-import { MemoryAdapter } from "@searchfn/adapters";
+import { MemoryAdapter } from "@searchfn/adapter-memory";
 
 const client = createSearchClient({
   adapter: new MemoryAdapter(),

@@ -1,4 +1,4 @@
-import type { SearchAdapter } from "@searchfn/adapters";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import { parseJsonBody, mapAdapterErrorToResponse, okResponse } from "../http/errors.js";
 import { validateResource, validateQuery, validateLimit } from "../http/validation.js";
 import type { ServerLimits } from "../http/validation.js";
@@ -30,6 +30,7 @@ export function searchHandler(adapter: SearchAdapter, limits: ServerLimits) {
         fields: Array.isArray(body.fields) ? body.fields : undefined,
         limit,
         fuzzy: body.fuzzy as boolean | number | undefined,
+        prefix: body.prefix as boolean | undefined,
         fieldBoosts: body.fieldBoosts as Record<string, number> | undefined,
         signal: req.signal,
       });

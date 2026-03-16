@@ -45,6 +45,7 @@ export async function executeTransaction(
   idempotencyStore: IdempotencyStore,
   limits: { maxTransactSteps?: number } | undefined,
   namespace: string,
+  actorId: string | undefined,
   sequenceStore: SequenceStore | undefined,
   plugins: DatafnPlugin[] = [],
   logger?: DatafnLogger,
@@ -62,7 +63,15 @@ export async function executeTransaction(
   const executeStep = async (step: TransactStep, stepDb: Adapter) => {
     if (step.query) {
       // Create store for query
-      const store = await DbDataStore.forQuery(stepDb, step.query, schema);
+      const store = await DbDataStore.forQuery(
+        stepDb,
+        step.query,
+        schema,
+        namespace,
+        undefined,
+        logger,
+        actorId,
+      );
       // Execute query
       const queryResult = executeQuery(step.query, schema, store);
       return queryResult;
@@ -76,6 +85,7 @@ export async function executeTransaction(
         changeTracking,
         plugins,
         namespace,
+        actorId,
       );
       // Expose the first error as a top-level `.error` property so that
       // transact callers can access result.results[i].error.code directly

@@ -11,11 +11,13 @@ import type { Adapter } from "@superfunctions/db";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { SequenceStore } from "./sequence-store.js";
 import type { DatafnLogger } from "../../logger.js";
+import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 
 export interface ReconcileRequest {
   clientId: string;
   resources: string[];
   includeJoins?: boolean;
+  actorId?: string;
 }
 
 export interface ReconcileResult {
@@ -67,6 +69,7 @@ export async function executeReconcile(
 
   const counts: Record<string, number> = {};
   let joinCounts: Record<string, number> | undefined;
+  const actorId = request.actorId;
 
   // Validate and count each requested resource
   for (const resourceName of request.resources) {
@@ -96,6 +99,38 @@ export async function executeReconcile(
     }
 
     try {
+      if (isPrivateShareableResource(schema, resourceName)) {
+        if (!actorId) {
+          counts[resourceName] = 0;
+          continue;
+        }
+        const rows = await db.findMany({
+          model: resourceName,
+          where: [],
+          namespace,
+        });
+        let visibleCount = 0;
+        for (const row of rows) {
+          const recordId = typeof row.id === "string" ? row.id : null;
+          if (!recordId) {
+            continue;
+          }
+          const level = await resolveAccessLevel(
+            db,
+            schema,
+            resourceName,
+            recordId,
+            actorId,
+            namespace,
+          );
+          if (level) {
+            visibleCount++;
+          }
+        }
+        counts[resourceName] = visibleCount;
+        continue;
+      }
+
       // SCA-001: Use db.count() instead of loading all records
       if (typeof db.count === "function") {
         counts[resourceName] = await db.count({

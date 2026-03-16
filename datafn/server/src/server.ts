@@ -45,6 +45,10 @@ import {
 import { createTimingEmitter, type TimingEmitter } from "./middleware/timing.js";
 import { createDefaultLogger, type DatafnLogger } from "./logger.js";
 import { DatafnExecutionError } from "./execution/errors.js";
+import {
+  setSpv2MigrationRuntimeConfig,
+  type Spv2MigrationRuntimeConfig,
+} from "./execution/migration/spv2.js";
 
 /**
  * Server configuration
@@ -219,6 +223,14 @@ export interface DatafnServerConfig<TContext = any> {
   logger?: DatafnLogger;
 
   /**
+   * COMP-001: SPV2 migration compatibility flags.
+   * - readMode: v2 (default), dual, or v1 (rollback mode)
+   * - writeMode: v2 (default) or dual
+   * - warnOnLegacyApi: emit deterministic deprecation warnings for shareWith.userId
+   */
+  spv2Migration?: Spv2MigrationRuntimeConfig;
+
+  /**
    * Optional search provider for full-text and semantic search queries.
    * When provided, search queries are routed to this provider instead of requiring a searchfn plugin.
    */
@@ -278,6 +290,9 @@ export async function createDatafnServer<TContext = any>(
 
   // LOG-001: Pluggable logger — default console-based
   const logger: DatafnLogger = config.logger ?? createDefaultLogger(debugMode);
+
+  // COMP-001/COMP-002: configure migration compatibility mode for this server instance.
+  setSpv2MigrationRuntimeConfig(config.spv2Migration);
 
   // Initialize database adapter if provided and implements Adapter interface
   if (
@@ -530,6 +545,7 @@ export async function createDatafnServer<TContext = any>(
     idempotencyStore,
     limits,
     extractNamespace,
+    extractActorId,
     sequenceStore,
     config.plugins || [],
     {
@@ -542,6 +558,7 @@ export async function createDatafnServer<TContext = any>(
   const cloneHandler = createCloneHandler(
     validatedSchema,
     extractNamespace,
+    extractActorId,
     db,
     config.plugins || [],
     sequenceStore,
@@ -550,6 +567,7 @@ export async function createDatafnServer<TContext = any>(
   const pullHandler = createPullHandler(
     validatedSchema,
     extractNamespace,
+    extractActorId,
     db,
     config.plugins || [],
     sequenceStore,
@@ -560,6 +578,7 @@ export async function createDatafnServer<TContext = any>(
   const reconcileHandler = createReconcileHandler(
     validatedSchema,
     extractNamespace,
+    extractActorId,
     db,
     config.plugins || [],
     sequenceStore,

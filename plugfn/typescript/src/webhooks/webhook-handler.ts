@@ -2,20 +2,34 @@ import type { WebhookEvent, TriggerHandler } from '../types/trigger.js';
 import type { Logger } from '../types/action.js';
 import { ProviderRegistry } from '../core/provider-registry.js';
 
-/**
- * Webhook handler manages incoming webhooks
- */
+export class WebhookHandlerError extends Error {
+  readonly code:
+    | 'WEBHOOK_SECRET_NOT_FOUND'
+    | 'WEBHOOK_SIGNATURE_INVALID'
+    | 'VALIDATION_ERROR';
+  readonly status: number;
+
+  constructor(
+    code: 'WEBHOOK_SECRET_NOT_FOUND' | 'WEBHOOK_SIGNATURE_INVALID' | 'VALIDATION_ERROR',
+    message: string,
+    status = 400
+  ) {
+    super(message);
+    this.name = 'WebhookHandlerError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
 export class WebhookHandler {
   private handlers = new Map<string, Set<TriggerHandler>>();
+  private processedEventIds = new Set<string>();
 
   constructor(
     private providerRegistry: ProviderRegistry,
     private logger: Logger
   ) {}
 
-  /**
-   * Handle incoming webhook
-   */
   async handleWebhook(
     provider: string,
     event: string,
@@ -25,128 +39,94 @@ export class WebhookHandler {
   ): Promise<WebhookEvent> {
     const providerObj = this.providerRegistry.get(provider);
     if (!providerObj) {
-      throw new Error(`Provider ${provider} not found`);
+      throw new WebhookHandlerError('VALIDATION_ERROR', `Provider ${provider} not found`, 404);
     }
 
-    // Find trigger
-    const trigger = providerObj.triggers?.[event];
-    if (!trigger) {
-      throw new Error(`Trigger ${event} not found in provider ${provider}`);
-    }
+    const { triggerKey, trigger } = this.resolveTrigger(provider, event, providerObj.triggers ?? {});
+    const normalizedHeaders = normalizeHeaders(headers);
+    const signature = getSignature(provider, normalizedHeaders);
 
-    // Verify signature if configured
-    let verified = false;
-    const signature = headers['x-signature'] || headers['x-hub-signature'] || '';
+    let verified = true;
+    if (trigger.webhookConfig?.verifySignature) {
+      if (!secret) {
+        throw new WebhookHandlerError('WEBHOOK_SECRET_NOT_FOUND', `secret not configured for ${provider}`);
+      }
 
-    if (trigger.webhookConfig?.verifySignature && secret) {
       try {
         verified = await trigger.webhookConfig.verifySignature(payload, signature, secret);
       } catch (error) {
-        this.logger.error(`Webhook signature verification failed for ${provider}.${event}`, { error });
-        throw new Error('Webhook signature verification failed');
+        this.logger.error(`Webhook signature verification failed for ${provider}.${triggerKey}`, { error });
+        throw new WebhookHandlerError('WEBHOOK_SIGNATURE_INVALID', 'signature verification failed');
       }
-    } else {
-      // If no verification configured, consider it verified
-      verified = true;
+
+      if (!verified) {
+        throw new WebhookHandlerError('WEBHOOK_SIGNATURE_INVALID', 'signature verification failed');
+      }
     }
 
-    // Transform payload if needed
     const transformedPayload = trigger.webhookConfig?.transformPayload
       ? trigger.webhookConfig.transformPayload(payload)
       : payload;
 
-    // Create webhook event
     const webhookEvent: WebhookEvent = {
       id: this.generateEventId(),
       provider,
-      event,
+      event: triggerKey,
       payload: transformedPayload,
       signature,
       receivedAt: new Date(),
       verified,
-      headers,
+      headers: normalizedHeaders,
     };
 
-    // Parse and handle event
-    try {
-      const triggerEvent = await trigger.handler(transformedPayload);
-      
-      // Emit to registered handlers
-      await this.emit(provider, event, { ...triggerEvent, ...webhookEvent });
-      
-      this.logger.info(`Webhook handled: ${provider}.${event}`, { verified });
-    } catch (error) {
-      this.logger.error(`Webhook handling failed: ${provider}.${event}`, { error });
-      throw error;
+    const eventId = getEventId(transformedPayload, normalizedHeaders);
+    const idempotencyKey = eventId ? `${provider}:${eventId}` : null;
+    if (idempotencyKey && this.processedEventIds.has(idempotencyKey)) {
+      this.logger.info(`Webhook duplicate ignored: ${provider}.${triggerKey}`, { eventId });
+      return webhookEvent;
     }
 
+    const triggerEvent = await trigger.handler(transformedPayload);
+    await this.emit(provider, triggerKey, { ...triggerEvent, ...webhookEvent });
+
+    if (idempotencyKey) {
+      this.processedEventIds.add(idempotencyKey);
+    }
+
+    this.logger.info(`Webhook handled: ${provider}.${triggerKey}`, { verified, eventId });
     return webhookEvent;
   }
 
-  /**
-   * Register a webhook handler
-   */
   on(provider: string, event: string, handler: TriggerHandler): void {
     const key = `${provider}:${event}`;
-    
+
     if (!this.handlers.has(key)) {
       this.handlers.set(key, new Set());
     }
-    
+
     this.handlers.get(key)!.add(handler);
     this.logger.debug(`Handler registered for ${provider}.${event}`);
   }
 
-  /**
-   * Unregister a webhook handler
-   */
   off(provider: string, event: string, handler: TriggerHandler): void {
     const key = `${provider}:${event}`;
     const handlers = this.handlers.get(key);
-    
+
     if (handlers) {
       handlers.delete(handler);
-      
+
       if (handlers.size === 0) {
         this.handlers.delete(key);
       }
     }
   }
 
-  /**
-   * Emit event to all registered handlers
-   */
-  private async emit(provider: string, event: string, webhookEvent: any): Promise<void> {
-    const key = `${provider}:${event}`;
-    const handlers = this.handlers.get(key);
-    
-    if (!handlers || handlers.size === 0) {
-      this.logger.debug(`No handlers registered for ${provider}.${event}`);
-      return;
-    }
-    
-    const promises: Promise<void>[] = [];
-    
-    for (const handler of handlers) {
-      promises.push(
-        Promise.resolve(handler(webhookEvent)).catch((error) => {
-          this.logger.error(`Handler error for ${provider}.${event}`, { error });
-        })
-      );
-    }
-    
-    await Promise.all(promises);
-  }
-
-  /**
-   * Get registered handlers count
-   */
   getHandlerCount(provider?: string, event?: string): number {
     if (provider && event) {
       const key = `${provider}:${event}`;
       return this.handlers.get(key)?.size || 0;
     }
-    
+
     let total = 0;
     for (const handlers of this.handlers.values()) {
       total += handlers.size;
@@ -154,11 +134,73 @@ export class WebhookHandler {
     return total;
   }
 
-  /**
-   * Clear all handlers
-   */
   clearHandlers(): void {
     this.handlers.clear();
+  }
+
+  private async emit(provider: string, event: string, webhookEvent: any): Promise<void> {
+    const key = `${provider}:${event}`;
+    const handlers = this.handlers.get(key);
+
+    if (!handlers || handlers.size === 0) {
+      this.logger.debug(`No handlers registered for ${provider}.${event}`);
+      return;
+    }
+
+    const promises: Promise<void>[] = [];
+
+    for (const handler of handlers) {
+      promises.push(
+        Promise.resolve(handler(webhookEvent)).catch((error) => {
+          this.logger.error(`Handler error for ${provider}.${event}`, { error });
+        })
+      );
+    }
+
+    await Promise.all(promises);
+  }
+
+  private resolveTrigger(
+    provider: string,
+    incomingEvent: string,
+    triggers: Record<string, any>
+  ): { triggerKey: string; trigger: any } {
+    const canonicalEvent = canonicalizeEvent(incomingEvent);
+    const eventMap = new Map<string, string>();
+
+    for (const [triggerKey, trigger] of Object.entries(triggers)) {
+      const normalizedTriggerKey = canonicalizeEvent(triggerKey);
+      setEventMapping(eventMap, normalizedTriggerKey, triggerKey);
+
+      const path = trigger.webhookConfig?.path;
+      if (typeof path === 'string' && path.length > 0) {
+        const normalizedPathKey = canonicalizeEvent(path.replace(/^\/+/, ''));
+        setEventMapping(eventMap, normalizedPathKey, triggerKey);
+      }
+    }
+
+    const resolvedTriggerKey = eventMap.get(canonicalEvent);
+    if (!resolvedTriggerKey) {
+      throw new WebhookHandlerError(
+        'VALIDATION_ERROR',
+        `unknown webhook event: ${provider}.${incomingEvent}`,
+        404
+      );
+    }
+
+    const trigger = triggers[resolvedTriggerKey];
+    if (!trigger) {
+      throw new WebhookHandlerError(
+        'VALIDATION_ERROR',
+        `Trigger ${resolvedTriggerKey} not found in provider ${provider}`,
+        404
+      );
+    }
+
+    return {
+      triggerKey: resolvedTriggerKey,
+      trigger,
+    };
   }
 
   private generateEventId(): string {
@@ -166,3 +208,62 @@ export class WebhookHandler {
   }
 }
 
+function setEventMapping(eventMap: Map<string, string>, canonicalEvent: string, triggerKey: string): void {
+  const existing = eventMap.get(canonicalEvent);
+  if (!existing) {
+    eventMap.set(canonicalEvent, triggerKey);
+  }
+}
+
+function canonicalizeEvent(event: string): string {
+  return decodeURIComponent(event)
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/\//g, '.')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeHeaders(headers: Record<string, string>): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    normalized[key.toLowerCase()] = value;
+  }
+  return normalized;
+}
+
+function getSignature(provider: string, headers: Record<string, string>): string {
+  const providerHeaderCandidates: Record<string, string[]> = {
+    stripe: ['stripe-signature'],
+    github: ['x-hub-signature-256', 'x-hub-signature'],
+    slack: ['x-slack-signature'],
+  };
+
+  const sharedCandidates = ['x-signature', 'x-hub-signature', 'x-hub-signature-256'];
+  const candidates = [...(providerHeaderCandidates[provider] ?? []), ...sharedCandidates];
+
+  for (const header of candidates) {
+    const signature = headers[header];
+    if (signature) {
+      return signature;
+    }
+  }
+
+  return '';
+}
+
+function getEventId(payload: any, headers: Record<string, string>): string | undefined {
+  const payloadId = payload && typeof payload === 'object' ? payload.id : undefined;
+  if (typeof payloadId === 'string' && payloadId.length > 0) {
+    return payloadId;
+  }
+
+  const headerCandidates = ['x-event-id', 'x-request-id', 'x-github-delivery', 'stripe-event-id'];
+  for (const header of headerCandidates) {
+    const value = headers[header];
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}

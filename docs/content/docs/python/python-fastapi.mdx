@@ -1,0 +1,120 @@
+---
+title: Python FastAPI
+description: Adapt the shared Python HTTP handler contract to FastAPI routers and route functions.
+---
+
+`superfunctions-fastapi` is the package to use when your service runs on FastAPI but you want handlers to stay portable. It bridges the shared `superfunctions.http` request and response model into FastAPI routing, which means your domain logic can keep working with framework-neutral handlers while FastAPI handles ASGI transport, dependency injection around the route, and OpenAPI generation.
+
+That separation is useful for external application teams and library authors alike. An app team can keep business logic isolated from FastAPI-specific request objects, making tests cheaper and route migration easier. A reusable package can publish handlers that depend only on the shared contracts, while each host application decides whether those handlers should be mounted in FastAPI, Flask, or another adapter later.
+
+## What It Is
+
+`superfunctions-fastapi` provides adapter helpers that translate between FastAPI and the shared Python HTTP layer. The main entry points are `create_router()`, which turns a list of shared `Route` objects into an `APIRouter`, and `to_fastapi_handler()`, which wraps one shared handler for direct use inside a FastAPI route declaration.
+
+The package also includes a request adapter and response conversion utilities so shared handlers can receive predictable `headers`, `params`, and `query` data while still returning one standard `Response` object.
+
+## When To Use It
+
+Use this package when you want FastAPI as the runtime but do not want your core handlers to depend on FastAPI request types everywhere. It is especially helpful when you are building a platform service that may later expose the same business operations through another framework, or when several apps should share one route implementation style.
+
+If you are only looking for the shared handler and error contracts, start with [`python-core`](/docs/python/python-core). If your persistence layer also needs to stay portable, pair this package with [`python-sqlalchemy`](/docs/python/python-sqlalchemy).
+
+## Install
+
+```bash
+pip install superfunctions-fastapi sfns fastapi
+```
+
+## Quick Start
+
+The most direct pattern is to define routes with shared `Route` objects and let `create_router()` build the FastAPI router.
+
+```python
+from fastapi import FastAPI
+from superfunctions.http import HttpMethod, Response, Route
+from superfunctions_fastapi import create_router
+
+
+async def get_account(request, context):
+    return Response(status=200, body={"accountId": context.params["id"]})
+
+
+app = FastAPI()
+router = create_router(
+    [
+        Route(method=HttpMethod.GET, path="/accounts/{id}", handler=get_account),
+    ],
+    prefix="/api",
+    tags=["accounts"],
+)
+app.include_router(router)
+```
+
+If you already have an existing FastAPI app with route decorators, wrap one shared handler at a time with `to_fastapi_handler()`.
+
+```python
+from fastapi import FastAPI, Request
+from superfunctions.http import Response
+from superfunctions_fastapi import to_fastapi_handler
+
+
+app = FastAPI()
+
+
+async def get_status(request, context):
+    return Response(status=200, body={"service": "billing-api", "path": context.url})
+
+
+@app.get("/status")
+async def status_route(request: Request):
+    return await to_fastapi_handler(get_status)(request)
+```
+
+## Core Concepts
+
+The first concept is edge adaptation. Your handler continues to receive the shared request protocol and `RouteContext`, while the package handles the translation from FastAPI's `Request`, path parameters, query parameters, and headers into that shared shape.
+
+The second concept is response normalization. Shared handlers return `superfunctions.http.Response`, not `JSONResponse` or a framework-specific class. The adapter converts dictionaries, strings, bytes, and error types into the FastAPI response object that ASGI expects.
+
+The third concept is incremental adoption. You do not need to rewrite an entire codebase to get value from this package. Teams can mount a new router with `create_router()` or wrap a small number of handlers with `to_fastapi_handler()` while the rest of the service remains plain FastAPI.
+
+## Real-World Example
+
+A common outside-world use case is a company that maintains one internal domain package and exposes it through several services. The domain package can publish shared handlers, while the API service owns FastAPI-specific concerns such as startup, middleware, dependencies, and deployment.
+
+```python
+from fastapi import FastAPI
+from superfunctions.http import HttpMethod, NotFoundError, Response, Route
+from superfunctions_fastapi import create_router
+
+
+async def get_invoice(request, context):
+    invoice_id = context.params["invoice_id"]
+    invoice = await fetch_invoice(invoice_id)
+    if invoice is None:
+        raise NotFoundError(f"Invoice {invoice_id} not found")
+
+    return Response(status=200, body=invoice)
+
+
+app = FastAPI()
+app.include_router(
+    create_router(
+        [Route(method=HttpMethod.GET, path="/invoices/{invoice_id}", handler=get_invoice)],
+        prefix="/v1",
+        tags=["invoices"],
+    )
+)
+```
+
+That lets the domain code stay framework-neutral while FastAPI still provides docs, dependency hooks, and deployment ergonomics. If another service later needs the same handler logic, the team can reuse it without copying framework code.
+
+## Related Packages
+
+- [`python-core`](/docs/python/python-core) for the shared request, response, route, and error contracts this adapter builds on.
+- [`python-flask`](/docs/python/python-flask) if another app needs the same handler style in Flask.
+- [`http`](/docs/http/http) if you want the TypeScript-side explanation of the same contract-versus-adapter boundary.
+
+## Troubleshooting
+
+If path parameters are missing, verify that the shared route path and the FastAPI path syntax line up with `{name}` placeholders. If responses look inconsistent, check that your handlers return the shared `Response` model rather than a FastAPI `JSONResponse`. If migration feels difficult in an existing app, start with `to_fastapi_handler()` on one or two routes before switching a larger section of the API to `create_router()`.

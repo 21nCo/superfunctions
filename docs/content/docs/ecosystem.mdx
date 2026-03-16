@@ -1,0 +1,43 @@
+import { ecosystemCatalog } from "../../lib/ecosystem-catalog";
+
+---
+title: Ecosystem
+description: See how the shared package docs connect to the broader Superfunctions ecosystem.
+---
+
+The root docs are the entry point for shared packages, not the only docs surface in the Superfunctions world. This page gives you the broader map so you can understand where the reusable package layer ends and where function-specific documentation begins. The catalog below covers all {ecosystemCatalog.length} top-level Superfunctions listed in the current repository guide.
+
+## Core Superfunctions
+
+Each entry below links to a public repo path that acts as the current landing point for that function workspace.
+
+<ul>
+  {ecosystemCatalog.map((entry) => (
+    <li key={entry.slug}>
+      <a href={entry.href} target="_blank" rel="noreferrer">
+        {entry.title}
+      </a>{" "}
+      — {entry.summary}
+    </li>
+  ))}
+</ul>
+
+That list includes the major product and platform workspaces in the ecosystem: identity and access through `authfn`, data pipelines through `datafn`, browser search through `searchfn`, integrations through `plugfn`, deployment support through `hostfn`, and many others. The point of collecting them in one place is to help you navigate the ecosystem without forcing every reader to treat the root shared-package docs as if they were the only documentation destination.
+
+## What The Root Docs Cover
+
+The root docs are intentionally narrower than the full ecosystem. They explain the reusable packages that sit underneath multiple functions and standalone applications. That includes shared contracts such as auth abstractions, HTTP primitives, middleware utilities, database and storage layers, Python integrations, and tooling packages.
+
+If your question sounds like “Which package should I install?” or “How do these primitives compose in my own app or library?”, stay in the root docs. Start with [Getting Started](/docs/getting-started), use [Choosing Packages](/docs/choosing-packages) for decision support, and then move into the package pages for API-level depth.
+
+If your question sounds like “Where is the docs surface for this product area?” or “Which function workspace should I evaluate for my use case?”, the ecosystem catalog is the better next step. It points you to the workspace that owns the more opinionated docs, examples, or specifications for that function.
+
+## Where To Find Function-Specific Docs
+
+Today, the function-specific entry points are a mix of dedicated docs apps, repo docs directories, and README or SPEC landing points. That is why the ecosystem catalog uses explicit public links instead of pretending every function shares one uniform docs layout. You can use the catalog in a few common ways:
+
+- go straight to `datafn`, `searchfn`, or `hostfn` when you already know the product area you care about
+- compare adjacent workspaces such as `authfn` and `plugfn` when your problem spans identity plus third-party integrations
+- start in the root docs for shared package decisions, then jump to a function workspace once you need a more opinionated end-to-end implementation story
+
+In practice, many teams use both levels together. They begin here to understand the shared contracts, then move into a function workspace to evaluate the broader product surface. That is the intended workflow: the root docs orient you, and the ecosystem links help you continue without guesswork.

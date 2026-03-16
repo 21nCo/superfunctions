@@ -285,3 +285,47 @@ export async function executeQueryWithStrategy(
 
   return executeQuery(query, schema, store);
 }
+
+export function mergeSharedWithMeRows(
+  perNamespaceRows: Array<{ namespace: string; data: Record<string, unknown>[] }>,
+  query: Pick<DFQLQuery, "sort" | "limit" | "offset" | "count">,
+): QueryResult {
+  const merged: Record<string, unknown>[] = [];
+  for (const entry of perNamespaceRows) {
+    for (const record of entry.data) {
+      merged.push({
+        ...record,
+        __ns:
+          typeof record.__ns === "string" && record.__ns.length > 0
+            ? record.__ns
+            : entry.namespace,
+      });
+    }
+  }
+
+  let sorted: Record<string, unknown>[];
+  if (query.sort && query.sort.length > 0) {
+    sorted = sortRecords(merged, parseSortTerms(query.sort));
+  } else {
+    sorted = [...merged].sort((a, b) => {
+      const nsA = typeof a.__ns === "string" ? a.__ns : "";
+      const nsB = typeof b.__ns === "string" ? b.__ns : "";
+      const nsCompare = nsA.localeCompare(nsB);
+      if (nsCompare !== 0) {
+        return nsCompare;
+      }
+      return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+    });
+  }
+
+  const offset = typeof query.offset === "number" && query.offset > 0 ? query.offset : 0;
+  const slicedByOffset = offset > 0 ? sorted.slice(offset) : sorted;
+  const limited =
+    typeof query.limit === "number" ? slicedByOffset.slice(0, query.limit) : slicedByOffset;
+
+  return {
+    data: limited,
+    nextCursor: null,
+    ...(query.count === true ? { count: sorted.length } : {}),
+  };
+}

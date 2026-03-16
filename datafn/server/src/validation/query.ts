@@ -322,6 +322,55 @@ export function validateQuery(
       return vErr("DFQL_INVALID", "Invalid search type", "search.type");
     }
 
+    if (search.prefix !== undefined && typeof search.prefix !== "boolean") {
+      return vErr("DFQL_INVALID", "Invalid DFQL: search.prefix must be boolean", "search.prefix");
+    }
+
+    if (
+      search.fuzzy !== undefined &&
+      typeof search.fuzzy !== "boolean" &&
+      (typeof search.fuzzy !== "number" || !Number.isFinite(search.fuzzy) || search.fuzzy < 0)
+    ) {
+      return vErr(
+        "DFQL_INVALID",
+        "Invalid DFQL: search.fuzzy must be boolean or non-negative number",
+        "search.fuzzy",
+      );
+    }
+
+    if (search.fieldBoosts !== undefined) {
+      if (
+        typeof search.fieldBoosts !== "object" ||
+        search.fieldBoosts === null ||
+        Array.isArray(search.fieldBoosts)
+      ) {
+        return vErr(
+          "DFQL_INVALID",
+          "Invalid DFQL: search.fieldBoosts must be object",
+          "search.fieldBoosts",
+        );
+      }
+      const fieldBoostEntries = Object.entries(
+        search.fieldBoosts as Record<string, unknown>,
+      );
+      if (fieldBoostEntries.length > 100) {
+        return vErr(
+          "LIMIT_EXCEEDED",
+          "Search fieldBoosts entries exceed maximum length",
+          "search.fieldBoosts",
+        );
+      }
+      for (const [field, value] of fieldBoostEntries) {
+        if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+          return vErr(
+            "DFQL_INVALID",
+            "Invalid DFQL: search.fieldBoosts values must be finite positive numbers",
+            `search.fieldBoosts.${field}`,
+          );
+        }
+      }
+    }
+
     if (search.fields) {
       if (!Array.isArray(search.fields)) {
         return vErr("DFQL_INVALID", "Search fields must be array", "search.fields");

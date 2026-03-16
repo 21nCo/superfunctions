@@ -1,0 +1,131 @@
+---
+title: Auth
+description: Use the shared authentication contract and middleware helpers without coupling your library to one auth vendor or one framework.
+---
+
+`@superfunctions/auth` is the package to use when you want authentication to stay boring, portable, and easy to substitute. It does not tell you how to issue sessions, how to store users, or which identity provider to trust. Instead, it gives you a stable `AuthProvider` interface, a shared `AuthSession` shape, and middleware helpers that can be reused across HTTP layers and library boundaries. That makes it especially useful for external library authors who want consumers to bring their own auth implementation instead of being forced into a single stack.
+
+For application developers, the same abstraction helps keep routing code clean. You can validate a bearer token, session cookie, API key, or OAuth-backed subject once and expose the result consistently to the rest of your handler pipeline. If you later decide to move from a custom token validator to a richer OAuth installation flow, you can keep the app-facing auth contract and change only the provider implementation behind it.
+
+## What It Is
+
+`@superfunctions/auth` defines the generic contract for request authentication and optional resource authorization. The core surface is small on purpose: an `AuthProvider` authenticates a request and returns a session or `null`; it can optionally authorize access to a resource and optionally revoke a session. The package also exports middleware helpers so you can attach authenticated state to a request context without rewriting the same guard logic in every service.
+
+This package is not an OAuth implementation. When you need redirect-based install flows, PKCE, or token persistence, move into the pages in this category that cover the OAuth-specific packages.
+
+## When To Use It
+
+Use `@superfunctions/auth` when you want your package or application to stay authentication-provider agnostic. Common fits include reusable SDK servers, framework adapters, internal platform libraries, and apps that want one middleware contract for several auth strategies. It is also the right package when the auth story is already solved elsewhere and your code only needs a normalized subject, scopes, and resource IDs.
+
+If your job is to build the OAuth lifecycle itself, jump to [`oauth-flow`](/docs/authentication/oauth-flow) or the lower-level OAuth packages instead. `auth` is the boundary that application code consumes, not the package that exchanges authorization codes.
+
+## Install
+
+```bash
+npm install @superfunctions/auth
+```
+
+## Quick Start
+
+The fastest way to adopt the package is to provide a token validator and let the bearer middleware normalize the result into request context.
+
+```ts
+import {
+  createBearerAuthMiddleware,
+  type AuthSession,
+} from "@superfunctions/auth";
+
+type ApiSession = AuthSession<{ accountId: string }>;
+
+const bearerAuth = createBearerAuthMiddleware<ApiSession>({
+  async validateToken(token) {
+    if (token !== "demo-token") {
+      return null;
+    }
+
+    return {
+      id: "user_123",
+      type: "api-key",
+      resourceIds: ["acct_456"],
+      scopes: ["projects:read"],
+      metadata: { accountId: "acct_456" },
+    };
+  },
+});
+```
+
+If you are building a reusable library, accept any provider that conforms to the interface rather than constructing one inside the package.
+
+```ts
+import {
+  createAuthMiddleware,
+  createResourceAuthMiddleware,
+  type AuthProvider,
+  type AuthSession,
+} from "@superfunctions/auth";
+
+export function createProtectedHooks<TSession extends AuthSession>(
+  provider: AuthProvider<TSession>,
+) {
+  return {
+    auth: createAuthMiddleware(provider, { skipPaths: ["/health"] }),
+    resource: createResourceAuthMiddleware(provider, {
+      resourceHeader: "x-project-id",
+      contextKey: "auth",
+    }),
+  };
+}
+```
+
+## Core Concepts
+
+The `AuthSession` type represents the authenticated subject your application cares about. At minimum it includes an identifier, a session type, and the resource IDs the subject can access. Optional scopes, expiration, and metadata fields let you add the details your app needs without breaking the common contract. Because the session shape is generic, a package can preserve rich metadata for app developers while still sharing the same top-level auth interface.
+
+The middleware helpers are intentionally small. `createAuthMiddleware` authenticates once and stores the session under a configurable context key. `createResourceAuthMiddleware` performs a second check against a resource header and either delegates to `provider.authorize()` or falls back to matching `resourceIds`. `createBearerAuthMiddleware` is the convenience path when your app already knows how to validate a token and just wants a reusable wrapper.
+
+## Real-World Example
+
+Imagine you are shipping a project-management API package to external customers. Some customers will use JWTs from their own identity system, others will use API keys issued by your service, and a third group may eventually use an OAuth-backed app install. Your router package should not care which one they pick. It can depend on `@superfunctions/auth` and treat every authenticated subject the same.
+
+```ts
+import type { AuthProvider, AuthSession } from "@superfunctions/auth";
+
+type ProjectSession = AuthSession<{ plan: "free" | "team" | "enterprise" }>;
+
+export async function loadProject(
+  provider: AuthProvider<ProjectSession>,
+  request: Request,
+  projectId: string,
+) {
+  const session = await provider.authenticate(request);
+  if (!session) {
+    throw new Error("Authentication required");
+  }
+
+  const allowed = provider.authorize
+    ? await provider.authorize(session, projectId)
+    : session.resourceIds.includes(projectId);
+
+  if (!allowed) {
+    throw new Error("Access denied");
+  }
+
+  return {
+    projectId,
+    actorId: session.id,
+    billingPlan: session.metadata?.plan ?? "free",
+  };
+}
+```
+
+That library remains easy to embed in different products because its auth dependency is a public interface, not a private implementation detail. If one consumer later swaps in an OAuth-based provider built on [`oauth-flow`](/docs/authentication/oauth-flow), the library code stays exactly the same.
+
+## Related Packages
+
+- [`oauth-core`](/docs/authentication/oauth-core) if you need redirect, state, and token lifecycle primitives.
+- [`oauth-flow`](/docs/authentication/oauth-flow) if you want a higher-level OAuth orchestration service.
+- [Middleware](/docs/middleware-runtime/middleware) if you are composing auth checks with other request pipeline concerns.
+
+## Troubleshooting
+
+If every request is failing authentication, first check which header your caller is actually sending and whether you changed `headerName` or `contextKey` from the defaults. If resource authorization is failing, verify that the upstream middleware already attached a session and that the resource header name matches what your client sends. A 401-style failure usually means the request could not be authenticated at all; a 403-style failure usually means the subject authenticated successfully but is not allowed to act on the requested resource. Keeping those two cases separate makes debugging much faster for downstream consumers.

@@ -1,0 +1,123 @@
+---
+title: Middleware
+description: Apply reusable runtime policies such as rate limiting without hard-coding them into every route or worker.
+---
+
+`@superfunctions/middleware` is the runtime package you reach for when an application needs one policy applied consistently in many places. Today the package focuses on rate limiting through `createRateLimiter()`, but the broader value is the same one middleware usually brings: keep cross-cutting behavior out of your business handlers so you can reuse it across routes, workers, and services.
+
+That separation matters for both app developers and library authors. An application team can enforce limits before expensive work begins, while a library author can accept a configured limiter rather than forcing one deployment model on downstream users. The current package also re-exports `KVStoreAdapter`, which makes it easier to persist rate-limit state in the same storage abstraction used elsewhere in the Superfunctions ecosystem.
+
+## What It Is
+
+`@superfunctions/middleware` exports a rate-limiter factory that supports three algorithms: fixed window, sliding window, and token bucket. The limiter exposes a small runtime contract: `check()` tells you whether a key may proceed, how many requests remain, the total limit, and when the window or bucket next resets; `reset()` clears state for a specific key. The package can keep state in memory or persist it through a `KVStoreAdapter` or compatible DB adapter.
+
+This package does not decide where you enforce the limit. You can call it in an HTTP route, before enqueuing work, or inside an integration edge that protects a partner API. That makes it practical for external readers who want the policy but not an opinionated framework wrapper.
+
+## When To Use It
+
+Use this package when repeated callers need bounded access to a shared resource. Common examples include per-account API limits, login burst protection, webhook receiver protection, and queue-producer throttling. It is especially helpful when the same rule must be enforced in several runtimes because the limiter contract itself stays the same even if the delivery surface changes.
+
+If all you need is one one-off counter hidden inside a single route file, this package may be more structure than you need. Its real value shows up when you want a reusable limiter that is testable, configurable, and portable across services.
+
+## Install
+
+```bash
+npm install @superfunctions/middleware
+```
+
+Add `@superfunctions/db` only when you want to persist limiter state instead of keeping it in memory:
+
+```bash
+npm install @superfunctions/middleware @superfunctions/db
+```
+
+## Quick Start
+
+The simplest adoption path is an in-memory limiter that protects one API key or account key.
+
+```ts
+import { createRateLimiter } from "@superfunctions/middleware";
+
+const limiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 100,
+  algorithm: "fixed-window",
+});
+
+export async function allowRequest(accountId: string) {
+  const result = await limiter.check({ key: accountId });
+
+  if (!result.allowed) {
+    return {
+      ok: false,
+      status: 429,
+      retryAfter: result.resetAt,
+    };
+  }
+
+  return {
+    ok: true,
+    remaining: result.remaining,
+  };
+}
+```
+
+If you are publishing a reusable service module, accept the limiter as a dependency so the consuming app controls persistence and algorithm choice.
+
+```ts
+import type { RateLimiter } from "@superfunctions/middleware";
+
+export function createWriteGuard(limiter: RateLimiter) {
+  return async function guard(accountId: string) {
+    const result = await limiter.check({ key: `writes:${accountId}`, limit: 10, windowSeconds: 60 });
+    return result.allowed;
+  };
+}
+```
+
+## Core Concepts
+
+The first concept is algorithm choice. Fixed window is easiest to reason about and often good enough for internal APIs. Sliding window gives fairer enforcement around boundary edges. Token bucket is useful when you want bursts to be allowed up to a cap while still enforcing a sustained rate over time. The package lets you swap between those models without changing the calling code.
+
+The second concept is persistence. In-memory mode is ideal for tests and single-process services. If you run several instances or need limits to survive restarts, pass a persistent adapter. Because the package works with a key-value contract rather than a single vendor SDK, you can fit it into your own infrastructure.
+
+The third concept is scope. The `key` is entirely yours to define. A team might rate-limit by account, IP address, installation ID, or a composite value such as `tenant:user:route`.
+
+## Real-World Example
+
+A practical outside-world example is a public ingestion endpoint that must protect itself from bursty producers while still allowing short spikes. Token bucket works well there because occasional bursts are fine, but sustained overload is not.
+
+```ts
+import { createRateLimiter } from "@superfunctions/middleware";
+
+const ingestionLimiter = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  algorithm: "token-bucket",
+  keyPrefix: "ingestion:",
+});
+
+export async function canIngest(tenantId: string, routeName: string) {
+  const result = await ingestionLimiter.check({
+    key: `${tenantId}:${routeName}`,
+  });
+
+  return {
+    allowed: result.allowed,
+    remaining: result.remaining,
+    resetAt: result.resetAt,
+  };
+}
+```
+
+That pattern keeps the rate-limiting logic reusable. The same limiter can sit in front of an HTTP route built on [`http`](/docs/http/http), a webhook receiver built with [`webhooks`](/docs/middleware-runtime/webhooks), or a queue producer that must protect a downstream service.
+
+## Related Packages
+
+- [`http`](/docs/http/http) if you want to apply limiter checks at the request boundary of a shared router.
+- [`errors`](/docs/middleware-runtime/errors) if blocked requests should map to typed runtime failures instead of ad hoc exceptions.
+- [`metrics`](/docs/middleware-runtime/metrics) if you want to record throttled, allowed, and reset events for operations visibility.
+
+## Troubleshooting
+
+If callers are being limited too aggressively, check whether your `key` is broader than intended. It is common to accidentally share one limit across several tenants or routes by using a generic key. If limits appear to reset unpredictably, confirm which algorithm you selected and whether the window semantics match your expectation. When running more than one server instance, remember that the in-memory default is process-local; move to a persistent adapter whenever you need cross-instance consistency.

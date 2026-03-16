@@ -1,0 +1,15 @@
+{
+  "title": "Data & Storage",
+  "pages": [
+    "index",
+    "db",
+    "storage",
+    "storage-s3",
+    "storage-r2",
+    "storage-minio",
+    "storage-gcs",
+    "storage-azure",
+    "storage-local",
+    "files"
+  ]
+}

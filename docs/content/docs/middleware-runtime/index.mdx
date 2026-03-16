@@ -1,0 +1,52 @@
+---
+title: Middleware & Runtime
+description: Learn how middleware, webhooks, queues, envelopes, errors, metrics, and config fit together in a practical service runtime.
+---
+
+This category covers the packages you use after you already know what your service does and need to decide how it behaves in production. These packages are not about domain modeling or framework choice. They are about the runtime edge around your business logic: enforcing rate limits, signing and delivering webhooks, moving work into background jobs, shaping API responses, classifying errors, emitting metrics, and loading safe configuration from the environment.
+
+That matters because most real services need the same set of cross-cutting concerns even when the feature area changes. A billing API, a webhook delivery worker, and an internal admin service might all expose different routes, but they still need shared runtime policies. Superfunctions keeps those concerns in small packages so you can compose the pieces you need instead of buying into a monolithic runtime framework.
+
+If you are reading these docs from the outside world, a useful mental model is this: [`middleware`](/docs/middleware-runtime/middleware) controls request-time policies, [`errors`](/docs/middleware-runtime/errors) decides how failures are classified, [`envelope`](/docs/middleware-runtime/envelope) standardizes what clients see, [`queue`](/docs/middleware-runtime/queue) moves slow work out of the request path, [`webhooks`](/docs/middleware-runtime/webhooks) handles signed delivery to other systems, [`metrics`](/docs/middleware-runtime/metrics) records what happened, and [`config`](/docs/middleware-runtime/config) keeps the runtime wiring predictable.
+
+## What This Category Covers
+
+The packages in this category solve the problems that show up once an application leaves the happy path. You need limits so one caller cannot overwhelm the service. You need typed error definitions so retries and status codes are consistent. You need a canonical envelope so mobile apps, browser clients, or partner integrations do not have to reverse-engineer every endpoint. You need metrics because runtime work is hard to operate blindly. You need queues and webhook helpers when events must leave your system reliably without blocking an HTTP request.
+
+These packages are intentionally composable. You can adopt one on its own, but they become more valuable together. A route built on the HTTP category can use middleware to apply rate limiting, use an error registry to classify failures, convert those failures into envelope responses, emit metrics around success or retry behavior, and read configuration from environment variables before the server starts.
+
+## Package Map
+
+| Package | Role | Start here when |
+| --- | --- | --- |
+| [`middleware`](/docs/middleware-runtime/middleware) | Cross-cutting request or workflow policies | You need reusable runtime guards such as rate limiting |
+| [`webhooks`](/docs/middleware-runtime/webhooks) | Signing, verification, and retry-aware delivery helpers | You send or receive signed webhook payloads |
+| [`queue`](/docs/middleware-runtime/queue) | Queue adapter contracts and in-memory or FlowFn-backed implementations | You want background execution behind a stable interface |
+| [`envelope`](/docs/middleware-runtime/envelope) | Canonical success and error payload helpers | You need stable API response shapes across services |
+| [`errors`](/docs/middleware-runtime/errors) | Typed error registry and reusable `SuperfunctionError` metadata | You want one source of truth for status and retryability |
+| [`metrics`](/docs/middleware-runtime/metrics) | Lightweight event emitters and namespacing helpers | You need instrumentation without coupling to one vendor SDK |
+| [`config`](/docs/middleware-runtime/config) | Safe environment readers and deterministic fallbacks | You want runtime settings validated before boot |
+
+## How To Choose
+
+Use this category like a composition guide rather than a menu of unrelated utilities:
+
+| If you are trying to solve... | Start with | Add next |
+| --- | --- | --- |
+| Protect an API route from burst traffic | [`middleware`](/docs/middleware-runtime/middleware) | [`metrics`](/docs/middleware-runtime/metrics) to observe throttling, then [`errors`](/docs/middleware-runtime/errors) if you want typed failures |
+| Standardize all API responses | [`envelope`](/docs/middleware-runtime/envelope) | [`errors`](/docs/middleware-runtime/errors) so failure metadata stays consistent |
+| Deliver partner events safely | [`webhooks`](/docs/middleware-runtime/webhooks) | [`queue`](/docs/middleware-runtime/queue) for async retries and [`metrics`](/docs/middleware-runtime/metrics) for delivery visibility |
+| Keep boot-time configuration safe | [`config`](/docs/middleware-runtime/config) | Any of the other packages that need validated runtime values |
+
+The most common beginner-friendly composition is `http + middleware + errors + envelope`. `http` handles the request, `middleware` enforces policies, `errors` gives failures consistent metadata, and `envelope` turns the outcome into a stable client-facing shape. Another common composition is `webhooks + queue + metrics + config` for outbound integrations that need retries, observability, and environment-driven endpoints or secrets.
+
+## Common Compositions
+
+- [`http`](/docs/http/http) + [`middleware`](/docs/middleware-runtime/middleware) + [`errors`](/docs/middleware-runtime/errors) + [`envelope`](/docs/middleware-runtime/envelope) for a public API that needs predictable request handling and response shapes.
+- [`webhooks`](/docs/middleware-runtime/webhooks) + [`queue`](/docs/middleware-runtime/queue) + [`metrics`](/docs/middleware-runtime/metrics) for partner-event delivery that should not block the original request.
+- [`config`](/docs/middleware-runtime/config) + [`middleware`](/docs/middleware-runtime/middleware) + [`metrics`](/docs/middleware-runtime/metrics) for boot-time runtime wiring driven by environment variables.
+- [`errors`](/docs/middleware-runtime/errors) + [`envelope`](/docs/middleware-runtime/envelope) when several services need a shared failure vocabulary even if they do not yet share one HTTP adapter.
+
+## Related Categories
+
+Most readers arrive here after choosing how requests enter the system. If that step is still undecided, start with [HTTP & Framework Adapters](/docs/http). If your runtime behavior needs identity or request-scoped subject information, pair these pages with [Authentication & OAuth](/docs/authentication). If you are still comparing package families at a high level, go back to [Choosing Packages](/docs/choosing-packages) for the broader ecosystem chooser.

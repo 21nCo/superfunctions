@@ -1,0 +1,104 @@
+---
+title: Storage GCS
+description: Use Google Cloud Storage with the shared storage contract when your app already runs on Google Cloud or prefers GCS tooling.
+---
+
+`@superfunctions/storage-gcs` adapts the shared storage contract to Google Cloud Storage. It is the right choice when your team already operates on Google Cloud, when service-account or key-file workflows are part of your platform standard, or when you want object storage that fits naturally into a GCP-based application architecture. The package keeps the object-storage boundary portable by exposing the same `StorageAdapter` interface used by the other provider packages.
+
+This adapter supports signed upload URLs, signed download URLs, proxy-streaming upload, and proxy-streaming download. It does not expose multipart upload support, so it is best for teams whose upload flows rely on signed URLs or streaming rather than S3-style multipart orchestration. That distinction is important because the contract makes capability differences explicit instead of pretending every provider behaves identically.
+
+## What It Is
+
+`@superfunctions/storage-gcs` exports `createGCSStorageAdapter()`. You configure it with a bucket and optional project or credential information. The adapter then provides object-stat, deletion, signed URL, and streaming operations behind the common `StorageAdapter` shape.
+
+The package is an adapter layer. Keep [`storage`](/docs/data-storage/storage) as the abstraction and choose this package when Google Cloud Storage is the concrete runtime.
+
+## When To Use It
+
+Choose this adapter when your application already runs on GCP, when your operational model favors service-account-based access, or when your file workflows are best served by signed URLs and server-side streams rather than multipart upload coordination.
+
+Use this chooser when selecting among siblings:
+
+| If your priority is... | Choose |
+| --- | --- |
+| Google Cloud-native object storage with signed URLs and streaming | `storage-gcs` |
+| Azure-native Blob workflows with multipart support | [`storage-azure`](/docs/data-storage/storage-azure) |
+| AWS-style multipart object storage | [`storage-s3`](/docs/data-storage/storage-s3) |
+| Local development on one machine | [`storage-local`](/docs/data-storage/storage-local) |
+
+## Install
+
+```bash
+npm install @superfunctions/storage @superfunctions/storage-gcs
+```
+
+## Quick Start
+
+Create the adapter using your bucket and the credential strategy your platform already uses.
+
+```ts
+import { createGCSStorageAdapter } from "@superfunctions/storage-gcs";
+
+export const storage = createGCSStorageAdapter({
+  bucket: "media-assets",
+  projectId: "your-gcp-project",
+  keyFilename: "./gcp-service-account.json",
+});
+```
+
+You can then issue signed upload URLs using the shared contract.
+
+```ts
+import { createGCSStorageAdapter } from "@superfunctions/storage-gcs";
+
+const storage = createGCSStorageAdapter({
+  bucket: "media-assets",
+  projectId: "your-gcp-project",
+});
+
+const upload = await storage.signUploadUrl?.({
+  key: "images/hero.png",
+  expiresInSeconds: 300,
+  constraints: { contentType: "image/png" },
+});
+```
+
+## Core Concepts
+
+The first concept is capability-aware design. GCS can satisfy a wide range of upload and download workflows through signed URLs and streaming, but this adapter does not provide multipart uploads. Your service should branch on adapter capabilities when large-file transport strategy matters.
+
+The second concept is portable service code. Your handlers, controllers, or services should still depend on `StorageAdapter`, leaving the GCS credentials and bucket wiring at application startup.
+
+The third concept is flexible credential input. The adapter can be configured with project ID, key-file path, or explicit credentials, which makes it usable across CI, local development, and production deployments without changing the rest of the workflow.
+
+## Real-World Example
+
+A good outside-world example is an internal media pipeline that accepts browser uploads into GCS and later streams objects back through an API that applies authorization or watermarking rules. The application code can keep one storage-facing API while GCS handles the object store itself.
+
+```ts
+import { createGCSStorageAdapter } from "@superfunctions/storage-gcs";
+
+const storage = createGCSStorageAdapter({
+  bucket: "project-media",
+  credentials: {
+    client_email: process.env.GCP_CLIENT_EMAIL!,
+    private_key: process.env.GCP_PRIVATE_KEY!,
+  },
+});
+
+export async function openPreviewStream(key: string) {
+  return storage.openDownloadStream?.({ key });
+}
+```
+
+That separation works well when you want to keep file-serving rules in your app and cloud-storage details in the adapter.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) for the base object-storage contract.
+- [`storage-azure`](/docs/data-storage/storage-azure) if you need a cloud adapter with a similar managed-storage story in Azure.
+- [`files`](/docs/data-storage/files) if your public API should speak in terms of upload sessions and file metadata rather than raw object keys.
+
+## Troubleshooting
+
+If signed URLs fail, check that the configured bucket and service-account permissions allow the requested read or write action. If an upload workflow assumes multipart support, switch the flow to signed URLs or proxy streaming after checking adapter capabilities. When debugging local credentials, prefer keeping project and key configuration at application boot so your shared service code stays portable across environments.

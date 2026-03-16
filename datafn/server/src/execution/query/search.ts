@@ -30,6 +30,9 @@ export async function executeSearchQuery(
     type?: "fullText" | "semantic";
     fields?: string[];
     limit?: number;
+    prefix?: boolean;
+    fuzzy?: boolean | number;
+    fieldBoosts?: Record<string, number>;
     signal?: AbortSignal;
   }) => Promise<string[]>,
   logger?: DatafnLogger,
@@ -46,23 +49,29 @@ export async function executeSearchQuery(
 
   // 1. Get candidates
   const candidates = searchProvider
-    ? await searchProvider.search({
-        resource: query.resource,
-        query: query.search.query,
-        type: query.search.type,
-        fields: query.search.fields,
-        limit: query.search.topK,
-        signal,
-      })
-    : resolveCandidates
-      ? await resolveCandidates({
+      ? await searchProvider.search({
           resource: query.resource,
           query: query.search.query,
           type: query.search.type,
           fields: query.search.fields,
           limit: query.search.topK,
+          prefix: query.search.prefix,
+          fuzzy: query.search.fuzzy,
+          fieldBoosts: query.search.fieldBoosts,
           signal,
         })
+      : resolveCandidates
+        ? await resolveCandidates({
+            resource: query.resource,
+            query: query.search.query,
+            type: query.search.type,
+            fields: query.search.fields,
+            limit: query.search.topK,
+            prefix: query.search.prefix,
+            fuzzy: query.search.fuzzy,
+            fieldBoosts: query.search.fieldBoosts,
+            signal,
+          })
       : (() => {
           throw new DatafnExecutionError(
             "DFQL_UNSUPPORTED",

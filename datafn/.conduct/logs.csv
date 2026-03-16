@@ -158,3 +158,12 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-07T15:46:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_04,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_04-2026-03-07-p7n3k5q2-report.md
 2026-03-07T16:20:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_05,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_05-2026-03-07-n2k8r4q9-report.md
 2026-03-07T16:45:00Z,claude-sonnet-4-6,CLI,execute,unknown-agent,PHASE_06,datafn/.conduct/specs/2026-03-07-new-q7m3k9r2-spec/phase-reports/PHASE_06-2026-03-07-q9r5k2m7-report.md
+2026-03-12T12:00:00Z,claude-opus-4-6,VS Code,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-12-k8m4x7r3-issue.md
+2026-03-13T12:59:37Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/datafn/.conduct/specs/2026-03-13-new-bhszlzcn-spec
+2026-03-13T14:28:09Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/datafn/.conduct/specs/2026-03-13-fix-c47f7431-spec
+2026-03-14T18:45:00Z,claude-opus-4-6,Claude Code CLI,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-14-v3k8m2q7-issue.md
+2026-03-14T19:15:00Z,claude-opus-4-6,Claude Code CLI,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-14-r8m3k7x4-issue.md
+2026-03-14T21:30:00Z,claude-sonnet-4-20250514,Factory Droid CLI,execute-issue,Droid,,datafn/.conduct/issue-completions/2026-03-14-r7k4m9x2-completion.md
+2026-03-14T21:45:00Z,claude-opus-4-6,Factory Droid CLI,execute-issue,Droid,,datafn/.conduct/issue-completions/2026-03-14-k9m4x7r3-completion.md
+2026-03-14T12:58:00Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec
+2026-03-15T12:43:27Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-15-new-ug0uwash-spec

@@ -27,6 +27,7 @@ export function createTransactHandler(
   idempotencyStore: IdempotencyStore | undefined,
   limits: { maxTransactSteps?: number } | undefined,
   extractNamespace: (ctx: any) => Promise<string>,
+  extractActorId: ((ctx: any) => Promise<string | undefined>) | undefined,
   sequenceStore: SequenceStore | undefined,
   plugins: DatafnPlugin[] = [],
   handlerOpts?: TransactHandlerOpts,
@@ -172,6 +173,7 @@ export function createTransactHandler(
 
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
+        const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
         // Normalize bare steps to wrapped format before passing to executeTransaction.
         // Bare mutations have `operation` field; bare queries have `resource` but no `operation`.
@@ -188,6 +190,7 @@ export function createTransactHandler(
         idempotencyStore,
         limits,
         namespace,
+        actorId,
         sequenceStore,
         plugins,
         logger,

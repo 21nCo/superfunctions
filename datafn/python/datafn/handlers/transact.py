@@ -153,6 +153,9 @@ class _TxConfig:
         self.db = tx_db
         self.authorize = original.authorize
         self.limits = getattr(original, "limits", {}) or {}
+        self.plugins = getattr(original, "plugins", []) or []
+        self.logger = getattr(original, "logger", None)
+        self.allowUnknownResources = getattr(original, "allowUnknownResources", False)
 
 
 async def _execute_single_step(db: Adapter, config: Any, step: Dict[str, Any], ctx: Any) -> Dict[str, Any]:

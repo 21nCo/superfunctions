@@ -216,6 +216,76 @@ const apiKey = await auth.getKey('key_abc123');
 await auth.revokeKey('key_abc123');
 ```
 
+## Social OAuth (Shared OAuth Primitives)
+
+`authfn` includes a social OAuth module that reuses shared packages:
+
+- `@superfunctions/oauth-core`
+- `@superfunctions/oauth-http`
+- `@superfunctions/oauth-storage`
+- `@superfunctions/oauth-providers`
+
+### Setup
+
+```typescript
+import { createSocialOAuthService } from 'authfn';
+
+const social = createSocialOAuthService({
+  providers: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      redirectUris: ['https://app.example.com/oauth/callback'],
+      scopes: ['openid', 'email', 'profile'],
+    },
+  },
+});
+```
+
+### Login URL + Callback
+
+```typescript
+const login = await social.createLoginUrl({
+  providerId: 'google',
+  tenantId: 'tenant_1',
+  userId: 'user_1',
+  redirectUri: 'https://app.example.com/oauth/callback',
+});
+
+const callback = await social.handleCallback({
+  providerId: 'google',
+  code: oauthCode,
+  state: oauthState,
+  redirectUri: 'https://app.example.com/oauth/callback',
+});
+```
+
+### Disconnect + Revoke
+
+```typescript
+await social.disconnect({
+  tenantId: 'tenant_1',
+  userId: 'user_1',
+  providerId: 'google',
+});
+```
+
+Local credential cleanup always runs during disconnect. If provider revocation fails, the failure is recorded and surfaced after local cleanup.
+
+### Interoperability Notes
+
+- This social OAuth flow intentionally shares the same OAuth core primitives used by `plugfn` to avoid diverging token/state logic.
+- Existing API-key authentication in `createAuthFn` remains unchanged.
+- Keep OAuth package versions aligned across `authfn` and `plugfn` (`oauth-core`, `oauth-http`, `oauth-storage`, `oauth-providers`) before release.
+- Managed mailbox, lifecycle deletion/export, telemetry redaction, and mail delivery risk controls belong to `plugfn` provider policy/security flows; social sign-in in `authfn` is identity-linking only.
+
+Cross-workspace release verification command:
+
+```bash
+cd /Users/serro/Documents/dev/n/superfunctions
+turbo run build test --filter=@superfunctions/oauth-core --filter=@superfunctions/oauth-http --filter=@superfunctions/oauth-storage --filter=@superfunctions/oauth-providers --filter=plugfn --filter=@authfn/core
+```
+
 ## Database Schema
 
 authfn creates a single table:

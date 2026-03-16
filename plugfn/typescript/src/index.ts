@@ -31,3 +31,10 @@ export * from './utils/index.js';
 
 // Provider exports
 export * from './providers/index.js';
+
+// Security exports
+export * from './security/isolation-guards.js';
+export * from './security/retention.js';
+export * from './security/export-delete.js';
+export * from './security/redaction.js';
+export * from './security/e2ee-mode.js';

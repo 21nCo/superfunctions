@@ -1,0 +1,120 @@
+---
+title: Python Core
+description: Use the shared Python HTTP and database contracts when you want framework-neutral handlers and persistence boundaries.
+---
+
+`sfns` is the foundation for the Python integrations. It packages the shared request, response, route, and database adapter concepts so Python services can use the same architectural boundaries described elsewhere in the Superfunctions docs. If you want a FastAPI service, a Flask app, and a reusable internal package to agree on one handler contract or one persistence interface, this is the package that makes that possible.
+
+The outside-world value is portability. Instead of writing your business logic directly against a framework request object or a raw ORM session, you can build on the shared contracts first. That lets a library author publish Python helpers that stay reusable across several host apps, and it lets an application team move code between frameworks without rewriting every route or repository function.
+
+## What It Is
+
+`sfns` provides two core surfaces. The first is the HTTP layer in `superfunctions.http`, which includes request and response protocols, route definitions, route context, and HTTP error types. The second is the data layer in `superfunctions.db`, which defines adapter protocols, CRUD parameter models, query operators, schema helpers, and health-check types.
+
+This package is intentionally low level. It does not start a web server, pick a framework, or create a database engine for you. Instead, it gives you the shared vocabulary that the framework adapters and database adapters build on top of.
+
+## When To Use It
+
+Use `sfns` when you want your Python code to depend on stable interfaces instead of framework internals. It is a strong fit for reusable libraries, platform teams standardizing service boundaries, and applications that want to keep route handlers and repositories easy to test. It is also the right starting point when you are evaluating whether a future FastAPI or Flask integration should share the same domain code.
+
+If you already know you need framework wiring, pair this package with [`python-fastapi`](/docs/python/python-fastapi) or [`python-flask`](/docs/python/python-flask). If your main problem is persistence behind SQLAlchemy, pair it with [`python-sqlalchemy`](/docs/python/python-sqlalchemy).
+
+## Install
+
+```bash
+pip install sfns
+```
+
+Add only the adapters your application needs:
+
+```bash
+pip install superfunctions-fastapi superfunctions-sqlalchemy
+```
+
+## Quick Start
+
+Use the shared database types when you want application logic to speak in terms of models, filters, and adapters rather than one ORM client.
+
+```python
+from superfunctions.db import CreateParams, FindManyParams, Operator, WhereClause
+
+
+async def list_team_members(adapter):
+    return await adapter.find_many(
+        FindManyParams(
+            model="users",
+            where=[WhereClause(field="email", operator=Operator.LIKE, value="%@example.com")],
+            limit=25,
+        )
+    )
+
+
+async def create_team_member(adapter, email: str):
+    return await adapter.create(
+        CreateParams(
+            model="users",
+            data={"email": email, "role": "member"},
+        )
+    )
+```
+
+The HTTP layer follows the same pattern: define a handler against the shared request and response contracts, then let a framework adapter bind it to FastAPI or Flask later.
+
+```python
+from superfunctions.http import NotFoundError, Response, RouteContext
+
+
+async def get_project(request, context: RouteContext) -> Response:
+    project_id = context.params["id"]
+    project = await load_project(project_id)
+    if project is None:
+        raise NotFoundError(f"Project {project_id} not found")
+
+    return Response(
+        status=200,
+        body={"id": project_id, "name": project["name"]},
+    )
+```
+
+## Core Concepts
+
+The first concept is contract-first design. `superfunctions.http` gives you a portable route model, while `superfunctions.db` gives you a portable persistence model. Your application code can stay on those boundaries even when the concrete runtime changes.
+
+The second concept is structured parameter objects. Database operations use models like `CreateParams`, `FindManyParams`, and `WhereClause` so that adapters can stay consistent about filters, limits, namespaces, and ordering. That improves portability and makes adapter implementations easier to test.
+
+The third concept is typed error handling. The HTTP package ships error types such as `BadRequestError`, `UnauthorizedError`, and `NotFoundError`, which means framework adapters can map failures into a consistent response shape without every service inventing its own conventions.
+
+## Real-World Example
+
+A practical pattern for external teams is to keep one shared Python package with business rules and let each deployed app choose its own framework adapter. The shared package depends only on the portable contracts.
+
+```python
+from superfunctions.db import FindOneParams, WhereClause
+from superfunctions.http import ForbiddenError, Response
+
+
+async def load_customer_dashboard(request, context, adapter) -> Response:
+    account_id = context.params["account_id"]
+    customer = await adapter.find_one(
+        FindOneParams(
+            model="customers",
+            where=[WhereClause(field="account_id", value=account_id)],
+        )
+    )
+    if customer is None:
+        raise ForbiddenError("Unknown account")
+
+    return Response(status=200, body={"account": customer, "viewer": context.headers.get("x-user-id")})
+```
+
+That function can be called from a FastAPI route today and a Flask blueprint tomorrow because it never coupled itself to one framework request object. The same pattern works for reusable admin modules, internal SDK servers, and tenant-aware platform services.
+
+## Related Packages
+
+- [`python-fastapi`](/docs/python/python-fastapi) if you want to run these HTTP handlers inside FastAPI.
+- [`python-flask`](/docs/python/python-flask) if your runtime is Flask or Blueprints.
+- [`python-sqlalchemy`](/docs/python/python-sqlalchemy) if SQLAlchemy should satisfy the shared DB adapter contract.
+
+## Troubleshooting
+
+If the package feels too abstract at first, start by moving only one route or repository onto the shared types and keep the rest of the application unchanged. If a framework adapter complains about response shapes, check that your handler returns `Response` instead of a framework-specific object. If a database adapter integration feels awkward, verify that your application code depends on `CreateParams`, `FindManyParams`, and related models rather than passing raw ORM expressions across the library boundary.

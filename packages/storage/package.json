@@ -10,6 +10,16 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./internal/s3-compatible": {
+      "types": "./dist/internal/s3-compatible.d.ts",
+      "import": "./dist/internal/s3-compatible.js",
+      "default": "./dist/internal/s3-compatible.js"
+    },
+    "./internal/errors": {
+      "types": "./dist/internal/errors.d.ts",
+      "import": "./dist/internal/errors.js",
+      "default": "./dist/internal/errors.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts"
     }

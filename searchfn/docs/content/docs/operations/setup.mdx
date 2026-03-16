@@ -14,7 +14,7 @@ description: Deploy SearchFn in production with proper configuration, limits, an
 
 ```typescript
 import { createSearchFnServer } from "@searchfn/server";
-import { PostgresAdapter } from "@searchfn/adapters";
+import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const server = await createSearchFnServer({
   adapter: new PostgresAdapter({

@@ -28,10 +28,12 @@ export type PullResultGlobalCursor = {
     serverSeq: number;
     resource: string;
     id: string;
-    op: "upsert" | "delete";
+    op: "insert" | "merge" | "replace" | "upsert" | "delete";
     record: Record<string, unknown> | null;
+    reason?: "revoked" | "grant_backfill";
   }>;
   nextCursor: string | null;
+  actorFeed?: Array<Record<string, unknown>>;
 };
 
 /**
@@ -47,6 +49,7 @@ export type PullResultCanonical = {
     delete: Array<{ from: string; to: string }>;
   }>;
   cursors: Record<string, string>;
+  actorFeed?: Array<Record<string, unknown>>;
   hasMore?: boolean; // CLIENT-PULL-001: true when more changes remain on server
 };
 
@@ -149,14 +152,18 @@ async function applyPullResultGlobalCursor(
 ): Promise<void> {
   const { changes, nextCursor } = result;
 
+  if (nextCursor !== null) {
+    await assertCursorNonRegressing(storage, GLOBAL_CURSOR_KEY, nextCursor, "nextCursor");
+  }
+
   // Process changes in order
   for (const change of changes) {
     const { resource, id, op, record } = change;
 
-    if (op === "upsert" && record) {
-      await storage.upsertRecord(resource, record);
-    } else if (op === "delete") {
+    if (op === "delete") {
       await storage.deleteRecord(resource, id);
+    } else if (record) {
+      await storage.upsertRecord(resource, record);
     }
   }
 
@@ -174,6 +181,11 @@ async function applyPullResultCanonical(
   result: PullResultCanonical,
 ): Promise<void> {
   const { records, merged, deleted, joins, cursors } = result;
+
+  // Reject cursor regressions before mutating local state.
+  for (const [resource, cursor] of Object.entries(cursors)) {
+    await assertCursorNonRegressing(storage, resource, cursor, `cursors.${resource}`);
+  }
 
   // Apply record upserts (insert/replace/upsert ops — full record replacement)
   for (const [resource, resourceRecords] of Object.entries(records)) {
@@ -271,5 +283,34 @@ export async function setCursorMonotonically(
   // Only update if new cursor is greater (monotonic)
   if (newSeq > existingSeq) {
     await storage.setCursor(resource, newCursor);
+  }
+}
+
+async function assertCursorNonRegressing(
+  storage: DatafnStorageAdapter,
+  resource: string,
+  newCursor: string,
+  path: string,
+): Promise<void> {
+  const existingCursor = await storage.getCursor(resource);
+  if (existingCursor === null) {
+    return;
+  }
+
+  const existingSeq = parseInt(existingCursor, 10);
+  const newSeq = parseInt(newCursor, 10);
+
+  if (Number.isNaN(existingSeq) || Number.isNaN(newSeq)) {
+    return;
+  }
+
+  if (newSeq < existingSeq) {
+    const error = new Error("Non-monotonic cursor") as Error & {
+      code: string;
+      details: Record<string, unknown>;
+    };
+    error.code = "CONFLICT";
+    error.details = { path };
+    throw error;
   }
 }

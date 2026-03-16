@@ -1,8 +1,16 @@
 import type { Adapter } from "@superfunctions/db";
+import type { DatafnLogger } from "../../logger.js";
+import {
+  emitLegacyShareDeprecationWarning,
+  mirrorGrantToLegacyV1,
+  removeLegacyV1Grant,
+} from "../migration/spv2.js";
 
 type ShareableConfig = {
   levels: string[];
   default: "private" | "shared";
+  supportsScopeGrants?: boolean;
+  crossNsShareable?: boolean;
 };
 
 type ShareableEntry = {
@@ -19,12 +27,108 @@ function getShareableConfig(resolvedCapabilities: unknown[]): ShareableConfig | 
   return entry?.shareable ?? null;
 }
 
-function getPermissionsTableName(resource: string): string {
-  return `__datafn_permissions_${resource}`;
+type ShareScope = "record" | "resource";
+
+type PrincipalCanonicalizationResult =
+  | { ok: true; principalId: string }
+  | { ok: false; code: "DFQL_PRINCIPAL_INVALID"; message: string; path: string };
+
+function normalizeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
-function getPermissionEntryId(resourceId: string, userId: string): string {
-  return `${resourceId}:${userId}`;
+function canonicalizePrincipalFromUserId(userId: string): string {
+  return userId.includes(":") ? userId : `user:${userId}`;
+}
+
+function canonicalizeSharePrincipal(
+  shareWith: Record<string, unknown> | undefined,
+): PrincipalCanonicalizationResult {
+  if (!shareWith) {
+    return {
+      ok: false,
+      code: "DFQL_PRINCIPAL_INVALID",
+      message: "Either shareWith.userId or shareWith.principalId is required",
+      path: "shareWith",
+    };
+  }
+
+  const principalId = normalizeNonEmptyString(shareWith.principalId);
+  const userId = normalizeNonEmptyString(shareWith.userId);
+
+  if (shareWith.principalId !== undefined && principalId === null) {
+    return {
+      ok: false,
+      code: "DFQL_PRINCIPAL_INVALID",
+      message: "principalId must be non-empty string",
+      path: "shareWith.principalId",
+    };
+  }
+
+  if (shareWith.userId !== undefined && userId === null) {
+    return {
+      ok: false,
+      code: "DFQL_PRINCIPAL_INVALID",
+      message: "userId must be non-empty string",
+      path: "shareWith.userId",
+    };
+  }
+
+  if (principalId && userId) {
+    const canonicalFromUser = canonicalizePrincipalFromUserId(userId);
+    if (canonicalFromUser !== principalId) {
+      return {
+        ok: false,
+        code: "DFQL_PRINCIPAL_INVALID",
+        message: "Provide only one of shareWith.userId or shareWith.principalId",
+        path: "shareWith",
+      };
+    }
+  }
+
+  if (!principalId && !userId) {
+    return {
+      ok: false,
+      code: "DFQL_PRINCIPAL_INVALID",
+      message: "Either shareWith.userId or shareWith.principalId is required",
+      path: "shareWith",
+    };
+  }
+
+  return {
+    ok: true,
+    principalId: principalId ?? canonicalizePrincipalFromUserId(userId as string),
+  };
+}
+
+function getShareScope(scope: unknown): ShareScope {
+  return scope === "resource" ? "resource" : "record";
+}
+
+const GLOBAL_PERMISSIONS_TABLE = "__datafn_permissions_global";
+
+function getPermissionsTableName(): string {
+  return GLOBAL_PERMISSIONS_TABLE;
+}
+
+function getPermissionEntryId(
+  resourceType: string,
+  resourceNs: string,
+  resourceId: string | null,
+  principalId: string,
+): string {
+  return `${resourceType}:${resourceNs}:${resourceId ?? "*"}:${principalId}`;
+}
+
+function isPrincipalInNamespace(
+  principalId: string,
+  namespace: string,
+): boolean {
+  return principalId === namespace || principalId.startsWith(`${namespace}:`);
 }
 
 type OwnershipResult =
@@ -63,20 +167,30 @@ async function ensureOwnerAccess(
   }
 
   const creatorId = (record as Record<string, unknown>).createdBy;
-  if (creatorId === actorId) {
+  const actorPrincipal = canonicalizePrincipalFromUserId(actorId);
+  const creatorPrincipal = normalizeNonEmptyString(creatorId)
+    ? canonicalizePrincipalFromUserId(String(creatorId))
+    : null;
+
+  if (creatorId === actorId || creatorPrincipal === actorPrincipal) {
     return { ok: true, record: record as Record<string, unknown> };
   }
 
-  const permissionsTable = getPermissionsTableName(resource);
-  const permissionsForRecord = await db.findMany({
+  const permissionsTable = getPermissionsTableName();
+  const ownerGrants = await db.findMany({
     model: permissionsTable,
-    where: [{ field: "resourceId", operator: "eq", value: recordId }],
+    where: [
+      { field: "resourceType", operator: "eq", value: resource },
+      { field: "resourceNs", operator: "eq", value: namespace },
+      { field: "principalId", operator: "eq", value: actorPrincipal },
+      { field: "level", operator: "eq", value: "owner" },
+    ],
     namespace,
   });
-  const ownerPermission = permissionsForRecord.find(
+  const ownerPermission = ownerGrants.find(
     (entry) =>
-      entry.userId === actorId &&
-      entry.level === "owner",
+      (entry.revokedAt === undefined || entry.revokedAt === null) &&
+      (entry.resourceId === recordId || entry.resourceId === null),
   );
 
   if (!ownerPermission) {
@@ -95,12 +209,14 @@ export async function executeShare(
   db: Adapter,
   mutation: {
     resource: string;
-    id: string;
-    shareWith?: { userId?: string; level?: string };
+    id?: string;
+    scope?: "record" | "resource";
+    shareWith?: { principalId?: string; userId?: string; level?: string };
   },
   resolvedCapabilities: unknown[],
   namespace: string,
   actorId?: string,
+  logger?: DatafnLogger,
 ): Promise<
   | { ok: true; permissionRecord: Record<string, unknown> }
   | { ok: false; code: string; message: string; path: string }
@@ -115,24 +231,67 @@ export async function executeShare(
     };
   }
 
-  const ownerCheck = await ensureOwnerAccess(
-    db,
-    mutation.resource,
-    mutation.id,
-    namespace,
-    actorId,
-  );
-  if (!ownerCheck.ok) {
-    return ownerCheck;
-  }
-
-  const shareUserId = mutation.shareWith?.userId;
-  if (!shareUserId) {
+  const shareScope = getShareScope(mutation.scope);
+  if (shareScope === "resource" && shareableConfig.supportsScopeGrants === false) {
     return {
       ok: false,
-      code: "DFQL_INVALID",
-      message: "Invalid DFQL: shareWith.userId must be string",
-      path: "shareWith.userId",
+      code: "DFQL_UNSUPPORTED",
+      message: "Unsupported DFQL feature: mutation.scope.resource",
+      path: "scope",
+    };
+  }
+
+  let ownerCheck: OwnershipResult | null = null;
+  if (shareScope === "record") {
+    if (!mutation.id) {
+      return {
+        ok: false,
+        code: "DFQL_INVALID",
+        message: "Invalid DFQL: id must be string",
+        path: "id",
+      };
+    }
+    ownerCheck = await ensureOwnerAccess(
+      db,
+      mutation.resource,
+      mutation.id,
+      namespace,
+      actorId,
+    );
+    if (!ownerCheck.ok) {
+      return ownerCheck;
+    }
+  } else if (!actorId) {
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      message: "Authorization denied",
+      path: "operation",
+    };
+  }
+
+  const canonicalPrincipalResult = canonicalizeSharePrincipal(
+    mutation.shareWith as Record<string, unknown> | undefined,
+  );
+  if (!canonicalPrincipalResult.ok) {
+    return canonicalPrincipalResult;
+  }
+  if (
+    mutation.shareWith?.userId !== undefined
+  ) {
+    emitLegacyShareDeprecationWarning(logger, "share");
+  }
+  const sharePrincipalId = canonicalPrincipalResult.principalId;
+
+  if (
+    shareableConfig.crossNsShareable === false &&
+    !isPrincipalInNamespace(sharePrincipalId, namespace)
+  ) {
+    return {
+      ok: false,
+      code: "DFQL_CROSS_NS_SHARE_FORBIDDEN",
+      message: "Cross-namespace sharing is disabled for this resource",
+      path: "shareWith.principalId",
     };
   }
 
@@ -146,31 +305,48 @@ export async function executeShare(
     };
   }
 
-  const permissionsTable = getPermissionsTableName(mutation.resource);
+  const resourceId = shareScope === "resource" ? null : (mutation.id as string);
+  const grantKind = shareScope === "resource" ? "scope" : "record";
+  const permissionEntryId = getPermissionEntryId(
+    mutation.resource,
+    namespace,
+    resourceId,
+    sharePrincipalId,
+  );
+  const permissionsTable = getPermissionsTableName();
   const now = Date.now();
-  const permissionsForRecord = await db.findMany({
+  const existingPermission = await db.findOne({
     model: permissionsTable,
-    where: [{ field: "resourceId", operator: "eq", value: mutation.id }],
+    where: [{ field: "id", operator: "eq", value: permissionEntryId }],
     namespace,
   });
-  const existingPermission = permissionsForRecord.find(
-    (entry) => entry.userId === shareUserId,
-  );
 
-  const permissionRecord = existingPermission
+  const permissionRecord: Record<string, unknown> = existingPermission
     ? {
         ...(existingPermission as Record<string, unknown>),
+        resourceType: mutation.resource,
+        resourceNs: namespace,
+        resourceId,
+        principalId: sharePrincipalId,
         level: requestedLevel,
-        grantedBy: actorId ?? null,
+        grantKind,
+        sourceRef: null,
+        grantedBy: actorId ?? "system",
         grantedAt: now,
+        revokedAt: null,
       }
     : {
-        id: getPermissionEntryId(mutation.id, shareUserId),
-        resourceId: mutation.id,
-        userId: shareUserId,
+        id: permissionEntryId,
+        resourceType: mutation.resource,
+        resourceNs: namespace,
+        resourceId,
+        principalId: sharePrincipalId,
         level: requestedLevel,
-        grantedBy: actorId ?? null,
+        grantKind,
+        sourceRef: null,
+        grantedBy: actorId ?? "system",
         grantedAt: now,
+        revokedAt: null,
       };
 
   if (existingPermission) {
@@ -178,9 +354,16 @@ export async function executeShare(
       model: permissionsTable,
       where: [{ field: "id", operator: "eq", value: permissionRecord.id }],
       data: {
+        resourceType: permissionRecord.resourceType,
+        resourceNs: permissionRecord.resourceNs,
+        resourceId: permissionRecord.resourceId,
+        principalId: permissionRecord.principalId,
         level: permissionRecord.level,
+        grantKind: permissionRecord.grantKind,
+        sourceRef: permissionRecord.sourceRef,
         grantedBy: permissionRecord.grantedBy,
         grantedAt: permissionRecord.grantedAt,
+        revokedAt: permissionRecord.revokedAt,
       },
       namespace,
     });
@@ -192,6 +375,25 @@ export async function executeShare(
     });
   }
 
+  const mirrorLevel =
+    requestedLevel === "viewer" ||
+    requestedLevel === "editor" ||
+    requestedLevel === "owner"
+      ? requestedLevel
+      : null;
+  if (mirrorLevel) {
+    await mirrorGrantToLegacyV1({
+      db,
+      namespace,
+      resource: mutation.resource,
+      resourceId,
+      principalId: sharePrincipalId,
+      level: mirrorLevel,
+      grantedBy: actorId ?? "system",
+      grantedAt: now,
+    });
+  }
+
   return { ok: true, permissionRecord };
 }
 
@@ -199,12 +401,14 @@ export async function executeUnshare(
   db: Adapter,
   mutation: {
     resource: string;
-    id: string;
-    shareWith?: { userId?: string };
+    id?: string;
+    scope?: "record" | "resource";
+    shareWith?: { principalId?: string; userId?: string };
   },
   resolvedCapabilities: unknown[],
   namespace: string,
   actorId?: string,
+  logger?: DatafnLogger,
 ): Promise<
   | { ok: true; deleted: boolean; changeId: string }
   | { ok: false; code: string; message: string; path: string }
@@ -219,68 +423,115 @@ export async function executeUnshare(
     };
   }
 
-  const ownerCheck = await ensureOwnerAccess(
-    db,
-    mutation.resource,
-    mutation.id,
-    namespace,
-    actorId,
-  );
-  if (!ownerCheck.ok) {
-    return ownerCheck;
-  }
-
-  const unshareUserId = mutation.shareWith?.userId;
-  if (!unshareUserId) {
+  const shareScope = getShareScope(mutation.scope);
+  if (shareScope === "resource" && shareableConfig.supportsScopeGrants === false) {
     return {
       ok: false,
-      code: "DFQL_INVALID",
-      message: "Invalid DFQL: shareWith.userId must be string",
-      path: "shareWith.userId",
+      code: "DFQL_UNSUPPORTED",
+      message: "Unsupported DFQL feature: mutation.scope.resource",
+      path: "scope",
     };
   }
 
-  const creatorId = ownerCheck.record.createdBy;
-  if (creatorId === unshareUserId || (creatorId == null && actorId === unshareUserId)) {
+  let ownerCheck: OwnershipResult | null = null;
+  if (shareScope === "record") {
+    if (!mutation.id) {
+      return {
+        ok: false,
+        code: "DFQL_INVALID",
+        message: "Invalid DFQL: id must be string",
+        path: "id",
+      };
+    }
+    ownerCheck = await ensureOwnerAccess(
+      db,
+      mutation.resource,
+      mutation.id,
+      namespace,
+      actorId,
+    );
+    if (!ownerCheck.ok) {
+      return ownerCheck;
+    }
+  } else if (!actorId) {
     return {
       ok: false,
       code: "FORBIDDEN",
-      message: "Cannot unshare the record creator",
-      path: "shareWith.userId",
+      message: "Authorization denied",
+      path: "operation",
     };
   }
 
-  const permissionsTable = getPermissionsTableName(mutation.resource);
-  const permissionsForRecord = await db.findMany({
+  const canonicalPrincipalResult = canonicalizeSharePrincipal(
+    mutation.shareWith as Record<string, unknown> | undefined,
+  );
+  if (!canonicalPrincipalResult.ok) {
+    return canonicalPrincipalResult;
+  }
+  if (
+    mutation.shareWith?.userId !== undefined
+  ) {
+    emitLegacyShareDeprecationWarning(logger, "unshare");
+  }
+  const unsharePrincipalId = canonicalPrincipalResult.principalId;
+
+  if (shareScope === "record") {
+    const creatorId = ownerCheck?.record.createdBy;
+    const creatorPrincipal = normalizeNonEmptyString(creatorId)
+      ? canonicalizePrincipalFromUserId(String(creatorId))
+      : null;
+    if (creatorPrincipal === unsharePrincipalId) {
+      return {
+        ok: false,
+        code: "FORBIDDEN",
+        message: "Cannot unshare the record creator",
+        path: "shareWith.principalId",
+      };
+    }
+  }
+
+  const resourceId = shareScope === "resource" ? null : (mutation.id as string);
+  const changeId = getPermissionEntryId(
+    mutation.resource,
+    namespace,
+    resourceId,
+    unsharePrincipalId,
+  );
+  const permissionsTable = getPermissionsTableName();
+  const existingPermission = await db.findOne({
     model: permissionsTable,
-    where: [{ field: "resourceId", operator: "eq", value: mutation.id }],
+    where: [{ field: "id", operator: "eq", value: changeId }],
     namespace,
   });
-  const existingPermission = permissionsForRecord.find(
-    (entry) => entry.userId === unshareUserId,
-  );
 
   if (!existingPermission) {
     return {
       ok: true,
       deleted: false,
-      changeId: getPermissionEntryId(mutation.id, unshareUserId),
+      changeId,
     };
   }
 
   await db.delete({
     model: permissionsTable,
-    where: [{ field: "id", operator: "eq", value: (existingPermission as Record<string, unknown>).id }],
+    where: [{ field: "id", operator: "eq", value: changeId }],
     namespace,
+  });
+  await removeLegacyV1Grant({
+    db,
+    namespace,
+    resource: mutation.resource,
+    resourceId,
+    principalId: unsharePrincipalId,
   });
 
   return {
     ok: true,
     deleted: true,
-    changeId: String((existingPermission as Record<string, unknown>).id),
+    changeId,
   };
 }
 
 export function getPermissionsTable(resource: string): string {
-  return getPermissionsTableName(resource);
+  return getPermissionsTableName();
 }

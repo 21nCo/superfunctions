@@ -1,0 +1,114 @@
+---
+title: Errors
+description: Define typed runtime failures once and reuse their status, retryability, and messages across packages and services.
+---
+
+`@superfunctions/errors` is the package for teams that want runtime failures to be treated as data, not just strings. Instead of scattering status codes and retry rules across route handlers, queue workers, and integration logic, you can keep one registry of error definitions and construct `SuperfunctionError` instances from that source of truth.
+
+That discipline pays off quickly in multi-service systems. Clients get more predictable error codes. Retry logic can rely on explicit `retryable` metadata instead of guessing based on message text. Operations teams can group failures by a stable code rather than free-form logs. For library authors, the registry also provides a public contract that consumers can understand without depending on one specific runtime framework.
+
+## What It Is
+
+`@superfunctions/errors` exports three core pieces. `createErrorRegistry()` stores `ErrorDefinition` entries keyed by code. `createTypedError()` resolves a code from the registry and produces a `SuperfunctionError` with status, retryability, message, and optional details attached. `SuperfunctionError` itself is the runtime error shape you can catch and map consistently.
+
+The registry is intentionally simple. It can register one definition at a time or many definitions together, answer whether a code exists, resolve a code, fall back to a default definition when needed, and list all registered entries. That small surface makes the package easy to embed in apps or libraries that want stable failure semantics without a heavy exception framework.
+
+## When To Use It
+
+Use this package when several parts of a system need to agree on what an error code means. Common fits include public APIs, background workers, webhook processors, partner integrations, and library packages that need a documented failure vocabulary. It is especially useful when retry decisions matter because the registry keeps retryability next to the error code rather than buried in custom caller logic.
+
+If your codebase has only a handful of local exceptions and no shared semantics, a registry may be unnecessary. The package becomes more valuable as soon as the same error concept must travel through more than one runtime boundary.
+
+## Install
+
+```bash
+npm install @superfunctions/errors
+```
+
+## Quick Start
+
+Start by creating a registry that captures the runtime failures your service actually cares about.
+
+```ts
+import { createErrorRegistry, createTypedError } from "@superfunctions/errors";
+
+const registry = createErrorRegistry([
+  {
+    code: "RATE_LIMIT_EXCEEDED",
+    httpStatus: 429,
+    retryable: true,
+    defaultMessage: "Too many requests.",
+  },
+]);
+
+export function buildRateLimitError() {
+  return createTypedError({
+    code: "RATE_LIMIT_EXCEEDED",
+    registry,
+    details: { bucket: "public-api" },
+  });
+}
+```
+
+If you are writing a library, export the registry or the codes rather than asking consumers to parse error message strings.
+
+```ts
+import { createErrorRegistry } from "@superfunctions/errors";
+
+export const integrationErrors = createErrorRegistry([
+  { code: "DESTINATION_UNAVAILABLE", httpStatus: 503, retryable: true },
+  { code: "SIGNATURE_INVALID", httpStatus: 401, retryable: false },
+]);
+```
+
+## Core Concepts
+
+The first concept is code-first semantics. A code such as `RATE_LIMIT_EXCEEDED` or `DESTINATION_UNAVAILABLE` is the stable identifier. Message text can change for clarity, but status and retryability should remain part of the definition.
+
+The second concept is centralized policy. When several handlers or workers can produce the same failure, the registry keeps them aligned. That is better than repeating `status: 503` or `retryable: true` in every call site and hoping they stay consistent.
+
+The third concept is safe failure for unknown codes. If code resolution happens against an unregistered value, the package throws a `SuperfunctionError` with `ERROR_CODE_UNREGISTERED`. That makes the misconfiguration obvious at runtime instead of silently inventing incomplete metadata.
+
+## Real-World Example
+
+One practical pattern is pairing an error registry with canonical envelopes so every API and worker result exposes the same machine-readable failure vocabulary.
+
+```ts
+import { createErrorRegistry, createTypedError, SuperfunctionError } from "@superfunctions/errors";
+import { err } from "@superfunctions/envelope";
+
+const registry = createErrorRegistry([
+  { code: "WEBHOOK_DELIVERY_FAILED", httpStatus: 502, retryable: true },
+]);
+
+export function toWebhookFailureEnvelope(cause: unknown) {
+  try {
+    throw createTypedError({
+      code: "WEBHOOK_DELIVERY_FAILED",
+      registry,
+      details: { cause: String(cause) },
+    });
+  } catch (error) {
+    const typed = error as SuperfunctionError;
+    return err({
+      code: typed.code,
+      message: typed.message,
+      status: typed.status,
+      retryable: typed.retryable,
+      details: typed.details,
+    });
+  }
+}
+```
+
+That pattern works well with [`webhooks`](/docs/middleware-runtime/webhooks) and [`queue`](/docs/middleware-runtime/queue) because both often need explicit retry semantics, not just a human-readable error message.
+
+## Related Packages
+
+- [`envelope`](/docs/middleware-runtime/envelope) if typed errors should become canonical client-facing success or failure payloads.
+- [`middleware`](/docs/middleware-runtime/middleware) if request guards such as rate limiting should map to stable error codes.
+- [`webhooks`](/docs/middleware-runtime/webhooks) if delivery or signature failures need explicit retry policies.
+
+## Troubleshooting
+
+If you see `ERROR_CODE_UNREGISTERED`, the registry and the call site drifted out of sync. Register the code before trying to create a typed error from it. If callers disagree about whether an error is retryable, move that decision into the registry rather than letting each caller guess. When defining details payloads, keep them structured and machine-readable so logs, envelopes, and dashboards can all reuse the same metadata.

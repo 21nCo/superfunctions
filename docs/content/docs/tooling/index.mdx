@@ -1,0 +1,38 @@
+---
+title: Tooling
+description: Choose the Superfunctions tools that help you generate schemas, wire docs layouts, and keep shared packages operable.
+---
+
+The Tooling category covers the packages you use around the edges of the shared package ecosystem rather than inside request handlers or repositories. These packages help you generate or validate project wiring, or they provide reusable building blocks for documentation surfaces. They are still public-facing packages, but their job is to support package consumers and library authors rather than to model domain logic directly.
+
+There are only two packages in this category, which makes the choice look easy, but they solve very different problems. [`cli`](/docs/tooling/cli) is for command-line workflows around schema management and project setup. [`docs-theme`](/docs/tooling/docs-theme) is for teams building Fumadocs-based documentation sites and wanting the same root layout and nav configuration patterns used across Superfunctions docs apps. One package helps you operate libraries from a terminal. The other helps you present them in docs.
+
+## What This Category Covers
+
+Use Tooling when the question is "How do I support the package around the code?" rather than "How do I handle requests or store data?" The CLI sits close to [Data & Storage](/docs/data-storage) because it helps generate or validate schema-related configuration for libraries built on shared persistence contracts. The docs theme sits closer to documentation operations and frontend presentation: it gives you reusable layout primitives for docs apps that want a consistent Superfunctions look and setup model.
+
+This category is especially relevant to external library authors. If you publish a package built on `@superfunctions/db`, the CLI helps your consumers manage schema workflows in a more standardized way. If you maintain product or platform docs, `@superfunctions/docs-theme` helps you reuse the same base docs shell instead of rebuilding layout primitives from scratch.
+
+## Package Map
+
+| Package | Role | Start here when |
+| --- | --- | --- |
+| [`cli`](/docs/tooling/cli) | Command-line config, validation, and migration-generation workflows | You need to initialize config or manage schema generation from the terminal |
+| [`docs-theme`](/docs/tooling/docs-theme) | Shared React and Fumadocs layout primitives | You are building a docs app and want a reusable root layout plus base config helpers |
+
+## How To Choose
+
+Choose `cli` when your job is operational: initialize a config file, validate it, discover compatible library setup, or generate migrations and schema artifacts. Choose `docs-theme` when your job is presentation: set up a docs site shell, define a consistent nav title and GitHub link, and share layout pieces across several documentation apps.
+
+It is common to use only one of these packages. Application teams touching database-backed libraries usually care about `cli` and never need `docs-theme`. Docs platform teams may use `docs-theme` without ever running the CLI. Reach for both only if your organization owns both package operations and the docs surface around those packages.
+
+## Common Compositions
+
+- [`cli`](/docs/tooling/cli) + [`db`](/docs/data-storage/db) when you ship a library with schema-generation or migration workflows.
+- [`cli`](/docs/tooling/cli) + [`config`](/docs/middleware-runtime/config) when environment-specific configuration must be validated before generation commands run.
+- [`docs-theme`](/docs/tooling/docs-theme) + [Getting Started](/docs/getting-started) when you are building a public docs app with a shared brand and nav shell.
+- [`docs-theme`](/docs/tooling/docs-theme) + [`http`](/docs/http/http) if your docs app also documents framework adapters and wants a consistent docs presentation layer.
+
+## Related Categories
+
+Most tooling decisions connect back to the package family you are supporting. If you are generating schemas or managing migrations, continue into [Data & Storage](/docs/data-storage) and [Middleware & Runtime](/docs/middleware-runtime/config). If you are comparing docs presentation patterns to the broader ecosystem guidance, go back to [Getting Started](/docs/getting-started) or [Choosing Packages](/docs/choosing-packages).

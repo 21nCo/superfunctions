@@ -5,8 +5,8 @@ import type {
   SearchAllParams,
   SearchAllResult,
   InitializeParams,
-} from "@searchfn/adapters";
-import { SearchAdapterError } from "@searchfn/adapters";
+} from "@searchfn/adapter-contracts";
+import { SearchAdapterError } from "@searchfn/adapter-contracts";
 import type { SearchClient, SearchClientConfig, SearchClientDefaults } from "./types";
 
 const MAX_QUERY_LENGTH = 1000;
@@ -97,11 +97,15 @@ export function createSearchClient(config: SearchClientConfig): SearchClient {
 
       const effectiveLimit = clampLimit(params.limit, defaults.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
       const effectiveFuzzy = params.fuzzy ?? defaults.fuzzy;
+      const effectivePrefix = params.prefix ?? defaults.prefix;
+      const effectiveFieldBoosts = params.fieldBoosts ?? defaults.fieldBoosts;
 
       return adapter.search({
         ...params,
         limit: effectiveLimit,
         fuzzy: effectiveFuzzy,
+        prefix: effectivePrefix,
+        fieldBoosts: effectiveFieldBoosts,
       });
     },
 
@@ -126,12 +130,16 @@ export function createSearchClient(config: SearchClientConfig): SearchClient {
         MAX_LIMIT_PER_RESOURCE,
       );
       const effectiveFuzzy = params.fuzzy ?? defaults.fuzzy;
+      const effectivePrefix = params.prefix ?? defaults.prefix;
+      const effectiveFieldBoosts = params.fieldBoosts ?? defaults.fieldBoosts;
 
       const searchParams: SearchAllParams = {
         ...params,
         limit: effectiveLimit,
         limitPerResource: effectiveLimitPerResource,
         fuzzy: effectiveFuzzy,
+        prefix: effectivePrefix,
+        fieldBoosts: effectiveFieldBoosts,
       };
 
       if (adapter.searchAll) {
@@ -156,7 +164,8 @@ export function createSearchClient(config: SearchClientConfig): SearchClient {
           fields: searchParams.fields,
           limit: effectiveLimitPerResource,
           fuzzy: effectiveFuzzy,
-          fieldBoosts: searchParams.fieldBoosts,
+          prefix: effectivePrefix,
+          fieldBoosts: effectiveFieldBoosts,
           signal: searchParams.signal,
         });
         for (let i = 0; i < ids.length; i++) {

@@ -20,6 +20,10 @@ import {
   buildTableOperationMutation,
   buildShareMutation,
   buildUnshareMutation,
+  buildPrincipalShareMutation,
+  buildPrincipalUnshareMutation,
+  type PrincipalShareMutationInput,
+  type PrincipalUnshareMutationInput,
   type TableOperation,
 } from "../mutate.js";
 import {
@@ -31,6 +35,11 @@ type QueryMetadata = {
   includeTrashed?: boolean;
   includeArchived?: boolean;
 };
+
+const DFQL_PRINCIPAL_INVALID_CODE = "DFQL_PRINCIPAL_INVALID" as any;
+const DFQL_SHARE_SCOPE_INVALID_CODE = "DFQL_SHARE_SCOPE_INVALID" as any;
+const LEGACY_SHARE_WARNING =
+  "Deprecated shareWith.userId is accepted for compatibility; use shareWith.principalId";
 
 export interface DatafnTable<
   S extends DatafnSchema = DatafnSchema,
@@ -47,8 +56,14 @@ export interface DatafnTable<
   restore?: (id: string) => Promise<unknown>;
   archive?: (id: string) => Promise<unknown>;
   unarchive?: (id: string) => Promise<unknown>;
-  share?: (id: string, userId: string, level: string) => Promise<unknown>;
-  unshare?: (id: string, userId: string) => Promise<unknown>;
+  share?: {
+    (id: string, userId: string, level: string): Promise<unknown>;
+    (input: PrincipalShareMutationInput): Promise<unknown>;
+  };
+  unshare?: {
+    (id: string, userId: string): Promise<unknown>;
+    (input: PrincipalUnshareMutationInput): Promise<unknown>;
+  };
   getPermissions?: (id: string) => Promise<PermissionEntry[]>;
   transact(payload: DfqlTransact): Promise<unknown>;
   signal(q: DfqlQueryFragment, options?: { disableOptimistic?: boolean }): DatafnSignal<unknown>;
@@ -247,14 +262,119 @@ export function createTable<S extends DatafnSchema>(
       "shareable" in (capability as Record<string, unknown>),
   );
   if (hasShareableCapability) {
-    table.share = async (
-      id: string,
-      userId: string,
-      level: string,
-    ): Promise<unknown> =>
-      client.mutate(buildShareMutation(name, version, id, userId, level));
-    table.unshare = async (id: string, userId: string): Promise<unknown> =>
-      client.mutate(buildUnshareMutation(name, version, id, userId));
+    table.share = (async (...args: unknown[]): Promise<unknown> => {
+      if (
+        args.length === 3 &&
+        typeof args[0] === "string" &&
+        typeof args[1] === "string" &&
+        typeof args[2] === "string"
+      ) {
+        console.warn(LEGACY_SHARE_WARNING, {
+          code: "DFQL_LEGACY_API_DEPRECATED",
+          operation: "share",
+          path: "shareWith.userId",
+          replacement: "shareWith.principalId",
+        });
+        return client.mutate(
+          buildShareMutation(name, version, args[0], args[1], args[2]),
+        );
+      }
+
+      const input = args[0] as PrincipalShareMutationInput | undefined;
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        throw createClientError("DFQL_INVALID", "Invalid share arguments", {
+          path: "shareWith",
+        });
+      }
+      if (typeof input.principalId !== "string" || input.principalId.trim().length === 0) {
+        throw createClientError(DFQL_PRINCIPAL_INVALID_CODE, "principalId must be non-empty string", {
+          path: "shareWith.principalId",
+        });
+      }
+      if (typeof input.level !== "string") {
+        throw createClientError("DFQL_INVALID", "Invalid DFQL: shareWith.level must be string", {
+          path: "shareWith.level",
+        });
+      }
+      const scope = input.scope ?? "record";
+      if (scope !== "record" && scope !== "resource") {
+        throw createClientError(DFQL_SHARE_SCOPE_INVALID_CODE, "scope must be either record or resource", {
+          path: "scope",
+        });
+      }
+      if (scope === "record") {
+        if (typeof input.id !== "string" || input.id.length === 0) {
+          throw createClientError(DFQL_SHARE_SCOPE_INVALID_CODE, "record scope share must include id", {
+            path: "id",
+          });
+        }
+      } else if (input.id !== undefined) {
+        throw createClientError(DFQL_SHARE_SCOPE_INVALID_CODE, "resource scope share must omit id", {
+          path: "id",
+        });
+      }
+
+      return client.mutate(
+        buildPrincipalShareMutation(name, version, {
+          id: input.id,
+          scope,
+          principalId: input.principalId,
+          level: input.level,
+        }),
+      );
+    }) as DatafnTable<S, string>["share"];
+    table.unshare = (async (...args: unknown[]): Promise<unknown> => {
+      if (
+        args.length === 2 &&
+        typeof args[0] === "string" &&
+        typeof args[1] === "string"
+      ) {
+        console.warn(LEGACY_SHARE_WARNING, {
+          code: "DFQL_LEGACY_API_DEPRECATED",
+          operation: "unshare",
+          path: "shareWith.userId",
+          replacement: "shareWith.principalId",
+        });
+        return client.mutate(buildUnshareMutation(name, version, args[0], args[1]));
+      }
+
+      const input = args[0] as PrincipalUnshareMutationInput | undefined;
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        throw createClientError("DFQL_INVALID", "Invalid unshare arguments", {
+          path: "shareWith",
+        });
+      }
+      if (typeof input.principalId !== "string" || input.principalId.trim().length === 0) {
+        throw createClientError(DFQL_PRINCIPAL_INVALID_CODE, "principalId must be non-empty string", {
+          path: "shareWith.principalId",
+        });
+      }
+      const scope = input.scope ?? "record";
+      if (scope !== "record" && scope !== "resource") {
+        throw createClientError(DFQL_SHARE_SCOPE_INVALID_CODE, "scope must be either record or resource", {
+          path: "scope",
+        });
+      }
+      if (scope === "record") {
+        if (typeof input.id !== "string" || input.id.length === 0) {
+          throw createClientError(DFQL_SHARE_SCOPE_INVALID_CODE, "record scope share must include id", {
+            path: "id",
+          });
+        }
+      } else if (input.id !== undefined) {
+        throw createClientError(DFQL_SHARE_SCOPE_INVALID_CODE, "resource scope share must omit id", {
+          path: "id",
+        });
+      }
+
+      return client.mutate(
+        buildPrincipalUnshareMutation(name, version, {
+          id: input.id,
+          scope,
+          principalId: input.principalId,
+        }),
+      );
+    }) as DatafnTable<S, string>["unshare"];
     table.getPermissions = async (id: string): Promise<PermissionEntry[]> =>
       client.query(buildGetPermissionsQuery(name, version, id)) as Promise<PermissionEntry[]>;
   }

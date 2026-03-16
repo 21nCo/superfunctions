@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { SearchAdapter } from "@searchfn/adapters";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import { createSearchProvider } from "../src/index";
 
 function makeAdapter(overrides?: Partial<SearchAdapter>): SearchAdapter {
@@ -212,5 +212,92 @@ describe("createSearchProvider — initialize and dispose delegation", () => {
     const adapter = makeAdapter();
     const provider = createSearchProvider(adapter);
     await expect(provider.dispose()).resolves.toBeUndefined();
+  });
+});
+
+// TV-DFP-001: provider forwards fuzzy, prefix, fieldBoosts to adapter.search
+describe("createSearchProvider — TV-DFP-001: forwards search options to adapter.search", () => {
+  it("forwards fuzzy, prefix, and fieldBoosts from params to adapter.search", async () => {
+    const searchSpy = vi.fn().mockResolvedValue([]);
+    const adapter = makeAdapter({ search: searchSpy });
+    const provider = createSearchProvider(adapter);
+
+    await provider.search({
+      resource: "todos",
+      query: "to",
+      fuzzy: true,
+      prefix: true,
+      fieldBoosts: { title: 2 },
+    } as any);
+
+    expect(searchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: "todos",
+        query: "to",
+        fuzzy: true,
+        prefix: true,
+        fieldBoosts: { title: 2 },
+      }),
+    );
+  });
+
+  it("forwards undefined options when not provided (no accidental overrides)", async () => {
+    const searchSpy = vi.fn().mockResolvedValue([]);
+    const adapter = makeAdapter({ search: searchSpy });
+    const provider = createSearchProvider(adapter);
+
+    await provider.search({ resource: "todos", query: "hello" } as any);
+
+    const call = searchSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.fuzzy).toBeUndefined();
+    expect(call.prefix).toBeUndefined();
+    expect(call.fieldBoosts).toBeUndefined();
+  });
+});
+
+// TV-DFP-002: provider forwards fuzzy, prefix, fieldBoosts to adapter.searchAll
+describe("createSearchProvider — TV-DFP-002: forwards search options to adapter.searchAll", () => {
+  it("forwards fuzzy, prefix, and fieldBoosts to native adapter.searchAll", async () => {
+    const searchAllSpy = vi.fn().mockResolvedValue([]);
+    const adapter = makeAdapter({ searchAll: searchAllSpy });
+    const provider = createSearchProvider(adapter);
+
+    await provider.searchAll({
+      query: "to",
+      resources: ["todos"],
+      fuzzy: true,
+      prefix: true,
+    } as any);
+
+    expect(searchAllSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "to",
+        fuzzy: true,
+        prefix: true,
+      }),
+    );
+  });
+
+  it("forwards fuzzy and prefix to fallback per-resource search when searchAll unavailable", async () => {
+    const searchSpy = vi.fn().mockResolvedValue([]);
+    const adapter = makeAdapter({ search: searchSpy });
+    // No searchAll on this adapter
+    const provider = createSearchProvider(adapter, { resourceFields: { todos: ["title"] } });
+
+    await provider.searchAll({
+      query: "to",
+      resources: ["todos"],
+      fuzzy: true,
+      prefix: true,
+    } as any);
+
+    expect(searchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: "todos",
+        query: "to",
+        fuzzy: true,
+        prefix: true,
+      }),
+    );
   });
 });

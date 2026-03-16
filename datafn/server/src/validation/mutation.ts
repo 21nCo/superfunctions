@@ -49,6 +49,31 @@ const VALID_OPERATIONS = new Set([
  */
 const RECORD_REQUIRED_OPERATIONS = new Set(["insert", "merge", "replace"]);
 
+type ShareScope = "record" | "resource";
+
+type ShareableCapability = {
+  shareable: {
+    levels: string[];
+    default: "private" | "shared";
+    supportsScopeGrants?: boolean;
+  };
+};
+
+const DFQL_SHARE_SCOPE_INVALID_CODE = "DFQL_SHARE_SCOPE_INVALID" as any;
+const DFQL_PRINCIPAL_INVALID_CODE = "DFQL_PRINCIPAL_INVALID" as any;
+
+function normalizeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function canonicalizePrincipalFromUserId(userId: string): string {
+  return userId.includes(":") ? userId : `user:${userId}`;
+}
+
 /**
  * Validate a single mutation against the schema
  */
@@ -91,21 +116,6 @@ export function validateMutation(
       "DFQL_UNSUPPORTED",
       `Unsupported DFQL feature: mutation.operation.${m.operation}`,
       `${basePath}.operation`,
-    );
-  }
-
-  // Validate id (required for all operations)
-  if (typeof m.id !== "string") {
-    return vErr("DFQL_INVALID", "Invalid DFQL: id must be string", `${basePath}.id`);
-  }
-
-  // VAL-006: ID length limit
-  const maxIdLength = opts?.maxIdLength ?? 255;
-  if (m.id.length > maxIdLength) {
-    return vErr(
-      "DFQL_INVALID",
-      `ID exceeds maximum length (${maxIdLength})`,
-      `${basePath}.id`,
     );
   }
 
@@ -156,11 +166,12 @@ export function validateMutation(
     (capability: unknown) => capability === "archivable",
   );
   const shareableCapability = resolvedCapabilities.find(
-    (capability: unknown): capability is { shareable: { levels: string[]; default: "private" | "shared" } } =>
+    (capability: unknown): capability is ShareableCapability =>
       typeof capability === "object" &&
       capability !== null &&
       "shareable" in (capability as Record<string, unknown>),
   );
+  const isShareOperation = m.operation === "share" || m.operation === "unshare";
 
   if ((m.operation === "trash" || m.operation === "restore") && !hasTrashCapability) {
     return vErr(
@@ -179,7 +190,7 @@ export function validateMutation(
       `${basePath}.operation`,
     );
   }
-  if ((m.operation === "share" || m.operation === "unshare") && !shareableCapability) {
+  if (isShareOperation && !shareableCapability) {
     return vErr(
       "DFQL_UNSUPPORTED",
       `Unsupported DFQL feature: mutation.operation.${m.operation}`,
@@ -187,7 +198,10 @@ export function validateMutation(
     );
   }
 
-  if (m.operation === "share" || m.operation === "unshare") {
+  // VAL-006: ID length limit
+  const maxIdLength = opts?.maxIdLength ?? 255;
+
+  if (isShareOperation) {
     if (typeof m.shareWith !== "object" || m.shareWith === null || Array.isArray(m.shareWith)) {
       return vErr(
         "DFQL_INVALID",
@@ -195,15 +209,104 @@ export function validateMutation(
         `${basePath}.shareWith`,
       );
     }
-    const shareWith = m.shareWith as Record<string, unknown>;
-    if (typeof shareWith.userId !== "string" || shareWith.userId.length === 0) {
+
+    const scopeValue = m.scope;
+    let scope: ShareScope = "record";
+    if (scopeValue !== undefined) {
+      if (scopeValue !== "record" && scopeValue !== "resource") {
+        return vErr(
+          DFQL_SHARE_SCOPE_INVALID_CODE,
+          "scope must be either record or resource",
+          `${basePath}.scope`,
+        );
+      }
+      scope = scopeValue;
+    } else {
+      m.scope = "record";
+    }
+
+    if (scope === "resource" && shareableCapability && shareableCapability.shareable.supportsScopeGrants === false) {
       return vErr(
-        "DFQL_INVALID",
-        "Invalid DFQL: shareWith.userId must be string",
+        "DFQL_UNSUPPORTED",
+        "Unsupported DFQL feature: mutation.scope.resource",
+        `${basePath}.scope`,
+      );
+    }
+
+    if (scope === "resource") {
+      if (m.id !== undefined) {
+        return vErr(
+          DFQL_SHARE_SCOPE_INVALID_CODE,
+          "resource scope share must omit id",
+          `${basePath}.id`,
+        );
+      }
+    } else {
+      if (typeof m.id !== "string") {
+        return vErr("DFQL_INVALID", "Invalid DFQL: id must be string", `${basePath}.id`);
+      }
+      if (m.id.length > maxIdLength) {
+        return vErr(
+          "DFQL_INVALID",
+          `ID exceeds maximum length (${maxIdLength})`,
+          `${basePath}.id`,
+        );
+      }
+      if (resource.idPrefix && !m.id.startsWith(resource.idPrefix)) {
+        return vErr(
+          "DFQL_INVALID",
+          `Invalid id: must start with "${resource.idPrefix}"`,
+          `${basePath}.id`,
+        );
+      }
+    }
+
+    const shareWith = m.shareWith as Record<string, unknown>;
+    const principalId = normalizeNonEmptyString(shareWith.principalId);
+    const userId = normalizeNonEmptyString(shareWith.userId);
+
+    if (shareWith.principalId !== undefined && principalId === null) {
+      return vErr(
+        DFQL_PRINCIPAL_INVALID_CODE,
+        "principalId must be non-empty string",
+        `${basePath}.shareWith.principalId`,
+      );
+    }
+    if (shareWith.userId !== undefined && userId === null) {
+      return vErr(
+        DFQL_PRINCIPAL_INVALID_CODE,
+        "userId must be non-empty string",
         `${basePath}.shareWith.userId`,
       );
     }
-    if (m.operation === "share" && shareWith.level !== undefined) {
+    if (principalId && userId) {
+      return vErr(
+        DFQL_PRINCIPAL_INVALID_CODE,
+        "Provide only one of shareWith.userId or shareWith.principalId",
+        `${basePath}.shareWith`,
+      );
+    }
+    if (!principalId && !userId) {
+      return vErr(
+        DFQL_PRINCIPAL_INVALID_CODE,
+        "Either shareWith.userId or shareWith.principalId is required",
+        `${basePath}.shareWith`,
+      );
+    }
+
+    const canonicalPrincipalId = principalId ?? canonicalizePrincipalFromUserId(userId as string);
+    const level = shareWith.level;
+    if (userId && !principalId) {
+      m.shareWith = level === undefined
+        ? { principalId: canonicalPrincipalId, userId }
+        : { principalId: canonicalPrincipalId, userId, level };
+    } else {
+      m.shareWith = level === undefined
+        ? { principalId: canonicalPrincipalId }
+        : { principalId: canonicalPrincipalId, level };
+    }
+
+    if (m.operation === "share" && level !== undefined) {
       if (typeof shareWith.level !== "string") {
         return vErr(
           "DFQL_INVALID",
@@ -220,14 +323,24 @@ export function validateMutation(
         );
       }
     }
-  }
-
-  if (resource.idPrefix && !m.id.startsWith(resource.idPrefix)) {
-    return vErr(
-      "DFQL_INVALID",
-      `Invalid id: must start with "${resource.idPrefix}"`,
-      `${basePath}.id`,
-    );
+  } else {
+    if (typeof m.id !== "string") {
+      return vErr("DFQL_INVALID", "Invalid DFQL: id must be string", `${basePath}.id`);
+    }
+    if (m.id.length > maxIdLength) {
+      return vErr(
+        "DFQL_INVALID",
+        `ID exceeds maximum length (${maxIdLength})`,
+        `${basePath}.id`,
+      );
+    }
+    if (resource.idPrefix && !m.id.startsWith(resource.idPrefix)) {
+      return vErr(
+        "DFQL_INVALID",
+        `Invalid id: must start with "${resource.idPrefix}"`,
+        `${basePath}.id`,
+      );
+    }
   }
 
   // Validate record for operations that require it

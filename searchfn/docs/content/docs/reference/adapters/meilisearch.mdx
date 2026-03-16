@@ -14,13 +14,13 @@ The Meilisearch Adapter connects to a Meilisearch instance for fast, typo-tolera
 ## Installation
 
 ```bash
-npm install @searchfn/adapters
+npm install @searchfn/adapter-meilisearch
 ```
 
 ## Usage
 
 ```typescript
-import { MeilisearchAdapter } from "@searchfn/adapters";
+import { MeilisearchAdapter } from "@searchfn/adapter-meilisearch";
 
 const adapter = new MeilisearchAdapter({
   host: process.env.MEILI_URL!,

@@ -177,7 +177,7 @@ export type { RealtimePipelineDeps } from './transcription/realtime.js';
 export { createSearchFnClient } from './integrations/searchfn.js';
 export type { SearchFnClient, TranscriptSearchDocument } from './integrations/searchfn.js';
 export { indexTranscript } from './search/indexer.js';
-export { createMemoryTokenStore } from './calendar/token-store.js';
+export { createMemoryTokenStore, createOAuthBackedCalendarTokenStore } from './calendar/token-store.js';
 export type { CalendarTokenStore } from './calendar/token-store.js';
 export { createGoogleCalendarClient } from './calendar/google.js';
 export type { GoogleCalendarClient } from './calendar/google.js';
@@ -188,7 +188,7 @@ export type { CalendarSchedulerDeps, SchedulerConfig } from './calendar/schedule
 export type { RecFnLimitsConfig, RecFnRateLimitConfig } from './config.js';
 export { loadLimitsConfig, loadRateLimitConfig, DEFAULT_LIMITS, DEFAULT_RATE_LIMIT } from './config.js';
 export { createRateLimitMiddleware } from './middleware/rate-limit.js';
-export { refreshTokenIfNeeded } from './calendar/token-refresh.js';
+export { refreshTokenIfNeeded, refreshCalendarToken } from './calendar/token-refresh.js';
 export type { TokenRefreshProvider, TokenRefreshResult } from './calendar/token-refresh.js';
 export { createMetricsEmitter } from './integrations/watchfn.js';
 export type { MetricsEmitter } from './integrations/watchfn.js';

@@ -1,0 +1,12 @@
+{
+  "title": "HTTP & Framework Adapters",
+  "pages": [
+    "index",
+    "http",
+    "http-express",
+    "http-fastify",
+    "http-hono",
+    "http-next",
+    "http-sveltekit"
+  ]
+}

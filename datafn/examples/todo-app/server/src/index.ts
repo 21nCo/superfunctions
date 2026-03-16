@@ -2,24 +2,59 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createDatafnServer } from "@datafn/server";
-import { ElasticsearchAdapter, MemoryAdapter } from "@searchfn/adapters";
+import { ElasticsearchAdapter } from "@searchfn/adapter-elasticsearch";
+import { MemoryAdapter } from "@searchfn/adapter-memory";
 import { createSearchProvider } from "@searchfn/datafn-provider";
 import { toHono } from "@superfunctions/http-hono";
 import { adapter } from "./db.js";
 import schema from "./schema.datafn.js";
+
+const SEARCH_RESOURCE_FIELDS: Record<string, string[]> = {
+  todos: ["text"],
+  categories: ["name"],
+};
+
+const SEARCH_DEFAULTS = {
+  prefix: true,
+  fuzzy: 0.2,
+  fieldBoosts: {
+    text: 2,
+    name: 1,
+  },
+};
+
+function parseNodeUrl(raw: string) {
+  const parsed = new URL(raw);
+  const auth = parsed.username
+    ? { username: decodeURIComponent(parsed.username), password: decodeURIComponent(parsed.password) }
+    : undefined;
+  parsed.username = "";
+  parsed.password = "";
+  return { node: parsed.toString().replace(/\/$/, ""), auth };
+}
+
+const searchLogger = {
+  debug: (msg: string, ctx?: Record<string, unknown>) => console.log(`[search:debug] ${msg}`, ctx ?? ""),
+  warn: (msg: string, ctx?: Record<string, unknown>) => console.warn(`[search:warn] ${msg}`, ctx ?? ""),
+  error: (msg: string, ctx?: Record<string, unknown>) => console.error(`[search:error] ${msg}`, ctx ?? ""),
+};
 
 function createSearchAdapter() {
   const openSearchUrl = process.env.OPENSEARCH_URL?.trim();
   const elasticsearchUrl = process.env.ELASTICSEARCH_URL?.trim();
 
   if (openSearchUrl) {
+    const { node, auth } = parseNodeUrl(openSearchUrl);
     return {
       label: "opensearch",
       adapter: new ElasticsearchAdapter({
-        node: openSearchUrl,
+        node,
+        auth,
         engine: "opensearch",
         indexPrefix: "todo_app",
+        defaults: SEARCH_DEFAULTS,
         requestTimeoutMs: 10_000,
+        logger: searchLogger,
         retry: {
           maxRetries: 3,
           baseDelayMs: 100,
@@ -30,12 +65,15 @@ function createSearchAdapter() {
   }
 
   if (elasticsearchUrl) {
+    const { node, auth } = parseNodeUrl(elasticsearchUrl);
     return {
       label: "elasticsearch",
       adapter: new ElasticsearchAdapter({
-        node: elasticsearchUrl,
+        node,
+        auth,
         engine: "elasticsearch",
         indexPrefix: "todo_app",
+        defaults: SEARCH_DEFAULTS,
         requestTimeoutMs: 10_000,
         retry: {
           maxRetries: 3,
@@ -48,17 +86,16 @@ function createSearchAdapter() {
 
   return {
     label: "memory",
-    adapter: new MemoryAdapter(),
+    adapter: new MemoryAdapter({
+      defaults: SEARCH_DEFAULTS,
+    }),
   };
 }
 
 async function main() {
   const { adapter: searchAdapter, label: searchAdapterLabel } = createSearchAdapter();
   const searchProvider = createSearchProvider(searchAdapter, {
-    resourceFields: {
-      todos: ["text"],
-      categories: ["name"],
-    },
+    resourceFields: SEARCH_RESOURCE_FIELDS,
   });
 
   // ── Create DataFn Server ───────────────────────────────────────────
@@ -88,6 +125,26 @@ async function main() {
       maxTransactSteps: 50,
     },
   });
+
+  // ── Reindex existing records into search (one-time) ─────────────────
+  if (process.env.REINDEX === "true") {
+    const resources = ["todos", "categories"] as const;
+    for (const resource of resources) {
+      const records = await adapter.findMany({
+        model: resource as string,
+        where: [],
+      });
+      if (records.length > 0) {
+        await searchProvider.updateIndices({
+          resource: resource as string,
+          records: records as Record<string, unknown>[],
+          operation: "upsert",
+        });
+        console.log(`  Reindexed ${records.length} ${resource} into search`);
+      }
+    }
+    console.log("  Reindex complete");
+  }
 
   // ── Hono HTTP App ──────────────────────────────────────────────────
   const app = new Hono();

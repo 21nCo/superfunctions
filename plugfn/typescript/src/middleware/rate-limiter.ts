@@ -1,163 +1,128 @@
+import { createRateLimiter, type RateLimiter as SharedRateLimiter } from '@superfunctions/middleware';
 import type { RateLimitConfig } from '../types/provider.js';
 
-interface RateLimitEntry {
-  tokens: number;
-  lastRefill: number;
-  queue: Array<{ resolve: () => void; reject: (error: Error) => void }>;
+interface RateLimiterDependencies {
+  now?: () => number;
+  setTimeoutFn?: (callback: () => void, delayMs: number) => NodeJS.Timeout;
+  clearTimeoutFn?: (timeoutId: NodeJS.Timeout) => void;
+  setIntervalFn?: (callback: () => void, delayMs: number) => NodeJS.Timeout;
+  clearIntervalFn?: (timeoutId: NodeJS.Timeout) => void;
+  cleanupIntervalMs?: number;
+}
+
+interface RateLimiterSnapshot {
+  remaining: number;
+  resetAt: number;
 }
 
 /**
- * Token bucket rate limiter
+ * Compatibility wrapper around shared token-bucket rate limiting.
  */
 export class RateLimiter {
-  private buckets = new Map<string, RateLimitEntry>();
-  private cleanupInterval: NodeJS.Timeout;
+  private readonly limiters = new Map<string, SharedRateLimiter>();
+  private readonly snapshots = new Map<string, RateLimiterSnapshot>();
+  private readonly pendingTimeouts = new Set<NodeJS.Timeout>();
+  private readonly now: () => number;
+  private readonly setTimeoutFn: (callback: () => void, delayMs: number) => NodeJS.Timeout;
+  private readonly clearTimeoutFn: (timeoutId: NodeJS.Timeout) => void;
+  private destroyed = false;
 
-  constructor() {
-    // Cleanup old buckets every minute
-    this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+  constructor(dependencies: RateLimiterDependencies = {}) {
+    this.now = dependencies.now ?? (() => Date.now());
+    this.setTimeoutFn = dependencies.setTimeoutFn ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    this.clearTimeoutFn = dependencies.clearTimeoutFn ?? ((timeoutId) => clearTimeout(timeoutId));
   }
 
-  /**
-   * Acquire a token for the given key
-   */
   async acquire(key: string, config: RateLimitConfig): Promise<void> {
-    const bucket = this.getOrCreateBucket(key, config);
-    
-    // Refill tokens based on time elapsed
-    this.refillTokens(bucket, config);
-    
-    // If tokens available, consume one
-    if (bucket.tokens >= 1) {
-      bucket.tokens -= 1;
-      return;
-    }
-    
-    // Wait for token to become available
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        const index = bucket.queue.findIndex((item) => item.resolve === resolve);
-        if (index !== -1) {
-          bucket.queue.splice(index, 1);
-        }
-        reject(new Error('Rate limit timeout'));
-      }, config.window * 2);
+    const limiter = this.getSharedLimiter(config);
+    const start = this.now();
 
-      bucket.queue.push({
-        resolve: () => {
-          clearTimeout(timeout);
-          resolve();
-        },
-        reject: (error: Error) => {
-          clearTimeout(timeout);
-          reject(error);
-        },
-      });
-    });
+    while (true) {
+      if (this.destroyed) {
+        throw new Error('Rate limiter destroyed');
+      }
+
+      const result = await limiter.check({ key });
+      this.setSnapshot(key, config, result.remaining, Date.parse(result.resetAt));
+
+      if (result.allowed) {
+        return;
+      }
+
+      const waitMs = Math.max(1, Date.parse(result.resetAt) - this.now());
+      if (this.now() - start + waitMs > config.window * 2) {
+        throw new Error('Rate limit timeout');
+      }
+
+      await this.sleep(waitMs);
+    }
   }
 
-  /**
-   * Check if rate limit would be exceeded
-   */
+  async acquireMany(keys: string[], config: RateLimitConfig): Promise<void> {
+    for (const key of keys) {
+      await this.acquire(key, config);
+    }
+  }
+
   wouldExceed(key: string, config: RateLimitConfig): boolean {
-    const bucket = this.buckets.get(key);
-    
-    if (!bucket) {
+    const snapshotKey = this.snapshotKey(key, config);
+    const snapshot = this.snapshots.get(snapshotKey);
+
+    if (!snapshot) {
       return false;
     }
-    
-    this.refillTokens(bucket, config);
-    return bucket.tokens < 1;
-  }
 
-  /**
-   * Get or create bucket for key
-   */
-  private getOrCreateBucket(key: string, config: RateLimitConfig): RateLimitEntry {
-    let bucket = this.buckets.get(key);
-    
-    if (!bucket) {
-      bucket = {
-        tokens: config.requests,
-        lastRefill: Date.now(),
-        queue: [],
-      };
-      this.buckets.set(key, bucket);
+    if (this.now() >= snapshot.resetAt) {
+      this.snapshots.delete(snapshotKey);
+      return false;
     }
-    
-    return bucket;
+
+    return snapshot.remaining < 1;
   }
 
-  /**
-   * Refill tokens based on elapsed time
-   */
-  private refillTokens(bucket: RateLimitEntry, config: RateLimitConfig): void {
-    const now = Date.now();
-    const elapsed = now - bucket.lastRefill;
-    
-    if (elapsed >= config.window) {
-      // Full refill
-      const tokensToAdd = config.requests;
-      bucket.tokens = Math.min(config.requests, bucket.tokens + tokensToAdd);
-      bucket.lastRefill = now;
-      
-      // Process queued requests
-      while (bucket.queue.length > 0 && bucket.tokens >= 1) {
-        const item = bucket.queue.shift();
-        if (item) {
-          bucket.tokens -= 1;
-          item.resolve();
-        }
-      }
-    } else {
-      // Partial refill based on time elapsed
-      const refillRate = config.requests / config.window;
-      const tokensToAdd = refillRate * elapsed;
-      
-      if (tokensToAdd >= 1) {
-        bucket.tokens = Math.min(config.requests, bucket.tokens + Math.floor(tokensToAdd));
-        bucket.lastRefill = now;
-        
-        // Process queued requests
-        while (bucket.queue.length > 0 && bucket.tokens >= 1) {
-          const item = bucket.queue.shift();
-          if (item) {
-            bucket.tokens -= 1;
-            item.resolve();
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Cleanup old buckets
-   */
-  private cleanup(): void {
-    const now = Date.now();
-    const maxAge = 300000; // 5 minutes
-    
-    for (const [key, bucket] of this.buckets.entries()) {
-      if (now - bucket.lastRefill > maxAge && bucket.queue.length === 0) {
-        this.buckets.delete(key);
-      }
-    }
-  }
-
-  /**
-   * Destroy rate limiter and cleanup
-   */
   destroy(): void {
-    clearInterval(this.cleanupInterval);
-    
-    // Reject all queued requests
-    for (const bucket of this.buckets.values()) {
-      for (const item of bucket.queue) {
-        item.reject(new Error('Rate limiter destroyed'));
-      }
+    this.destroyed = true;
+    for (const timeoutId of this.pendingTimeouts) {
+      this.clearTimeoutFn(timeoutId);
     }
-    
-    this.buckets.clear();
+    this.pendingTimeouts.clear();
+    this.limiters.clear();
+    this.snapshots.clear();
+  }
+
+  private getSharedLimiter(config: RateLimitConfig): SharedRateLimiter {
+    const id = `${config.requests}:${config.window}`;
+    const existing = this.limiters.get(id);
+    if (existing) {
+      return existing;
+    }
+
+    const limiter = createRateLimiter({
+      algorithm: 'token-bucket',
+      maxRequests: config.requests,
+      windowMs: config.window,
+      keyPrefix: `plugfn:ratelimit:${id}:`,
+      now: this.now,
+    });
+    this.limiters.set(id, limiter);
+    return limiter;
+  }
+
+  private snapshotKey(key: string, config: RateLimitConfig): string {
+    return `${config.requests}:${config.window}:${key}`;
+  }
+
+  private setSnapshot(key: string, config: RateLimitConfig, remaining: number, resetAt: number): void {
+    this.snapshots.set(this.snapshotKey(key, config), { remaining, resetAt });
+  }
+
+  private sleep(delayMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timeout = this.setTimeoutFn(() => {
+        this.pendingTimeouts.delete(timeout);
+        resolve();
+      }, delayMs);
+      this.pendingTimeouts.add(timeout);
+    });
   }
 }
-

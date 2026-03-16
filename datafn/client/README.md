@@ -202,6 +202,46 @@ const result = await tasks.query({
 - `groupBy` / `aggregations` / `having` — aggregation queries
 - `search` — full-text search
 
+### Search (Provider-Backed, Local-First)
+
+DataFn search is provider-backed when `searchProvider` is configured. In sync mode, search is local-first after hydration is ready.
+
+`table.query()` search block options:
+
+```typescript
+const result = await tasks.query({
+  search: {
+    query: "test",
+    prefix: true,
+    fuzzy: 0.2,
+    fieldBoosts: { title: 2, description: 1 },
+  },
+});
+```
+
+Cross-resource search with explicit source routing:
+
+```typescript
+const result = await client.search({
+  query: "test",
+  resources: ["tasks", "projects"],
+  prefix: true,
+  fuzzy: 0.2,
+  fieldBoosts: { title: 2, name: 1 },
+  source: "auto", // auto | local | remote
+});
+```
+
+`source` semantics:
+
+- `auto` (default): local-first; falls back to remote if local provider path is unavailable.
+- `local`: force local provider execution.
+- `remote`: force remote `/datafn/search` execution.
+
+If the requested source is unavailable, DataFn returns `DFQL_UNSUPPORTED`.
+
+MiniSearch-only plugin mode is still supported for compatibility, but provider-backed mode is the recommended path.
+
 ### table.mutate(fragment)
 
 Execute a mutation scoped to this resource.

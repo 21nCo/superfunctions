@@ -34,10 +34,14 @@
     "namespace": "cifn"
   },
   "dependencies": {
+    "@superfunctions/webhooks": "*",
     "ajv": "^8.12.0",
     "hono": "^4.11.8",
     "js-yaml": "^4.1.0",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "@superfunctions/envelope": "*",
+    "@superfunctions/errors": "*",
+    "@superfunctions/queue": "*"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

@@ -1,4 +1,4 @@
-import type { SearchAdapter } from "@searchfn/adapters";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import { parseJsonBody, mapAdapterErrorToResponse, okResponse } from "../http/errors.js";
 import { validateResource, validateIds } from "../http/validation.js";
 import type { ServerLimits } from "../http/validation.js";

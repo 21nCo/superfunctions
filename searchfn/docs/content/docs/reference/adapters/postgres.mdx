@@ -14,7 +14,7 @@ The Postgres Adapter uses native Postgres full-text search (`tsvector`/`tsquery`
 ## Installation
 
 ```bash
-npm install @searchfn/adapters
+npm install @searchfn/adapter-postgres
 ```
 
 ## Setup
@@ -22,7 +22,7 @@ npm install @searchfn/adapters
 The adapter requires search tables and indexes in your Postgres database. Run the migration SQL shipped with the package:
 
 ```typescript
-import { getPostgresMigrationSQL } from "@searchfn/adapters";
+import { getPostgresMigrationSQL } from "@searchfn/adapter-postgres";
 
 const sql = getPostgresMigrationSQL();
 // Execute this SQL against your database to create required tables and indexes
@@ -31,7 +31,7 @@ const sql = getPostgresMigrationSQL();
 ## Usage
 
 ```typescript
-import { PostgresAdapter } from "@searchfn/adapters";
+import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const adapter = new PostgresAdapter({
   connectionString: process.env.SEARCH_DB_URL!,

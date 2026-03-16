@@ -38,6 +38,74 @@ describe("capability schema types", () => {
     const validated = validateSchema(schema);
     expect(validated.ok).toBe(true);
   });
+
+  it("accepts SPV2 shareable extensions and normalizes defaults", () => {
+    const validated = validateSchema({
+      capabilities: ["audit"],
+      resources: [
+        {
+          name: "docs",
+          version: 1,
+          capabilities: [
+            {
+              shareable: {
+                levels: ["viewer", "editor", "owner"],
+                default: "private",
+                supportsScopeGrants: false,
+                crossNsShareable: false,
+                principalMode: "opaque-id",
+                relationInheritance: {
+                  enabled: true,
+                  relations: ["items"],
+                },
+              },
+            },
+          ],
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    });
+
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+    const caps = validated.result.resources[0].capabilities as any[];
+    const shareable = caps.find((entry) => typeof entry === "object" && entry && "shareable" in entry) as any;
+    expect(shareable?.shareable?.visibilityDefault).toBe("private");
+    expect(shareable?.shareable?.supportsScopeGrants).toBe(false);
+    expect(shareable?.shareable?.crossNsShareable).toBe(false);
+    expect(shareable?.shareable?.principalMode).toBe("opaque-id");
+    expect(shareable?.shareable?.relationInheritance?.enabled).toBe(true);
+    expect(shareable?.shareable?.relationInheritance?.requireRelateConsent).toBe(true);
+  });
+
+  it("accepts SPV2 canonical visibilityDefault without legacy default", () => {
+    const validated = validateSchema({
+      capabilities: ["audit"],
+      resources: [
+        {
+          name: "collections",
+          version: 1,
+          capabilities: [
+            {
+              shareable: {
+                levels: ["viewer", "editor", "owner"],
+                visibilityDefault: "ns",
+              },
+            },
+          ],
+          fields: [{ name: "title", type: "string", required: true }],
+        },
+      ],
+    });
+
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+
+    const caps = validated.result.resources[0].capabilities as any[];
+    const shareable = caps.find((entry) => typeof entry === "object" && entry && "shareable" in entry) as any;
+    expect(shareable?.shareable?.visibilityDefault).toBe("ns");
+    expect(shareable?.shareable?.default).toBe("shared");
+  });
 });
 
 describe("resolveCapabilities", () => {
@@ -134,6 +202,23 @@ describe("getCapabilityFields", () => {
       "shareable",
       "timestamps",
       "trash",
+    ]);
+  });
+
+  it("injects readonly visibility for shareable resources", () => {
+    const fields = getCapabilityFields([
+      { shareable: { levels: ["viewer", "editor", "owner"], default: "private" } },
+    ]);
+
+    expect(fields).toEqual([
+      {
+        name: "visibility",
+        type: "string",
+        required: false,
+        nullable: true,
+        readonly: true,
+        default: null,
+      },
     ]);
   });
 });

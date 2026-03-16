@@ -1,7 +1,7 @@
 /**
  * Canonical error/envelope utilities for @searchfn/server
  */
-import { SearchAdapterError } from "@searchfn/adapters";
+import { SearchAdapterError } from "@searchfn/adapter-contracts";
 
 export type SearchFnErrorCode =
   | "DFQL_INVALID"

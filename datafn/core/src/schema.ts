@@ -30,6 +30,8 @@ const SIMPLE_CAPABILITIES: ReadonlySet<SimpleCapability> = new Set([
 
 const SHAREABLE_LEVELS = new Set(["viewer", "editor", "owner"]);
 const SHAREABLE_DEFAULTS = new Set(["private", "shared"]);
+const SHAREABLE_VISIBILITY_DEFAULTS = new Set(["ns", "private", "shared"]);
+const SHAREABLE_PRINCIPAL_MODES = new Set(["opaque-id"]);
 
 const RELATION_SIMPLE_CAPABILITIES: ReadonlySet<RelationSimpleCapability> = new Set([
   "timestamps",
@@ -284,7 +286,7 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
 
     normalizedResources.push({
       ...r,
-      capabilities: r.capabilities as DatafnResourceSchema["capabilities"],
+      capabilities: resourceCapsResult.result as DatafnResourceSchema["capabilities"],
       fields: [...(r.fields as DatafnResourceSchema["fields"]), ...injectedFields],
       indices: normalizedIndices,
     } as DatafnResourceSchema);
@@ -454,37 +456,181 @@ function parseCapabilityArray(
       parsed.push(entry as SimpleCapability);
       continue;
     }
-    if (isValidShareableCapability(entry)) {
-      parsed.push(entry);
+    const shareableResult = parseShareableCapability(entry, path);
+    if (shareableResult.ok) {
+      parsed.push(shareableResult.result);
       continue;
     }
-    return err("INVALID_CAPABILITY_CONFIG", "Invalid capability configuration", { path });
+    return shareableResult;
   }
 
   // VA-001: duplicate entries are deduplicated, not rejected
   return ok(resolveCapabilities(parsed, undefined));
 }
 
-function isValidShareableCapability(entry: unknown): entry is ShareableCapability {
+function parseShareableCapability(
+  entry: unknown,
+  path: string,
+): DatafnEnvelope<ShareableCapability> {
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-    return false;
+    return err("INVALID_CAPABILITY_CONFIG", "Invalid capability configuration", { path });
   }
   const obj = entry as Record<string, unknown>;
   if (!obj.shareable || typeof obj.shareable !== "object" || Array.isArray(obj.shareable)) {
-    return false;
+    return err("INVALID_CAPABILITY_CONFIG", "Invalid capability configuration", { path });
   }
   const shareable = obj.shareable as Record<string, unknown>;
-  if (!Array.isArray(shareable.levels)) return false;
+  if (!Array.isArray(shareable.levels)) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.levels" must be an array`,
+      { path: `${path}.shareable.levels` },
+    );
+  }
   if (
     shareable.levels.length === 0 ||
     !shareable.levels.every((level) => typeof level === "string" && SHAREABLE_LEVELS.has(level))
   ) {
-    return false;
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.levels" must include one or more of [viewer, editor, owner]`,
+      { path: `${path}.shareable.levels` },
+    );
   }
-  if (typeof shareable.default !== "string" || !SHAREABLE_DEFAULTS.has(shareable.default)) {
-    return false;
+  if (
+    shareable.default !== undefined &&
+    (typeof shareable.default !== "string" || !SHAREABLE_DEFAULTS.has(shareable.default))
+  ) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.default" must be one of [private, shared]`,
+      { path: `${path}.shareable.default` },
+    );
   }
-  return true;
+
+  if (
+    shareable.visibilityDefault !== undefined &&
+    (typeof shareable.visibilityDefault !== "string" ||
+      !SHAREABLE_VISIBILITY_DEFAULTS.has(shareable.visibilityDefault))
+  ) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.visibilityDefault" must be one of [ns, private, shared]`,
+      { path: `${path}.shareable.visibilityDefault` },
+    );
+  }
+  if (shareable.default === undefined && shareable.visibilityDefault === undefined) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.default" or "shareable.visibilityDefault" must be provided`,
+      { path: `${path}.shareable` },
+    );
+  }
+
+  if (
+    shareable.supportsScopeGrants !== undefined &&
+    typeof shareable.supportsScopeGrants !== "boolean"
+  ) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.supportsScopeGrants" must be boolean`,
+      { path: `${path}.shareable.supportsScopeGrants` },
+    );
+  }
+
+  if (
+    shareable.crossNsShareable !== undefined &&
+    typeof shareable.crossNsShareable !== "boolean"
+  ) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.crossNsShareable" must be boolean`,
+      { path: `${path}.shareable.crossNsShareable` },
+    );
+  }
+
+  if (
+    shareable.principalMode !== undefined &&
+    (typeof shareable.principalMode !== "string" ||
+      !SHAREABLE_PRINCIPAL_MODES.has(shareable.principalMode))
+  ) {
+    return err(
+      "INVALID_CAPABILITY_CONFIG",
+      `"shareable.principalMode" must be one of [opaque-id]`,
+      { path: `${path}.shareable.principalMode` },
+    );
+  }
+
+  let relationInheritance: ShareableCapability["shareable"]["relationInheritance"] | undefined;
+  if (shareable.relationInheritance !== undefined) {
+    const rel = shareable.relationInheritance;
+    if (typeof rel !== "object" || rel === null || Array.isArray(rel)) {
+      return err(
+        "INVALID_CAPABILITY_CONFIG",
+        `"shareable.relationInheritance" must be an object`,
+        { path: `${path}.shareable.relationInheritance` },
+      );
+    }
+    const relObj = rel as Record<string, unknown>;
+    if (typeof relObj.enabled !== "boolean") {
+      return err(
+        "INVALID_CAPABILITY_CONFIG",
+        `"shareable.relationInheritance.enabled" must be boolean`,
+        { path: `${path}.shareable.relationInheritance.enabled` },
+      );
+    }
+    if (
+      relObj.relations !== undefined &&
+      (!Array.isArray(relObj.relations) ||
+        !relObj.relations.every((value) => typeof value === "string"))
+    ) {
+      return err(
+        "INVALID_CAPABILITY_CONFIG",
+        `"shareable.relationInheritance.relations" must be string[]`,
+        { path: `${path}.shareable.relationInheritance.relations` },
+      );
+    }
+    if (
+      relObj.requireRelateConsent !== undefined &&
+      typeof relObj.requireRelateConsent !== "boolean"
+    ) {
+      return err(
+        "INVALID_CAPABILITY_CONFIG",
+        `"shareable.relationInheritance.requireRelateConsent" must be boolean`,
+        { path: `${path}.shareable.relationInheritance.requireRelateConsent` },
+      );
+    }
+    relationInheritance = {
+      enabled: relObj.enabled,
+      relations: relObj.relations as string[] | undefined,
+      requireRelateConsent: (relObj.requireRelateConsent as boolean | undefined) ?? true,
+    };
+  }
+
+  const normalized: ShareableCapability = {
+    shareable: {
+      levels: shareable.levels as ShareableCapability["shareable"]["levels"],
+      default:
+        (shareable.default as ShareableCapability["shareable"]["default"] | undefined) ??
+        ((shareable.visibilityDefault as ShareableCapability["shareable"]["visibilityDefault"]) === "private"
+          ? "private"
+          : "shared"),
+      visibilityDefault: (
+        (shareable.visibilityDefault as
+          | ShareableCapability["shareable"]["visibilityDefault"]
+          | undefined) ??
+        (shareable.default as ShareableCapability["shareable"]["default"])
+      ) as ShareableCapability["shareable"]["visibilityDefault"],
+      supportsScopeGrants: (shareable.supportsScopeGrants as boolean | undefined) ?? true,
+      crossNsShareable: (shareable.crossNsShareable as boolean | undefined) ?? true,
+      principalMode:
+        (shareable.principalMode as ShareableCapability["shareable"]["principalMode"] | undefined) ??
+        "opaque-id",
+      relationInheritance,
+    },
+  };
+
+  return ok(normalized);
 }
 
 function hasCapability(caps: CapabilityEntry[], capability: SimpleCapability): boolean {

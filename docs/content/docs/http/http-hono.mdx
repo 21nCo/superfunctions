@@ -1,0 +1,105 @@
+---
+title: HTTP Hono
+description: Run a shared Superfunctions router inside Hono for lightweight APIs and fetch-native or edge-friendly deployments.
+---
+
+`@superfunctions/http-hono` is the adapter to choose when your application runs on Hono or in environments that already speak the fetch model natively. Hono is a natural fit for edge-oriented deployments, lightweight APIs, and projects that want a small framework surface. This adapter lets you keep that deployment style while still writing your route logic against the portable [`@superfunctions/http`](/docs/http/http) contract.
+
+Because Hono already works well with Web-standard `Request` and `Response` objects, this adapter is conceptually simple. That simplicity is the main reason to pick it. You keep the same router definition that could also run in other environments, but the handoff into Hono remains easy to reason about.
+
+## What It Is
+
+`@superfunctions/http-hono` converts a shared Superfunctions router into a Hono app segment that you can mount with `app.route()`. The adapter delegates incoming Hono requests to the shared router and returns the resulting Web `Response` back through Hono's own response pipeline.
+
+This package exists for developers who want Hono's runtime and deployment story without rewriting the business logic around Hono-specific handler signatures. It keeps the adapter thin and the route model portable.
+
+## When To Use It
+
+Choose this adapter when Hono is already part of your runtime plan or when you want to stay close to fetch-native semantics. It is a strong fit for Cloudflare Workers, lightweight Node APIs, and services that may eventually run across several fetch-friendly runtimes.
+
+Use this checklist as a quick chooser:
+
+| Choose this adapter when | Consider another adapter when |
+| --- | --- |
+| You are already using `new Hono()` and `app.route()` | You want a more traditional Node server based on Express or Fastify |
+| You care about edge-friendly deployment and Web-standard requests | You need route-file conventions in Next.js or SvelteKit |
+| You want the lightest bridge between a shared router and a framework | You need framework-specific middleware stacks from another runtime |
+
+## Install
+
+```bash
+npm install @superfunctions/http @superfunctions/http-hono hono
+```
+
+## Quick Start
+
+Mount the shared router inside a Hono app with `toHono()`.
+
+```ts
+import { Hono } from "hono";
+import { createRouter } from "@superfunctions/http";
+import { toHono } from "@superfunctions/http-hono";
+
+const router = createRouter({
+  routes: [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async () => Response.json({ ok: true }),
+    },
+  ],
+});
+
+const app = new Hono();
+app.route("/api", toHono(router));
+
+export default app;
+```
+
+## Core Concepts
+
+The most useful Hono-specific concept is that the adapter is intentionally thin because Hono already embraces Web `Request` and `Response` primitives. That means the jump from framework request to shared router request is smaller than it is in older Node-centric frameworks. If your team likes the fetch programming model, this adapter feels natural quickly.
+
+The second concept is mount-path ownership. As with the other adapters, decide whether the framework contributes the prefix or the router does. If you mount with `app.route("/api", ...)`, define routes relative to that mount point inside the shared router whenever possible. This keeps portability high and reduces confusion when the same router is mounted in another runtime later.
+
+The third concept is direct use versus adapter use. A fetch-native router can sometimes be called directly, but the adapter still gives you a clearer Hono integration surface and keeps framework composition explicit in application code.
+
+## Real-World Example
+
+Assume you publish a shared router for customer-facing account APIs, and one deployment target is a Hono service running close to the edge. You can mount the same shared logic in Hono while keeping the route behavior independent from Hono-specific handler code.
+
+```ts
+import { Hono } from "hono";
+import { createRouter } from "@superfunctions/http";
+import { toHono } from "@superfunctions/http-hono";
+
+const accountRouter = createRouter({
+  routes: [
+    {
+      method: "GET",
+      path: "/accounts/:id",
+      handler: async (_request, context) =>
+        Response.json({
+          accountId: context.params.id,
+          region: "global-edge",
+        }),
+    },
+  ],
+});
+
+const app = new Hono();
+app.route("/api", toHono(accountRouter));
+```
+
+In that setup, Hono controls runtime concerns such as server bootstrap and middleware composition, while the shared router continues to own path matching and response generation. That division is what keeps the route reusable elsewhere.
+
+## Related Packages
+
+- [`http`](/docs/http/http) for the shared router contract underneath the adapter.
+- [`http-next`](/docs/http/http-next) if you also need route-file integration in Next.js while keeping shared handlers.
+- [`http-sveltekit`](/docs/http/http-sveltekit) if your team compares Hono against another fetch-oriented framework.
+- [Webhooks](/docs/middleware-runtime/webhooks) if you are building webhook endpoints on top of the shared router layer.
+
+## Troubleshooting
+
+If a route does not match where you expect, inspect the split between the Hono mount prefix and the router path definitions. If behavior differs between Hono and another runtime, check whether some application code still depends on Hono-only context instead of the shared `Request` and route context. When you keep the handler body fetch-native and the framework-specific behavior at the mount boundary, this adapter stays predictable and easy to move across runtimes.

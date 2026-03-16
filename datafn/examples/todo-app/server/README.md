@@ -22,6 +22,12 @@ Create a `.env` file in this directory:
 
 ```
 DATABASE_URL=postgresql://user:password@localhost:5432/todo_app
+PORT=3001
+# Optional: use OpenSearch or Elasticsearch for remote search
+# OPENSEARCH_URL=https://user:pass@localhost:9200
+# ELASTICSEARCH_URL=http://user:pass@localhost:9200
+# Optional one-time bootstrap indexing on startup
+# REINDEX=true
 ```
 
 ### 3. Push schema to database
@@ -45,7 +51,7 @@ npm run dev
 npm run build && npm run start
 ```
 
-The server runs on `http://localhost:3000` by default (override with `PORT` env var).
+The server runs on `http://localhost:3001` by default (override with `PORT` env var).
 
 ## Endpoints
 
@@ -59,6 +65,7 @@ The server runs on `http://localhost:3000` by default (override with `PORT` env 
 | POST   | `/datafn/pull`      | Incremental sync (cursor-based)      |
 | POST   | `/datafn/push`      | Upload offline mutations             |
 | POST   | `/datafn/seed`      | Seed data                            |
+| POST   | `/datafn/search`    | Cross-resource search                |
 
 ## Schema
 
@@ -79,3 +86,24 @@ The server defines two resources and one many-many relation:
 | `npm run db:migrate`  | Apply migrations                          |
 | `npm run db:push`     | Push schema directly (development)        |
 | `npm run db:studio`   | Open Drizzle Studio (database browser)    |
+
+## Search Defaults And Smoke Checks
+
+The example server and client are wired with matching SearchFn defaults:
+
+- `prefix: true`
+- `fuzzy: 0.2`
+- `fieldBoosts: { text: 2, name: 1 }`
+
+Smoke checks:
+
+1. Local-first path (expected success)
+   - Run server and client app.
+   - In the app, keep mode as `sync`, create a todo with text `testing`, then search `test`.
+   - Expected: the todo appears in results (`source: "auto"` selects local provider path when hydrated).
+2. Explicit remote-mode negative path (expected clean failure when remote unavailable)
+   - Switch app mode to `local-only`.
+   - Trigger search with `source: "remote"` from browser devtools:
+     - `const { client } = await import("/src/lib/datafn.ts");`
+     - `await client.search({ query: "test", source: "remote" });`
+   - Expected: `DFQL_UNSUPPORTED` with message `Remote search unavailable`.

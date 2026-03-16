@@ -1,0 +1,6 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-12T06:30:00Z,claude-opus-4-6,VS Code,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-12-change-p7x3k9m2-spec
+2026-03-12T00:00:00Z,claude-sonnet-4-6,VS Code,execute,unknown-agent,PHASE_00,searchfn/.conduct/specs/2026-03-12-change-p7x3k9m2-spec/phase-reports/PHASE_00-2026-03-12-k3m9x2p7-report.md
+2026-03-12T11:46:00Z,claude-sonnet-4-6,VS Code,execute,unknown-agent,PHASE_01,searchfn/.conduct/specs/2026-03-12-change-p7x3k9m2-spec/phase-reports/PHASE_01-2026-03-12-m4r2x9k1-report.md
+2026-03-12T11:55:00Z,claude-sonnet-4-6,VS Code,execute,unknown-agent,PHASE_02,searchfn/.conduct/specs/2026-03-12-change-p7x3k9m2-spec/phase-reports/PHASE_02-2026-03-12-r9k1m4x2-report.md
+2026-03-12T12:10:00Z,claude-opus-4-5,VS Code,execute,unknown-agent,PHASE_03,searchfn/.conduct/specs/2026-03-12-change-p7x3k9m2-spec/phase-reports/PHASE_03-2026-03-12-n8k2p4x7-report.md

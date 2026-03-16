@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createHmac } from 'node:crypto';
+import { signWebhookPayload } from '@superfunctions/webhooks';
 import { verifySignature, handleWebhook, parseGitHubEvent } from './webhook.js';
 import { CronScheduler } from './cron.js';
 import { MemoryStore } from '../store/memory-store.js';
@@ -33,8 +33,7 @@ function mockPipelineResolver(spec: PipelineSpec) {
 }
 
 function sign(payload: string, secret: string): string {
-  const hmac = createHmac('sha256', secret).update(payload).digest('hex');
-  return `sha256=${hmac}`;
+  return signWebhookPayload(payload, secret, { algorithm: 'sha256', encoding: 'hex', prefix: 'sha256=' });
 }
 
 function makePayload(repo: string, ref: string): string {

@@ -25,6 +25,8 @@ import {
 import { runBeforeSync, runAfterSync } from "../plugins/run-hooks.js";
 // CLI-008: buildEvent import removed (was unused)
 
+const ACTOR_FEED_CURSOR_KEY = "__datafn_actor_feed__";
+
 /**
  * Helper: Sleep for a given number of milliseconds (PHASE_08)
  */
@@ -189,24 +191,8 @@ export class SyncEngine {
       this.ws.onopen = async () => {
         // Reset reconnection attempt counter on successful connection
         this.wsReconnectAttempt = 0;
-        
-        // Build per-table cursors map from all known resources
-        const cursors: Record<string, string> = {};
-        
-        for (const res of this.schema.resources) {
-          if (res.isRemoteOnly) continue;
-          
-          // Get per-table cursor, default to "0" if not set
-          const cursor = await this.storage.getCursor(res.name) || "0";
-          cursors[res.name] = cursor;
-        }
 
-        // Add join store cursors for many-many relations
-        if (this.schema.relations) {
-          for (const joinStoreKey of enumerateJoinStoreKeys(this.schema.relations)) {
-            cursors[joinStoreKey] = await this.storage.getCursor(joinStoreKey) || "0";
-          }
-        }
+        const cursors = await this.buildPullCursors();
         
         // Send hello with current cursors
         this.ws?.send(
@@ -351,6 +337,27 @@ export class SyncEngine {
       this.timer = null;
       this.pushPausedForOffline = true;
     }
+  }
+
+  private async buildPullCursors(): Promise<Record<string, string>> {
+    const cursors: Record<string, string> = {};
+
+    for (const res of this.schema.resources) {
+      if (res.isRemoteOnly) continue;
+      const cursor = await this.storage.getCursor(res.name) || "0";
+      cursors[res.name] = cursor;
+    }
+
+    if (this.schema.relations) {
+      for (const joinStoreKey of enumerateJoinStoreKeys(this.schema.relations)) {
+        cursors[joinStoreKey] = await this.storage.getCursor(joinStoreKey) || "0";
+      }
+    }
+
+    cursors[ACTOR_FEED_CURSOR_KEY] =
+      await this.storage.getCursor(ACTOR_FEED_CURSOR_KEY) || "0";
+
+    return cursors;
   }
 
   /**
@@ -775,23 +782,7 @@ export class SyncEngine {
     this.pullInFlight = true;
 
     try {
-      // Build per-table cursors map from all known resources
-      const cursors: Record<string, string> = {};
-      
-      for (const res of this.schema.resources) {
-        if (res.isRemoteOnly) continue;
-        
-        // Get per-table cursor, default to "0" if not set
-        const cursor = await this.storage.getCursor(res.name) || "0";
-        cursors[res.name] = cursor;
-      }
-
-      // Add join store cursors for many-many relations
-      if (this.schema.relations) {
-        for (const joinStoreKey of enumerateJoinStoreKeys(this.schema.relations)) {
-          cursors[joinStoreKey] = await this.storage.getCursor(joinStoreKey) || "0";
-        }
-      }
+      const cursors = await this.buildPullCursors();
 
       // Use canonical per-table cursor pull if we have cursors
       if (Object.keys(cursors).length > 0) {

@@ -1,4 +1,4 @@
-import type { SearchAdapter } from "@searchfn/adapters";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import { okResponse, errorResponse } from "../http/errors.js";
 import type { ServerContext } from "../server.js";
 

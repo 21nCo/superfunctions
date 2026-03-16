@@ -45,7 +45,8 @@ program
   .option('-p, --provider <name>', 'Provider to test')
   .option('-a, --action <name>', 'Action to test')
   .option('-c, --connection <id>', 'Connection ID to use')
+  .option('--json', 'Emit machine-readable JSON output')
+  .option('--live', 'Run optional provider live health check')
   .action(testCommand);
 
 program.parse();
-

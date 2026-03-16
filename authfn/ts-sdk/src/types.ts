@@ -80,8 +80,8 @@ export interface AuthFnInstance {
   revokeKey: (keyId: string) => Promise<void>;
 
   /** Get API key by ID */
-  getKey: (keyId: string) => Promise<ApiKey | null>;
+  getKey: (keyId: string) => Promise<Omit<ApiKey, 'key'> | null>;
 
   /** List API keys */
-  listKeys: (filters?: { resourceId?: string }) => Promise<ApiKey[]>;
+  listKeys: (filters?: { resourceId?: string }) => Promise<Omit<ApiKey, 'key'>[]>;
 }

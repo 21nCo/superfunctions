@@ -1,38 +1,13 @@
 """Schema definition for authfn database tables."""
 
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict
 
-
-class FieldSchema(TypedDict, total=False):
-    """Schema for a field in a table."""
-
-    type: str
-    required: bool
-    unique: bool
-    fieldName: str
-
-
-class IndexSchema(TypedDict):
-    """Schema for an index."""
-
-    name: str
-    fields: List[str]
-    unique: bool
-
-
-class TableSchema(TypedDict):
-    """Schema for a database table."""
-
-    modelName: str
-    fields: Dict[str, FieldSchema]
-    indexes: List[IndexSchema]
-
-
-class SchemaDefinition(TypedDict):
-    """Complete schema definition."""
-
-    version: int
-    schemas: List[TableSchema]
+from superfunctions.schema_helpers import (
+    FieldSchema,
+    IndexSchema,
+    SchemaDefinition,
+    TableSchema,
+)
 
 
 def get_schema(config: Dict[str, Any] = None) -> SchemaDefinition:

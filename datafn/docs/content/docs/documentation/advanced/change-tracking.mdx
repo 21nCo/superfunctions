@@ -1,6 +1,8 @@
 ---
 title: Change Tracking
 description: Track mutations for incremental sync.
+audience: guide
+applies_to: both
 ---
 
 The `ChangeTrackingService` records every mutation as a change entry with a monotonic `serverSeq`. These entries power the incremental sync protocol, allowing clients to pull only the changes they have not yet seen.

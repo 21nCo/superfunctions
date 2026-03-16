@@ -1,138 +1,157 @@
 # Getting Started with PlugFn
 
-Welcome to PlugFn! This guide will help you get started with building integrations in your preferred language.
+PlugFn powers Finatron and Fellotron integrations with shared OAuth primitives and policy-guarded provider adapters.
 
-## Choose Your SDK
+## Install
 
-### TypeScript/JavaScript
-Best for Node.js applications, Next.js, Express, and other JavaScript frameworks.
-
-👉 [TypeScript Quick Start](../typescript/README.md)
-
-### Python
-Best for Python applications, FastAPI, Flask, and Django.
-
-👉 [Python Quick Start](../python/README.md)
-
-## Installation
-
-### TypeScript
 ```bash
-npm install @superfunctions/plugfn
+npm install @superfunctions/plugfn @superfunctions/db @superfunctions/http
 ```
 
-### Python
-```bash
-pip install plugfn
-```
+## Core Setup
 
-## Core Concepts
-
-### 1. Providers
-Providers are pre-built integrations with external services (GitHub, Slack, Stripe, etc.).
-
-### 2. Actions
-Actions are operations you can perform with a provider (create issue, send message, etc.).
-
-### 3. Triggers
-Triggers are events from providers that your app can respond to (webhook events).
-
-### 4. Connections
-Connections store user authentication credentials for each provider (OAuth tokens, API keys).
-
-### 5. Workflows
-Workflows chain multiple actions together in response to triggers.
-
-## Basic Flow
-
-1. **Initialize PlugFn** with your configuration
-2. **Register providers** you want to use
-3. **Set up OAuth** for user connections
-4. **Execute actions** on behalf of users
-5. **Handle webhooks** for real-time events
-6. **Build workflows** to automate tasks
-
-## Example: Create a GitHub Issue
-
-### TypeScript
-```typescript
+```ts
 import { plugFn } from '@superfunctions/plugfn';
-import { githubProvider } from '@superfunctions/plugfn/providers';
+import { gmailProvider, outlookProvider } from '@superfunctions/plugfn/providers';
 
 const plug = plugFn({
   database: adapter,
   auth: authProvider,
-  baseUrl: 'https://myapp.com',
-  encryptionKey: process.env.ENCRYPTION_KEY,
+  baseUrl: 'https://app.example.com',
+  encryptionKey: process.env.ENCRYPTION_KEY!,
   integrations: {
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET
-    }
-  }
+    gmail: {
+      type: 'oauth2',
+      clientId: process.env.GMAIL_CLIENT_ID!,
+      clientSecret: process.env.GMAIL_CLIENT_SECRET!,
+      redirectUris: ['https://app.example.com/oauth/callback'],
+    },
+    outlook: {
+      type: 'oauth2',
+      clientId: process.env.MS_CLIENT_ID!,
+      clientSecret: process.env.MS_CLIENT_SECRET!,
+      redirectUris: ['https://app.example.com/oauth/callback'],
+    },
+  },
 });
 
-plug.providers.register(githubProvider);
-
-const issue = await plug.github['issues.create']({
-  userId: 'user-123',
-  params: {
-    owner: 'myorg',
-    repo: 'myrepo',
-    title: 'Bug report'
-  }
-});
+plug.providers.register(gmailProvider);
+plug.providers.register(outlookProvider);
 ```
 
-### Python
-```python
-from plugfn import PlugFn
-from plugfn.providers import github_provider
+## Database Contract
 
-plug = PlugFn(
-    database=adapter,
-    auth=auth_provider,
-    base_url="https://myapp.com",
-    encryption_key=os.getenv("ENCRYPTION_KEY"),
-    integrations={
-        "github": {
-            "client_id": os.getenv("GITHUB_CLIENT_ID"),
-            "client_secret": os.getenv("GITHUB_CLIENT_SECRET")
-        }
-    }
-)
+Use a database adapter compatible with `@superfunctions/db` contracts. PlugFn storage wrappers build on
+that shared adapter baseline for connections, webhooks, workflow state, and execution logs.
 
-plug.providers.register(github_provider)
+OAuth flows in `plugfn` use shared packages:
 
-issue = await plug.github.issues.create(
-    user_id="user-123",
-    params={
-        "owner": "myorg",
-        "repo": "myrepo",
-        "title": "Bug report"
-    }
-)
+- `@superfunctions/oauth-core`
+- `@superfunctions/oauth-http`
+- `@superfunctions/oauth-storage`
+- `@superfunctions/oauth-providers`
+
+## Mounting Routes with `@superfunctions/http-*`
+
+Use `@superfunctions/http` + framework adapters rather than framework-specific route wiring.
+
+### Express
+
+```ts
+import express from 'express';
+import { createExpressAdapter } from '@superfunctions/http-express';
+import { createRouter } from '@superfunctions/http';
+import { createPlugFnRouter } from '@superfunctions/plugfn/router';
+
+const app = express();
+const adapter = createExpressAdapter(app);
+adapter.mount(createRouter({ routes: createPlugFnRouter(plug) }), '/api/plugfn');
 ```
 
-## Next Steps
+### Fastify
 
-1. **Choose your SDK** and follow the language-specific guide
-2. **Configure providers** with your API credentials
-3. **Set up OAuth** for user authentication
-4. **Build your first integration**
-5. **Explore examples** in the examples/ directory
+```ts
+import Fastify from 'fastify';
+import { createFastifyAdapter } from '@superfunctions/http-fastify';
+import { createRouter } from '@superfunctions/http';
+import { createPlugFnRouter } from '@superfunctions/plugfn/router';
 
-## Resources
+const app = Fastify();
+const adapter = createFastifyAdapter(app);
+adapter.mount(createRouter({ routes: createPlugFnRouter(plug) }), '/api/plugfn');
+```
 
-- [Provider Guides](./providers/) - Setup guides for each provider
-- [API Reference](./api-reference/) - Complete API documentation
-- [Examples](./examples/) - Code examples and tutorials
-- [Specification](../SPEC.md) - Full technical specification
+### Hono
 
-## Need Help?
+```ts
+import { Hono } from 'hono';
+import { createHonoAdapter } from '@superfunctions/http-hono';
+import { createRouter } from '@superfunctions/http';
+import { createPlugFnRouter } from '@superfunctions/plugfn/router';
 
-- **Documentation**: https://docs.superfunctions.dev/plugfn
-- **Discord**: https://discord.gg/superfunctions
-- **GitHub Issues**: https://github.com/superfunctions/superfunctions/issues
-- **Email**: support@superfunctions.dev
+const app = new Hono();
+const adapter = createHonoAdapter(app);
+adapter.mount(createRouter({ routes: createPlugFnRouter(plug) }), '/api/plugfn');
+```
 
+## Provider Coverage For Finatron/Fellotron
+
+Required adapters are available for:
+
+- `gmail`
+- `outlook`
+- `yahoo`
+- `icloud`
+- `imap-smtp`
+- `forwarding` (optional fallback ingest)
+- `managed-mail` (explicit opt-in mode)
+
+Provider operations are enforced through the policy registry before external API calls.
+
+## Managed Mailbox Risk Boundary
+
+Managed mailbox mode is not a default path. Finance-critical usage must require:
+
+1. Explicit user opt-in.
+2. Backup channel confirmation.
+3. Risk acknowledgment.
+
+E2EE security mode metadata must be explicit per mailbox (`non-recoverable` or `escrow-recoverable`).
+
+## Lifecycle and Security Controls
+
+PlugFn includes lifecycle and telemetry controls for production operations:
+
+- Retention sweeps with legal-hold exceptions.
+- Portable user export across connections/tokens/messages/parse artifacts.
+- Cascading user deletion with residual-record detection.
+- Tenant/user isolation guards that return `TENANT_ACCESS_DENIED` on cross-scope access.
+- Redaction utilities for logs and metric dimensions.
+
+## Runbooks
+
+Operational runbooks:
+
+- [OAuth Incident](./runbooks/oauth-incident.md)
+- [Provider Throttle Incident](./runbooks/provider-throttle-incident.md)
+- [Webhook Security Incident](./runbooks/webhook-security-incident.md)
+- [Mail Delivery Incident](./runbooks/mail-delivery-incident.md)
+
+## Interop with authfn
+
+`authfn` social OAuth reuses the same shared OAuth package family. Keep provider configuration and redirect URI controls aligned across both services to avoid callback mismatch and policy drift.
+
+Legacy path note:
+- `plugfn/auth/oauth-flow` is a compatibility shim for one minor release.
+- It emits `DEPRECATED_PATH` and points to `@superfunctions/oauth-flow`.
+- Planned removal target: `plugfn@0.2.0`.
+
+## Release Verification
+
+```bash
+cd /Users/serro/Documents/dev/n/superfunctions/plugfn/typescript
+npm test -- --run tests/security/lifecycle.test.ts tests/security/redaction.test.ts tests/security/isolation.test.ts
+
+cd /Users/serro/Documents/dev/n/superfunctions
+turbo run build test --filter=@superfunctions/oauth-core --filter=@superfunctions/oauth-http --filter=@superfunctions/oauth-storage --filter=@superfunctions/oauth-providers --filter=plugfn --filter=@authfn/core
+```

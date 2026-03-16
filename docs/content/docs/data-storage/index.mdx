@@ -1,0 +1,55 @@
+---
+title: Data & Storage
+description: Understand how the shared database contract, storage contract, provider adapters, and file-facing types fit together.
+---
+
+This category covers the packages you use when your application needs durable state, object storage, or a portable file workflow. The most important distinction is that Superfunctions splits the foundational contracts from the environment-specific adapters. That split lets you write higher-level application or library code against stable interfaces first, then decide later whether the runtime should talk to Postgres, S3, R2, Azure Blob Storage, Google Cloud Storage, MinIO, or the local filesystem.
+
+For many teams, the confusing part is not "which package exists?" but "which layer am I actually choosing?" [`db`](/docs/data-storage/db) is the persistence abstraction for structured records and queries. [`storage`](/docs/data-storage/storage) is the object-storage contract for binary blobs, signed URLs, multipart uploads, and download streams. The provider packages such as [`storage-s3`](/docs/data-storage/storage-s3) or [`storage-r2`](/docs/data-storage/storage-r2) implement that storage contract for one platform. [`files`](/docs/data-storage/files) sits one layer higher and gives you portable file-facing types for upload sessions, metadata, and file-provider workflows.
+
+## What This Category Covers
+
+Use this category when you need to store something that outlives one request. If the thing you store is a row-like record with filters, updates, counts, joins, and migrations, start with `db`. If the thing you store is a binary object such as an image, export bundle, user upload, or document, start with `storage`. If your product talks in terms of "files" rather than raw objects, add `files` so your service surface can describe upload sessions, file metadata, completion, and deletion in a consistent way.
+
+The contract-versus-adapter split matters for external users. A reusable package can accept a `StorageAdapter` or DB `Adapter` without forcing every consumer into the same vendor. An application team can keep its business logic stable while changing only the edge adapter when moving from local development to cloud production. That is the main story of this category: treat persistence and storage as portable boundaries first, then choose providers second.
+
+## Package Map
+
+| Package | Role | Start here when |
+| --- | --- | --- |
+| [`db`](/docs/data-storage/db) | Structured persistence abstraction for CRUD, transactions, schema helpers, and namespace isolation | You need records, queries, or ORM-neutral persistence |
+| [`storage`](/docs/data-storage/storage) | Base object-storage contract and conformance helpers | You want one API for blobs, signed URLs, multipart uploads, and streams |
+| [`storage-s3`](/docs/data-storage/storage-s3) | Amazon S3 adapter for the storage contract | You run on AWS or another S3-native environment |
+| [`storage-r2`](/docs/data-storage/storage-r2) | Cloudflare R2 adapter for the storage contract | You prefer Cloudflare storage near Workers or edge delivery |
+| [`storage-minio`](/docs/data-storage/storage-minio) | MinIO adapter for self-hosted or local S3-compatible storage | You need S3 semantics without depending on AWS |
+| [`storage-gcs`](/docs/data-storage/storage-gcs) | Google Cloud Storage adapter | You already operate on Google Cloud and want signed URLs plus streaming |
+| [`storage-azure`](/docs/data-storage/storage-azure) | Azure Blob Storage adapter | Your platform standard is Azure and you need Blob or SAS support |
+| [`storage-local`](/docs/data-storage/storage-local) | Local filesystem adapter | You want the same storage contract in development, tests, or single-host deployments |
+| [`files`](/docs/data-storage/files) | File-facing types and workflow contracts | Your API talks about upload sessions, files, or versions instead of raw object keys |
+
+## How To Choose
+
+Start with the abstraction that matches the shape of your problem:
+
+| If you need... | Choose first | Add next |
+| --- | --- | --- |
+| Queryable application data | [`db`](/docs/data-storage/db) | A specific DB adapter strategy in your app or library |
+| Binary object storage with signed URLs or streams | [`storage`](/docs/data-storage/storage) | One provider adapter such as [`storage-s3`](/docs/data-storage/storage-s3) or [`storage-local`](/docs/data-storage/storage-local) |
+| An upload-and-complete file workflow | [`files`](/docs/data-storage/files) | Usually [`storage`](/docs/data-storage/storage) plus one provider adapter and often [`db`](/docs/data-storage/db) for metadata |
+| AWS-native storage | [`storage-s3`](/docs/data-storage/storage-s3) | [`files`](/docs/data-storage/files) if your API is file-centric |
+| Edge-adjacent object storage on Cloudflare | [`storage-r2`](/docs/data-storage/storage-r2) | [`files`](/docs/data-storage/files) for product-facing upload flows |
+| Self-hosted S3-compatible storage | [`storage-minio`](/docs/data-storage/storage-minio) | [`storage-local`](/docs/data-storage/storage-local) for simpler local-only workflows |
+| Local-only development or test storage | [`storage-local`](/docs/data-storage/storage-local) | Later swap to a cloud adapter without changing storage-facing code |
+
+The usual beginner mistake is to choose a provider page first. In practice, start with the base contract whenever you are designing a reusable layer. Choose the provider only when you are wiring the runtime boundary. That keeps your higher-level code portable and makes the provider swap a deployment concern instead of a domain rewrite.
+
+## Common Compositions
+
+- [`db`](/docs/data-storage/db) + [`storage`](/docs/data-storage/storage) when your service stores metadata in tables and blobs in object storage.
+- [`storage`](/docs/data-storage/storage) + [`storage-s3`](/docs/data-storage/storage-s3) for browser uploads, signed downloads, and multipart delivery on AWS.
+- [`storage`](/docs/data-storage/storage) + [`storage-local`](/docs/data-storage/storage-local) for tests, developer workstations, or single-node tools that still want the same adapter shape.
+- [`files`](/docs/data-storage/files) + [`storage`](/docs/data-storage/storage) + [`db`](/docs/data-storage/db) for end-user file products that need upload sessions, persisted metadata, and object storage together.
+
+## Related Categories
+
+Most teams pair these packages with one request entry layer and one runtime layer. If files are uploaded through HTTP routes, continue into [HTTP & Framework Adapters](/docs/http) for route handling and adapter wiring. If uploads trigger retries, webhook notifications, or metrics, pair this category with [Middleware & Runtime](/docs/middleware-runtime). If you are still deciding between several package families, go back to [Choosing Packages](/docs/choosing-packages) for the broader ecosystem map.

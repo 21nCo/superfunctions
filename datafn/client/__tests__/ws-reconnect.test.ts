@@ -256,6 +256,7 @@ describe("WebSocket Reconnection (Phase 07)", () => {
           task: "5",
           user: "3",
           kv: "0",
+          __datafn_actor_feed__: "0",
         },
       })
     );
@@ -292,6 +293,7 @@ describe("WebSocket Reconnection (Phase 07)", () => {
           task: "5",
           user: "3",
           kv: "0",
+          __datafn_actor_feed__: "0",
         },
       })
     );
@@ -469,6 +471,7 @@ describe("WebSocket Reconnection (Phase 07)", () => {
           task: "10",
           user: "7",
           kv: "0",
+          __datafn_actor_feed__: "0",
         },
       })
     );
@@ -495,6 +498,7 @@ describe("WebSocket Reconnection (Phase 07)", () => {
           task: "10",
           user: "7",
           kv: "0",
+          __datafn_actor_feed__: "0",
         },
       })
     );

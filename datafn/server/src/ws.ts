@@ -3,7 +3,7 @@
  *
  * Implements the server-side protocol for:
  * - Client registration (hello) with namespace tracking
- * - Cursor notifications (push -> broadcast) scoped to namespace
+ * - Cursor notifications (push -> broadcast) scoped to namespace or targeted principals
  *
  * SEC-001: Auth required via addClient authContext parameter
  * SEC-002: Namespace is server-derived, never client-supplied
@@ -25,6 +25,10 @@ export interface WebSocketClient {
  */
 export interface WsAuthContext {
   namespace: string;
+  /** Optional actor identity for principal-targeted invalidation. */
+  actorId?: string;
+  /** Optional resolved principal IDs for principal-targeted invalidation. */
+  principalIds?: string[];
 }
 
 /** WebSocket manager configuration (sourced from DatafnServerConfig.ws). */
@@ -41,7 +45,25 @@ export interface WsManagerConfig {
 
 type Message =
   | { type: "hello"; clientId: string; cursor: string; namespace?: string }
-  | { type: "cursor"; cursor: string };
+  | {
+      type: "cursor";
+      cursor: string;
+      targeting?: {
+        mode: "namespace-broadcast" | "targeted";
+        degraded: boolean;
+        principals?: string[];
+      };
+    };
+
+export interface CursorBroadcastTargeting {
+  affectedPrincipals?: string[];
+}
+
+export interface CursorBroadcastResult {
+  mode: "namespace-broadcast" | "targeted";
+  degraded: boolean;
+  wokenClients: number | "all-in-namespace";
+}
 
 const DEFAULT_MAX_CONNECTIONS = 10_000;
 const DEFAULT_MAX_PER_NAMESPACE = 100;
@@ -54,9 +76,21 @@ export class WebSocketManager {
    */
   private namespaceClients = new Map<string, Set<WebSocketClient>>();
   /**
+   * PERF-003: namespace → principalId → Set<client> for targeted invalidation.
+   */
+  private namespacePrincipalClients = new Map<string, Map<string, Set<WebSocketClient>>>();
+  /**
+   * namespace → clients without principal hints; targeted mode degrades when this is non-empty.
+   */
+  private namespaceUntargetableClients = new Map<string, Set<WebSocketClient>>();
+  /**
    * Reverse mapping: client → namespace for O(1) removeClient.
    */
   private clientNamespace = new Map<WebSocketClient, string>();
+  /**
+   * Reverse mapping: client → known principalIds for O(1) targeted index cleanup.
+   */
+  private clientPrincipals = new Map<WebSocketClient, Set<string>>();
   /** Clients that have been sent a ping and have not yet replied (REL-007). */
   private pendingPong = new Set<WebSocketClient>();
   /** Heartbeat interval handle. */
@@ -87,6 +121,97 @@ export class WebSocketManager {
 
   private getNamespaceCount(namespace: string): number {
     return this.namespaceClients.get(namespace)?.size ?? 0;
+  }
+
+  private normalizeNonEmptyString(value: unknown): string | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private canonicalizeActorPrincipal(actorId: string): string {
+    return actorId.includes(":") ? actorId : `user:${actorId}`;
+  }
+
+  private resolveClientPrincipals(authContext: WsAuthContext): Set<string> {
+    const principals = new Set<string>();
+    if (Array.isArray(authContext.principalIds)) {
+      for (const principal of authContext.principalIds) {
+        const normalized = this.normalizeNonEmptyString(principal);
+        if (normalized) {
+          principals.add(normalized);
+        }
+      }
+    }
+    const actorId = this.normalizeNonEmptyString(authContext.actorId);
+    if (actorId) {
+      principals.add(this.canonicalizeActorPrincipal(actorId));
+    }
+    return principals;
+  }
+
+  private addTargetingIndexes(
+    namespace: string,
+    client: WebSocketClient,
+    principals: Set<string>,
+  ): void {
+    this.clientPrincipals.set(client, principals);
+    if (principals.size === 0) {
+      let untargetable = this.namespaceUntargetableClients.get(namespace);
+      if (!untargetable) {
+        untargetable = new Set<WebSocketClient>();
+        this.namespaceUntargetableClients.set(namespace, untargetable);
+      }
+      untargetable.add(client);
+      return;
+    }
+
+    let principalMap = this.namespacePrincipalClients.get(namespace);
+    if (!principalMap) {
+      principalMap = new Map<string, Set<WebSocketClient>>();
+      this.namespacePrincipalClients.set(namespace, principalMap);
+    }
+
+    for (const principal of principals) {
+      let principalClients = principalMap.get(principal);
+      if (!principalClients) {
+        principalClients = new Set<WebSocketClient>();
+        principalMap.set(principal, principalClients);
+      }
+      principalClients.add(client);
+    }
+  }
+
+  private removeTargetingIndexes(client: WebSocketClient, namespace: string): void {
+    const principals = this.clientPrincipals.get(client);
+    const principalMap = this.namespacePrincipalClients.get(namespace);
+    if (principals && principalMap) {
+      for (const principal of principals) {
+        const principalClients = principalMap.get(principal);
+        if (!principalClients) {
+          continue;
+        }
+        principalClients.delete(client);
+        if (principalClients.size === 0) {
+          principalMap.delete(principal);
+        }
+      }
+      if (principalMap.size === 0) {
+        this.namespacePrincipalClients.delete(namespace);
+      }
+    }
+
+    const untargetable = this.namespaceUntargetableClients.get(namespace);
+    if (untargetable) {
+      untargetable.delete(client);
+      if (untargetable.size === 0) {
+        this.namespaceUntargetableClients.delete(namespace);
+      }
+    }
+
+    this.clientPrincipals.delete(client);
   }
 
   /** REL-007: Start heartbeat interval. Pings every client; closes those that don't pong. */
@@ -150,6 +275,11 @@ export class WebSocketManager {
     nsSet.add(client);
     // SEC-002: Server-derived namespace locked in at connection time
     this.clientNamespace.set(client, namespace);
+    this.addTargetingIndexes(
+      namespace,
+      client,
+      this.resolveClientPrincipals(authContext),
+    );
 
     // REL-007: Start heartbeat lazily on first connected client
     if (this.heartbeatTimer === null) {
@@ -165,6 +295,7 @@ export class WebSocketManager {
   removeClient(client: WebSocketClient) {
     const namespace = this.clientNamespace.get(client);
     if (namespace !== undefined) {
+      this.removeTargetingIndexes(client, namespace);
       const nsSet = this.namespaceClients.get(namespace);
       if (nsSet) {
         nsSet.delete(client);
@@ -202,11 +333,68 @@ export class WebSocketManager {
    * Broadcast cursor update to all clients in the given namespace.
    * SCA-006: O(clients-in-namespace) — only the namespace Set is iterated.
    */
-  broadcastCursor(cursor: string, namespace: string) {
+  broadcastCursor(
+    cursor: string,
+    namespace: string,
+    targeting?: CursorBroadcastTargeting,
+  ): CursorBroadcastResult {
     const nsSet = this.namespaceClients.get(namespace);
-    if (!nsSet || nsSet.size === 0) return;
-    const msg = JSON.stringify({ type: "cursor", cursor });
-    for (const client of nsSet) {
+    if (!nsSet || nsSet.size === 0) {
+      return {
+        mode: "namespace-broadcast",
+        degraded: false,
+        wokenClients: 0,
+      };
+    }
+
+    const requestedPrincipals = new Set<string>();
+    for (const principal of targeting?.affectedPrincipals ?? []) {
+      const normalized = this.normalizeNonEmptyString(principal);
+      if (normalized) {
+        requestedPrincipals.add(normalized);
+      }
+    }
+
+    let recipients: Set<WebSocketClient>;
+    let mode: "namespace-broadcast" | "targeted" = "namespace-broadcast";
+    let degraded = false;
+
+    if (requestedPrincipals.size === 0) {
+      recipients = nsSet;
+    } else {
+      const principalMap = this.namespacePrincipalClients.get(namespace);
+      const hasUntargetableClients =
+        (this.namespaceUntargetableClients.get(namespace)?.size ?? 0) > 0;
+      const canTarget = !!principalMap && !hasUntargetableClients;
+
+      if (!canTarget) {
+        recipients = nsSet;
+        degraded = true;
+      } else {
+        recipients = new Set<WebSocketClient>();
+        mode = "targeted";
+        for (const principal of requestedPrincipals) {
+          const principalClients = principalMap.get(principal);
+          if (!principalClients) {
+            continue;
+          }
+          for (const client of principalClients) {
+            recipients.add(client);
+          }
+        }
+      }
+    }
+
+    const msg = JSON.stringify({
+      type: "cursor",
+      cursor,
+      targeting: {
+        mode,
+        degraded,
+        principals: mode === "targeted" ? Array.from(requestedPrincipals).sort() : undefined,
+      },
+    });
+    for (const client of recipients) {
       try {
         client.send(msg);
       } catch (e) {
@@ -214,6 +402,12 @@ export class WebSocketManager {
         this.removeClient(client);
       }
     }
+
+    return {
+      mode,
+      degraded,
+      wokenClients: mode === "namespace-broadcast" ? "all-in-namespace" : recipients.size,
+    };
   }
 
   /**
@@ -230,7 +424,10 @@ export class WebSocketManager {
       }
     }
     this.namespaceClients.clear();
+    this.namespacePrincipalClients.clear();
+    this.namespaceUntargetableClients.clear();
     this.clientNamespace.clear();
+    this.clientPrincipals.clear();
     this.pendingPong.clear();
   }
 

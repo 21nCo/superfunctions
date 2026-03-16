@@ -7,7 +7,7 @@
 import type { DatafnRemoteAdapter } from "./client.js";
 import type { DatafnStorageAdapter } from "./storage.js";
 import type { EventBus } from "./events/bus.js";
-import type { DatafnPlugin, DatafnSchema } from "@datafn/core";
+import type { DatafnPlugin, DatafnSchema, SearchProvider } from "@datafn/core";
 import { unwrapRemoteSuccess } from "./remote/unwrap.js";
 import { isTransportError } from "./errors.js";
 import { handleOfflineMutation } from "./offline/mutate.js";
@@ -27,6 +27,21 @@ export type TableOperation =
   | "restore"
   | "archive"
   | "unarchive";
+
+export type ShareScope = "record" | "resource";
+
+export type PrincipalShareMutationInput = {
+  principalId: string;
+  level: string;
+  scope?: ShareScope;
+  id?: string;
+};
+
+export type PrincipalUnshareMutationInput = {
+  principalId: string;
+  scope?: ShareScope;
+  id?: string;
+};
 
 /**
  * Build a table-scoped mutation payload for operation convenience methods.
@@ -74,6 +89,53 @@ export function buildUnshareMutation(
     id,
     shareWith: { userId },
   };
+}
+
+export function buildPrincipalShareMutation(
+  resource: string,
+  version: number,
+  input: PrincipalShareMutationInput,
+): Record<string, unknown> {
+  const scope = input.scope ?? "record";
+  const payload: Record<string, unknown> = {
+    resource,
+    version,
+    operation: "share",
+    scope,
+    shareWith: {
+      principalId: input.principalId,
+      level: input.level,
+    },
+  };
+
+  if (scope === "record") {
+    payload.id = input.id;
+  }
+
+  return payload;
+}
+
+export function buildPrincipalUnshareMutation(
+  resource: string,
+  version: number,
+  input: PrincipalUnshareMutationInput,
+): Record<string, unknown> {
+  const scope = input.scope ?? "record";
+  const payload: Record<string, unknown> = {
+    resource,
+    version,
+    operation: "unshare",
+    scope,
+    shareWith: {
+      principalId: input.principalId,
+    },
+  };
+
+  if (scope === "record") {
+    payload.id = input.id;
+  }
+
+  return payload;
 }
 
 /**
@@ -131,6 +193,75 @@ function sanitizeCapabilityFieldsInMutationPayload(
   );
 }
 
+const SEARCH_INDEX_UPSERT_OPS = new Set([
+  "insert",
+  "merge",
+  "replace",
+  "trash",
+  "restore",
+  "archive",
+  "unarchive",
+]);
+
+function resolveSearchIndexOperation(
+  operation: unknown,
+): "upsert" | "delete" | undefined {
+  if (operation === "delete") return "delete";
+  if (typeof operation === "string" && SEARCH_INDEX_UPSERT_OPS.has(operation)) {
+    return "upsert";
+  }
+  return undefined;
+}
+
+async function tryUpdateSearchIndex(
+  searchProvider: SearchProvider | undefined,
+  storage: DatafnStorageAdapter | undefined,
+  mutation: Record<string, unknown>,
+  resolvedRecord?: Record<string, unknown>,
+): Promise<void> {
+  if (!searchProvider) return;
+
+  const resource = mutation.resource;
+  const id = mutation.id;
+  const searchOp = resolveSearchIndexOperation(mutation.operation);
+  if (typeof resource !== "string" || typeof id !== "string" || !searchOp) return;
+
+  try {
+    if (searchOp === "delete") {
+      await searchProvider.updateIndices({
+        resource,
+        records: [{ id }],
+        operation: "delete",
+      });
+      return;
+    }
+
+    const fromStorage = storage ? await storage.getRecord(resource, id) : null;
+    const fallbackRecord =
+      typeof mutation.record === "object" &&
+      mutation.record !== null &&
+      !Array.isArray(mutation.record)
+        ? (mutation.record as Record<string, unknown>)
+        : {};
+    const finalRecord = {
+      id,
+      ...(resolvedRecord ?? (fromStorage as Record<string, unknown> | null) ?? fallbackRecord),
+    };
+    await searchProvider.updateIndices({
+      resource,
+      records: [finalRecord],
+      operation: "upsert",
+    });
+  } catch (error) {
+    // Search indexing is non-fatal for mutation durability.
+    console.warn("Search index update failed (non-fatal)", {
+      operation: "search-index-update",
+      resource,
+      error: String(error),
+    });
+  }
+}
+
 /**
  * Execute a mutation (single or batch) via the remote adapter.
  * Unwraps responses, emits events, and returns mutation result(s).
@@ -147,6 +278,7 @@ export async function executeMutation(
   offlinability?: boolean,
   clientId?: string,
   debouncerMap?: DebouncerMap,
+  searchProvider?: SearchProvider,
 ): Promise<unknown> {
   // Validate clientId is provided when offline functionality is needed
   if ((offlinability || storage) && !clientId) {
@@ -236,6 +368,12 @@ export async function executeMutation(
             : { ...optimisticRecord, id };
           merged.id = id;
           await storage.upsertRecord(resource, merged);
+          await tryUpdateSearchIndex(
+            searchProvider,
+            storage,
+            enrichedMutation as Record<string, unknown>,
+            merged,
+          );
 
           // Add to debouncer for delayed changelog append + event emission
           debouncerMap.set(
@@ -367,10 +505,11 @@ export async function executeMutation(
 
       const results: unknown[] = [];
       for (const mut of enrichedMutations) {
+        const mutationRecord = mut as Record<string, unknown>;
         let result = await handleOfflineMutation(
           storage,
           schema!,
-          mut as Record<string, unknown>,
+          mutationRecord,
           getTimestamp(),
         );
 
@@ -378,6 +517,11 @@ export async function executeMutation(
         result = schema
           ? await runAfterMutation(plugins, schema, mut, result)
           : result;
+        await tryUpdateSearchIndex(
+          searchProvider,
+          storage,
+          mutationRecord,
+        );
 
         results.push(result);
         emitMutationEvents(eventBus, getTimestamp, mut, result);
@@ -494,12 +638,18 @@ export async function executeMutation(
           // Batch offline handling: iterate through each mutation
           const results: any[] = [];
           for (const mutation of mutationForRemote) {
+            const mutationRecord = mutation as Record<string, unknown>;
             try {
               const mutResult = await handleOfflineMutation(
                 storage,
                 schema,
-                mutation as Record<string, unknown>,
+                mutationRecord,
                 getTimestamp(),
+              );
+              await tryUpdateSearchIndex(
+                searchProvider,
+                storage,
+                mutationRecord,
               );
               // Emit mutation_applied event (unless silent)
               emitMutationEvents(eventBus, getTimestamp, mutation, mutResult);
@@ -519,6 +669,11 @@ export async function executeMutation(
             schema,
             mutationToUse,
             getTimestamp(),
+          );
+          await tryUpdateSearchIndex(
+            searchProvider,
+            storage,
+            mutationToUse,
           );
           // REL-012: Emit applied here so only one event fires (no double-emit with final path)
           emitMutationEvents(eventBus, getTimestamp, mutationToUse, result);

@@ -25,7 +25,13 @@
   "author": "21n",
   "license": "MIT",
   "dependencies": {
+    "@superfunctions/oauth-core": "*",
+    "@superfunctions/oauth-flow": "*",
+    "@superfunctions/oauth-http": "*",
+    "@superfunctions/oauth-providers": "*",
+    "@superfunctions/oauth-storage": "*",
     "@superfunctions/http": "*",
+    "@superfunctions/middleware": "*",
     "@superfunctions/db": "*",
     "zod": "^3.22.4"
   },

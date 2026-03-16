@@ -9,7 +9,7 @@ Use `createSearchFnServer()` to wrap any adapter behind HTTP endpoints.
 
 ```typescript
 import { createSearchFnServer } from "@searchfn/server";
-import { PostgresAdapter } from "@searchfn/adapters";
+import { PostgresAdapter } from "@searchfn/adapter-postgres";
 
 const server = await createSearchFnServer({
   adapter: new PostgresAdapter({

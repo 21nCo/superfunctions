@@ -24,11 +24,81 @@ export interface QueryMetadata {
   includeTrashed?: boolean;
   includeArchived?: boolean;
   shareableAccessIds?: string[];
+  accessMode?: "namespace" | "sharedWithMe";
+  namespaceFilter?: string[];
+  /**
+   * PERF-001 diagnostics: optional runtime ACL index catalog and enforcement flag.
+   * Intended for startup/benchmark diagnostics and smoke checks.
+   */
+  aclIndexCatalog?: string[];
+  enforceAclIndexCatalog?: boolean;
 }
 
 type QueryWithMetadata = DFQLQuery & {
   metadata?: QueryMetadata;
 };
+
+const REQUIRED_ACL_INDEXES = [
+  "__datafn_permissions_global_resource_record_idx",
+  "__datafn_permissions_global_scope_idx",
+  "__datafn_principal_hierarchy_namespace_principal_parent_idx",
+  "__datafn_principal_memberships_namespace_actor_principal_idx",
+  "idx_perm_principal",
+  "idx_perm_resource_ns_principal",
+] as const;
+
+export interface AclIndexCoverageResult {
+  usesIndex: boolean;
+  requiredIndexes: string[];
+  missingIndexes: string[];
+}
+
+function normalizeIndexNames(indexes: readonly string[]): string[] {
+  const normalized = new Set<string>();
+  for (const index of indexes) {
+    if (typeof index !== "string") {
+      continue;
+    }
+    const trimmed = index.trim();
+    if (trimmed.length > 0) {
+      normalized.add(trimmed);
+    }
+  }
+  return Array.from(normalized).sort((a, b) => a.localeCompare(b));
+}
+
+export function getRequiredAclIndexes(): string[] {
+  return normalizeIndexNames(REQUIRED_ACL_INDEXES);
+}
+
+export function evaluateAclIndexCoverage(
+  indexCatalog: readonly string[],
+): AclIndexCoverageResult {
+  const available = new Set(normalizeIndexNames(indexCatalog));
+  const required = getRequiredAclIndexes();
+  const missingIndexes = required.filter((indexName) => !available.has(indexName));
+  return {
+    usesIndex: missingIndexes.length === 0,
+    requiredIndexes: required,
+    missingIndexes,
+  };
+}
+
+export function assertRequiredAclIndexes(indexCatalog: readonly string[]): void {
+  const diagnostics = evaluateAclIndexCoverage(indexCatalog);
+  if (diagnostics.usesIndex) {
+    return;
+  }
+  throw new DatafnExecutionError(
+    "INTERNAL",
+    "Required ACL index missing",
+    "db.indexes",
+    {
+      missingIndexes: diagnostics.missingIndexes,
+      requiredIndexes: diagnostics.requiredIndexes,
+    },
+  );
+}
 
 function mergeAutoFilters(
   existingFilters: Record<string, unknown> | undefined,
@@ -87,7 +157,10 @@ export function injectCapabilityAutoFilters(
       capability !== null &&
       "shareable" in (capability as Record<string, unknown>),
   );
-  if (shareableCapability?.shareable.default === "private") {
+  if (
+    shareableCapability?.shareable.default === "private" &&
+    metadata.accessMode !== "sharedWithMe"
+  ) {
     const accessIds = Array.isArray(metadata.shareableAccessIds)
       ? metadata.shareableAccessIds
       : [];
@@ -171,6 +244,7 @@ export async function executePartialPushdownQuery(
   schema: DatafnSchema,
   db: Adapter,
   namespace: string,
+  actorId?: string,
 ): Promise<QueryResult> {
   // 1. Execute the push-down core (same as FULL_PUSHDOWN up to trimming)
   const { records, nextCursor, count } = await pushdownCore(
@@ -190,6 +264,8 @@ export async function executePartialPushdownQuery(
     { select: query.select },
     schema,
     namespace,
+    undefined,
+    actorId,
   );
 
   // 3. Materialize select (relation expansion + field projection)
@@ -232,6 +308,18 @@ async function pushdownCore(
     query as QueryWithMetadata,
     schema,
   );
+  const metadata =
+    queryWithAutoFilters.metadata &&
+    typeof queryWithAutoFilters.metadata === "object"
+      ? (queryWithAutoFilters.metadata as QueryMetadata)
+      : undefined;
+
+  if (
+    metadata?.accessMode === "sharedWithMe" &&
+    (metadata.enforceAclIndexCatalog === true || Array.isArray(metadata.aclIndexCatalog))
+  ) {
+    assertRequiredAclIndexes(metadata.aclIndexCatalog ?? []);
+  }
 
   // 1. Convert filters and sort -------------------------------------------
   const whereClauses: WhereClause[] = queryWithAutoFilters.filters

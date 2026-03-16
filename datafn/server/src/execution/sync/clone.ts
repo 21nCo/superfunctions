@@ -8,6 +8,7 @@ import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { SequenceStore } from "./sequence-store.js";
 import { ChangeTrackingService } from "./change-tracking.js";
 import type { DatafnLogger } from "../../logger.js";
+import { isPrivateShareableResource, resolveAccessLevel } from "../../validation/authz.js";
 
 export interface CloneRequest {
   clientId: string;
@@ -18,6 +19,7 @@ export interface CloneRequest {
     limit: number;
   };
   includeJoins?: boolean;
+  actorId?: string;
 }
 
 export interface CloneResult {
@@ -68,6 +70,38 @@ export async function executeClone(
 
   // Determine which tables to clone
   const tablesToClone = request.tables || schema.resources.map((r) => r.name);
+  const actorId = request.actorId;
+
+  const filterActorVisibleRows = async (
+    resource: string,
+    rows: Array<Record<string, unknown>>,
+  ): Promise<Array<Record<string, unknown>>> => {
+    if (!isPrivateShareableResource(schema, resource)) {
+      return rows;
+    }
+    if (!actorId) {
+      return [];
+    }
+    const visible: Array<Record<string, unknown>> = [];
+    for (const row of rows) {
+      const recordId = typeof row.id === "string" ? row.id : null;
+      if (!recordId) {
+        continue;
+      }
+      const level = await resolveAccessLevel(
+        db,
+        schema,
+        resource,
+        recordId,
+        actorId,
+        namespace,
+      );
+      if (level) {
+        visible.push(row);
+      }
+    }
+    return visible;
+  };
 
   // Check for isRemoteOnly tables
   for (const tableName of tablesToClone) {
@@ -138,8 +172,7 @@ export async function executeClone(
         limit: effectiveLimit,
         namespace,
       });
-
-      data[table] = records;
+      data[table] = await filterActorVisibleRows(table, records);
 
       // Compute next marker
       if (records.length === effectiveLimit) {
@@ -213,7 +246,7 @@ export async function executeClone(
               limit: remaining,
               namespace,
             });
-            data[tableName] = records;
+            data[tableName] = await filterActorVisibleRows(tableName, records);
             remaining -= records.length;
 
             // Set next cursor if more records exist
@@ -243,8 +276,7 @@ export async function executeClone(
             orderBy: [{ field: "id", direction: "asc" }],
             namespace,
           });
-
-          data[tableName] = records;
+          data[tableName] = await filterActorVisibleRows(tableName, records);
 
           const latestSeq = await changeTracking.getLatestServerSeq({ resource: tableName });
           cursors[tableName] = String(latestSeq);

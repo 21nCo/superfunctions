@@ -4,10 +4,27 @@ export type SimpleCapability = "timestamps" | "audit" | "trash" | "archivable";
 
 export type AccessLevel = "viewer" | "editor" | "owner";
 
+export type ShareableVisibilityDefault = "ns" | "private" | "shared";
+
+export type ShareablePrincipalMode = "opaque-id";
+
+export type ShareableRelationInheritance = {
+  enabled: boolean;
+  relations?: string[];
+  requireRelateConsent?: boolean;
+};
+
 export type ShareableCapability = {
   shareable: {
     levels: AccessLevel[];
-    default: "private" | "shared";
+    // Legacy compatibility field retained for existing schemas/runtime behavior.
+    default?: "private" | "shared";
+    // SPV2 extensions (optional in schema input, defaulted during validation).
+    visibilityDefault?: ShareableVisibilityDefault;
+    supportsScopeGrants?: boolean;
+    crossNsShareable?: boolean;
+    principalMode?: ShareablePrincipalMode;
+    relationInheritance?: ShareableRelationInheritance;
   };
 };
 
@@ -38,7 +55,7 @@ export const CAPABILITY_FIELD_DEFS: Record<CapabilityKey, CapabilityFieldDef[]> 
     { name: "trashedBy", type: "string", required: false, nullable: true, readonly: true, default: null },
   ],
   archivable: [{ name: "isArchived", type: "boolean", required: false, nullable: false, readonly: false, default: false }],
-  shareable: [],
+  shareable: [{ name: "visibility", type: "string", required: false, nullable: true, readonly: true, default: null }],
 };
 
 // ---------------------------------------------------------------------------

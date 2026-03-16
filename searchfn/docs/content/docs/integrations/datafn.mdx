@@ -8,7 +8,7 @@ The `@searchfn/datafn-provider` package bridges any SearchFn adapter into DataFn
 ## Installation
 
 ```bash
-npm install @searchfn/datafn-provider @searchfn/adapters
+npm install @searchfn/datafn-provider @searchfn/adapter-meilisearch
 ```
 
 ## Usage
@@ -17,7 +17,7 @@ Create a search provider by passing any SearchFn adapter to `createSearchProvide
 
 ```typescript
 import { createSearchProvider } from "@searchfn/datafn-provider";
-import { MeilisearchAdapter } from "@searchfn/adapters";
+import { MeilisearchAdapter } from "@searchfn/adapter-meilisearch";
 
 const adapter = new MeilisearchAdapter({
   host: process.env.MEILI_URL!,
@@ -43,6 +43,38 @@ const server = await createDatafnServer({
   search: provider,
 });
 ```
+
+### Client-Side Setup
+
+Pass the same provider (or a client-appropriate adapter) to `createDatafnClient` for local-first search:
+
+```typescript
+import { createDatafnClient } from "@datafn/client";
+import { createSearchProvider } from "@searchfn/datafn-provider";
+import { IndexedDbAdapter } from "@searchfn/adapter-indexeddb";
+
+const searchProvider = createSearchProvider(
+  new IndexedDbAdapter({
+    dbName: "my-app-search",
+    defaults: { prefix: true, fuzzy: 0.2 },
+  }),
+  {
+    resourceFields: {
+      tasks: ["title", "description"],
+      notes: ["content", "tags"],
+    },
+  },
+);
+
+const client = createDatafnClient({
+  schema,
+  clientId,
+  storage,
+  searchProvider,
+});
+```
+
+With `searchProvider` configured on the client, DFQL `search` blocks and `client.search()` calls execute locally using the IndexedDB adapter. The client falls back to server search when the local index is not yet ready.
 
 ## Configuration
 

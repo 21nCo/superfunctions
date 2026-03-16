@@ -17,7 +17,8 @@
   "dependencies": {
     "@datafn/core": "*",
     "@datafn/server": "*",
-    "@searchfn/adapters": "*",
+    "@searchfn/adapter-elasticsearch": "*",
+    "@searchfn/adapter-memory": "*",
     "@searchfn/datafn-provider": "*",
     "@superfunctions/db": "*",
     "@superfunctions/http-hono": "*",

@@ -1,0 +1,127 @@
+---
+title: OAuth Core
+description: Build provider-neutral OAuth services with shared state, PKCE, redirect validation, and callback invariants.
+---
+
+`@superfunctions/oauth-core` is the lowest-level OAuth package most teams need to touch directly. It gives you the data model and lifecycle rules for OAuth without deciding how tokens are transported over HTTP or how state and tokens are stored. In practice, that means you can model providers, generate PKCE material, validate redirect URIs, consume one-time state, and handle callback invariants in one place while keeping transport and storage swappable.
+
+This package is a good fit for teams building an OAuth integration platform, library authors who need a predictable service contract, and application teams that want to keep policy and orchestration logic in their own code. If you want more batteries included, move up to [`oauth-flow`](/docs/authentication/oauth-flow). If you want only a generic auth boundary, stay at [`auth`](/docs/authentication/auth).
+
+## What It Is
+
+`@superfunctions/oauth-core` exports the common types and service primitives for OAuth. The important pieces are `OAuthProviderDescriptor`, `AuthorizationRequest`, `OAuthCallbackInput`, `OAuthTokenSet`, and `DefaultOAuthService`. The service knows how to create authorization URLs, persist state through an `OAuthStateStore`, enforce redirect allowlists, and reject replayed or mismatched callbacks. It does not exchange tokens itself; you supply that behavior, which keeps the package usable in server runtimes with different HTTP requirements.
+
+## When To Use It
+
+Use this package when you need precise control over the OAuth lifecycle but do not want to rebuild the dangerous parts such as PKCE, state expiration, redirect validation, and callback matching. Typical users are platform teams building install flows for several products, teams with custom provider policies, and library authors who want a public OAuth contract that does not assume a specific token client.
+
+If your code is mostly request authentication rather than redirect-based OAuth, `@superfunctions/auth` is the simpler choice. If you already know you want one high-level service for start, callback, refresh, and disconnect, use [`oauth-flow`](/docs/authentication/oauth-flow).
+
+## Install
+
+```bash
+npm install @superfunctions/oauth-core @superfunctions/oauth-storage
+```
+
+## Quick Start
+
+You can use `DefaultOAuthService` with an in-memory state store while you wire up your provider descriptor and token exchange callback.
+
+```ts
+import { DefaultOAuthService } from "@superfunctions/oauth-core";
+import { MemoryOAuthStateStore } from "@superfunctions/oauth-storage";
+
+const oauth = new DefaultOAuthService({
+  providers: {
+    github: {
+      id: "github",
+      authorizationUrl: "https://github.com/login/oauth/authorize",
+      tokenUrl: "https://github.com/login/oauth/access_token",
+      defaultScopes: ["read:user", "user:email"],
+      supportsPkce: true,
+      supportsRefreshToken: false,
+      scopeSeparator: " ",
+      tokenAuthMethod: "client_secret_post",
+    },
+  },
+  providerRuntimeConfig: {
+    github: {
+      clientId: "github-client-id",
+      allowlistedRedirectUris: ["https://app.example/oauth/callback"],
+    },
+  },
+  stateStore: new MemoryOAuthStateStore(),
+  async exchangeCodeForToken() {
+    return {
+      accessToken: "access-token",
+      tokenType: "Bearer",
+    };
+  },
+});
+```
+
+Once the service is created, you can issue the redirect URL and later verify the callback against the stored state.
+
+```ts
+const started = await oauth.createAuthorizationRequest({
+  providerId: "github",
+  tenantId: "tenant_1",
+  userId: "user_1",
+  redirectUri: "https://app.example/oauth/callback",
+});
+
+const tokenSet = await oauth.handleCallback({
+  providerId: "github",
+  code: "oauth-code",
+  state: started.stateId,
+  redirectUri: "https://app.example/oauth/callback",
+});
+```
+
+## Core Concepts
+
+The provider descriptor is the contract that describes one OAuth provider: authorization URL, token URL, default scopes, PKCE support, refresh-token behavior, and token authentication method. Runtime config then supplies deployment-specific values such as the client ID and redirect allowlist. Keeping those separate matters for external library authors because the descriptor can be packaged and reused while runtime config stays in the consuming application.
+
+The state store is the other core dependency. `DefaultOAuthService` persists tenant, user, provider, redirect URI, requested scopes, PKCE verifier, and expiry before issuing the authorization URL. On callback it consumes the stored record exactly once, which is what lets it reject replayed state and redirect mismatches with deterministic error codes. Those invariants are the main reason to use this package instead of hand-rolling OAuth around ad hoc query-parameter handling.
+
+## Real-World Example
+
+For a multi-tenant SaaS product, a common pattern is to combine a curated provider descriptor with your own approval or policy layer. The example below uses the shared GitHub descriptor from [`oauth-providers`](/docs/authentication/oauth-providers) but still keeps the low-level orchestration under your control.
+
+```ts
+import { DefaultOAuthService } from "@superfunctions/oauth-core";
+import { getOAuthProviderDescriptor } from "@superfunctions/oauth-providers";
+import { MemoryOAuthStateStore } from "@superfunctions/oauth-storage";
+
+const github = getOAuthProviderDescriptor("github");
+
+const oauth = new DefaultOAuthService({
+  providers: { github },
+  providerRuntimeConfig: {
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      allowlistedRedirectUris: ["https://acme.example/oauth/github/callback"],
+    },
+  },
+  stateStore: new MemoryOAuthStateStore(),
+  async exchangeCodeForToken(input) {
+    return {
+      accessToken: `token-for-${input.provider.id}`,
+      refreshToken: undefined,
+      tokenType: "Bearer",
+    };
+  },
+});
+```
+
+That setup is useful when your product wants a custom persistence layer or approval process but still wants shared PKCE generation, redirect validation, and one-time state consumption. It is the “build your own orchestrator” path between the generic [`auth`](/docs/authentication/auth) abstraction and the higher-level [`oauth-flow`](/docs/authentication/oauth-flow) service.
+
+## Related Packages
+
+- [`oauth-http`](/docs/authentication/oauth-http) when you need a token client to perform exchanges and revocations.
+- [`oauth-storage`](/docs/authentication/oauth-storage) when you need durable state and token persistence contracts.
+- [`oauth-flow`](/docs/authentication/oauth-flow) when you are ready to move from primitives to end-to-end orchestration.
+
+## Troubleshooting
+
+If callback handling fails with a mismatch error, check the provider ID and redirect URI you pass at callback time before you inspect token exchange logic. Those validations run before token transport. If replay errors appear in development, make sure the same `state` value is not being retried after a successful callback. When using an allowlist, remember that `DefaultOAuthService` compares exact redirect URIs, so a missing path segment or a trailing slash difference is enough to block the callback.

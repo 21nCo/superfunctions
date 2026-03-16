@@ -1,0 +1,139 @@
+---
+title: HTTP
+description: Build framework-agnostic routers, middleware, and request handlers that can move between Express, Fastify, Hono, Next.js, and SvelteKit.
+---
+
+`@superfunctions/http` is the foundation package for this category. It gives you a router, route definitions, typed request context, middleware chaining, and a consistent Web `Request` or `Response` model without forcing your application into one framework. That makes it valuable for two very different use cases. App developers can keep business logic portable when they need to move between frameworks. Library authors can expose reusable HTTP behavior without shipping an Express-only or Fastify-only API surface.
+
+The package is intentionally small at the boundary. You define routes, parse request bodies through the route context, return standard `Response` objects, and let adapters translate that behavior into the framework runtime. When your project grows, that separation pays off: the route logic stays stable even if you replace the framework around it.
+
+## What It Is
+
+`@superfunctions/http` is a framework-neutral routing contract. It exports `createRouter()` plus the core route, middleware, and error types used by the adapter packages. Routes are declared as plain objects with an HTTP method, a path, and a handler. The handler receives the original `Request` and a route context that already includes path params, query access, and helper methods such as `json()`, `formData()`, and `text()`.
+
+Because the package works directly with Web-standard requests and responses, it fits naturally in fetch-native environments and can also sit underneath adapters for Node frameworks. That is the core design choice of the package: keep the HTTP model portable and let the framework-specific packages deal with mounting, plugin registration, or route-file exports.
+
+## When To Use It
+
+Use this package when you want routing logic to outlive one framework choice. It is a strong fit for reusable APIs, internal platform layers, SDK backends, and applications that may eventually expose the same business behavior through several runtimes. It is also the right place to start when you want to test request handling without pulling a full framework into every unit test.
+
+If you already know the deployment target, pair `http` with one adapter rather than reaching for the adapter alone. That gives you the portable foundation while still making the framework integration straightforward. For example, an Express app should still start with `http`; it simply adds [`http-express`](/docs/http/http-express) at the edge.
+
+## Install
+
+```bash
+npm install @superfunctions/http
+```
+
+Add one adapter only when you know which runtime will receive requests:
+
+```bash
+npm install @superfunctions/http @superfunctions/http-express
+```
+
+## Quick Start
+
+The simplest way to use the package is to define routes against the shared contract and export the router for whichever framework needs it.
+
+```ts
+import { createRouter } from "@superfunctions/http";
+
+export const apiRouter = createRouter({
+  routes: [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async () =>
+        Response.json({ ok: true, service: "catalog-api" }),
+    },
+    {
+      method: "GET",
+      path: "/projects/:id",
+      handler: async (_request, context) =>
+        Response.json({
+          projectId: context.params.id,
+          requestedAt: context.url.toISOString(),
+        }),
+    },
+  ],
+});
+```
+
+If you are building a library, keep the router factory itself portable so consuming apps can attach their own adapters later.
+
+```ts
+import { createRouter, type RouterOptions } from "@superfunctions/http";
+
+export function createInventoryApi(options: RouterOptions = { routes: [] }) {
+  return createRouter({
+    ...options,
+    routes: [
+      {
+        method: "GET",
+        path: "/inventory",
+        handler: async () => Response.json({ items: [] }),
+      },
+      ...options.routes,
+    ],
+  });
+}
+```
+
+## Core Concepts
+
+The first concept to understand is that the router owns request matching, middleware execution, and response generation. A framework adapter should only be responsible for converting the incoming framework request into a standard `Request`, passing it into the router, and translating the resulting `Response` back out. This is what keeps your handler logic portable.
+
+The second concept is route context. Superfunctions does not make you parse everything manually from the URL or body. Instead, handlers receive `params`, `query`, `url`, and body helpers in a single object. You can also layer your own context factory on top when you need database handles, configuration, or service clients attached per request.
+
+The third concept is composition. You can define middleware once and reuse it across several adapters, as long as that middleware only depends on the shared contract. That is especially helpful when you later combine this package with auth, metrics, or envelope tooling from adjacent categories.
+
+## Real-World Example
+
+A good outside-world example is a library team shipping an API surface to several product teams. One team deploys on Express, another on Fastify, and a third wants an edge-facing Hono worker. The library can publish one router definition built on `@superfunctions/http`, and each app can decide how to mount it locally.
+
+```ts
+import { createRouter, type Middleware } from "@superfunctions/http";
+
+const requestLogger: Middleware = async (request, _context, next) => {
+  const startedAt = Date.now();
+  const response = await next();
+
+  console.log(`${request.method} ${new URL(request.url).pathname}`, {
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+  });
+
+  return response;
+};
+
+export const billingRouter = createRouter({
+  middleware: [requestLogger],
+  routes: [
+    {
+      method: "POST",
+      path: "/invoices",
+      handler: async (_request, context) => {
+        const payload = await context.json<{ customerId: string }>();
+
+        return Response.json(
+          { invoiceId: "inv_demo_123", customerId: payload.customerId },
+          { status: 201 },
+        );
+      },
+    },
+  ],
+});
+```
+
+That router can now be mounted in Express, Fastify, Hono, Next.js, or SvelteKit without changing the billing behavior itself. The framework becomes a delivery choice, not a business-logic constraint.
+
+## Related Packages
+
+- [`http-express`](/docs/http/http-express) if you need to mount the router inside an Express app.
+- [`http-fastify`](/docs/http/http-fastify) if your deployment model is based on Fastify plugins and prefixes.
+- [`http-hono`](/docs/http/http-hono) if you want a lightweight fetch-native adapter for Hono or edge runtimes.
+- [Middleware](/docs/middleware-runtime/middleware) if you want to combine routing with cross-cutting request policies.
+
+## Troubleshooting
+
+If a route is not matching, first check whether your framework mount path and your router paths are aligned. In adapter-based apps, the framework often contributes part of the URL and the router contributes the rest. If request bodies appear empty, verify whether the framework expects body parsing middleware before the adapter sees the request. When debugging portability issues, remember the main rule of this package: handlers should depend only on Web `Request` or `Response` behavior and the shared route context. The more framework-specific state you pull into the handler body, the harder it becomes to move that router elsewhere later.

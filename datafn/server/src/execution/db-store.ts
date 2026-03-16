@@ -10,10 +10,58 @@ import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { DataStore, JoinRow } from "./store.js";
 import { getJoinTableName } from "@datafn/core";
 import type { DatafnLogger } from "../logger.js";
+import { isPrivateShareableResource, resolveAccessLevel } from "../validation/authz.js";
 
 export class DbDataStore implements DataStore {
   private recordsCache: Map<string, Record<string, unknown>[]> = new Map();
   private joinCache: Map<string, JoinRow[]> = new Map();
+
+  private static async applyActorVisibilityFilter(
+    store: DbDataStore,
+    db: Adapter,
+    schema: any,
+    namespace: string,
+    actorId: string | undefined,
+    logger?: DatafnLogger,
+  ): Promise<void> {
+    for (const [resourceName, rows] of store.recordsCache.entries()) {
+      if (!isPrivateShareableResource(schema, resourceName)) {
+        continue;
+      }
+      if (!actorId) {
+        store.recordsCache.set(resourceName, []);
+        continue;
+      }
+
+      const visible: Record<string, unknown>[] = [];
+      for (const row of rows) {
+        const recordId = typeof row.id === "string" ? row.id : null;
+        if (!recordId) {
+          continue;
+        }
+        try {
+          const level = await resolveAccessLevel(
+            db,
+            schema,
+            resourceName,
+            recordId,
+            actorId,
+            namespace,
+          );
+          if (level) {
+            visible.push(row);
+          }
+        } catch (error) {
+          logger?.warn("DbDataStore visibility filter failed", {
+            error: String(error),
+            resource: resourceName,
+            operation: "db-store-visibility-filter",
+          });
+        }
+      }
+      store.recordsCache.set(resourceName, visible);
+    }
+  }
 
   /**
    * Create a DataStore from DB adapter by pre-loading data for a query.
@@ -77,6 +125,7 @@ export class DbDataStore implements DataStore {
     schema: any,
     namespace: string = "datafn",
     logger?: DatafnLogger,
+    actorId?: string,
   ): Promise<DbDataStore> {
     const store = new DbDataStore();
 
@@ -84,6 +133,14 @@ export class DbDataStore implements DataStore {
     store.recordsCache.set(primaryResource, primaryRecords);
 
     if (!Array.isArray(query.select) || !schema?.relations) {
+      await DbDataStore.applyActorVisibilityFilter(
+        store,
+        db,
+        schema,
+        namespace,
+        actorId,
+        logger,
+      );
       return store;
     }
 
@@ -382,6 +439,14 @@ export class DbDataStore implements DataStore {
       }
     }
 
+    await DbDataStore.applyActorVisibilityFilter(
+      store,
+      db,
+      schema,
+      namespace,
+      actorId,
+      logger,
+    );
     return store;
   }
 
@@ -461,6 +526,7 @@ export class DbDataStore implements DataStore {
     namespace: string = "datafn",
     preFilterWhere?: WhereClause[],
     logger?: DatafnLogger,
+    actorId?: string,
   ): Promise<DbDataStore> {
     const resourcesToLoad = new Set<string>([query.resource]);
     const relationsToLoad = new Set<string>();
@@ -872,6 +938,14 @@ export class DbDataStore implements DataStore {
       }
     }
 
+    await DbDataStore.applyActorVisibilityFilter(
+      store,
+      db,
+      schema,
+      namespace,
+      actorId,
+      logger,
+    );
     return store;
   }
 }

@@ -1,6 +1,8 @@
 ---
 title: "Capabilities"
 description: "Opt-in resource behaviors for lifecycle fields, mutation operations, auto-filters, and sharing."
+audience: concept
+applies_to: both
 ---
 
 ## Overview
@@ -63,7 +65,8 @@ const schema = defineSchema({
         {
           shareable: {
             levels: ["viewer", "editor", "owner"],
-            default: "private",
+            visibilityDefault: "private",
+            supportsScopeGrants: true,
           },
         },
       ],
@@ -124,15 +127,80 @@ await client.table("todos").query({
 
 ## Shareable Capability
 
-`shareable` adds per-record permissions through an internal permissions table (`__datafn_permissions_{resource}`), not new columns on the resource itself.
+`shareable` adds per-record and per-resource permissions through a global permissions table (`__datafn_permissions_global`), not new columns on the resource itself.
 
-Client table methods (exposed only for shareable resources):
+### Shareable Configuration Reference
 
-- `table.share(id, userId, level)`
-- `table.unshare(id, userId)`
-- `table.getPermissions(id)`
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `levels` | `("viewer" \| "editor" \| "owner")[]` | **(required)** | Access levels available for grants. Must include at least one. |
+| `default` | `"private" \| "shared"` | Derived from `visibilityDefault` | Legacy visibility default. Either `default` or `visibilityDefault` must be provided. |
+| `visibilityDefault` | `"ns" \| "private" \| "shared"` | Derived from `default` | SPV2 visibility default. `"ns"` = visible to all principals in the namespace, `"private"` = visible only to creator and granted principals, `"shared"` = visible to all. |
+| `supportsScopeGrants` | `boolean` | `true` | When `true`, allows resource-level scope grants (share all records of a resource with a principal). |
+| `crossNsShareable` | `boolean` | `true` | When `true`, allows sharing with principals outside the current namespace. |
+| `principalMode` | `"opaque-id"` | `"opaque-id"` | Principal identity mode. `"opaque-id"` treats principal strings as opaque identifiers with `type:id` format. |
+| `relationInheritance` | `object` | `undefined` | Configures access inheritance through relations. See below. |
 
-For resources with `shareable.default: "private"`, server queries are auto-scoped to IDs the caller can access.
+#### `relationInheritance` Object
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | **(required)** | Whether child records inherit parent access. |
+| `relations` | `string[]` | `undefined` | Restrict inheritance to specific relation names. If omitted, all relations are eligible. |
+| `requireRelateConsent` | `boolean` | `true` | When `true`, creating a relation that would inherit permissions requires the actor to have share-level access on the parent. |
+
+### Minimal Example
+
+```typescript
+{
+  shareable: {
+    levels: ["viewer", "editor", "owner"],
+    default: "private",
+  },
+}
+```
+
+### Full SPV2 Example
+
+```typescript
+{
+  shareable: {
+    levels: ["viewer", "editor", "owner"],
+    visibilityDefault: "private",
+    supportsScopeGrants: true,
+    crossNsShareable: false,
+    principalMode: "opaque-id",
+    relationInheritance: {
+      enabled: true,
+      relations: ["parent"],
+      requireRelateConsent: true,
+    },
+  },
+}
+```
+
+### Client Table Methods
+
+SPV2 client table methods (exposed only for shareable resources):
+
+```typescript
+// SPV2 principal-based API (recommended)
+table.share({ id: "doc:1", principalId: "user:bob", level: "editor", scope: "record" });
+table.unshare({ id: "doc:1", principalId: "user:bob", scope: "record" });
+
+// Resource-level scope grant
+table.share({ principalId: "team:eng", level: "viewer", scope: "resource" });
+table.unshare({ principalId: "team:eng", scope: "resource" });
+
+// Legacy positional API (deprecated, emits console warning)
+table.share(id, userId, level);
+table.unshare(id, userId);
+
+// Permissions query
+table.getPermissions(id);
+```
+
+For resources with `visibilityDefault: "private"` (or `default: "private"`), server queries are auto-scoped to IDs the caller can access.
 
 ## Client API Surface
 

@@ -1,0 +1,107 @@
+---
+title: Config
+description: Read environment-driven runtime settings safely with typed helpers and deterministic fallbacks.
+---
+
+`@superfunctions/config` is the package for turning environment variables into runtime settings without scattering parsing logic throughout your application. It gives you focused helpers for integers, strings, and booleans plus a typed `ConfigError` when values are invalid or out of range.
+
+That sounds small, but it solves a recurring production problem. Runtime packages often depend on values such as queue base URLs, retry counts, rate-limit windows, and feature flags. When every service parses those values differently, boot behavior becomes unpredictable. A shared config helper makes startup safer for application teams and lets library authors document the exact shape of the environment they expect.
+
+## What It Is
+
+`@superfunctions/config` exports `readIntEnv()`, `readIntEnvOrDefault()`, `readStringEnv()`, `readBooleanEnv()`, and `ConfigError`. The helpers accept the env key plus options such as a default value, minimum and maximum bounds, whether empty strings are allowed, and an optional env object override for testing. `readIntEnv()` throws when a provided value is invalid or outside the allowed bounds. `readIntEnvOrDefault()` gives you a deterministic fallback path when permissive startup is more useful than a hard failure.
+
+The package stays intentionally narrow. It does not build full schema objects or load `.env` files for you. Its job is to make the final step from raw environment text to safe runtime values explicit and reusable.
+
+## When To Use It
+
+Use this package when runtime behavior depends on environment variables and those values should be validated consistently. Typical cases include webhook retry counts, queue base URLs, auth flags, worker concurrency, rate-limit windows, and feature toggles.
+
+If a value is hard-coded and not deployment-specific, a config helper is unnecessary. The package becomes valuable when different environments can supply different values and you want invalid settings to fail fast or fall back predictably.
+
+## Install
+
+```bash
+npm install @superfunctions/config
+```
+
+## Quick Start
+
+Start by reading the values your runtime needs before the service wires its dependencies together.
+
+```ts
+import { readBooleanEnv, readIntEnv, readStringEnv } from "@superfunctions/config";
+
+const webhookBaseUrl = readStringEnv("WEBHOOK_BASE_URL", {
+  defaultValue: "https://api.example.com",
+});
+
+const maxRetries = readIntEnv("WEBHOOK_MAX_RETRIES", {
+  defaultValue: 3,
+  min: 1,
+  max: 10,
+});
+
+const metricsEnabled = readBooleanEnv("METRICS_ENABLED", {
+  defaultValue: true,
+});
+```
+
+In tests or reusable modules, pass an explicit env object so behavior stays deterministic.
+
+```ts
+import { readIntEnvOrDefault } from "@superfunctions/config";
+
+const concurrency = readIntEnvOrDefault("WORKER_CONCURRENCY", {
+  env: { WORKER_CONCURRENCY: "-1" },
+  defaultValue: 5,
+  min: 1,
+});
+```
+
+## Core Concepts
+
+The first concept is explicit validation policy. Some settings should fail fast because a bad value would make the service unsafe or misleading. Others can reasonably fall back to a known default. The package lets you choose that posture intentionally rather than mixing the two styles accidentally.
+
+The second concept is bounded integers. Retry counts, batch sizes, and timeout windows often become dangerous when they are too small or too large. Integer helpers with `min` and `max` guards catch those mistakes at boot instead of after deployment.
+
+The third concept is testability. Every reader accepts an optional `env` object, so you can validate configuration behavior in unit tests without mutating global process state.
+
+## Real-World Example
+
+A practical outside-world pattern is reading queue and webhook configuration once, then passing those validated values into the runtime packages that actually do the work.
+
+```ts
+import { readBooleanEnv, readIntEnv, readStringEnv } from "@superfunctions/config";
+
+export function loadRuntimeSettings(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    flowFnBaseUrl: readStringEnv("FLOWFN_BASE_URL", {
+      env,
+      defaultValue: "https://flowfn.example.com",
+    }),
+    webhookMaxRetries: readIntEnv("WEBHOOK_MAX_RETRIES", {
+      env,
+      defaultValue: 3,
+      min: 1,
+      max: 10,
+    }),
+    metricsEnabled: readBooleanEnv("METRICS_ENABLED", {
+      env,
+      defaultValue: true,
+    }),
+  };
+}
+```
+
+That configuration object can then feed [`queue`](/docs/middleware-runtime/queue), [`webhooks`](/docs/middleware-runtime/webhooks), and [`metrics`](/docs/middleware-runtime/metrics) without each package re-parsing raw environment values independently.
+
+## Related Packages
+
+- [`queue`](/docs/middleware-runtime/queue) if queue endpoints, API keys, or worker tuning values come from the environment.
+- [`webhooks`](/docs/middleware-runtime/webhooks) if retry counts, signature headers, or destination defaults are deployment-specific.
+- [`metrics`](/docs/middleware-runtime/metrics) if instrumentation toggles or namespace settings should be configured at boot time.
+
+## Troubleshooting
+
+If a service crashes on startup with `ConfigError`, inspect the message first; it tells you whether the value is invalid or outside the allowed range. If blank strings are unexpectedly rejected, decide whether the setting should truly allow empty values and set `allowEmpty` explicitly when it should. When using the fallback helpers, document which defaults you rely on so operators are not surprised when an invalid environment value silently resolves to a safe default.

@@ -47,6 +47,11 @@ export type DatafnResourceSchema = {
   version: number;
   idPrefix?: string;
   isRemoteOnly?: boolean;
+  /**
+   * Resource capabilities.
+   * For shareable resources, SPV2 extends shareable config with
+   * visibility/membership/scope-related options while preserving legacy fields.
+   */
   capabilities?: ResourceCapabilities;
   fields: DatafnFieldSchema[];
   indices?:

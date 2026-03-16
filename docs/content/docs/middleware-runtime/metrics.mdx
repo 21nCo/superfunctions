@@ -1,0 +1,95 @@
+---
+title: Metrics
+description: Emit lightweight runtime events and namespaced metrics without locking your code to one analytics or telemetry vendor.
+---
+
+`@superfunctions/metrics` exists for teams that want instrumentation to be easy to add, easy to swap, and easy to ignore when they do not need it yet. The package keeps the API deliberately small: a `MetricsEmitter` with `track()`, a factory for creating an emitter from any callback, and a helper for namespacing event names.
+
+That makes it a good fit for shared runtime code. A library can emit meaningful lifecycle events without importing a specific vendor SDK such as Datadog, PostHog, or Segment. The consuming application decides where those events go. Application teams get the same flexibility when they want one instrumentation surface that can later route to a real metrics backend.
+
+## What It Is
+
+`@superfunctions/metrics` exports `createMetricsEmitter()` and `createNamespacedEmitter()`. The base factory either wraps a provided callback or returns a safe no-op emitter when no callback is supplied. The namespacing helper prefixes event names with a namespace such as `billing`, `webhooks`, or `catalog-api` while preserving an already-prefixed event if it matches the namespace.
+
+The package is intentionally event-oriented rather than tied to a single metrics format. You choose the event names and properties that matter to your runtime. That simplicity is useful when you want instrumentation in shared packages, middleware, or queue workers without introducing a heavy observability dependency.
+
+## When To Use It
+
+Use this package when runtime behavior should leave a machine-readable trace but you do not want to commit to one analytics implementation at the package boundary. Common fits include webhook delivery success and failure events, queue enqueue and dequeue events, rate-limit decisions, integration lifecycle events, and environment boot summaries.
+
+If your application already has a rich observability layer and no shared code needs a portable abstraction, you might call the vendor SDK directly instead. The package becomes most valuable when reusable code needs to emit events that downstream apps can route however they want.
+
+## Install
+
+```bash
+npm install @superfunctions/metrics
+```
+
+## Quick Start
+
+The simplest path is to wrap whatever event sink you already have.
+
+```ts
+import { createMetricsEmitter } from "@superfunctions/metrics";
+
+const metrics = createMetricsEmitter((event, properties) => {
+  console.log("metric", event, properties);
+});
+
+metrics.track("api.request.completed", {
+  status: 200,
+  durationMs: 42,
+});
+```
+
+If you are publishing a reusable package, take a `MetricsEmitter` dependency and remain agnostic about where metrics go.
+
+```ts
+import type { MetricsEmitter } from "@superfunctions/metrics";
+
+export function recordQueueResult(metrics: MetricsEmitter, queueName: string, ok: boolean) {
+  metrics.track("queue.result", { queueName, ok });
+}
+```
+
+## Core Concepts
+
+The first concept is portability. The package does not know anything about counters, histograms, or vendor credentials. It simply gives runtime code a consistent `track(event, properties)` shape that can be backed by anything from `console.log` to a production telemetry SDK.
+
+The second concept is safe optionality. When you call `createMetricsEmitter()` without a callback, you still get a valid emitter. That no-op behavior is helpful in tests, local development, or simple scripts where instrumentation should not block the main work.
+
+The third concept is namespacing. Shared event names become much easier to operate when they are prefixed consistently. A namespaced emitter lets several packages emit similarly named events without colliding in dashboards or logs.
+
+## Real-World Example
+
+One practical outside-world pattern is instrumenting webhook delivery and retry behavior from a worker. The worker does not need to know which telemetry backend the app uses; it only needs to emit clear runtime events.
+
+```ts
+import { createMetricsEmitter, createNamespacedEmitter } from "@superfunctions/metrics";
+
+const baseEmitter = createMetricsEmitter((event, properties) => {
+  console.log(event, properties);
+});
+
+const webhookMetrics = createNamespacedEmitter("webhooks", baseEmitter);
+
+export function recordDeliveryAttempt(destination: string, ok: boolean, attempt: number) {
+  webhookMetrics.track("delivery.attempt", {
+    destination,
+    ok,
+    attempt,
+  });
+}
+```
+
+That emitter can sit next to [`webhooks`](/docs/middleware-runtime/webhooks), [`queue`](/docs/middleware-runtime/queue), or [`middleware`](/docs/middleware-runtime/middleware) without dragging a vendor-specific dependency into those packages.
+
+## Related Packages
+
+- [`middleware`](/docs/middleware-runtime/middleware) if rate-limit decisions or guard outcomes should emit telemetry.
+- [`webhooks`](/docs/middleware-runtime/webhooks) if outbound or inbound webhook flows need structured delivery events.
+- [`queue`](/docs/middleware-runtime/queue) if job scheduling and worker processing should produce consistent runtime traces.
+
+## Troubleshooting
+
+If events are not appearing in your telemetry backend, first confirm that you actually passed a callback into `createMetricsEmitter()` and did not accidentally keep the default no-op emitter in production. If namespacing throws `METRIC_NAMESPACE_INVALID`, validate that the namespace is not empty and does not contain `..`. When designing event properties, prefer stable keys such as `queueName`, `status`, or `attempt` so dashboards and alert rules remain usable over time.

@@ -2,6 +2,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, stat, unlink, realpath } from 'node:fs/promises';
 import { dirname, join, normalize, resolve, isAbsolute } from 'node:path';
 import type { StorageAdapter, StorageAdapterCapabilities, StorageObjectStat } from '@superfunctions/storage';
+import { createNotFoundError } from '@superfunctions/storage/internal/errors';
 
 export interface LocalStorageConfig {
   rootDir: string;
@@ -94,9 +95,7 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         const stats = await stat(filePath);
 
         if (!stats.isFile()) {
-          const error = new Error('Object not found') as Error & { code: string };
-          error.code = 'STORAGE_NOT_FOUND';
-          throw error;
+          throw createNotFoundError();
         }
 
         return {
@@ -106,9 +105,7 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         };
       } catch (err: unknown) {
         if (err instanceof Error && 'code' in err && err.code === 'ENOENT') {
-          const error = new Error('Object not found') as Error & { code: string };
-          error.code = 'STORAGE_NOT_FOUND';
-          throw error;
+          throw createNotFoundError();
         }
         throw err;
       }
@@ -178,9 +175,7 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         const stats = await stat(filePath);
 
         if (!stats.isFile()) {
-          const error = new Error('Object not found') as Error & { code: string };
-          error.code = 'STORAGE_NOT_FOUND';
-          throw error;
+          throw createNotFoundError();
         }
 
         if (input.range) {
@@ -196,9 +191,7 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         }
       } catch (err: unknown) {
         if (err instanceof Error && 'code' in err && err.code === 'ENOENT') {
-          const error = new Error('Object not found') as Error & { code: string };
-          error.code = 'STORAGE_NOT_FOUND';
-          throw error;
+          throw createNotFoundError();
         }
         throw err;
       }

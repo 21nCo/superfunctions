@@ -1,18 +1,22 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRateLimiter, createInMemoryKVStore, type KVStoreAdapter } from './rate-limit.js';
 
 describe('rate-limit', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
   describe('createRateLimiter', () => {
-    it('should allow requests within limit', async () => {
+    it('allows requests within fixed-window limit', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,
         maxRequests: 3,
+        algorithm: 'fixed-window',
       });
 
       const r1 = await limiter.check({ key: 'user1' });
       expect(r1.allowed).toBe(true);
       expect(r1.remaining).toBe(2);
-      expect(r1.total).toBe(3);
 
       const r2 = await limiter.check({ key: 'user1' });
       expect(r2.allowed).toBe(true);
@@ -21,58 +25,96 @@ describe('rate-limit', () => {
       const r3 = await limiter.check({ key: 'user1' });
       expect(r3.allowed).toBe(true);
       expect(r3.remaining).toBe(0);
+
+      const r4 = await limiter.check({ key: 'user1' });
+      expect(r4.allowed).toBe(false);
     });
 
-    it('should deny requests over limit (TV-RATE-NEG-001)', async () => {
+    it('enforces sliding-window behavior based on timestamp eviction (TV-REUSE-011-P)', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-12T00:00:00.000Z'));
+
       const limiter = createRateLimiter({
-        windowMs: 60000,
+        windowMs: 1000,
+        maxRequests: 5,
+        algorithm: 'sliding-window',
+      });
+
+      for (let i = 0; i < 5; i += 1) {
+        const result = await limiter.check({ key: 'sliding-user' });
+        expect(result.allowed).toBe(true);
+        vi.setSystemTime(Date.now() + 100);
+      }
+
+      const blockedAt500 = await limiter.check({ key: 'sliding-user' });
+      expect(blockedAt500.allowed).toBe(false);
+
+      vi.setSystemTime(Date.now() + 500);
+      const allowedAt1000 = await limiter.check({ key: 'sliding-user' });
+      expect(allowedAt1000.allowed).toBe(true);
+    });
+
+    it('enforces token-bucket behavior distinctly from fixed-window (TV-REUSE-011-N)', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-12T00:00:00.000Z'));
+
+      const tokenBucket = createRateLimiter({
+        windowMs: 1000,
         maxRequests: 2,
+        algorithm: 'token-bucket',
       });
 
-      await limiter.check({ key: 'user1' });
-      await limiter.check({ key: 'user1' });
+      expect((await tokenBucket.check({ key: 'tb-user' })).allowed).toBe(true);
+      expect((await tokenBucket.check({ key: 'tb-user' })).allowed).toBe(true);
+      expect((await tokenBucket.check({ key: 'tb-user' })).allowed).toBe(false);
 
-      const r3 = await limiter.check({ key: 'user1' });
-      expect(r3.allowed).toBe(false);
-      expect(r3.remaining).toBe(0);
+      // Token bucket refills continuously; fixed-window would still block at +500ms.
+      vi.setSystemTime(Date.now() + 500);
+      const tokenBucketAtHalfWindow = await tokenBucket.check({ key: 'tb-user' });
+      expect(tokenBucketAtHalfWindow.allowed).toBe(true);
+
+      const fixedWindow = createRateLimiter({
+        windowMs: 1000,
+        maxRequests: 2,
+        algorithm: 'fixed-window',
+      });
+
+      expect((await fixedWindow.check({ key: 'fw-user' })).allowed).toBe(true);
+      expect((await fixedWindow.check({ key: 'fw-user' })).allowed).toBe(true);
+      expect((await fixedWindow.check({ key: 'fw-user' })).allowed).toBe(false);
+
+      vi.setSystemTime(Date.now() + 500);
+      const fixedAtHalfWindow = await fixedWindow.check({ key: 'fw-user' });
+      expect(fixedAtHalfWindow.allowed).toBe(false);
     });
 
-    it('should track different keys separately', async () => {
+    it('tracks different keys separately', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,
         maxRequests: 1,
       });
 
-      const r1 = await limiter.check({ key: 'user1' });
-      expect(r1.allowed).toBe(true);
-
-      const r2 = await limiter.check({ key: 'user2' });
-      expect(r2.allowed).toBe(true);
-
-      const r3 = await limiter.check({ key: 'user1' });
-      expect(r3.allowed).toBe(false);
+      expect((await limiter.check({ key: 'user1' })).allowed).toBe(true);
+      expect((await limiter.check({ key: 'user2' })).allowed).toBe(true);
+      expect((await limiter.check({ key: 'user1' })).allowed).toBe(false);
     });
 
-    it('should reset key state', async () => {
+    it('resets key state', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,
         maxRequests: 1,
       });
 
       await limiter.check({ key: 'user1' });
-      const r1 = await limiter.check({ key: 'user1' });
-      expect(r1.allowed).toBe(false);
+      expect((await limiter.check({ key: 'user1' })).allowed).toBe(false);
 
       await limiter.reset('user1');
-
-      const r2 = await limiter.check({ key: 'user1' });
-      expect(r2.allowed).toBe(true);
+      expect((await limiter.check({ key: 'user1' })).allowed).toBe(true);
     });
 
-    it('should include reset time in result (TV-RATE-001)', async () => {
+    it('includes reset time in result', async () => {
       const now = Date.now();
       const windowMs = 60000;
-
       const limiter = createRateLimiter({
         windowMs,
         maxRequests: 10,
@@ -84,22 +126,17 @@ describe('rate-limit', () => {
       expect(resetAtTs).toBeLessThanOrEqual(now + windowMs + 100);
     });
 
-    it('should respect overrides in check (TV-RATE-001 variant)', async () => {
+    it('respects check overrides', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,
         maxRequests: 10,
       });
 
-      // Override limit to 1
-      const result = await limiter.check({ key: 'user_override', limit: 1 });
-      expect(result.allowed).toBe(true);
-      expect(result.total).toBe(1);
-      
-      const result2 = await limiter.check({ key: 'user_override', limit: 1 });
-      expect(result2.allowed).toBe(false);
+      expect((await limiter.check({ key: 'user_override', limit: 1 })).allowed).toBe(true);
+      expect((await limiter.check({ key: 'user_override', limit: 1 })).allowed).toBe(false);
     });
 
-    it('should use custom key prefix', async () => {
+    it('uses custom key prefix', async () => {
       const store = createInMemoryKVStore();
       const limiter = createRateLimiter({
         windowMs: 60000,
@@ -113,7 +150,7 @@ describe('rate-limit', () => {
       expect(value).not.toBeNull();
     });
 
-    it('should accept external persistence (PKG-006)', async () => {
+    it('accepts external persistence', async () => {
       const internalStore = new Map<string, string>();
       const customStore: KVStoreAdapter = {
         async get(key: string) {
@@ -145,34 +182,27 @@ describe('rate-limit', () => {
       store = createInMemoryKVStore();
     });
 
-    it('should get and set values', async () => {
+    it('gets and sets values', async () => {
       await store.set({ key: 'key1', value: 'value1' });
-      const result = await store.get('key1');
-      expect(result).toBe('value1');
+      expect(await store.get('key1')).toBe('value1');
     });
 
-    it('should return null for missing keys', async () => {
-      const result = await store.get('missing');
-      expect(result).toBeNull();
+    it('returns null for missing keys', async () => {
+      expect(await store.get('missing')).toBeNull();
     });
 
-    it('should delete keys', async () => {
+    it('deletes keys', async () => {
       await store.set({ key: 'key1', value: 'value1' });
       await store.delete('key1');
-      const result = await store.get('key1');
-      expect(result).toBeNull();
+      expect(await store.get('key1')).toBeNull();
     });
 
-    it('should expire keys after TTL', async () => {
-      await store.set({ key: 'key1', value: 'value1', ttlSeconds: 0.01 }); // 10ms TTL
-      
-      const immediate = await store.get('key1');
-      expect(immediate).toBe('value1');
+    it('expires keys after TTL', async () => {
+      await store.set({ key: 'key1', value: 'value1', ttlSeconds: 0.01 });
+      expect(await store.get('key1')).toBe('value1');
 
-      await new Promise((r) => setTimeout(r, 20));
-
-      const expired = await store.get('key1');
-      expect(expired).toBeNull();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(await store.get('key1')).toBeNull();
     });
   });
 });

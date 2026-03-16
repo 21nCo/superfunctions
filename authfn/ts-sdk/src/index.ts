@@ -303,3 +303,31 @@ export function createAuthFn(config: AuthFnConfig): AuthFnInstance {
 // Re-export types
 export type { AuthFnConfig, AuthFnInstance, ApiKey, ApiKeySession } from './types.js';
 export { getSchema } from './schema.js';
+export {
+  createSocialOAuthService,
+  createSocialProviderMap,
+  resolveSocialProviderId,
+  InMemorySocialIdentityStore,
+  SocialOAuthError,
+} from './social-oauth/index.js';
+export type {
+  SocialAuthCallbackInput,
+  SocialAuthCallbackResult,
+  SocialAuthDisconnectInput,
+  SocialAuthLoginInput,
+  SocialAuthLoginResult,
+  SocialAuthService,
+  SocialIdentityRecord,
+  SocialIdentityStore,
+  SocialOAuthCallbackInput,
+  SocialOAuthCallbackResult,
+  SocialOAuthDisconnectInput,
+  SocialOAuthDisconnectResult,
+  SocialOAuthLoginInput,
+  SocialOAuthLoginResult,
+  SocialOAuthProviderRuntimeConfig,
+  SocialOAuthService,
+  SocialProviderId,
+  SocialRevocationFailureRecord,
+  CreateSocialOAuthServiceConfig,
+} from './social-oauth/index.js';

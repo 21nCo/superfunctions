@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@superfunctions/http": "*",
-    "@searchfn/adapters": "file:../adapters"
+    "@searchfn/adapter-contracts": "file:../adapter-contracts",
+    "@searchfn/adapter-memory": "file:../adapter-memory"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

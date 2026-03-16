@@ -30,6 +30,8 @@ export class ActionExecutor {
   private cacheMiddleware: CacheMiddleware;
   private loggingMiddleware: LoggingMiddleware;
   private metricsMiddleware: MetricsMiddleware;
+  private readonly syncExecutionQueue = new Map<string, Promise<void>>();
+  private readonly maxConcurrentSyncPerConnection: number;
 
   constructor(
     private connectionManager: ConnectionManager,
@@ -41,6 +43,7 @@ export class ActionExecutor {
       enableCache?: boolean;
       enableLogging?: boolean;
       enableMetrics?: boolean;
+      maxConcurrentSyncPerConnection?: number;
     } = {}
   ) {
     this.httpClient = new FetchHttpClient();
@@ -49,6 +52,7 @@ export class ActionExecutor {
     this.cacheMiddleware = new CacheMiddleware(300000, logger);
     this.loggingMiddleware = new LoggingMiddleware(logger);
     this.metricsMiddleware = new MetricsMiddleware();
+    this.maxConcurrentSyncPerConnection = Math.max(1, _options.maxConcurrentSyncPerConnection ?? 1);
   }
 
   /**
@@ -107,9 +111,11 @@ export class ActionExecutor {
       }
 
       // Get or select connection
-      const connection = options.connectionId
-        ? await this.connectionManager.get(options.connectionId)
-        : await this.connectionManager.getByUserAndProvider(options.userId, provider);
+      const connection = await this.connectionManager.resolveConnectionForAction({
+        userId: options.userId,
+        provider,
+        connectionId: options.connectionId,
+      });
 
       if (!connection) {
         throw new Error(`No connection found for provider ${provider} and user ${options.userId}`);
@@ -120,8 +126,8 @@ export class ActionExecutor {
 
       // Apply rate limiting
       if (providerObj.rateLimit) {
-        const rateLimitKey = `${provider}:${options.userId}`;
-        await this.rateLimiter.acquire(rateLimitKey, providerObj.rateLimit);
+        await this.rateLimiter.acquire(`provider:${provider}`, providerObj.rateLimit);
+        await this.rateLimiter.acquire(`provider:${provider}:tenant:${options.userId}`, providerObj.rateLimit);
       }
 
       // Build action context
@@ -145,9 +151,14 @@ export class ActionExecutor {
         return actionObj.execute(validatedParams, context);
       };
 
-      const result = await this.retryMiddleware.execute(
-        executeAction,
-        `${provider}.${action}`
+      const result = await this.executeWithSyncConcurrencyGuard(
+        action,
+        connection.id,
+        async () =>
+          this.retryMiddleware.execute(
+            executeAction,
+            `${provider}.${action}`
+          )
       );
 
       retries = result.retries;
@@ -304,5 +315,32 @@ export class ActionExecutor {
         }),
     };
   }
-}
 
+  private async executeWithSyncConcurrencyGuard<T>(
+    action: string,
+    connectionId: string,
+    execute: () => Promise<T>
+  ): Promise<T> {
+    if (action !== 'mail.sync' || this.maxConcurrentSyncPerConnection > 1) {
+      return execute();
+    }
+
+    const previous = this.syncExecutionQueue.get(connectionId) ?? Promise.resolve();
+    let releaseCurrent!: () => void;
+    const current = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    const queueTail = previous.then(() => current);
+    this.syncExecutionQueue.set(connectionId, queueTail);
+
+    await previous;
+    try {
+      return await execute();
+    } finally {
+      releaseCurrent();
+      if (this.syncExecutionQueue.get(connectionId) === queueTail) {
+        this.syncExecutionQueue.delete(connectionId);
+      }
+    }
+  }
+}

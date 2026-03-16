@@ -1,10 +1,9 @@
+import { deliverWebhook as deliverWithSharedPackage } from '@superfunctions/webhooks';
 import type { WebhookPayload } from './events.js';
-import { computeWebhookSignature } from './sign.js';
 
 const RECFN_SIGNATURE_HEADER = 'X-RecFn-Signature';
 
 const DEFAULT_RETRY_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 1000;
 
 export interface WebhookDelivererDeps {
   fetch?: typeof globalThis.fetch;
@@ -26,35 +25,28 @@ export async function deliverWebhook(
   payload: WebhookPayload,
   deps: WebhookDelivererDeps = {},
 ): Promise<{ ok: boolean; attempt: number }> {
-  const fetchFn = deps.fetch ?? globalThis.fetch;
   const maxRetries = deps.maxRetries ?? DEFAULT_RETRY_ATTEMPTS;
+  const result = await deliverWithSharedPackage(
+    {
+      url: target.url,
+      payload,
+      secret: target.secret,
+      signatureHeader: RECFN_SIGNATURE_HEADER,
+    },
+    {
+      fetch: deps.fetch,
+      maxRetries,
+      initialDelayMs: 1000,
+    }
+  );
 
-  const bodyStr = JSON.stringify(payload);
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+  if (!result.ok) {
+    const lastAttempt = result.attempts[result.attempts.length - 1];
+    throw new Error(lastAttempt?.error ?? 'Webhook delivery failed');
+  }
+
+  return {
+    ok: true,
+    attempt: result.attempts.length,
   };
-  if (target.secret) {
-    headers[RECFN_SIGNATURE_HEADER] = computeWebhookSignature(bodyStr, target.secret);
-  }
-
-  let lastError: Error | null = null;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await fetchFn(target.url, {
-        method: 'POST',
-        headers,
-        body: bodyStr,
-      });
-      if (res.ok) {
-        return { ok: true, attempt };
-      }
-      lastError = new Error(`HTTP ${res.status}`);
-    } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e));
-    }
-    if (attempt < maxRetries) {
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
-    }
-  }
-  throw lastError ?? new Error('Webhook delivery failed');
 }

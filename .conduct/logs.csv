@@ -19,3 +19,11 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-08T18:30:00Z,claude-opus-4-6,CLI,document-issue,unknown-agent,,.conduct/issues/2026-03-08-k7m4x2p9-issue.md
 2026-03-09T06:31:47Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-09-r8m4k2p7-completion.md
 2026-03-11T12:02:27Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-11-m7q2k9p4-completion.md
+2026-03-11T16:12:49Z,gpt-5 (Codex),Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-11-new-h3r9k2m7-spec
+2026-03-11T16:27:57Z,gpt-5 (Codex),Codex Desktop,spec,unknown-agent,,searchfn/.conduct/specs/2026-03-11-new-h3r9k2m7-spec
+2026-03-12T11:22:33Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-12-audit-fix-o4u9k2m7-spec
+2026-03-14T16:00:00Z,claude-opus-4-6,Claude Code CLI,audit,unknown-agent,,.conduct/audits/2026-03-14-r7k4m9x3-full-audit.md
+2026-03-14T17:30:00Z,claude-opus-4-6,Claude Code CLI,audit,unknown-agent,,.conduct/audits/2026-03-14-k8v2m7p4-full-audit.md
+2026-03-14T18:00:00Z,gemini-pro,CLI,audit,Antigravity,,.conduct/audits/2026-03-14-u8k4m2p9-full-audit.md
+2026-03-14T16:18:00Z,gemini-2.5-pro,CLI,audit,Gemini CLI,,.conduct/audits/2026-03-14-a1b2c3-full-audit.md
+2026-03-14T18:50:49Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-15-fix-ifnaigab-spec

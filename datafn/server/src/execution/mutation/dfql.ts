@@ -28,7 +28,12 @@ export interface DFQLMutation {
   mutationId: string;
   id: string;
   record?: Record<string, unknown>;
-  shareWith?: { userId: string; level?: string };
+  scope?: "record" | "resource";
+  shareWith?: {
+    principalId?: string;
+    userId?: string;
+    level?: string;
+  };
   if?: Record<string, unknown>; // Optimistic concurrency guard
   relations?: Record<string, unknown>; // Relation operations payload
 }

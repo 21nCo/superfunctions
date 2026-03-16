@@ -78,6 +78,14 @@ function analyzeFilterComplexity(
   return { depth: maxDepth, conditions };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 export function createSearchHandler(
   validatedSchema: DatafnSchema,
   extractNamespace: (ctx: any) => Promise<string>,
@@ -175,6 +183,50 @@ export function createSearchHandler(
         details: { path: "filters" },
       });
     }
+    if (raw.prefix !== undefined && typeof raw.prefix !== "boolean") {
+      return errorResponse({
+        code: "DFQL_INVALID",
+        message: "Invalid request: prefix must be boolean",
+        details: { path: "prefix" },
+      });
+    }
+    if (
+      raw.fuzzy !== undefined &&
+      typeof raw.fuzzy !== "boolean" &&
+      (typeof raw.fuzzy !== "number" || !Number.isFinite(raw.fuzzy) || raw.fuzzy < 0)
+    ) {
+      return errorResponse({
+        code: "DFQL_INVALID",
+        message: "Invalid request: fuzzy must be boolean or a non-negative number",
+        details: { path: "fuzzy" },
+      });
+    }
+    if (raw.fieldBoosts !== undefined) {
+      if (!isPlainObject(raw.fieldBoosts)) {
+        return errorResponse({
+          code: "DFQL_INVALID",
+          message: "Invalid request: fieldBoosts must be an object",
+          details: { path: "fieldBoosts" },
+        });
+      }
+      const boostEntries = Object.entries(raw.fieldBoosts);
+      if (boostEntries.length > 100) {
+        return errorResponse({
+          code: "LIMIT_EXCEEDED",
+          message: "Too many fieldBoosts entries in search request",
+          details: { path: "fieldBoosts" },
+        });
+      }
+      for (const [field, value] of boostEntries) {
+        if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+          return errorResponse({
+            code: "DFQL_INVALID",
+            message: "Invalid request: fieldBoosts values must be finite positive numbers",
+            details: { path: `fieldBoosts.${field}` },
+          });
+        }
+      }
+    }
 
     if (!db) {
       return errorResponse({
@@ -225,6 +277,9 @@ export function createSearchHandler(
         fields: Array.isArray(raw.fields) ? (raw.fields as string[]) : undefined,
         limit,
         limitPerResource,
+        prefix: raw.prefix as boolean | undefined,
+        fuzzy: raw.fuzzy as boolean | number | undefined,
+        fieldBoosts: raw.fieldBoosts as Record<string, number> | undefined,
         filters: (typeof raw.filters === "object" && raw.filters !== null && !Array.isArray(raw.filters))
           ? (raw.filters as Record<string, Record<string, unknown>>)
           : undefined,

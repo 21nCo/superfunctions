@@ -4,6 +4,7 @@
   "license": "Apache-2.0",
   "description": "Building blocks for software development",
   "workspaces": [
+    "docs",
     "contentfn/*",
     "searchfn/*",
     "botfn/*",
@@ -49,13 +50,16 @@
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
     "test:coverage": "turbo run test:coverage",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "check:duplication": "node scripts/check-duplication.mjs",
+    "gate:audit-fix-o4u9k2m7": "node scripts/gate-audit-fix-o4u9k2m7.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@types/node": "^20.0.0",
     "@vitest/ui": "^3.2.4",
     "fast-glob": "^3.3.3",
+    "jscpd": "^4.0.5",
     "msw": "^2.11.6",
     "prettier": "^3.0.0",
     "turbo": "^2.0.0",

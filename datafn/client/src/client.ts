@@ -802,6 +802,7 @@ function _buildRawClient<S extends DatafnSchema>(
         config.sync?.offlinability,
         config.clientId,
         debouncerMap,
+        config.searchProvider,
       );
     },
 
@@ -1037,6 +1038,71 @@ function _buildRawClient<S extends DatafnSchema>(
         );
       }
 
+      if (raw.prefix !== undefined && typeof raw.prefix !== "boolean") {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid request: prefix must be boolean",
+          { path: "prefix" },
+        );
+      }
+      if (
+        raw.fuzzy !== undefined &&
+        typeof raw.fuzzy !== "boolean" &&
+        (typeof raw.fuzzy !== "number" || !Number.isFinite(raw.fuzzy) || raw.fuzzy < 0)
+      ) {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid request: fuzzy must be boolean or a non-negative number",
+          { path: "fuzzy" },
+        );
+      }
+      if (raw.fieldBoosts !== undefined) {
+        const fieldBoostsValue = raw.fieldBoosts;
+        const isPlainObject =
+          typeof fieldBoostsValue === "object" &&
+          fieldBoostsValue !== null &&
+          !Array.isArray(fieldBoostsValue) &&
+          (Object.getPrototypeOf(fieldBoostsValue) === Object.prototype ||
+            Object.getPrototypeOf(fieldBoostsValue) === null);
+        if (!isPlainObject) {
+          throw createClientError(
+            "DFQL_INVALID",
+            "Invalid request: fieldBoosts must be an object",
+            { path: "fieldBoosts" },
+          );
+        }
+        const entries = Object.entries(fieldBoostsValue as Record<string, unknown>);
+        if (entries.length > 100) {
+          throw createClientError(
+            "LIMIT_EXCEEDED",
+            "Too many fieldBoosts entries in search request",
+            { path: "fieldBoosts" },
+          );
+        }
+        for (const [field, value] of entries) {
+          if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+            throw createClientError(
+              "DFQL_INVALID",
+              "Invalid request: fieldBoosts values must be finite positive numbers",
+              { path: `fieldBoosts.${field}` },
+            );
+          }
+        }
+      }
+
+      if (
+        raw.source !== undefined &&
+        raw.source !== "auto" &&
+        raw.source !== "local" &&
+        raw.source !== "remote"
+      ) {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid request: source must be one of auto, local, remote",
+          { path: "source" },
+        );
+      }
+
       const limit = Math.min(
         typeof raw.limit === "number" ? raw.limit : 50,
         10_000,
@@ -1045,13 +1111,20 @@ function _buildRawClient<S extends DatafnSchema>(
         typeof raw.limitPerResource === "number" ? raw.limitPerResource : limit,
         1_000,
       );
+      const resources = Array.isArray(raw.resources) ? (raw.resources as string[]) : undefined;
+      const fields = Array.isArray(raw.fields) ? (raw.fields as string[]) : undefined;
+      const prefix = raw.prefix as boolean | undefined;
+      const fuzzy = raw.fuzzy as boolean | number | undefined;
+      const fieldBoosts = raw.fieldBoosts as Record<string, number> | undefined;
+      const source = (raw.source ?? "auto") as "auto" | "local" | "remote";
       const signal = raw.signal as AbortSignal | undefined;
       assertSearchNotAborted(signal);
 
       const hasRemote = !!(config.sync?.remote || config.sync?.remoteAdapter);
       const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
+      const hasLocalSearch = typeof config.searchProvider?.searchAll === "function";
 
-      if (hasRemote && !isOffline) {
+      const runRemoteSearch = async (): Promise<unknown> => {
         if (typeof (remote as any).search === "function") {
           return (remote as any).search({
             ...raw,
@@ -1066,17 +1139,28 @@ function _buildRawClient<S extends DatafnSchema>(
           "Remote adapter does not support search",
           { path: "search" },
         );
-      }
+      };
 
-      if (config.searchProvider?.searchAll) {
+      const runLocalSearch = async (): Promise<{ results: Array<{ id: string; resource: string; score: number; data: Record<string, unknown> }> }> => {
+        const searchAll = config.searchProvider?.searchAll;
+        if (!searchAll) {
+          throw createClientError(
+            "DFQL_UNSUPPORTED",
+            "Local search unavailable",
+            { path: "source" },
+          );
+        }
         await storageValidationPromise;
         await localOnlyInitPromise;
-        const candidates = await (config.searchProvider.searchAll as any)({
+        const candidates = await (searchAll as any)({
           query,
-          resources: Array.isArray(raw.resources) ? (raw.resources as string[]) : undefined,
-          fields: Array.isArray(raw.fields) ? (raw.fields as string[]) : undefined,
+          resources,
+          fields,
           limit,
           limitPerResource,
+          prefix,
+          fuzzy,
+          fieldBoosts,
           signal,
         });
         assertSearchNotAborted(signal);
@@ -1116,6 +1200,35 @@ function _buildRawClient<S extends DatafnSchema>(
         });
 
         return { results: results.slice(0, limit) };
+      };
+
+      if (source === "local") {
+        if (!hasLocalSearch) {
+          throw createClientError(
+            "DFQL_UNSUPPORTED",
+            "Local search unavailable",
+            { path: "source" },
+          );
+        }
+        return runLocalSearch();
+      }
+
+      if (source === "remote") {
+        if (!hasRemote || isOffline || typeof (remote as any).search !== "function") {
+          throw createClientError(
+            "DFQL_UNSUPPORTED",
+            "Remote search unavailable",
+            { path: "source" },
+          );
+        }
+        return runRemoteSearch();
+      }
+
+      if (hasLocalSearch) {
+        return runLocalSearch();
+      }
+      if (hasRemote && !isOffline) {
+        return runRemoteSearch();
       }
 
       throw createClientError(

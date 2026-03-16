@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createDatafnClient } from "../src/client.js";
 import { DefaultHttpTransport } from "../src/transport/http.js";
+import { MemoryStorageAdapter } from "../src/adapters/memoryStorage.js";
 import type { DatafnEvent } from "@datafn/core";
 
 // Default schema for testing
@@ -160,6 +161,40 @@ describe("@datafn/client mutations", () => {
       message: "Invalid DFQL: missing clientId or mutationId",
       path: "$",
     });
+  });
+});
+
+describe("@datafn/client mutation search index lifecycle (IDX-001/IDX-002)", () => {
+  it("updates search index for successful local mutation", async () => {
+    const storage = new MemoryStorageAdapter();
+    const updateIndices = vi.fn().mockResolvedValue(undefined);
+    const client = createDatafnClient({
+      schema: defaultSchema,
+      sync: { mode: "local-only" },
+      storage,
+      clientId: "idx-client",
+      searchProvider: {
+        name: "provider",
+        search: vi.fn().mockResolvedValue([]),
+        searchAll: vi.fn().mockResolvedValue([]),
+        updateIndices,
+      },
+    });
+
+    const result: any = await client.task.mutate({
+      operation: "insert",
+      id: "task:idx-1",
+      record: { title: "Index Me" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(updateIndices).toHaveBeenCalledTimes(1);
+    expect(updateIndices).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: "task",
+        operation: "upsert",
+      }),
+    );
   });
 });
 

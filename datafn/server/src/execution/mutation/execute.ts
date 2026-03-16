@@ -12,9 +12,17 @@ import { executeRelate, executeModifyRelation, executeUnrelate, extractJoinDelta
 import { executeSchemaAwareMerge } from "./merge-decision.js";
 import { executeShare, executeUnshare, getPermissionsTable } from "./share.js";
 import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry } from "../sync/change-tracking.js";
+import {
+  applyRelationInheritanceForRelate,
+  applyRelationInheritanceForShare,
+  applyRelationInheritanceForUnrelate,
+  applyRelationInheritanceForUnshare,
+  collectRelationInheritanceTargetsForUnrelate,
+  enforceRelateConsentForInheritance,
+} from "../relations/inheritance.js";
 import { evaluateGuard } from "./guards.js";
 import type { DatafnLogger } from "../../logger.js";
-import { resolveAccessLevel } from "../../validation/authz.js";
+import { validateShareableOperationAccess } from "../../validation/authz.js";
 import type { SearchProvider } from "../../search-provider.js";
 
 const SEARCH_UPSERT_OPS = new Set(["insert", "merge", "replace", "trash", "restore", "archive", "unarchive"]);
@@ -564,6 +572,7 @@ async function executeMutationCore(
           resolvedCapabilities,
           namespace,
           actorId,
+          logger,
         );
         if (!shareResult.ok) {
           opResult = {
@@ -580,6 +589,25 @@ async function executeMutationCore(
           op: "upsert",
           record: shareResult.permissionRecord,
         };
+        const inheritanceShareResult = await applyRelationInheritanceForShare({
+          db,
+          schema,
+          namespace,
+          actorId,
+          parentResource: mutation.resource,
+          parentId:
+            typeof shareResult.permissionRecord.resourceId === "string"
+              ? shareResult.permissionRecord.resourceId
+              : null,
+          principalId: String(shareResult.permissionRecord.principalId ?? ""),
+          level:
+            (shareResult.permissionRecord.level as "viewer" | "editor" | "owner") ??
+            "viewer",
+        });
+        if (!inheritanceShareResult.ok) {
+          opResult = inheritanceShareResult;
+          break;
+        }
         opResult = { ok: true };
         break;
       }
@@ -591,6 +619,7 @@ async function executeMutationCore(
           resolvedCapabilities,
           namespace,
           actorId,
+          logger,
         );
         if (!unshareResult.ok) {
           opResult = {
@@ -604,6 +633,27 @@ async function executeMutationCore(
         if (!unshareResult.deleted) {
           skipChangeTracking = true;
         } else {
+          const inheritanceUnsharePrincipal =
+            mutation.shareWith?.principalId ??
+            (mutation.shareWith?.userId
+              ? (String(mutation.shareWith.userId).includes(":")
+                ? String(mutation.shareWith.userId)
+                : `user:${mutation.shareWith.userId}`)
+              : undefined);
+          if (typeof inheritanceUnsharePrincipal === "string") {
+            const inheritanceUnshareResult = await applyRelationInheritanceForUnshare({
+              db,
+              schema,
+              namespace,
+              parentResource: mutation.resource,
+              parentId: mutation.scope === "resource" ? null : mutation.id,
+              principalId: inheritanceUnsharePrincipal,
+            });
+            if (!inheritanceUnshareResult.ok) {
+              opResult = inheritanceUnshareResult;
+              break;
+            }
+          }
           changeOverride = {
             resource: getPermissionsTable(mutation.resource),
             id: unshareResult.changeId,
@@ -617,7 +667,30 @@ async function executeMutationCore(
 
       case "relate":
         try {
+          const consentResult = await enforceRelateConsentForInheritance({
+            schema,
+            db,
+            namespace,
+            mutation,
+          });
+          if (!consentResult.ok) {
+            opResult = consentResult;
+            break;
+          }
+
           opResult = await executeRelate(db, schema, mutation, namespace, actorId);
+          if (opResult.ok) {
+            const inheritanceRelateResult = await applyRelationInheritanceForRelate({
+              db,
+              schema,
+              namespace,
+              actorId,
+              mutation,
+            });
+            if (!inheritanceRelateResult.ok) {
+              opResult = inheritanceRelateResult;
+            }
+          }
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation relate failed", { error: String(e), operation: "relate", resource: mutation.resource });
@@ -637,7 +710,25 @@ async function executeMutationCore(
 
       case "unrelate":
         try {
+          const unrelateTargets = await collectRelationInheritanceTargetsForUnrelate({
+            db,
+            schema,
+            namespace,
+            mutation,
+          });
           opResult = await executeUnrelate(db, schema, mutation, namespace);
+          if (opResult.ok) {
+            const inheritanceUnrelateResult = await applyRelationInheritanceForUnrelate({
+              db,
+              schema,
+              namespace,
+              mutation,
+              targets: unrelateTargets,
+            });
+            if (!inheritanceUnrelateResult.ok) {
+              opResult = inheritanceUnrelateResult;
+            }
+          }
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation unrelate failed", { error: String(e), operation: "unrelate", resource: mutation.resource });
@@ -802,42 +893,27 @@ export async function executeMutation(
 
   // PHASE_11: Shareable mutation authorization by access level.
   const resolvedCapabilities = resolveCapabilitiesForResource(schema, mutation.resource);
-  if (hasShareableCapability(resolvedCapabilities) && mutation.operation !== "insert") {
-    const accessLevel = await resolveAccessLevel(
+  if (hasShareableCapability(resolvedCapabilities)) {
+    const authzResult = await validateShareableOperationAccess({
       db,
       schema,
-      mutation.resource,
-      mutation.id,
+      resource: mutation.resource,
+      operation: mutation.operation,
+      id: mutation.id,
       actorId,
       namespace,
-    );
-    const isOwner = accessLevel === "owner";
-    const isEditor = accessLevel === "editor";
-    const isViewer = accessLevel === "viewer";
-
-    let allowed = false;
-    if (isOwner) {
-      allowed = true;
-    } else if (isEditor) {
-      allowed = mutation.operation !== "delete" &&
-        mutation.operation !== "share" &&
-        mutation.operation !== "unshare";
-    } else if (isViewer) {
-      allowed = false;
-    } else {
-      allowed = false;
-    }
-
-    if (!allowed) {
+      requireActorForPrivate: false,
+    });
+    if (!authzResult.ok) {
       const result: MutationResult = {
         ok: false,
         mutationId: effectiveMutationId,
         affectedIds: [],
         errors: [
           {
-            code: "FORBIDDEN",
-            message: "Forbidden",
-            path: "operation",
+            code: authzResult.code,
+            message: authzResult.message,
+            path: authzResult.path,
             retryable: false,
           },
         ],

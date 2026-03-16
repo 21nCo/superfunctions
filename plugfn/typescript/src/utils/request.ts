@@ -1,8 +1,5 @@
 import type { HttpClient, HttpResponse, RequestConfig } from '../types/action.js';
 
-/**
- * Default HTTP client implementation using fetch
- */
 export class FetchHttpClient implements HttpClient {
   private baseTimeout: number;
 
@@ -41,20 +38,20 @@ export class FetchHttpClient implements HttpClient {
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     try {
-      // Build URL with query params
       const finalUrl = config?.params
         ? `${url}?${new URLSearchParams(config.params).toString()}`
         : url;
 
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...config?.headers,
+        ...(config?.headers ?? {}),
       };
+
+      const body = this.serializeBody(method, data, headers, config?.bodyEncoding);
 
       const response = await fetch(finalUrl, {
         method,
         headers,
-        body: data ? JSON.stringify(data) : undefined,
+        body,
         signal: controller.signal,
       });
 
@@ -67,7 +64,7 @@ export class FetchHttpClient implements HttpClient {
 
       let responseData: T;
       const contentType = response.headers.get('content-type');
-      
+
       if (contentType?.includes('application/json')) {
         responseData = (await response.json()) as T;
       } else {
@@ -90,19 +87,66 @@ export class FetchHttpClient implements HttpClient {
       };
     } catch (error) {
       clearTimeout(timeoutId);
-      
+
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error(`Request timeout after ${timeout}ms`);
       }
-      
+
       throw error;
     }
   }
+
+  private serializeBody(
+    method: string,
+    data: any,
+    headers: Record<string, string>,
+    bodyEncoding?: RequestConfig['bodyEncoding']
+  ): any {
+    if (data === undefined || method === 'GET' || method === 'HEAD') {
+      return undefined;
+    }
+
+    if (isFormDataInstance(data)) {
+      removeHeader(headers, 'content-type');
+      return data;
+    }
+
+    const explicitContentType = getHeader(headers, 'content-type')?.toLowerCase();
+    const resolvedEncoding = bodyEncoding ?? inferEncoding(explicitContentType, data);
+
+    if (resolvedEncoding === 'form') {
+      if (!explicitContentType) {
+        setHeader(headers, 'Content-Type', 'application/x-www-form-urlencoded');
+      }
+      return serializeFormPayload(data);
+    }
+
+    if (resolvedEncoding === 'json') {
+      if (!explicitContentType) {
+        setHeader(headers, 'Content-Type', 'application/json');
+      }
+      if (typeof data === 'string') {
+        return data;
+      }
+      return JSON.stringify(data);
+    }
+
+    if (typeof data === 'string') {
+      return data;
+    }
+
+    if (data instanceof URLSearchParams) {
+      return data.toString();
+    }
+
+    if (isArrayBuffer(data) || isArrayBufferView(data) || isBlobInstance(data)) {
+      return data;
+    }
+
+    return String(data);
+  }
 }
 
-/**
- * HTTP error class
- */
 export class HttpError extends Error {
   constructor(
     message: string,
@@ -114,3 +158,87 @@ export class HttpError extends Error {
   }
 }
 
+function inferEncoding(contentType: string | undefined, data: unknown): 'json' | 'form' | 'raw' {
+  if (contentType?.includes('application/x-www-form-urlencoded')) {
+    return 'form';
+  }
+
+  if (contentType?.includes('application/json')) {
+    return 'json';
+  }
+
+  if (typeof data === 'string' || data instanceof URLSearchParams) {
+    return 'raw';
+  }
+
+  if (isFormDataInstance(data)) {
+    return 'raw';
+  }
+
+  return 'json';
+}
+
+function serializeFormPayload(data: unknown): string {
+  if (typeof data === 'string') {
+    return data;
+  }
+
+  if (data instanceof URLSearchParams) {
+    return data.toString();
+  }
+
+  if (data && typeof data === 'object') {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      if (value === undefined || value === null) {
+        continue;
+      }
+      params.set(key, String(value));
+    }
+    return params.toString();
+  }
+
+  throw new Error('Form encoding requires object, URLSearchParams, or string payload');
+}
+
+function getHeader(headers: Record<string, string>, name: string): string | undefined {
+  const key = findHeaderKey(headers, name);
+  return key ? headers[key] : undefined;
+}
+
+function setHeader(headers: Record<string, string>, name: string, value: string): void {
+  const key = findHeaderKey(headers, name);
+  if (key) {
+    headers[key] = value;
+    return;
+  }
+  headers[name] = value;
+}
+
+function removeHeader(headers: Record<string, string>, name: string): void {
+  const key = findHeaderKey(headers, name);
+  if (key) {
+    delete headers[key];
+  }
+}
+
+function findHeaderKey(headers: Record<string, string>, name: string): string | undefined {
+  const normalized = name.toLowerCase();
+  return Object.keys(headers).find((key) => key.toLowerCase() === normalized);
+}
+
+function isArrayBuffer(data: unknown): data is ArrayBuffer {
+  return typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer;
+}
+
+function isArrayBufferView(data: unknown): data is ArrayBufferView {
+  return typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(data);
+}
+
+function isBlobInstance(data: unknown): data is Blob {
+  return typeof Blob !== 'undefined' && data instanceof Blob;
+}
+
+function isFormDataInstance(data: unknown): data is FormData {
+  return typeof FormData !== 'undefined' && data instanceof FormData;
+}

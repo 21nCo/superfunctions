@@ -21,9 +21,12 @@ export interface DFQLQuery {
   having?: Record<string, unknown>;
   search?: {
     query: string;
-    type: "fullText" | "semantic";
+    type?: "fullText" | "semantic";
     fields?: string[];
     topK?: number;
+    prefix?: boolean;
+    fuzzy?: boolean | number;
+    fieldBoosts?: Record<string, number>;
   };
 }
 

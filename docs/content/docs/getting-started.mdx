@@ -1,0 +1,78 @@
+---
+title: Getting Started
+description: Start with the right shared package, install it cleanly, and build a small first integration.
+---
+
+The fastest way to get value from Superfunctions is to start with one concrete need, install the smallest useful package set, and only add more layers when your application actually needs them. The root docs focus on shared packages and ecosystem orientation, so this page is deliberately external-first: it assumes you are evaluating Superfunctions for your own application, SDK, integration, or platform work rather than editing the monorepo itself.
+
+## Choose Your Starting Point
+
+Pick the first package family by the decision in front of you:
+
+- Choose the authentication stack when you need a reusable auth contract or OAuth installation flow that can span multiple frameworks and providers.
+- Choose the HTTP packages when you want framework-agnostic handlers first and a thin adapter layer second.
+- Choose data and storage packages when you need database abstractions, object storage adapters, or portable file workflows.
+- Choose the Python integrations when your team wants the same shared ideas in FastAPI, Flask, or SQLAlchemy projects.
+- Choose tooling packages when your immediate problem is schema management, documentation infrastructure, or local authoring workflows.
+
+If you are unsure which path applies, go to [Choosing Packages](/docs/choosing-packages). That page groups packages by user need instead of making you already know the package names. If you already know the product area you care about, use [Ecosystem](/docs/ecosystem) to jump out to a function workspace such as `datafn`, `searchfn`, or `plugfn`.
+
+## Install Your First Package
+
+For most JavaScript or TypeScript projects, you can install one primitive package plus one adapter or sibling package that completes the workflow you need.
+
+```bash
+npm install @superfunctions/http @superfunctions/http-express
+```
+
+If you are starting with the OAuth stack instead, the install step usually looks more like a layered composition:
+
+```bash
+npm install @superfunctions/auth @superfunctions/oauth-core @superfunctions/oauth-flow
+```
+
+For Python, install the integration that matches your runtime alongside the shared Python core:
+
+```bash
+pip install sfns superfunctions-fastapi
+```
+
+Keep the first install small. The packages are designed to compose, so you do not need to pull in the entire ecosystem just to validate whether the approach fits your project.
+
+## Build a Small Example
+
+Here is a minimal external app example that starts with the shared HTTP contract and then binds it to Express. The important idea is that your route definition stays portable even if you later swap frameworks.
+
+```ts
+import express from "express";
+import { createRouter } from "@superfunctions/http";
+import { toExpress } from "@superfunctions/http-express";
+
+const app = express();
+const router = createRouter({
+  routes: [
+    {
+      method: "GET",
+      path: "/health",
+      handler: async () =>
+        Response.json({ ok: true, service: "example-app" }),
+    },
+  ],
+});
+
+app.use("/api", toExpress(router));
+app.listen(3000);
+```
+
+That example is intentionally small, but it shows the pattern used across the shared packages: start from a portable contract, then attach framework- or provider-specific behavior at the edges. The same mindset applies in the OAuth stack, storage stack, and Python integrations. You begin with the common model, then choose the orchestration layer or adapter that matches your deployment environment.
+
+## Where To Go Next
+
+After your first install and sample integration, continue in the direction that matches your next question:
+
+- Read [Choosing Packages](/docs/choosing-packages) if you are comparing sibling packages and want a plain-language chooser.
+- Jump straight into a category such as [Authentication & OAuth](/docs/authentication), [HTTP & Framework Adapters](/docs/http), or [Data & Storage](/docs/data-storage) if you already know the type of package you need.
+- Jump to [Ecosystem](/docs/ecosystem) if you now need function-level docs for a broader product surface.
+- Open package entry points such as [`auth`](/docs/authentication/auth), [`http`](/docs/http/http), [`db`](/docs/data-storage/db), or [`python-core`](/docs/python/python-core) when you are ready for deeper API guidance.
+
+The root docs are here to help you make the first architectural choices with confidence. Once those choices are clear, the package pages provide the deeper implementation detail.

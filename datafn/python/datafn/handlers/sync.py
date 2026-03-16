@@ -6,11 +6,41 @@ from ..change_tracking import get_changes_since, get_latest_cursor, write_change
 from ..idempotency import check_idempotency, store_idempotency
 from ..utils.date import coerce_date_fields_to_epoch
 from ..utils.joins import get_join_table_name, enumerate_join_store_keys
+from ..authz import (
+    get_actor_id_from_context,
+    is_private_shareable_resource,
+    is_record_visible,
+    validate_mutation_authz,
+)
 from .mutation import execute_mutation_core
 
 SEED_TABLE = "__datafn_seed"
 DEFAULT_NAMESPACE = "datafn"
 DEFAULT_MAX_PULL_LIMIT = 5000
+
+
+def _resource_is_private_shareable(index: SchemaIndex, resource: str) -> bool:
+    resource_def = index.resources_by_name.get(resource)
+    if not resource_def:
+        return False
+    return is_private_shareable_resource(resource_def)
+
+
+async def _filter_visible_records(
+    db: Any,
+    index: SchemaIndex,
+    resource: str,
+    records: List[Dict[str, Any]],
+    actor_id: str,
+    namespace: str,
+) -> List[Dict[str, Any]]:
+    if not _resource_is_private_shareable(index, resource):
+        return records
+    filtered: List[Dict[str, Any]] = []
+    for record in records:
+        if await is_record_visible(db, index, resource, record, actor_id, namespace=namespace):
+            filtered.append(record)
+    return filtered
 
 
 async def handle_seed(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
@@ -60,6 +90,7 @@ async def handle_clone(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 return error_response({"code": "FORBIDDEN", "message": "Authorization denied", "details": {"path": "$"}})
 
         namespace = _get_namespace(ctx)
+        actor_id = get_actor_id_from_context(ctx)
         index = SchemaIndex(config.schema)
         data = {}
         cursors = {}
@@ -77,6 +108,17 @@ async def handle_clone(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 })
 
             records = await config.db.find_many(table, [], sort=["id:asc"], namespace=namespace)
+            if actor_id:
+                records = await _filter_visible_records(
+                    config.db,
+                    index,
+                    table,
+                    records,
+                    actor_id,
+                    namespace,
+                )
+            elif _resource_is_private_shareable(index, table):
+                records = []
             data[table] = records
 
             cursor = await get_latest_cursor(config.db, namespace, table)
@@ -118,6 +160,7 @@ async def handle_pull(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                     return err
 
         namespace = _get_namespace(ctx)
+        actor_id = get_actor_id_from_context(ctx)
         index = SchemaIndex(config.schema)
         limits = getattr(config, "limits", {}) or {}
         max_pull_limit = limits.get("maxPullLimit", DEFAULT_MAX_PULL_LIMIT)
@@ -197,6 +240,20 @@ async def handle_pull(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                     namespace=namespace,
                 )
                 upserts = rows
+                if actor_id:
+                    upserts = await _filter_visible_records(
+                        config.db,
+                        index,
+                        table_name,
+                        upserts,
+                        actor_id,
+                        namespace,
+                    )
+                elif _resource_is_private_shareable(index, table_name):
+                    upserts = []
+
+            if not actor_id and _resource_is_private_shareable(index, table_name):
+                delete_ids = []
 
             if upserts:
                 result_records[table_name] = upserts
@@ -237,6 +294,7 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 return error_response({"code": "FORBIDDEN", "message": "Authorization denied", "details": {"path": "$"}})
 
         namespace = _get_namespace(ctx)
+        actor_id = get_actor_id_from_context(ctx)
         applied = []
         errors = []
         index = SchemaIndex(config.schema)
@@ -244,6 +302,7 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
         for mutation in mutations:
             m_client_id = mutation.get("clientId")
             m_id = mutation.get("mutationId")
+            resource = mutation.get("resource")
 
             if m_client_id != client_id:
                 errors.append({
@@ -259,6 +318,20 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 continue
 
             try:
+                if isinstance(resource, str):
+                    authz_err = validate_mutation_authz(
+                        mutation,
+                        resource,
+                        index,
+                        allow_unknown_resources=getattr(config, "allowUnknownResources", False),
+                    )
+                    if authz_err:
+                        errors.append({
+                            "mutationId": m_id,
+                            "error": {"code": authz_err.code, "message": authz_err.message, "details": authz_err.details},
+                        })
+                        continue
+
                 # Date coercion on mutation record
                 resource = mutation.get("resource", "")
                 date_fields = index.date_fields.get(resource, set())
@@ -274,18 +347,24 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                                 coerce_date_fields_to_epoch(rec, list(date_fields))
 
                 # Execute
-                affected_ids, _changes = await execute_mutation_core(config.db, index, mutation)
+                affected_ids, mutation_changes = await execute_mutation_core(
+                    config.db,
+                    index,
+                    mutation,
+                    namespace=namespace,
+                    actor_id=actor_id,
+                    logger=logger,
+                )
 
                 # Change Tracking
                 server_seq = await get_next_server_seq(config.db, namespace)
-
-                for aid in affected_ids:
+                for change in mutation_changes:
                     await write_change(
                         config.db,
                         namespace,
-                        mutation["resource"],
-                        mutation["operation"],
-                        aid,
+                        change["table"],
+                        change["operation"],
+                        change["recordId"],
                         server_seq
                     )
 

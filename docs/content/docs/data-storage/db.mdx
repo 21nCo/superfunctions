@@ -1,0 +1,161 @@
+---
+title: DB
+description: Use one persistence contract across ORMs and query builders without locking your library to a single database stack.
+---
+
+`@superfunctions/db` is the structured-data foundation in the Data & Storage category. It is designed for libraries and applications that need CRUD operations, transactions, health checks, and schema-aware persistence without coupling the calling code to one ORM. Instead of forcing your package to know whether the host app uses Drizzle, Prisma, or Kysely, you can depend on a stable `Adapter` interface and let the application inject the concrete implementation.
+
+That makes the package useful in two common outside-world scenarios. Library authors can expose persistence as a dependency instead of shipping a framework-specific database integration that only some consumers can use. Application teams can standardize on one storage contract while still keeping the freedom to pick their preferred ORM or query builder for each service. If you need tables, filters, counts, joins, or namespace isolation, this package is the right starting point.
+
+## What It Is
+
+`@superfunctions/db` provides a shared adapter interface for structured persistence. The interface includes core CRUD operations, batch helpers, transactions, health checks, schema-version helpers, and validation utilities. The package also ships factory utilities so you can wrap lower-level implementations with capabilities, namespacing, key transforms, and logging behavior.
+
+The package is not itself an ORM. Think of it as the contract layer that sits between your domain code and whichever persistence engine you actually run in production. That is why it belongs next to `storage`, but solves a different problem. `db` is for records and queries. `storage` is for blobs and object keys.
+
+## When To Use It
+
+Use `db` when your application logic needs to store structured entities such as users, sessions, products, jobs, or file metadata. It is especially useful when you are building a reusable package that should work for several host stacks. Instead of hard-coding Drizzle or Prisma into your public API, accept an `Adapter` and keep the rest of your code database-neutral.
+
+If your problem is mostly object storage, signed URLs, or multipart uploads, start with [`storage`](/docs/data-storage/storage) instead. If you need a file-oriented workflow that spans upload sessions plus metadata, combine `db` with [`files`](/docs/data-storage/files) and one storage adapter.
+
+## Install
+
+```bash
+npm install @superfunctions/db
+```
+
+Add only the optional adapter package or peer stack you actually use:
+
+```bash
+npm install @superfunctions/db drizzle-orm
+```
+
+## Quick Start
+
+For a library author, the simplest pattern is to accept the shared `Adapter` type and keep the package logic unaware of the concrete ORM.
+
+```ts
+import type { Adapter } from "@superfunctions/db";
+
+export interface CustomerRepository {
+  saveCustomer(input: { id: string; email: string }): Promise<void>;
+}
+
+export function createCustomerRepository(db: Adapter): CustomerRepository {
+  return {
+    async saveCustomer(input) {
+      await db.create({
+        model: "customers",
+        data: input,
+      });
+    },
+  };
+}
+```
+
+If you are building your own adapter wrapper, the package root also exports `createAdapterFactory()` so you can add namespacing or consistent behavior around a lower-level implementation.
+
+```ts
+import { createAdapterFactory } from "@superfunctions/db";
+
+const createAppAdapter = createAdapterFactory({
+  config: {
+    adapterId: "app-db",
+    adapterName: "Application DB",
+    namespace: { enabled: true, separator: "_" },
+  },
+  adapter(context) {
+    return {
+      async create(params) {
+        return { id: "row_1", __table: context.getModelName(params.model), ...params.data };
+      },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update(params) { return params.data; },
+      async delete() {},
+      async createMany(params) { return params.data; },
+      async updateMany() { return 0; },
+      async deleteMany() { return 0; },
+      async upsert(params) { return params.create; },
+      async count() { return 0; },
+      async transaction(callback) { return callback({} as never); },
+      async initialize() {},
+      async isHealthy() { return { healthy: true, uptime: 1 }; },
+      async close() {},
+      async getSchemaVersion() { return 0; },
+      async setSchemaVersion() {},
+      async validateSchema() { return { valid: true }; },
+      internal: {} as never,
+    };
+  },
+});
+```
+
+## Core Concepts
+
+The first concept is adapter injection. Your higher-level code should depend on the `Adapter` interface, not on a concrete ORM client. That is what makes your package portable across host applications.
+
+The second concept is capabilities and wrapping. `createAdapterFactory()` lets you build a consistent adapter surface around an underlying implementation while adding namespacing, key translation, logging, or custom ID generation. This is valuable when several libraries share one database but still need isolated model names or operational behavior.
+
+The third concept is namespace-aware persistence. The package includes helpers for namespace isolation, which is useful when several reusable libraries write into the same database and you do not want table or model collisions.
+
+## Real-World Example
+
+A strong outside-world use case is a platform team publishing a billing or audit library for several internal apps. One app may use Drizzle, another Prisma, and a third Kysely. The shared library can stay stable by receiving an adapter at startup and never importing the ORM directly.
+
+```ts
+import { createAdapterFactory, type Adapter } from "@superfunctions/db";
+
+export function createAuditRepository(db: Adapter) {
+  return {
+    async record(event: { actorId: string; action: string }) {
+      await db.create({
+        model: "audit_events",
+        data: event,
+      });
+    },
+  };
+}
+
+export const createTenantAwareAdapter = createAdapterFactory({
+  config: {
+    adapterId: "tenant-db",
+    namespace: { enabled: true, separator: "_" },
+  },
+  adapter() {
+    return {
+      async create(params) { return params.data; },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update(params) { return params.data; },
+      async delete() {},
+      async createMany(params) { return params.data; },
+      async updateMany() { return 0; },
+      async deleteMany() { return 0; },
+      async upsert(params) { return params.create; },
+      async count() { return 0; },
+      async transaction(callback) { return callback({} as never); },
+      async initialize() {},
+      async isHealthy() { return { healthy: true, uptime: 1 }; },
+      async close() {},
+      async getSchemaVersion() { return 0; },
+      async setSchemaVersion() {},
+      async validateSchema() { return { valid: true }; },
+      internal: {} as never,
+    };
+  },
+});
+```
+
+In that model, the application owns the ORM wiring and the shared package owns the business behavior. That separation is exactly what `@superfunctions/db` is for.
+
+## Related Packages
+
+- [`storage`](/docs/data-storage/storage) if the same workflow also needs binary-object storage.
+- [`files`](/docs/data-storage/files) if you are storing file metadata or upload-session state alongside objects.
+- [`python-sqlalchemy`](/docs/python/python-sqlalchemy) if you need a similar persistence story on the Python side.
+
+## Troubleshooting
+
+If an adapter works in tests but not in production, check that the app is injecting the same model names and dialect assumptions your package expects. If records appear in unexpected tables, verify whether namespace isolation or model-name mapping is enabled in the adapter wrapper. If a shared library seems too tied to one ORM, move the ORM client creation to the host application and keep the library boundary on the `Adapter` type instead.

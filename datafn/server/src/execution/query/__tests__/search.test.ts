@@ -62,13 +62,18 @@ describe("executeSearchQuery", () => {
       mockSearchProvider,
     );
 
-    expect(mockSearchProvider.search).toHaveBeenCalledWith({
-      resource: "tasks",
-      query: "urgent",
-      type: "fullText",
-      fields: undefined,
-      limit: undefined,
-    });
+    expect(mockSearchProvider.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resource: "tasks",
+        query: "urgent",
+        type: "fullText",
+        fields: undefined,
+        limit: undefined,
+        prefix: undefined,
+        fuzzy: undefined,
+        fieldBoosts: undefined,
+      }),
+    );
 
     // Expect implicit filter: status=active AND id IN ["task-1", "task-3"]
     // task-1: status=active (Match)
@@ -101,10 +106,46 @@ describe("executeSearchQuery", () => {
     );
 
     expect(resolveCandidates).toHaveBeenCalledWith(
-      expect.objectContaining({ resource: "tasks", query: "urgent" }),
+      expect.objectContaining({
+        resource: "tasks",
+        query: "urgent",
+        prefix: undefined,
+        fuzzy: undefined,
+        fieldBoosts: undefined,
+      }),
     );
     expect(result.data).toHaveLength(1);
     expect(result.data[0].id).toBe("task-1");
+  });
+
+  it("forwards prefix/fuzzy/fieldBoosts to provider.search", async () => {
+    (mockSearchProvider.search as any).mockResolvedValue(["task-1"]);
+    const query = {
+      resource: "tasks",
+      version: 1,
+      search: {
+        query: "urgent",
+        type: "fullText" as const,
+        prefix: true,
+        fuzzy: 0.2,
+        fieldBoosts: { title: 2 },
+      },
+    };
+
+    await executeSearchQuery(
+      query,
+      mockSchema,
+      mockStore,
+      mockSearchProvider,
+    );
+
+    expect(mockSearchProvider.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prefix: true,
+        fuzzy: 0.2,
+        fieldBoosts: { title: 2 },
+      }),
+    );
   });
 
   it("throws canonical unsupported when neither provider nor fallback resolver is available", async () => {

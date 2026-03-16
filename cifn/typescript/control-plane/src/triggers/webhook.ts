@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { verifyWebhookSignature } from '@superfunctions/webhooks';
 import type { TriggerType } from '../pipeline/types.js';
 import type { MemoryStore, CreateRunInput } from '../store/memory-store.js';
 import type { QueueClient } from '../queue/flowfn-client.js';
@@ -22,15 +22,11 @@ export interface WebhookOptions {
 }
 
 export function verifySignature(payload: string, signature: string, secret: string): boolean {
-  if (!signature || !signature.startsWith('sha256=')) return false;
-  const expected = createHmac('sha256', secret).update(payload).digest('hex');
-  const sig = signature.slice('sha256='.length);
-  if (sig.length !== expected.length) return false;
-  try {
-    return timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'));
-  } catch {
-    return false;
-  }
+  return verifyWebhookSignature(payload, signature, secret, {
+    algorithm: 'sha256',
+    encoding: 'hex',
+    prefix: 'sha256=',
+  });
 }
 
 export interface WebhookResult {

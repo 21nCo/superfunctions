@@ -14,7 +14,7 @@ A single adapter implementation that supports both Elasticsearch and OpenSearch.
 ## Installation
 
 ```bash
-npm install @searchfn/adapters
+npm install @searchfn/adapter-elasticsearch @searchfn/adapter-opensearch
 ```
 
 ## Usage
@@ -22,7 +22,7 @@ npm install @searchfn/adapters
 ### Elasticsearch
 
 ```typescript
-import { ElasticsearchAdapter } from "@searchfn/adapters";
+import { ElasticsearchAdapter } from "@searchfn/adapter-elasticsearch";
 
 const adapter = new ElasticsearchAdapter({
   node: "https://es.example.com:9200",
@@ -41,7 +41,7 @@ const ids = await adapter.search({ resource: "tasks", query: "docs" });
 ### OpenSearch
 
 ```typescript
-import { OpenSearchAdapter } from "@searchfn/adapters";
+import { OpenSearchAdapter } from "@searchfn/adapter-opensearch";
 
 const adapter = new OpenSearchAdapter({
   node: "https://opensearch.example.com:9200",

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSearchClient, SearchClientValidationError } from "../src/client";
-import type { SearchAdapter, SearchAllResult } from "@searchfn/adapters";
+import type { SearchAdapter, SearchAllResult } from "@searchfn/adapter-contracts";
 
 function createMockAdapter(overrides?: Partial<SearchAdapter>): SearchAdapter {
   return {
@@ -118,6 +118,48 @@ describe("createSearchClient", () => {
       const client = createSearchClient({ adapter, defaults: { limit: 25, fuzzy: true } });
       await client.search({ resource: "tasks", query: "test", limit: 5, fuzzy: false });
       expect(adapter.search).toHaveBeenCalledWith(expect.objectContaining({ limit: 5, fuzzy: false }));
+    });
+
+    // TV-CLT-001: client resolves prefix from defaults
+    it("TV-CLT-001: applies default prefix to search when query param omits it", async () => {
+      const client = createSearchClient({ adapter, defaults: { prefix: true } });
+      await client.search({ resource: "tasks", query: "to" });
+      expect(adapter.search).toHaveBeenCalledWith(expect.objectContaining({ prefix: true }));
+    });
+
+    it("TV-CLT-001: applies default prefix to searchAll when query param omits it", async () => {
+      const client = createSearchClient({ adapter, defaults: { prefix: true } });
+      await client.searchAll({ query: "to", resources: ["tasks"] });
+      expect(adapter.searchAll).toHaveBeenCalledWith(expect.objectContaining({ prefix: true }));
+    });
+
+    it("TV-CLT-001: applies default fieldBoosts to search when query param omits it", async () => {
+      const client = createSearchClient({ adapter, defaults: { fieldBoosts: { title: 2 } } });
+      await client.search({ resource: "tasks", query: "test" });
+      expect(adapter.search).toHaveBeenCalledWith(
+        expect.objectContaining({ fieldBoosts: { title: 2 } }),
+      );
+    });
+
+    // TV-CLT-002: query-time values override defaults
+    it("TV-CLT-002: query-time prefix: false overrides default prefix: true in search", async () => {
+      const client = createSearchClient({ adapter, defaults: { prefix: true } });
+      await client.search({ resource: "tasks", query: "to", prefix: false });
+      expect(adapter.search).toHaveBeenCalledWith(expect.objectContaining({ prefix: false }));
+    });
+
+    it("TV-CLT-002: query-time prefix: false overrides default prefix: true in searchAll", async () => {
+      const client = createSearchClient({ adapter, defaults: { prefix: true } });
+      await client.searchAll({ query: "to", resources: ["tasks"], prefix: false });
+      expect(adapter.searchAll).toHaveBeenCalledWith(expect.objectContaining({ prefix: false }));
+    });
+
+    it("TV-CLT-002: query-time fieldBoosts override default fieldBoosts", async () => {
+      const client = createSearchClient({ adapter, defaults: { fieldBoosts: { title: 2 } } });
+      await client.search({ resource: "tasks", query: "test", fieldBoosts: { body: 3 } });
+      expect(adapter.search).toHaveBeenCalledWith(
+        expect.objectContaining({ fieldBoosts: { body: 3 } }),
+      );
     });
   });
 

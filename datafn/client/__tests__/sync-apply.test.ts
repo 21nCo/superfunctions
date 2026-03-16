@@ -243,7 +243,12 @@ describe("Sync Apply Tests", () => {
     });
 
     // Call pull with lower cursor (simulated re-pull or out of order response)
-    await client.sync.pull({ clientId: "client:1", cursor: "10" });
+    await expect(
+      client.sync.pull({ clientId: "client:1", cursor: "10" }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { path: "nextCursor" },
+    });
 
     // Verify remote was called
     expect(pullSpy).toHaveBeenCalledTimes(1);

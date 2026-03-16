@@ -1,6 +1,8 @@
 ---
 title: Plugin System
 description: Extend DataFn with pluggable hooks.
+audience: guide
+applies_to: both
 ---
 
 DataFn provides a plugin system that lets you intercept and transform queries, mutations, and sync operations. Plugins run on the client, the server, or both, and are composed as an ordered chain.
@@ -150,4 +152,4 @@ afterSync(ctx, payload, result, ...args) {
 ## Built-In Plugins
 
 - [Capabilities](/docs/documentation/concepts/capabilities) -- Schema-driven lifecycle and sharing model.
-- [Client Search](/docs/documentation/plugins/custom-plugins) -- Client-side full-text search.
+- [Client Search](/docs/documentation/plugins/client-search) -- Client-side full-text search.

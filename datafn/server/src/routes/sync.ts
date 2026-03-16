@@ -37,6 +37,7 @@ export interface PushHandlerOpts extends MutationValidationOpts {
 export function createCloneHandler(
   validatedSchema: DatafnSchema,
   extractNamespace: (ctx: any) => Promise<string>,
+  extractActorId: ((ctx: any) => Promise<string | undefined>) | undefined,
   db?: Adapter,
   plugins: DatafnPlugin[] = [],
   sequenceStore?: SequenceStore,
@@ -79,9 +80,13 @@ export function createCloneHandler(
 
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
+        const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
         const result = await executeClone(
-        beforeHookResult.payload as any,
+        {
+          ...(beforeHookResult.payload as any),
+          ...(actorId !== undefined ? { actorId } : {}),
+        },
         validatedSchema,
         db,
         namespace,
@@ -139,6 +144,7 @@ export function createCloneHandler(
 export function createPullHandler(
   validatedSchema: DatafnSchema,
   extractNamespace: (ctx: any) => Promise<string>,
+  extractActorId: ((ctx: any) => Promise<string | undefined>) | undefined,
   db?: Adapter,
   plugins: DatafnPlugin[] = [],
   sequenceStore?: SequenceStore,
@@ -185,10 +191,14 @@ export function createPullHandler(
 
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
+        const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
         timer?.startPhase("fetchChanges");
         const result = await executePull(
-        beforeHookResult.payload as any,
+        {
+          ...(beforeHookResult.payload as any),
+          ...(actorId !== undefined ? { actorId } : {}),
+        },
         validatedSchema,
         db,
         namespace,
@@ -491,6 +501,7 @@ export function createPushHandler(
 export function createReconcileHandler(
   validatedSchema: DatafnSchema,
   extractNamespace: (ctx: any) => Promise<string>,
+  extractActorId: ((ctx: any) => Promise<string | undefined>) | undefined,
   db?: Adapter,
   plugins: DatafnPlugin[] = [],
   sequenceStore?: SequenceStore,
@@ -533,9 +544,13 @@ export function createReconcileHandler(
 
         // Extract namespace from context
         const namespace = await extractNamespace(ctx);
+        const actorId = extractActorId ? await extractActorId(ctx) : undefined;
 
         const result = await executeReconcile(
-        beforeHookResult.payload as any,
+        {
+          ...(beforeHookResult.payload as any),
+          ...(actorId !== undefined ? { actorId } : {}),
+        },
         validatedSchema,
         db,
         namespace,

@@ -1,0 +1,42 @@
+---
+title: Superfunctions
+description: Shared-package docs and ecosystem guides for developers building on Superfunctions.
+---
+
+Superfunctions is a toolkit for building developer-facing products with reusable authentication, HTTP, runtime, storage, and Python integration primitives. The root docs are the public entry point for that toolkit. They explain how the ecosystem fits together, help you pick the right shared packages, and point you to the right function-specific docs when you need product-level guidance.
+
+## What Superfunctions Is
+
+Superfunctions is not one single framework with one happy path. It is a collection of focused packages and function workspaces that you compose based on the kind of system you are building. Some teams only need a small piece such as a framework-agnostic HTTP router or a storage adapter. Others use the same shared contracts across larger products such as `authfn`, `datafn`, or `plugfn`.
+
+These root docs focus on the reusable building blocks that appear across that ecosystem. That means this site is the right place when you want to understand the shared packages in `packages/*` and `packages/python-*`, compare adjacent options, and learn how the lower-level contracts fit together before you commit to a bigger product surface.
+
+## Who These Docs Are For
+
+This site is written for external readers first:
+
+- application engineers who want production-ready primitives without locking themselves into one framework too early
+- library authors who need portable contracts for auth, HTTP, data, files, or runtime concerns
+- platform teams evaluating which Superfunctions packages they can adopt independently
+- contributors who need a public-facing explanation of the shared package layer before diving into function-specific codebases
+
+If you are looking for a single function product such as `datafn` or `searchfn`, you will still find useful orientation here, but the root docs are intentionally centered on the reusable package layer rather than one function workspace.
+
+## How the Ecosystem Fits Together
+
+The Superfunctions ecosystem has two levels. The first level is the shared package layer: packages like `@superfunctions/http`, `@superfunctions/db`, and the OAuth stack give you reusable contracts, adapters, and composition patterns. The second level is the function layer: workspaces such as `authfn`, `plugfn`, `hostfn`, and `datafn` apply those building blocks to more opinionated product domains.
+
+That split is important because it helps you decide where to start. If you already know the product area you care about, the ecosystem guide will point you to the relevant function workspace. If you are still deciding how to wire authentication, HTTP routing, storage, or Python integrations into your own project, the shared package docs are the faster starting point.
+
+## Start With These Packages
+
+Start with the route that matches the decision you need to make right now:
+
+- [Getting Started](/docs/getting-started) for an external-first onboarding flow and a small first example.
+- [Choosing Packages](/docs/choosing-packages) if you want guidance by need instead of by package name.
+- [Authentication guidance](/docs/choosing-packages#if-you-need-authentication) if you are deciding between `auth`, the lower-level OAuth pieces, and `oauth-flow`.
+- [HTTP routing guidance](/docs/choosing-packages#if-you-need-http-routing) if you need to pair `@superfunctions/http` with the right framework adapter.
+- [Storage and persistence guidance](/docs/choosing-packages#if-you-need-storage-or-persistence) if you are comparing `db`, `storage`, provider adapters, and `files`.
+- [Ecosystem](/docs/ecosystem) if you need the broader map of top-level Superfunctions such as `authfn`, `searchfn`, `datafn`, and `plugfn`.
+
+Once you know which area matches your job to be done, move into the package pages for concrete APIs and examples. The later sections of this docs site go deep on the shared packages themselves; this Start Here section is here to make the first decision easy.

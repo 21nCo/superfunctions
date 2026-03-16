@@ -29,6 +29,7 @@ export async function executeSingleQuery(
   schema: DatafnSchema,
   db: Adapter,
   namespace: string,
+  actorId: string | undefined,
   searchProvider: SearchProvider | undefined,
   logger?: DatafnLogger,
   timer?: ExecutionTimer | null,
@@ -42,7 +43,13 @@ export async function executeSingleQuery(
   }
 
   if (strategy === "PARTIAL_PUSHDOWN") {
-    return executePartialPushdownQuery(query as any, schema, db, namespace);
+    return executePartialPushdownQuery(
+      query as any,
+      schema,
+      db,
+      namespace,
+      actorId,
+    );
   }
 
   // IN_MEMORY: load records via DbDataStore.
@@ -73,6 +80,7 @@ export async function executeSingleQuery(
     namespace,
     preFilterWhere,
     logger,
+    actorId,
   );
 
   // Execute search query or regular query
@@ -92,14 +100,26 @@ export async function executeSingleQuery(
       schema,
       store,
       undefined,
-      async ({ resource, query: searchQuery, fields, limit, signal }) =>
+      async ({
+        resource,
+        query: searchQuery,
+        fields,
+        limit,
+        prefix,
+        fuzzy,
+        fieldBoosts,
+        signal,
+      }) =>
         executeDbNativeResourceSearch(db, schema, namespace, {
           resource,
           query: searchQuery,
           fields,
           limit,
+          prefix,
+          fuzzy,
+          fieldBoosts,
           signal,
-        }),
+        } as any),
       logger,
     );
   }

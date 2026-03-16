@@ -13,7 +13,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "author": "21n",
   "license": "MIT",
   "repository": {
@@ -41,12 +43,21 @@
   "engines": {
     "node": ">=18.18.0"
   },
-  "keywords": ["cmsfn", "cms", "content", "studio"],
+  "keywords": [
+    "cmsfn",
+    "cms",
+    "content",
+    "studio"
+  ],
   "sideEffects": false,
   "devDependencies": {
     "@types/node": "^24.9.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@superfunctions/envelope": "*",
+    "@superfunctions/errors": "*"
   }
 }

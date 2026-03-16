@@ -2,12 +2,16 @@ import type { Adapter, KVStoreAdapter } from '@superfunctions/db';
 
 export { KVStoreAdapter };
 
+export type LegacyWindowAlgorithm = 'sliding-window'|'fixed-window';
+export type RateLimitAlgorithm = LegacyWindowAlgorithm | 'token-bucket';
+
 export interface RateLimitConfig {
   windowMs: number;
   maxRequests: number;
   keyPrefix?: string;
   persistence?: Adapter | KVStoreAdapter;
-  algorithm?: 'sliding-window' | 'fixed-window';
+  algorithm?: RateLimitAlgorithm;
+  now?: () => number;
 }
 
 export interface RateLimitResult {
@@ -28,9 +32,18 @@ export interface RateLimiter {
   reset(key: string): Promise<void>;
 }
 
-interface RateLimitState {
+interface FixedWindowState {
   count: number;
   windowStart: number;
+}
+
+interface SlidingWindowState {
+  timestamps: number[];
+}
+
+interface TokenBucketState {
+  tokens: number;
+  lastRefill: number;
 }
 
 function createInMemoryKVStore(): KVStoreAdapter {
@@ -58,40 +71,68 @@ function createInMemoryKVStore(): KVStoreAdapter {
   };
 }
 
-function isAdapter(p: any): p is Adapter {
-  return typeof p.findOne === 'function' && typeof p.create === 'function';
+function isAdapter(p: unknown): p is Adapter {
+  return !!p && typeof p === 'object' && 'findOne' in p && 'create' in p;
 }
 
 function ensureKV(p: Adapter | KVStoreAdapter): KVStoreAdapter {
   if (isAdapter(p)) {
     return {
       async get(key: string) {
-        const res = await p.findOne<{ value: string; expiresAt?: string }>({ 
-          model: 'rate_limits', 
-          where: [{ field: 'key', operator: 'eq', value: key }] 
+        const res = await p.findOne<{ value: string; expiresAt?: string }>({
+          model: 'rate_limits',
+          where: [{ field: 'key', operator: 'eq', value: key }],
         });
         if (!res) return null;
         if (res.expiresAt && new Date(res.expiresAt).getTime() < Date.now()) {
-           await p.delete({ model: 'rate_limits', where: [{ field: 'key', operator: 'eq', value: key }] });
-           return null;
+          await p.delete({ model: 'rate_limits', where: [{ field: 'key', operator: 'eq', value: key }] });
+          return null;
         }
         return res.value;
       },
       async set(input) {
-        const expiresAt = input.ttlSeconds ? new Date(Date.now() + input.ttlSeconds * 1000).toISOString() : undefined;
+        const expiresAt = input.ttlSeconds
+          ? new Date(Date.now() + input.ttlSeconds * 1000).toISOString()
+          : undefined;
         await p.upsert({
           model: 'rate_limits',
           where: [{ field: 'key', operator: 'eq', value: input.key }],
           create: { key: input.key, value: input.value, expiresAt },
-          update: { value: input.value, expiresAt }
+          update: { value: input.value, expiresAt },
         });
       },
       async delete(key) {
         await p.delete({ model: 'rate_limits', where: [{ field: 'key', operator: 'eq', value: key }] });
-      }
+      },
     };
   }
   return p;
+}
+
+async function getState<T>(kv: KVStoreAdapter, key: string): Promise<T | null> {
+  const data = await kv.get(key);
+  if (!data) return null;
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function setState(
+  kv: KVStoreAdapter,
+  key: string,
+  state: unknown,
+  ttlMs: number
+): Promise<void> {
+  if (ttlMs <= 0) {
+    return;
+  }
+  await kv.set({
+    key,
+    value: JSON.stringify(state),
+    ttlSeconds: Math.ceil(ttlMs / 1000),
+  });
 }
 
 export function createRateLimiter(config: RateLimitConfig): RateLimiter {
@@ -101,62 +142,126 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
     keyPrefix = 'ratelimit:',
     persistence = createInMemoryKVStore(),
     algorithm = 'fixed-window',
+    now = () => Date.now(),
   } = config;
 
   const kv = ensureKV(persistence);
+  const keyLocks = new Map<string, Promise<void>>();
 
-  async function getState(key: string): Promise<RateLimitState | null> {
-    const data = await kv.get(keyPrefix + key);
-    if (!data) return null;
+  async function withKeyLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const prior = keyLocks.get(key) ?? Promise.resolve();
+    let resolveLock!: () => void;
+    const current = new Promise<void>((resolve) => {
+      resolveLock = resolve;
+    });
+    const queued = prior.then(() => current);
+    keyLocks.set(key, queued);
+
+    await prior;
     try {
-      return JSON.parse(data) as RateLimitState;
-    } catch {
-      return null;
-    }
-  }
-
-  async function setState(key: string, state: RateLimitState, windowDuration: number): Promise<void> {
-    const ttlMs = state.windowStart + windowDuration - Date.now();
-    if (ttlMs > 0) {
-      await kv.set({
-        key: keyPrefix + key, 
-        value: JSON.stringify(state), 
-        ttlSeconds: Math.ceil(ttlMs / 1000)
-      });
+      return await work();
+    } finally {
+      resolveLock();
+      if (keyLocks.get(key) === queued) {
+        keyLocks.delete(key);
+      }
     }
   }
 
   return {
     async check(input: CheckLimitInput): Promise<RateLimitResult> {
-      const key = input.key;
-      const effectiveWindowMs = (input.windowSeconds ? input.windowSeconds * 1000 : undefined) ?? windowMs;
-      const effectiveLimit = input.limit ?? maxRequests;
+      const key = `${keyPrefix}${input.key}`;
+      return withKeyLock(key, async () => {
+        const effectiveWindowMs =
+          (input.windowSeconds !== undefined ? input.windowSeconds * 1000 : undefined) ?? windowMs;
+        const effectiveLimit = input.limit ?? maxRequests;
+        const currentTime = now();
 
-      const now = Date.now();
-      let state = await getState(key);
+        if (algorithm === 'sliding-window') {
+          const state = (await getState<SlidingWindowState>(kv, key)) ?? { timestamps: [] };
+          const floor = currentTime - effectiveWindowMs;
+          state.timestamps = state.timestamps.filter((timestamp) => timestamp > floor);
 
-      if (!state || now >= state.windowStart + effectiveWindowMs) {
-        state = { count: 0, windowStart: now };
-      }
+          const allowed = state.timestamps.length < effectiveLimit;
+          if (allowed) {
+            state.timestamps.push(currentTime);
+          }
 
-      const allowed = state.count < effectiveLimit;
-      if (allowed) {
-        state.count++;
-        await setState(key, state, effectiveWindowMs);
-      }
+          const oldest = state.timestamps[0] ?? currentTime;
+          const resetAt = oldest + effectiveWindowMs;
+          const ttlMs = Math.max(1, resetAt - currentTime);
+          await setState(kv, key, state, ttlMs);
 
-      const resetAtTs = state.windowStart + effectiveWindowMs;
+          return {
+            allowed,
+            remaining: Math.max(0, effectiveLimit - state.timestamps.length),
+            resetAt: new Date(resetAt).toISOString(),
+            total: effectiveLimit,
+          };
+        }
 
-      return {
-        allowed,
-        remaining: Math.max(0, effectiveLimit - state.count),
-        resetAt: new Date(resetAtTs).toISOString(),
-        total: effectiveLimit,
-      };
+        if (algorithm === 'token-bucket') {
+          const refillRatePerMs = effectiveLimit / effectiveWindowMs;
+          const state = (await getState<TokenBucketState>(kv, key)) ?? {
+            tokens: effectiveLimit,
+            lastRefill: currentTime,
+          };
+
+          const elapsed = Math.max(0, currentTime - state.lastRefill);
+          state.tokens = Math.min(effectiveLimit, state.tokens + elapsed * refillRatePerMs);
+          state.lastRefill = currentTime;
+
+          const allowed = state.tokens >= 1;
+          if (allowed) {
+            state.tokens -= 1;
+          }
+
+          const msUntilNextToken = state.tokens >= 1 ? 0 : Math.ceil((1 - state.tokens) / refillRatePerMs);
+          const msUntilFull = Math.ceil((effectiveLimit - state.tokens) / refillRatePerMs);
+          const resetAt = currentTime + msUntilNextToken;
+
+          await setState(kv, key, state, Math.max(1, msUntilFull));
+
+          return {
+            allowed,
+            remaining: Math.max(0, Math.floor(state.tokens)),
+            resetAt: new Date(resetAt).toISOString(),
+            total: effectiveLimit,
+          };
+        }
+
+        const state = (await getState<FixedWindowState>(kv, key)) ?? {
+          count: 0,
+          windowStart: currentTime,
+        };
+
+        if (currentTime >= state.windowStart + effectiveWindowMs) {
+          state.count = 0;
+          state.windowStart = currentTime;
+        }
+
+        const allowed = state.count < effectiveLimit;
+        if (allowed) {
+          state.count += 1;
+        }
+
+        const resetAt = state.windowStart + effectiveWindowMs;
+        await setState(kv, key, state, Math.max(1, resetAt - currentTime));
+
+        return {
+          allowed,
+          remaining: Math.max(0, effectiveLimit - state.count),
+          resetAt: new Date(resetAt).toISOString(),
+          total: effectiveLimit,
+        };
+      });
     },
 
     async reset(key: string): Promise<void> {
-      await kv.delete(keyPrefix + key);
+      const namespacedKey = `${keyPrefix}${key}`;
+      await withKeyLock(namespacedKey, async () => {
+        await kv.delete(namespacedKey);
+      });
     },
   };
 }

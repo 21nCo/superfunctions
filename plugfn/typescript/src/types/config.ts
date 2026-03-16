@@ -1,11 +1,15 @@
 import type { Logger } from './action.js';
 import type { RetryOptions } from './action.js';
 import type { RateLimitConfig } from './provider.js';
+import type { Adapter as DbAdapter } from '@superfunctions/db';
 
 /**
- * Database adapter interface
+ * Subset of @superfunctions/db Adapter methods used by PlugFn persistence.
+ * This keeps PlugFn contracts anchored to the shared DB abstraction.
  */
-export interface Adapter {
+export type PlugFnDbAdapterContract = Partial<DbAdapter>;
+
+export interface PlugFnDatabaseAdapter extends PlugFnDbAdapterContract {
   // Connections
   createConnection(connection: any): Promise<void>;
   getConnection(id: string): Promise<any>;
@@ -38,6 +42,11 @@ export interface Adapter {
 }
 
 /**
+ * Backward-compatible alias retained for one minor release.
+ */
+export type Adapter = PlugFnDatabaseAdapter;
+
+/**
  * Auth provider interface
  */
 export interface AuthProvider {
@@ -59,6 +68,7 @@ export interface OAuth2IntegrationConfig {
   clientId: string;
   clientSecret: string;
   scopes?: string[];
+  redirectUris?: string[];
 }
 
 export interface ApiKeyIntegrationConfig {
@@ -167,4 +177,3 @@ export interface ActionMetrics {
   successRate: number;
   avgResponseTime: number;
 }
-

@@ -33,6 +33,10 @@ export interface Connection {
 export interface EncryptedCredentials {
   encrypted: string;
   algorithm: string;
+  encryptedPayload?: string;
+  keyRef?: string;
+  tokenId?: string;
+  schemaVersion?: string;
   iv?: string;
 }
 
@@ -77,7 +81,7 @@ export interface GetAuthUrlOptions {
   userId: string;
   provider: string;
   redirectUri: string;
-  state: string;
+  state?: string;
   scopes?: string[];
   connectionName?: string;
 }
@@ -88,6 +92,9 @@ export interface GetAuthUrlOptions {
 export interface HandleCallbackOptions {
   code: string;
   state: string;
+  provider?: string;
+  redirectUri?: string;
+  connectionName?: string;
 }
 
 /**
@@ -107,4 +114,3 @@ export interface DisconnectOptions {
   provider: string;
   connectionId?: string;
 }
-

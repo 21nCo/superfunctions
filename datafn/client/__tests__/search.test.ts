@@ -189,6 +189,159 @@ describe("TV-ERR-001: canonical search validation/client errors", () => {
       message: "Search request aborted",
     });
   });
+
+  it("rejects non-boolean prefix with canonical path", async () => {
+    const remote = makeRemoteAdapter(vi.fn().mockResolvedValue({ ok: true, result: { results: [] } }));
+    const client = createDatafnClient({
+      schema,
+      sync: { mode: "sync", remoteAdapter: remote },
+      clientId: "test-prefix",
+    });
+
+    await expect(client.search({ query: "task", prefix: 1 as unknown as boolean })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+      message: "Invalid request: prefix must be boolean",
+      details: { path: "prefix" },
+    });
+  });
+
+  it("rejects invalid fuzzy values", async () => {
+    const remote = makeRemoteAdapter(vi.fn().mockResolvedValue({ ok: true, result: { results: [] } }));
+    const client = createDatafnClient({
+      schema,
+      sync: { mode: "sync", remoteAdapter: remote },
+      clientId: "test-fuzzy",
+    });
+
+    await expect(client.search({ query: "task", fuzzy: "auto" as unknown as boolean })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+      details: { path: "fuzzy" },
+    });
+    await expect(client.search({ query: "task", fuzzy: -1 })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+      details: { path: "fuzzy" },
+    });
+  });
+
+  it("rejects invalid fieldBoosts shapes and values", async () => {
+    const remote = makeRemoteAdapter(vi.fn().mockResolvedValue({ ok: true, result: { results: [] } }));
+    const client = createDatafnClient({
+      schema,
+      sync: { mode: "sync", remoteAdapter: remote },
+      clientId: "test-fieldboosts",
+    });
+
+    await expect(client.search({ query: "task", fieldBoosts: [] as unknown as Record<string, number> })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+      details: { path: "fieldBoosts" },
+    });
+    await expect(client.search({ query: "task", fieldBoosts: { title: 0 } })).rejects.toMatchObject({
+      code: "DFQL_INVALID",
+      details: { path: "fieldBoosts.title" },
+    });
+  });
+
+  it("rejects too many fieldBoost entries with LIMIT_EXCEEDED", async () => {
+    const remote = makeRemoteAdapter(vi.fn().mockResolvedValue({ ok: true, result: { results: [] } }));
+    const client = createDatafnClient({
+      schema,
+      sync: { mode: "sync", remoteAdapter: remote },
+      clientId: "test-fieldboosts-cap",
+    });
+
+    const fieldBoosts: Record<string, number> = {};
+    for (let i = 0; i < 101; i += 1) {
+      fieldBoosts[`f${i}`] = i + 1;
+    }
+
+    await expect(client.search({ query: "task", fieldBoosts })).rejects.toMatchObject({
+      code: "LIMIT_EXCEEDED",
+      details: { path: "fieldBoosts" },
+    });
+  });
+});
+
+describe("TV-CLI-002: client.search() forwards advanced search options", () => {
+  it("forwards prefix/fuzzy/fieldBoosts to local search provider unchanged", async () => {
+    const { MemoryStorageAdapter } = await import("../src/adapters/memoryStorage.js");
+    const storage = new MemoryStorageAdapter();
+    await storage.upsertRecord("tasks", { id: "t1", title: "task one" });
+
+    const candidates = [{ resource: "tasks", id: "t1", score: 0.8 }];
+    const searchProvider: any = {
+      name: "offline-provider",
+      search: vi.fn().mockResolvedValue([]),
+      searchAll: vi.fn().mockResolvedValue(candidates),
+      updateIndices: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const client = createDatafnClient({
+      schema,
+      sync: { mode: "local-only" },
+      storage,
+      clientId: "test-forward-local",
+      searchProvider,
+    });
+
+    await client.search({
+      query: "task",
+      prefix: true,
+      fuzzy: 0.3,
+      fieldBoosts: { title: 2 },
+    });
+
+    expect(searchProvider.searchAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "task",
+        prefix: true,
+        fuzzy: 0.3,
+        fieldBoosts: { title: 2 },
+      }),
+    );
+  });
+
+  it("forwards prefix/fuzzy/fieldBoosts to remote.search unchanged", async () => {
+    const searchFn = vi.fn().mockResolvedValue({ ok: true, result: { results: [] } });
+    const remote = makeRemoteAdapter(searchFn);
+    const client = createDatafnClient({
+      schema,
+      sync: { mode: "sync", remoteAdapter: remote },
+      clientId: "test-forward-remote",
+    });
+
+    await client.search({
+      query: "task",
+      prefix: true,
+      fuzzy: true,
+      fieldBoosts: { title: 2 },
+      source: "remote",
+    });
+
+    expect(searchFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "task",
+        prefix: true,
+        fuzzy: true,
+        fieldBoosts: { title: 2 },
+      }),
+    );
+  });
+
+  it("keeps omitted options undefined in forwarded payloads", async () => {
+    const searchFn = vi.fn().mockResolvedValue({ ok: true, result: { results: [] } });
+    const remote = makeRemoteAdapter(searchFn);
+    const client = createDatafnClient({
+      schema,
+      sync: { mode: "sync", remoteAdapter: remote },
+      clientId: "test-forward-undefined",
+    });
+
+    await client.search({ query: "task", source: "remote" });
+    const payload = searchFn.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.prefix).toBeUndefined();
+    expect(payload.fuzzy).toBeUndefined();
+    expect(payload.fieldBoosts).toBeUndefined();
+  });
 });
 
 describe("PROV-008/009: client search provider lifecycle", () => {

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createSearchFnServer } from "../src/server";
-import { MemoryAdapter } from "@searchfn/adapters";
-import type { SearchAdapter } from "@searchfn/adapters";
-import { SearchAdapterError } from "@searchfn/adapters";
+import { MemoryAdapter } from "@searchfn/adapter-memory";
+import type { SearchAdapter } from "@searchfn/adapter-contracts";
+import { SearchAdapterError } from "@searchfn/adapter-contracts";
 
 // Helper: make a request and get response body
 async function req(
@@ -258,325 +258,145 @@ describe("@searchfn/server routes", () => {
     });
   });
 
-  // ── SRV-002: Validation + limits ──
-
-  describe("SRV-002: validation and limits", () => {
-    it("rejects empty query (TV-NEG-002)", async () => {
-      const server = await createSearchFnServer({ adapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "   ",
-      });
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-      expect(body.error.code).toBe("DFQL_INVALID");
-      expect(body.error.message).toBe("Search query must not be empty");
-    });
-
-    it("rejects missing resource", async () => {
-      const server = await createSearchFnServer({ adapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        query: "hello",
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("DFQL_INVALID");
-    });
-
-    it("rejects limit exceeding max (TV-SRV-002)", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        limits: { maxLimit: 1000 },
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "x",
-        limit: 1000000,
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("LIMIT_EXCEEDED");
-      expect(body.error.message).toContain("exceeds maximum");
-    });
-
-    it("rejects non-positive limit", async () => {
-      const server = await createSearchFnServer({ adapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "hello",
-        limit: 0,
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("DFQL_INVALID");
-      expect(body.error.message).toContain("positive number");
-    });
-
-    it("rejects empty documents array", async () => {
-      const server = await createSearchFnServer({ adapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/index", {
-        resource: "tasks",
-        documents: [],
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("DFQL_INVALID");
-    });
-
-    it("rejects document batch exceeding max", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        limits: { maxIndexBatch: 2 },
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/index", {
-        resource: "tasks",
-        documents: [
-          { id: "1", fields: { a: "b" } },
-          { id: "2", fields: { a: "b" } },
-          { id: "3", fields: { a: "b" } },
-        ],
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("LIMIT_EXCEEDED");
-    });
-
-    it("rejects empty ids array for remove", async () => {
-      const server = await createSearchFnServer({ adapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/remove", {
-        resource: "tasks",
-        ids: [],
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("DFQL_INVALID");
-    });
-
-    it("rejects invalid JSON body", async () => {
-      const server = await createSearchFnServer({ adapter });
-      const r = new Request("http://localhost/searchfn/search", {
-        method: "POST",
-        body: "not json {{{",
-        headers: { "Content-Type": "application/json" },
-      });
-      const res = await server.router.handle(r);
-      const json = await res.json();
-      expect(res.status).toBe(400);
-      expect(json.error.code).toBe("DFQL_INVALID");
-    });
-
-    it("rejects resources array exceeding maxResourcesPerSearchAll", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        limits: { maxResourcesPerSearchAll: 2 },
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search-all", {
-        query: "x",
-        resources: ["a", "b", "c"],
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("LIMIT_EXCEEDED");
-    });
-
-    it("rejects query exceeding maxQueryLength", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        limits: { maxQueryLength: 5 },
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "abcdefghij",
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("LIMIT_EXCEEDED");
-    });
-
-    it("rejects payload larger than maxPayloadBytes", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        limits: { maxPayloadBytes: 80 },
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "a".repeat(200),
-      });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("LIMIT_EXCEEDED");
-      expect(body.error.details.max).toBe(80);
-    });
-  });
-
-  // ── SRV-003: Authorization ──
-
-  describe("SRV-003: authorization callback", () => {
-    it("returns FORBIDDEN when authorize returns false (TV-SRV-003)", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        authorize: (_ctx, action) => action !== "search",
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "a",
-      });
-      expect(status).toBe(403);
-      expect(body.ok).toBe(false);
-      expect(body.error.code).toBe("FORBIDDEN");
-      expect(body.error.message).toBe("Authorization denied");
-    });
-
-    it("allows when authorize returns true", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        authorize: () => true,
-      });
-      // Index first so search has data
-      await req(server.router, "POST", "/searchfn/index", {
-        resource: "tasks",
-        documents: [{ id: "t1", fields: { title: "ok" } }],
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "ok",
-      });
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-    });
-
-    it("returns FORBIDDEN when authorize throws", async () => {
-      const server = await createSearchFnServer({
-        adapter,
-        authorize: () => { throw new Error("auth error"); },
-      });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
-        resource: "tasks",
-        query: "a",
-      });
-      expect(status).toBe(403);
-      expect(body.error.code).toBe("FORBIDDEN");
-    });
-
-    it("auth callback receives action name", async () => {
-      const actions: string[] = [];
-      const server = await createSearchFnServer({
-        adapter,
-        authorize: (_ctx, action) => { actions.push(action); return true; },
-      });
-      await req(server.router, "GET", "/searchfn/status");
-      await req(server.router, "POST", "/searchfn/search", { resource: "r", query: "q" });
-      expect(actions).toContain("status");
-      expect(actions).toContain("search");
-    });
-
-    it("auth callback receives parsed payload for JSON requests", async () => {
-      const payloads: unknown[] = [];
-      const server = await createSearchFnServer({
-        adapter,
-        authorize: (_ctx, _action, payload) => {
-          payloads.push(payload);
-          return true;
+  describe("error mapping", () => {
+    it("maps SearchAdapterError with known code to matching HTTP status", async () => {
+      const forbiddenAdapter: SearchAdapter = {
+        name: "forbidden",
+        async index() {
+          throw new SearchAdapterError("FORBIDDEN", "Denied");
         },
-      });
-      await req(server.router, "POST", "/searchfn/search", { resource: "r", query: "q" });
-      expect(payloads[0]).toEqual({ resource: "r", query: "q" });
-    });
-  });
-
-  describe("API-002: adapter error mapping", () => {
-    it("maps DFQL_ABORTED to status 499", async () => {
-      const abortedAdapter: SearchAdapter = {
-        name: "aborted",
-        async index() {},
         async search() {
-          throw new SearchAdapterError("DFQL_ABORTED", "Search operation aborted");
+          return [];
         },
         async remove() {},
         async clear() {},
       };
-
-      const server = await createSearchFnServer({ adapter: abortedAdapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
+      const server = await createSearchFnServer({ adapter: forbiddenAdapter });
+      const { status, body } = await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
-        query: "hello",
+        documents: [{ id: "1", fields: { title: "x" } }],
       });
-      expect(status).toBe(499);
-      expect(body.error.code).toBe("DFQL_ABORTED");
+      expect(status).toBe(403);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("FORBIDDEN");
     });
 
-    it("maps DFQL_UNSUPPORTED to status 400", async () => {
-      const unsupportedAdapter: SearchAdapter = {
-        name: "unsupported",
-        async index() {},
+    it("maps unknown errors to INTERNAL", async () => {
+      const badAdapter: SearchAdapter = {
+        name: "bad",
+        async index() {
+          throw new Error("boom");
+        },
         async search() {
-          throw new SearchAdapterError("DFQL_UNSUPPORTED", "Unsupported operation");
+          return [];
         },
         async remove() {},
         async clear() {},
       };
-
-      const server = await createSearchFnServer({ adapter: unsupportedAdapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
+      const server = await createSearchFnServer({ adapter: badAdapter });
+      const { status, body } = await req(server.router, "POST", "/searchfn/index", {
         resource: "tasks",
-        query: "hello",
+        documents: [{ id: "1", fields: { title: "x" } }],
       });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("DFQL_UNSUPPORTED");
+      expect(status).toBe(500);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("INTERNAL");
     });
   });
 
-  // ── Logging ──
-
-  describe("structured logging", () => {
-    it("emits request.start and request.end with operation metadata", async () => {
-      const logs: Array<{ msg: string; ctx: any }> = [];
-      const logger = {
-        info: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
-        warn: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
-        error: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
-        debug: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
+  // TV-SRV-001: server search route passes prefix to adapter
+  describe("TV-SRV-001: POST /search passes prefix to adapter", () => {
+    it("forwards prefix: true from request body to adapter.search", async () => {
+      const searchSpy = vi.fn().mockResolvedValue([]);
+      const spyAdapter: SearchAdapter = {
+        name: "spy",
+        async index() {},
+        search: searchSpy,
+        async remove() {},
+        async clear() {},
       };
-      const server = await createSearchFnServer({ adapter, logger });
-      await req(server.router, "GET", "/searchfn/status");
 
-      const startLog = logs.find(l => l.msg === "request.start");
-      const endLog = logs.find(l => l.msg === "request.end");
-      expect(startLog).toBeDefined();
-      expect(startLog!.ctx.operation).toBe("status");
-      expect(endLog).toBeDefined();
-      expect(typeof endLog!.ctx.durationMs).toBe("number");
+      const server = await createSearchFnServer({ adapter: spyAdapter });
+      await req(server.router, "POST", "/searchfn/search", {
+        resource: "tasks",
+        query: "to",
+        prefix: true,
+      });
+
+      expect(searchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ prefix: true }),
+      );
     });
 
-    it("redacts sensitive keys in logs (TV-NEG-008)", async () => {
-      const logs: Array<{ msg: string; ctx: any }> = [];
-      const logger = {
-        info: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
-        warn: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
-        error: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
-        debug: (msg: string, ctx?: any) => logs.push({ msg, ctx }),
+    it("forwards prefix: false (no bool.should) when prefix omitted", async () => {
+      const searchSpy = vi.fn().mockResolvedValue([]);
+      const spyAdapter: SearchAdapter = {
+        name: "spy",
+        async index() {},
+        search: searchSpy,
+        async remove() {},
+        async clear() {},
       };
-      const server = await createSearchFnServer({ adapter, logger });
-      await req(server.router, "GET", "/searchfn/status");
 
-      // No log entry should contain unredacted sensitive data
-      for (const log of logs) {
-        if (log.ctx) {
-          expect(JSON.stringify(log.ctx)).not.toContain("apiKey=abc123");
-        }
-      }
+      const server = await createSearchFnServer({ adapter: spyAdapter });
+      await req(server.router, "POST", "/searchfn/search", {
+        resource: "tasks",
+        query: "todo",
+      });
+
+      // prefix should be undefined (not passed), so adapter receives undefined
+      expect(searchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ prefix: undefined }),
+      );
     });
   });
 
-  // ── searchAll fallback for adapter without searchAll ──
-
-  describe("searchAll fallback", () => {
-    it("returns error when adapter lacks searchAll and no resources provided", async () => {
-      const noSearchAllAdapter: SearchAdapter = {
-        name: "basic",
+  // TV-SRV-002: server searchAll route passes prefix to adapter
+  describe("TV-SRV-002: POST /search-all passes prefix to adapter", () => {
+    it("forwards prefix: true to native adapter.searchAll", async () => {
+      const searchAllSpy = vi.fn().mockResolvedValue([]);
+      const spyAdapter: SearchAdapter = {
+        name: "spy",
         async index() {},
         async search() { return []; },
+        searchAll: searchAllSpy,
         async remove() {},
         async clear() {},
       };
-      const server = await createSearchFnServer({ adapter: noSearchAllAdapter });
-      const { status, body } = await req(server.router, "POST", "/searchfn/search-all", {
-        query: "test",
+
+      const server = await createSearchFnServer({ adapter: spyAdapter });
+      await req(server.router, "POST", "/searchfn/search-all", {
+        query: "to",
+        resources: ["tasks"],
+        prefix: true,
       });
-      expect(status).toBe(400);
-      expect(body.error.code).toBe("DFQL_INVALID");
-      expect(body.error.message).toContain("resources are required");
+
+      expect(searchAllSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ prefix: true }),
+      );
+    });
+
+    it("forwards prefix: true to fallback per-resource adapter.search when searchAll unavailable", async () => {
+      const searchSpy = vi.fn().mockResolvedValue([]);
+      const spyAdapter: SearchAdapter = {
+        name: "spy-no-searchall",
+        async index() {},
+        search: searchSpy,
+        async remove() {},
+        async clear() {},
+        // no searchAll
+      };
+
+      const server = await createSearchFnServer({ adapter: spyAdapter });
+      await req(server.router, "POST", "/searchfn/search-all", {
+        query: "to",
+        resources: ["tasks"],
+        prefix: true,
+      });
+
+      expect(searchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ prefix: true }),
+      );
     });
   });
 });

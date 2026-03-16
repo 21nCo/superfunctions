@@ -77,6 +77,41 @@ describe('PlugFn SDK', () => {
       expect(result).toEqual({ data: 'test-data' });
     });
 
+    it('serializes concurrent mail.sync actions for the same connection', async () => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const provider = mockProvider('test', {
+        'mail.sync': mockResponse({ ok: true }),
+      });
+
+      provider.actions['mail.sync'].execute = async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return { ok: true };
+      };
+
+      plug.providers.register(provider);
+      const connection = mockConnection('test-user', 'test');
+      await adapter.createConnection(connection);
+
+      await Promise.all([
+        plug.test['mail.sync']({
+          userId: 'test-user',
+          params: {},
+          cache: false,
+        }),
+        plug.test['mail.sync']({
+          userId: 'test-user',
+          params: {},
+          cache: false,
+        }),
+      ]);
+
+      expect(maxInFlight).toBe(1);
+    });
+
     it('should handle action errors', async () => {
       const provider = mockProvider('test', {
         'failingAction': mockResponse(null, { delay: 0 }),
@@ -147,4 +182,3 @@ describe('PlugFn SDK', () => {
     });
   });
 });
-
