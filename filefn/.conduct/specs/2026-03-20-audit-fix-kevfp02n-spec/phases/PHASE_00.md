@@ -1,0 +1,32 @@
+# Phase 00
+- Phase goal: Encode every unresolved audit gap into failing tests and verification gates before behavior changes begin.
+- In scope:
+  - add TS conformance tests for upload-session auth, upload status shape, share/artifact proxy descriptors, deterministic listing, delete cascade, package/build gates
+  - add Python test scaffold and initial failing parity tests
+  - add `packages/files` FileProvider conformance tests
+- Out of scope:
+  - implementing the fixes
+- Deliverables:
+  - `filefn/server/src/__tests__/upload-session-authz.test.ts`
+  - `filefn/server/src/__tests__/upload-status-contract.test.ts`
+  - `filefn/server/src/__tests__/artifact-authz.test.ts`
+  - `filefn/server/src/__tests__/delete-cascade.test.ts`
+  - `filefn/server/src/__tests__/list-determinism.test.ts`
+  - `filefn/client/src/__tests__/resume-contract.test.ts`
+  - `packages/files/src/__tests__/file-provider-conformance.test.ts`
+  - `filefn/python/tests/test_core.py`
+  - `filefn/python/tests/test_upload_flow.py`
+- Requirements covered: BUILD-001, API-001, AUTH-001, AUTH-002, UPLOAD-001, FILE-001, FILE-003, FILE-004, CLIENT-001, PY-003
+- Implementation tasks:
+  - Add failing tests for each unresolved TS audit finding.
+  - Add failing Python tests that capture the current parity gaps.
+  - Add a conformance suite for `@superfunctions/files`.
+  - Add a simple verification script or npm script aliases only if needed for local execution clarity.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/server && npm test -- --run`
+    - Expected outcome: failing tests identify unresolved audit gaps.
+  - `cd /Users/serro/Documents/dev/n/superfunctions/packages/files && npm test -- --run`
+    - Expected outcome: at least one conformance test executes, initially failing if behavior is missing.
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/python && python3 -m pytest`
+    - Expected outcome: tests collect and initially fail on current gaps.
+- Stop condition: test coverage exists for the unresolved gaps and failures are attributable to the intended fixes, not harness issues.

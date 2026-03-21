@@ -1,52 +1,34 @@
 # @uifn/vue
 
-Accessible, unstyled Vue composables built on `@uifn/core` primitives.
+Experimental Vue adapter exports for `uifn` primitives.
+
+## Status
+
+Experimental
+
+This package is public but not GA. API and behavior may change in minor releases while the adapter is hardened.
 
 ## Installation
 
 ```bash
-npm install @uifn/vue
+npm install @uifn/core @uifn/vue
 ```
 
-## Usage
+## API Shape
 
-```vue
-<script setup>
-import { useCheckbox } from "@uifn/vue";
+`@uifn/vue` currently exports component modules (for example `Checkbox`, `Dialog`, `Popover`, `Select`) from `src/index.ts`.
 
-const { checked, toggle } = useCheckbox({
-  defaultChecked: false,
-});
-</script>
+Current exported families include Accordion, AlertDialog, Avatar, Badge, Checkbox, Collapsible, Combobox, ContextMenu, Dialog, DropdownMenu, HoverCard, Label, MenuBar, Popover, Progress, RadioGroup, ScrollArea, Select, Separator, Slider, Switch, Tabs, Toast, Toggle, ToggleGroup, Toolbar, and Tooltip.
 
-<template>
-  <button @click="toggle">
-    {{ checked ? "Checked" : "Unchecked" }}
-  </button>
-</template>
-```
+`VirtualizedList` is not currently exported by the Vue adapter.
 
-## Composables
+It does **not** currently ship a stable composable-first surface such as `useCheckbox` / `useDialog`.
 
-- useAccordion
-- useCheckbox
-- useDialog
-- useRadioGroup
-- useSwitch
-- And more...
+## Compatibility
 
-## Features
-
-- **Accessible**: WCAG 2.1 Level AA compliant with full keyboard navigation
-- **Unstyled**: No styling opinions, use with any CSS solution
-- **Composable**: Vue 3 Composition API
-- **TypeScript**: Full type definitions included
-- **Controllable**: Both controlled and uncontrolled modes supported
-
-## Documentation
-
-For detailed documentation and examples, visit the [UIFn documentation](https://github.com/21nCo/super-functions/tree/main/uifn).
+- Vue: `3.5+`
+- Node.js: `18.x`, `20.x`, `22.x`
 
 ## License
 
-Apache-2.0
+MIT

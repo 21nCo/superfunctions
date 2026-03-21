@@ -1,5 +1,5 @@
 {
-  "name": "filefn",
+  "name": "@filefn/client",
   "version": "0.1.0",
   "description": "FileFn client SDK for browser file uploads",
   "type": "module",

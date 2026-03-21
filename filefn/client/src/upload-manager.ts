@@ -21,6 +21,7 @@ export class UploadManager {
   private file: Blob | null = null;
   private completedParts: Set<number> = new Set();
   private bytesUploaded = 0;
+  private uploadSessionToken?: string;
 
   constructor(private readonly httpClient: HttpClient) {
     this.abortController = new AbortController();
@@ -34,6 +35,7 @@ export class UploadManager {
 
     const handle: UploadHandle = {
       uploadSessionId: "",
+      uploadSessionToken: undefined,
       onProgress: (callback) => {
         this.progressCallbacks.push(callback);
       },
@@ -46,6 +48,7 @@ export class UploadManager {
         }
         const result = await uploadPromise;
         handle.uploadSessionId = this.session?.uploadSessionId || "";
+        handle.uploadSessionToken = this.uploadSessionToken;
         return result;
       },
     };
@@ -76,7 +79,7 @@ export class UploadManager {
     );
 
     // Accept both unwrapped { uploadSessionId, ... } and envelope { data: { uploadSessionId, ... } }
-    const initResponse =
+    const initResponse = (
       rawInit && typeof rawInit === "object" && "uploadSessionId" in rawInit
         ? rawInit
         : (
@@ -85,9 +88,16 @@ export class UploadManager {
                 uploadSessionId?: string;
                 totalParts?: number;
                 chunkSizeBytes?: number;
+                uploadSessionToken?: string;
               };
             }
-          )?.data;
+          )?.data
+    ) as {
+      uploadSessionId?: string;
+      totalParts?: number;
+      chunkSizeBytes?: number;
+      uploadSessionToken?: string;
+    };
 
     const uploadSessionId = initResponse?.uploadSessionId;
     if (!uploadSessionId) {
@@ -102,11 +112,13 @@ export class UploadManager {
       chunkSizeBytes: initResponse.chunkSizeBytes ?? 0,
       fileSize: size,
     };
+    this.uploadSessionToken = initResponse.uploadSessionToken;
 
     await this.uploadAllParts(signal);
 
     const result = await this.httpClient.completeUpload(
       this.session.uploadSessionId,
+      this.uploadSessionToken,
       signal,
     );
     return result;
@@ -115,12 +127,15 @@ export class UploadManager {
   async resumeUpload(
     uploadSessionId: string,
     file: Blob,
+    uploadSessionToken?: string,
   ): Promise<UploadResult> {
     const signal = this.abortController.signal;
     this.file = file;
+    this.uploadSessionToken = uploadSessionToken;
 
     const status = await this.httpClient.getUploadStatus(
       uploadSessionId,
+      this.uploadSessionToken,
       signal,
     );
 
@@ -131,7 +146,8 @@ export class UploadManager {
       fileSize: status.fileSize,
     };
 
-    this.completedParts = new Set(status.recordedParts);
+    const recordedParts = status.recordedParts || status.uploadedParts || [];
+    this.completedParts = new Set(recordedParts);
     this.bytesUploaded = this.calculateUploadedBytes(status);
 
     this.emitProgress();
@@ -140,6 +156,7 @@ export class UploadManager {
 
     const result = await this.httpClient.completeUpload(
       uploadSessionId,
+      this.uploadSessionToken,
       signal,
     );
     return result;
@@ -147,7 +164,8 @@ export class UploadManager {
 
   private calculateUploadedBytes(status: UploadStatusResponse): number {
     let bytes = 0;
-    for (const partNum of status.recordedParts) {
+    const recordedParts = status.recordedParts || status.uploadedParts || [];
+    for (const partNum of recordedParts) {
       if (partNum < status.totalParts) {
         bytes += status.chunkSizeBytes;
       } else {
@@ -195,6 +213,7 @@ export class UploadManager {
       uploadSessionId,
       partNumber,
       chunk.size,
+      this.uploadSessionToken,
       signal,
     );
 
@@ -202,6 +221,7 @@ export class UploadManager {
       signResponse.url,
       signResponse.headers || {},
       chunk,
+      this.uploadSessionToken,
       signal,
     );
 
@@ -211,6 +231,7 @@ export class UploadManager {
         partNumber,
         etag,
         chunk.size,
+        this.uploadSessionToken,
         signal,
       );
     }

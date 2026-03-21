@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createSelect } from '@uifn/core/primitives/select';
+  import type { SelectOption } from '@uifn/core/primitives/select';
   import { setContext } from 'svelte';
 
   interface Props {
@@ -41,11 +42,24 @@
 
   let state = $state(machine.state);
   let triggerElement = $state<HTMLElement | null>(null);
+  let options = $state<SelectOption[]>([]);
 
   $effect(() => {
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (valueProp !== undefined && state.value !== valueProp) {
+      machine.actions.syncValue(valueProp);
+    }
+  });
+
+  $effect(() => {
+    if (openProp !== undefined && state.open !== openProp) {
+      machine.actions.syncOpen(openProp);
+    }
   });
 
   // Derived state handling
@@ -74,6 +88,21 @@
     triggerElement = el;
   }
 
+  function registerOption(option: SelectOption) {
+    const existingIndex = options.findIndex((entry) => entry.value === option.value);
+    if (existingIndex === -1) {
+      options = [...options, option];
+    } else {
+      options = options.map((entry, index) => (index === existingIndex ? option : entry));
+    }
+    machine.actions.setOptions(options);
+  }
+
+  function unregisterOption(value: string) {
+    options = options.filter((entry) => entry.value !== value);
+    machine.actions.setOptions(options);
+  }
+
   setContext('select', {
     get value() { return value; },
     get open() { return isOpen; },
@@ -81,7 +110,9 @@
     get trigger() { return triggerElement; },
     setValue,
     setOpen,
-    registerTrigger
+    registerTrigger,
+    registerOption,
+    unregisterOption
   });
 </script>
 

@@ -1,11 +1,15 @@
 # @uifn/react
 
-Accessible, unstyled React components built on `@uifn/core` primitives.
+Unstyled, accessible React primitives built on `@uifn/core`.
+
+## Status
+
+GA
 
 ## Installation
 
 ```bash
-npm install @uifn/react
+npm install @uifn/core @uifn/react
 ```
 
 ## Usage
@@ -13,60 +17,37 @@ npm install @uifn/react
 ```tsx
 import { Checkbox, CheckboxIndicator } from "@uifn/react";
 
-function MyCheckbox() {
+export function Example() {
   return (
     <Checkbox defaultChecked={false}>
-      <CheckboxIndicator>
-        <CheckIcon />
-      </CheckboxIndicator>
+      <CheckboxIndicator>✓</CheckboxIndicator>
     </Checkbox>
   );
 }
 ```
 
-## Components
+## Public Surface
 
-- Accordion
-- Alert Dialog
-- Avatar
-- Badge
-- Checkbox
-- Collapsible
-- Combobox
-- Context Menu
-- Dialog
-- Dropdown Menu
-- Hover Card
-- Label
-- Menu Bar
-- Popover
-- Progress
-- Radio Group
-- Scroll Area
-- Select
-- Separator
-- Slider
-- Switch
-- Tabs
-- Toast
-- Toggle
-- Toggle Group
-- Toolbar
-- Tooltip
-- Virtualized List
+`@uifn/react` exports component families including:
 
-## Features
+- Accordion, AlertDialog, Avatar, Badge, Checkbox, Collapsible, Combobox
+- ContextMenu, Dialog, DropdownMenu, HoverCard, Label, MenuBar, Popover
+- Progress, RadioGroup, ScrollArea, Select, Separator, Slider, Switch
+- Tabs, Toast, Toggle, ToggleGroup, Toolbar, Tooltip, VirtualizedList
+- `Portal`, `Presence`, and `Slot` helper exports
 
-- **Accessible**: WCAG 2.1 Level AA compliant with full keyboard navigation
-- **Unstyled**: No styling opinions, use with any CSS solution
-- **Composable**: Compound component pattern for maximum flexibility
-- **TypeScript**: Full type definitions included
-- **Controllable**: Both controlled and uncontrolled modes supported
+## Display Helpers Contract
 
-## Documentation
+- `Avatar`, `Badge`, `Label`, `Separator`, and `VirtualizedList` are part of the GA React adapter surface.
+- `AvatarFallback` rendering is deterministic: it renders whenever the image is not in the `loaded` state, with optional `delayMs` gating before fallback appears.
+- `VirtualizedList` is adapter-only and not part of `@uifn/core`.
+- `VirtualizedList` windowing is deterministic: `overscan` defaults to `3`; render contract is `renderItem(item, index)` with required `items`, `itemHeight`, and `height`.
 
-For detailed documentation and examples, visit the [UIFn documentation](https://github.com/21nCo/super-functions/tree/main/uifn).
+## Compatibility
+
+- React: `18.2+`
+- Node.js: `18.x`, `20.x`, `22.x`
 
 ## License
 
-Apache-2.0
+MIT

@@ -59,7 +59,7 @@ export function createFakeDbAdapter(): Adapter {
     name: "fake",
     version: "1.0.0",
     capabilities: FAKE_DB_CAPABILITIES,
-    async create(params) {
+    async create(params: any) {
       const table = getTable(params.model);
       const id =
         params.data.uploadSessionId ||
@@ -71,14 +71,14 @@ export function createFakeDbAdapter(): Adapter {
       table.set(id, record);
       return record;
     },
-    async findOne(params) {
+    async findOne(params: any) {
       const table = getTable(params.model);
       for (const record of table.values()) {
         if (matchesWhere(record, params.where)) return record;
       }
       return null;
     },
-    async findMany(params) {
+    async findMany(params: any) {
       const table = getTable(params.model);
       const results: any[] = [];
       for (const record of table.values()) {
@@ -103,7 +103,7 @@ export function createFakeDbAdapter(): Adapter {
       }
       return results.slice(0, params.limit || results.length);
     },
-    async update(params) {
+    async update(params: any) {
       const table = getTable(params.model);
       for (const [id, record] of table.entries()) {
         if (matchesWhere(record, params.where)) {
@@ -114,7 +114,7 @@ export function createFakeDbAdapter(): Adapter {
       }
       return null;
     },
-    async delete(params) {
+    async delete(params: any) {
       const table = getTable(params.model);
       for (const [id, record] of table.entries()) {
         if (matchesWhere(record, params.where)) {
@@ -123,13 +123,13 @@ export function createFakeDbAdapter(): Adapter {
         }
       }
     },
-    async createMany(params) {
+    async createMany(params: any) {
       return [];
     },
-    async updateMany(params) {
+    async updateMany(params: any) {
       return 0;
     },
-    async deleteMany(params) {
+    async deleteMany(params: any) {
       const table = getTable(params.model);
       let count = 0;
       for (const [id, record] of table.entries()) {
@@ -140,7 +140,7 @@ export function createFakeDbAdapter(): Adapter {
       }
       return count;
     },
-    async upsert(params) {
+    async upsert(this: any, params: any) {
       const existing = await this.findOne({
         model: params.model,
         where: params.where,
@@ -160,10 +160,10 @@ export function createFakeDbAdapter(): Adapter {
         namespace: params.namespace,
       });
     },
-    async count(params) {
+    async count(params: any) {
       return 0;
     },
-    async transaction(callback) {
+    async transaction(callback: any) {
       return callback(this as any);
     },
     async initialize() {},
@@ -178,5 +178,5 @@ export function createFakeDbAdapter(): Adapter {
     async validateSchema() {
       return { valid: true };
     },
-  } as Adapter;
+  } as unknown as Adapter;
 }

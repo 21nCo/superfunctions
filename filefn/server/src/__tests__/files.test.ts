@@ -114,6 +114,14 @@ function createFakeDbAdapter(): Adapter {
     async getSchemaVersion() { return 0; },
     async setSchemaVersion() {},
     async validateSchema() { return { valid: true }; },
+    internal: {
+      async ensureTable() {},
+      async create() { return {}; },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update() { return 0; },
+      async delete() { return 0; },
+    },
   } as Adapter;
 }
 
@@ -388,6 +396,48 @@ describe('@filefn/server files', () => {
 
       const body = await response!.json();
       expect(body.error.code).toBe('FILEFN_RATE_LIMITED');
+    });
+
+    it('TV-RATE-001: should enforce download category rate limits from config', async () => {
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
+
+      const fileFnWithCategoryRateLimit = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: { signedUploadUrls: true, signedDownloadUrls: true, multipart: true, proxyStreamingUpload: false, proxyStreamingDownload: true },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png'] }],
+        rateLimit: {
+          limits: {
+            download: { windowSeconds: 60, maxRequests: 1 },
+          },
+        },
+        auth: {
+          required: false,
+          resolveSession: async () => ({ principalId: 'user_123' }),
+        },
+      });
+
+      const first = await fileFnWithCategoryRateLimit.router.handle(
+        new Request(`http://localhost/${fileId}/download`, {
+          method: 'GET',
+          headers: { 'x-request-id': 'req_rate_cat_1' },
+        })
+      );
+      expect(first!.status).toBe(200);
+
+      const second = await fileFnWithCategoryRateLimit.router.handle(
+        new Request(`http://localhost/${fileId}/download`, {
+          method: 'GET',
+          headers: { 'x-request-id': 'req_rate_cat_2' },
+        })
+      );
+      expect(second!.status).toBe(429);
+
+      const body = await second!.json();
+      expect(body.error.code).toBe('FILEFN_RATE_LIMITED');
+      expect(typeof body.error.details?.resetAt).toBe('string');
+      expect(Number.isNaN(Date.parse(body.error.details.resetAt))).toBe(false);
     });
   });
 });

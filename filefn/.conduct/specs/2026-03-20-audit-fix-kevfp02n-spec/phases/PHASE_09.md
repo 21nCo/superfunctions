@@ -1,0 +1,21 @@
+# Phase 09
+- Phase goal: Verify the bundled demo and run the full production-readiness verification sweep.
+- In scope:
+  - full demo smoke verification
+  - final regression command sweep
+  - documentation alignment with canonical package names and behavior
+- Out of scope:
+  - new feature work
+- Deliverables:
+  - `filefn/examples/full-demo/README.md` (only if docs need canonical alignment)
+  - demo smoke notes or script under `filefn/examples/full-demo/` if needed
+  - any remaining package/test manifest updates required for final verification
+- Requirements covered: BUILD-001, DEMO-001, PKG-001
+- Implementation tasks:
+  - Align the demo with canonical package names and route semantics.
+  - Run the full verification sweep from `TV-BUILD-001`.
+  - Execute the demo smoke steps and document the exact verification path if automation is added.
+- Verification steps:
+  - Run every command from `TV-BUILD-001`.
+  - Start the full demo server and client, then verify upload/list/download/delete.
+- Stop condition: full verification sweep and demo smoke both pass with no unresolved audit findings left in scope.

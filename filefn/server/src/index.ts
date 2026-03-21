@@ -9,6 +9,7 @@ import { createUploadSessionService, type QuotaProvider } from './upload-session
 import { createUploadSessionRoutes } from './upload-sessions/routes.js';
 import { createFileService, type Authorizer } from './files/service.js';
 import { createFileRoutes } from './files/routes.js';
+import { createDeduplicationService } from './dedup/service.js';
 import { createGrantsService } from './authz/grants.service.js';
 import { createGrantsRoutes } from './authz/grants.routes.js';
 import { createSharesService } from './shares/service.js';
@@ -21,6 +22,20 @@ import { createRouter, type FileFnRouter } from './router.js';
 import type { AuthConfig } from './auth.js';
 import type { Logger } from './observability/logger.js';
 
+export interface RateLimitCategory {
+  windowSeconds: number;
+  maxRequests: number;
+}
+
+export interface FileFnRouteRateLimits {
+  uploadInit?: RateLimitCategory;
+  uploadSign?: RateLimitCategory;
+  uploadComplete?: RateLimitCategory;
+  download?: RateLimitCategory;
+  shareDownload?: RateLimitCategory;
+  artifactDownload?: RateLimitCategory;
+}
+
 export interface FileFnConfig {
   db: Adapter;
   storage: StorageAdapter;
@@ -30,11 +45,8 @@ export interface FileFnConfig {
   rateLimiter?: RateLimiter;
   rateLimit?: {
     persistence?: any;
-    algorithm?: 'fixed-window' | 'sliding-window';
-    limits?: {
-      windowSeconds?: number;
-      maxRequests?: number;
-    };
+    algorithm?: 'fixed-window' | 'sliding-window' | 'token-bucket';
+    limits?: FileFnRouteRateLimits;
   };
   logger?: Logger;
   authorizer?: Authorizer;
@@ -42,6 +54,9 @@ export interface FileFnConfig {
   defaultChunkSizeBytes?: number;
   uploadSessionTtlSeconds?: number;
   signedUrlTtlSeconds?: number;
+  dedup?: {
+    enabled?: boolean;
+  };
   processing?: {
     enabled?: boolean;
     processors?: Processor[];
@@ -54,6 +69,18 @@ export interface FileFn extends FileProvider {
   events: FileFnEventEmitter;
   definePolicy(name: string, policy: Omit<Policy, 'name'>): void;
   getSchema(): ReturnType<typeof getSchema>;
+}
+
+function hasConfiguredRouteRateLimits(limits?: FileFnRouteRateLimits): boolean {
+  if (!limits) return false;
+  return Boolean(
+    limits.uploadInit ||
+    limits.uploadSign ||
+    limits.uploadComplete ||
+    limits.download ||
+    limits.shareDownload ||
+    limits.artifactDownload
+  );
 }
 
 export function createFileFn(config: FileFnConfig): FileFn {
@@ -71,21 +98,44 @@ export function createFileFn(config: FileFnConfig): FileFn {
     defaultChunkSizeBytes,
     uploadSessionTtlSeconds,
     signedUrlTtlSeconds,
+    dedup,
     processing: processingConfig,
   } = config;
 
   const policyRegistry = createPolicyRegistry(initialPolicies);
   const events = createEventEmitter();
+  const deduplication = createDeduplicationService({
+    db,
+    namespace,
+    enabled: dedup?.enabled ?? false,
+  });
+
+  const routeRateLimits = rateLimit?.limits;
+  const hasRouteRateLimits = hasConfiguredRouteRateLimits(routeRateLimits);
+
+  if (rateLimit && !hasRouteRateLimits) {
+    throw new Error('RATE_LIMIT_CONFIG_INVALID: Missing route-category limits');
+  }
 
   let finalRateLimiter = rateLimiter;
-  if (!finalRateLimiter && rateLimit) {
-     finalRateLimiter = createRateLimiter({
-        windowMs: (rateLimit.limits?.windowSeconds || 60) * 1000,
-        maxRequests: rateLimit.limits?.maxRequests || 100,
-        persistence: rateLimit.persistence,
-        algorithm: rateLimit.algorithm
-     });
+  if (!finalRateLimiter && rateLimit && routeRateLimits) {
+    const seedLimit =
+      routeRateLimits.uploadInit ||
+      routeRateLimits.uploadSign ||
+      routeRateLimits.uploadComplete ||
+      routeRateLimits.download ||
+      routeRateLimits.shareDownload ||
+      routeRateLimits.artifactDownload;
+
+    finalRateLimiter = createRateLimiter({
+      windowMs: (seedLimit?.windowSeconds || 60) * 1000,
+      maxRequests: seedLimit?.maxRequests || 100,
+      persistence: rateLimit.persistence,
+      algorithm: rateLimit.algorithm,
+    });
   }
+
+  const legacyGlobalRateLimit = Boolean(rateLimiter && !rateLimit);
 
   // Create file service first so we can use it for authorization checks
   const fileService = createFileService({
@@ -106,6 +156,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     events,
     logger,
     quota,
+    dedup: deduplication,
     fileWriteChecker: fileService,
     namespace,
     defaultChunkSizeBytes,
@@ -117,12 +168,22 @@ export function createFileFn(config: FileFnConfig): FileFn {
     service: uploadService,
     auth,
     rateLimiter: finalRateLimiter,
+    rateLimits: {
+      uploadInit: routeRateLimits?.uploadInit,
+      uploadSign: routeRateLimits?.uploadSign,
+      uploadComplete: routeRateLimits?.uploadComplete,
+    },
+    legacyGlobalRateLimit,
   });
 
   const fileRoutes = createFileRoutes({
     service: fileService,
     auth,
     rateLimiter: finalRateLimiter,
+    rateLimits: {
+      download: routeRateLimits?.download,
+    },
+    legacyGlobalRateLimit,
   });
 
   const grantsService = createGrantsService({
@@ -145,6 +206,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const sharesRoutes = createSharesRoutes({
     service: sharesService,
     auth,
+    rateLimiter: finalRateLimiter,
+    rateLimits: {
+      shareDownload: routeRateLimits?.shareDownload,
+    },
   });
 
   const processingService = createProcessingService({
@@ -160,6 +225,10 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const processingRoutes = createProcessingRoutes({
     service: processingService,
     auth,
+    rateLimiter: finalRateLimiter,
+    rateLimits: {
+      artifactDownload: routeRateLimits?.artifactDownload,
+    },
   });
 
   const policyRoutes = createPolicyRoutes({
@@ -188,32 +257,36 @@ export function createFileFn(config: FileFnConfig): FileFn {
 
     // FileProvider implementation
     async createUploadSession(input, ctx) {
-      const result = await uploadService.createSession(input, ctx);
-      return { uploadSessionId: result.uploadSessionId };
+      return uploadService.createSession(input, ctx);
     },
 
     async getUploadSessionStatus(input, ctx) {
-      return uploadService.getSessionStatus(input.uploadSessionId, ctx);
+      const uploadSessionToken = (ctx as any)?.uploadSessionToken as string | undefined;
+      return uploadService.getSessionStatus(input.uploadSessionId, ctx, uploadSessionToken);
     },
 
     async signUploadPart(input, ctx) {
-      return uploadService.signPart(input.uploadSessionId, input.partNumber, input.contentLength, ctx);
+      const uploadSessionToken = (ctx as any)?.uploadSessionToken as string | undefined;
+      return uploadService.signPart(input.uploadSessionId, input.partNumber, input.contentLength, ctx, uploadSessionToken);
     },
 
     async completeUploadPart(input, ctx) {
-      await uploadService.completePart(input.uploadSessionId, input.partNumber, input.etag, input.size, ctx);
+      const uploadSessionToken = (ctx as any)?.uploadSessionToken as string | undefined;
+      await uploadService.completePart(input.uploadSessionId, input.partNumber, input.etag, input.size, ctx, uploadSessionToken);
     },
 
     async completeUploadSession(input, ctx) {
-      return uploadService.completeSession(input.uploadSessionId, ctx);
+      const uploadSessionToken = (ctx as any)?.uploadSessionToken as string | undefined;
+      return uploadService.completeSession(input.uploadSessionId, ctx, uploadSessionToken);
     },
 
     async abortUploadSession(input, ctx) {
-      await uploadService.abortSession(input.uploadSessionId, ctx);
+      const uploadSessionToken = (ctx as any)?.uploadSessionToken as string | undefined;
+      await uploadService.abortSession(input.uploadSessionId, ctx, uploadSessionToken);
     },
 
     async getFile(input, ctx) {
-      return fileService.getFile(input.fileId, ctx);
+      return fileService.getFile(input.fileId, ctx, input.versionId);
     },
 
     async listFiles(input, ctx) {

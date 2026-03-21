@@ -1,56 +1,13 @@
-import type { DocPage, Sidebar, SidebarItem } from "./types";
+import {
+  resolveBreadcrumbsFromSidebar,
+  resolvePaginationFromSidebar,
+  resolveSidebarForRoute,
+} from "./navigation";
+import type { DocPage, DocsManifest, DocsTopNavItem, Sidebar } from "./types";
 
 export interface BreadcrumbItem {
   label: string;
   href: string;
-}
-
-/**
- * Generate breadcrumbs from a route path
- * Example: /docs/guides/setup -> [Home, Docs, Guides, Setup]
- */
-export function generateBreadcrumbs(
-  path: string,
-  pages: Record<string, DocPage>,
-  options: {
-    homeLabel?: string;
-    homeHref?: string;
-  } = {}
-): BreadcrumbItem[] {
-  const { homeLabel = "Home", homeHref = "/" } = options;
-
-  const crumbs: BreadcrumbItem[] = [{ label: homeLabel, href: homeHref }];
-
-  // Split path and build breadcrumbs
-  const segments = path.split("/").filter(Boolean);
-  let currentPath = "";
-
-  for (let i = 0; i < segments.length; i++) {
-    currentPath += `/${segments[i]}`;
-
-    // Try to find a page with this path
-    const page = Object.values(pages).find((p) => p.path === currentPath);
-
-    if (page) {
-      crumbs.push({
-        label: page.title,
-        href: currentPath,
-      });
-    } else {
-      // Fallback: capitalize segment
-      const label = segments[i]
-        .split("-")
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(" ");
-
-      crumbs.push({
-        label,
-        href: currentPath,
-      });
-    }
-  }
-
-  return crumbs;
 }
 
 export interface PaginationLinks {
@@ -64,84 +21,185 @@ export interface PaginationLinks {
   };
 }
 
-/**
- * Get prev/next page links based on sidebar order
- */
+type ManifestNavigationInput = Pick<DocsManifest, "pages" | "sidebars">;
+
+function isManifestNavigationInput(
+  value: Record<string, DocPage> | ManifestNavigationInput
+): value is ManifestNavigationInput {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "sidebars" in value &&
+    typeof (value as ManifestNavigationInput).sidebars === "object" &&
+    (value as ManifestNavigationInput).sidebars !== null
+  );
+}
+
+interface PaginationOverride {
+  path: string;
+  title?: string;
+}
+
+function normalizePaginationOverride(
+  input: unknown
+): PaginationOverride | undefined {
+  if (typeof input === "string" && input.length > 0) {
+    return { path: input };
+  }
+
+  if (typeof input !== "object" || input === null) {
+    return undefined;
+  }
+
+  const candidate = input as Record<string, unknown>;
+  const pathCandidate =
+    (typeof candidate.path === "string" && candidate.path) ||
+    (typeof candidate.href === "string" && candidate.href);
+
+  if (!pathCandidate) {
+    return undefined;
+  }
+
+  return {
+    path: pathCandidate,
+    title: typeof candidate.title === "string" ? candidate.title : undefined,
+  };
+}
+
+function resolveTitleForPath(
+  path: string,
+  pages: Record<string, DocPage>,
+  fallback: string
+): string {
+  const page = Object.values(pages).find((candidate) => candidate.path === path);
+  return page?.title ?? fallback;
+}
+
+export function generateBreadcrumbs(
+  path: string,
+  pagesOrManifest: Record<string, DocPage> | ManifestNavigationInput,
+  options: {
+    homeLabel?: string;
+    homeHref?: string;
+    sidebarId?: string;
+  } = {}
+): BreadcrumbItem[] {
+  const { homeLabel, homeHref } = options;
+  if (
+    isManifestNavigationInput(pagesOrManifest) &&
+    Object.keys(pagesOrManifest.sidebars).length > 0
+  ) {
+    const selectedSidebarId =
+      options.sidebarId ??
+      resolveSidebarForRoute({
+        sidebars: pagesOrManifest.sidebars,
+        route: path,
+      }) ??
+      "default";
+    const selectedSidebar = pagesOrManifest.sidebars[selectedSidebarId];
+    if (selectedSidebar) {
+      return resolveBreadcrumbsFromSidebar({
+        sidebar: selectedSidebar,
+        route: path,
+        rootLabel: homeLabel,
+        rootHref: homeHref,
+      });
+    }
+  }
+
+  const pages = isManifestNavigationInput(pagesOrManifest)
+    ? pagesOrManifest.pages
+    : pagesOrManifest;
+  const fallbackHomeLabel = homeLabel ?? "Home";
+  const fallbackHomeHref = homeHref ?? "/";
+  const crumbs: BreadcrumbItem[] = [{ label: fallbackHomeLabel, href: fallbackHomeHref }];
+  const segments = path.split("/").filter(Boolean);
+  let currentPath = "";
+
+  for (const segment of segments) {
+    currentPath += `/${segment}`;
+    const page = Object.values(pages).find((candidate) => candidate.path === currentPath);
+    if (page) {
+      crumbs.push({ label: page.title, href: currentPath });
+      continue;
+    }
+    crumbs.push({
+      label: segment
+        .split("-")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" "),
+      href: currentPath,
+    });
+  }
+
+  return crumbs;
+}
+
 export function getPaginationFromSidebar(
   currentPath: string,
   sidebar: Sidebar
 ): PaginationLinks {
-  const links: string[] = [];
-
-  // Flatten sidebar to get all links in order
-  function flatten(items: SidebarItem[]) {
-    for (const item of items) {
-      if (item.type === "link" && item.link) {
-        links.push(item.link);
-      } else if (item.type === "group" && item.items) {
-        flatten(item.items);
-      }
-    }
-  }
-
-  flatten(sidebar.items);
-
-  // Find current index
-  const currentIndex = links.indexOf(currentPath);
-
-  if (currentIndex === -1) {
+  try {
+    return resolvePaginationFromSidebar({
+      sidebar,
+      route: currentPath,
+    });
+  } catch {
     return {};
   }
-
-  const result: PaginationLinks = {};
-
-  // Get prev
-  if (currentIndex > 0) {
-    result.prev = {
-      path: links[currentIndex - 1],
-      title: links[currentIndex - 1], // Will be replaced by actual title in component
-    };
-  }
-
-  // Get next
-  if (currentIndex < links.length - 1) {
-    result.next = {
-      path: links[currentIndex + 1],
-      title: links[currentIndex + 1],
-    };
-  }
-
-  return result;
 }
 
-/**
- * Enhanced version that includes actual page titles
- */
 export function getPaginationFromSidebarWithTitles(
   currentPath: string,
   sidebar: Sidebar,
   pages: Record<string, DocPage>
 ): PaginationLinks {
-  const pagination = getPaginationFromSidebar(currentPath, sidebar);
+  const currentPage = Object.values(pages).find((page) => page.path === currentPath);
+  const previousOverride = normalizePaginationOverride(currentPage?.frontmatter?.prev);
+  const nextOverride = normalizePaginationOverride(currentPage?.frontmatter?.next);
 
-  // Find page titles
-  if (pagination.prev) {
-    const prevPage = Object.values(pages).find(
-      (p) => p.path === pagination.prev!.path
-    );
-    if (prevPage) {
-      pagination.prev.title = prevPage.title;
-    }
+  if (previousOverride || nextOverride) {
+    return {
+      prev: previousOverride
+        ? {
+            path: previousOverride.path,
+            title: previousOverride.title
+              ? previousOverride.title
+              : resolveTitleForPath(previousOverride.path, pages, previousOverride.path),
+          }
+        : undefined,
+      next: nextOverride
+        ? {
+            path: nextOverride.path,
+            title: nextOverride.title
+              ? nextOverride.title
+              : resolveTitleForPath(nextOverride.path, pages, nextOverride.path),
+          }
+        : undefined,
+    };
   }
 
-  if (pagination.next) {
-    const nextPage = Object.values(pages).find(
-      (p) => p.path === pagination.next!.path
+  const pagination = getPaginationFromSidebar(currentPath, sidebar);
+  if (pagination.prev) {
+    pagination.prev.title = resolveTitleForPath(
+      pagination.prev.path,
+      pages,
+      pagination.prev.title
     );
-    if (nextPage) {
-      pagination.next.title = nextPage.title;
-    }
+  }
+  if (pagination.next) {
+    pagination.next.title = resolveTitleForPath(
+      pagination.next.path,
+      pages,
+      pagination.next.title
+    );
   }
 
   return pagination;
+}
+
+export function getTopNavigation(
+  manifest: Pick<DocsManifest, "topNav">
+): DocsTopNavItem[] {
+  return manifest.topNav ?? [];
 }

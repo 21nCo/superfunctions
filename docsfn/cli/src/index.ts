@@ -1,102 +1,548 @@
-import cac from 'cac';
-import pc from 'picocolors';
-import path from 'path';
-import fs from 'fs/promises';
-import { buildManifest, buildSearchIndex } from '@docsfn/core';
-import { FsContentProvider } from '@docsfn/provider-fs';
-import chokidar from 'chokidar';
+import fs from "node:fs/promises";
+import path from "node:path";
+import cac from "cac";
+import chokidar from "chokidar";
+import pc from "picocolors";
+import {
+  buildManifest,
+  buildSearchIndex,
+  createDiagnostic,
+  diagnosticsFromUnknownError,
+  formatDiagnosticsForCli,
+  hasErrorDiagnostics,
+  loadDocsConfig,
+  redactDiagnostics,
+  type DocsCompatPreset,
+  type DocsConfig,
+  type DocsDiagnostic,
+  type DocsManifest,
+} from "@docsfn/core";
+import type { DocsProviderWatchMetadata } from "@docsfn/core";
+import type { DocsSearchArtifact } from "@docsfn/core";
+import { FsContentProvider } from "@docsfn/provider-fs";
 
-const cli = cac('docsfn');
+const cli = cac("docsfn");
 
-async function loadConfig(cwd: string) {
-  const configPath = path.resolve(cwd, 'docsfn.config.js');
-  try {
-    // Basic dynamic import for now. 
-    // Real implementation needs to handle TS compilation or use jiti.
-    const mod = await import(configPath);
-    return mod.default || mod;
-  } catch (e) {
-    console.warn(pc.yellow('⚠ Config file not found or invalid, using defaults.'));
-    return {
-      site: { title: 'Docs' },
-      provider: {
-        root: cwd,
-        docsDir: 'docs',
-        blogDir: 'blog',
-        apiDir: 'api'
+interface BuildCommandOptions {
+  root?: string;
+  out?: string;
+  outDir?: string;
+  config?: string;
+}
+
+interface PipelineInput {
+  cwd: string;
+  configPath?: string;
+  changedPaths?: string[];
+}
+
+interface DocsCompatReport {
+  schemaVersion: 1;
+  preset: DocsCompatPreset;
+  transformedFiles: Array<{
+    sourceId: string;
+    transforms: string[];
+  }>;
+  unsupportedSyntax: DocsDiagnostic[];
+}
+
+interface PipelineResult {
+  cwd: string;
+  config?: DocsConfig;
+  manifest?: DocsManifest;
+  searchArtifact?: DocsSearchArtifact;
+  diagnostics: DocsDiagnostic[];
+  compatReport: DocsCompatReport;
+  invalidatedPaths: string[];
+}
+
+function compareStrings(left: string, right: string): number {
+  return left.localeCompare(right, "en", {
+    sensitivity: "variant",
+    numeric: true,
+  });
+}
+
+function stableSortDiagnostics(diagnostics: DocsDiagnostic[]): DocsDiagnostic[] {
+  return [...diagnostics].sort((left, right) => {
+    const leftKey = `${left.severity}:${left.code}:${left.message}`;
+    const rightKey = `${right.severity}:${right.code}:${right.message}`;
+    return compareStrings(leftKey, rightKey);
+  });
+}
+
+function normalizePath(value: string): string {
+  return value.replaceAll("\\", "/");
+}
+
+function resolveOutDirectory(input: BuildCommandOptions, cwd: string): string {
+  const outValue = input.outDir ?? input.out ?? ".docsfn";
+  return path.isAbsolute(outValue) ? outValue : path.resolve(cwd, outValue);
+}
+
+function createProvider(config: DocsConfig, cwd: string): FsContentProvider {
+  return new FsContentProvider({
+    root: config.content.root || cwd,
+    docsDir: config.content.docsDir,
+    pagesDir: config.content.pagesDir,
+    blogDir: config.content.blogDir,
+    apiDir: config.content.apiDir,
+    assetsDir: config.content.assetsDir,
+  });
+}
+
+async function loadConfig(cwd: string, configPath?: string): Promise<DocsConfig> {
+  return loadDocsConfig({
+    cwd,
+    configPath,
+  });
+}
+
+function resolveCollectionDirectories(config: DocsConfig): Record<string, string> {
+  const root = path.resolve(config.content.root);
+  return {
+    docs: path.resolve(root, config.content.docsDir ?? "content/docs"),
+    pages: path.resolve(root, config.content.pagesDir ?? "pages"),
+    blog: path.resolve(root, config.content.blogDir ?? "blog"),
+    api: path.resolve(root, config.content.apiDir ?? "api"),
+    assets: path.resolve(root, config.content.assetsDir ?? "public"),
+  };
+}
+
+function computeInvalidatedPaths(input: {
+  cwd: string;
+  config?: DocsConfig;
+  changedPaths?: string[];
+}): string[] {
+  if (!input.changedPaths || input.changedPaths.length === 0) {
+    return [];
+  }
+
+  const normalizedCwd = path.resolve(input.cwd);
+  const directories = input.config ? resolveCollectionDirectories(input.config) : {};
+  const configFiles = [
+    path.resolve(normalizedCwd, "docsfn.config.ts"),
+    path.resolve(normalizedCwd, "docsfn.config.mjs"),
+    path.resolve(normalizedCwd, "docsfn.config.js"),
+  ];
+
+  const invalidated = new Set<string>();
+
+  for (const rawPath of input.changedPaths) {
+    const absolutePath = path.resolve(rawPath);
+
+    if (configFiles.includes(absolutePath)) {
+      invalidated.add("config");
+      continue;
+    }
+
+    let matchedCollection = false;
+    for (const [collection, directory] of Object.entries(directories)) {
+      const absoluteDirectory = path.resolve(directory);
+      if (
+        absolutePath === absoluteDirectory ||
+        absolutePath.startsWith(`${absoluteDirectory}${path.sep}`)
+      ) {
+        const relative = normalizePath(path.relative(absoluteDirectory, absolutePath));
+        invalidated.add(`${collection}:${relative || "*"}`);
+        matchedCollection = true;
+        break;
       }
-    };
+    }
+
+    if (!matchedCollection) {
+      const relativeToRoot = path.relative(normalizedCwd, absolutePath);
+      if (!relativeToRoot.startsWith("..")) {
+        invalidated.add(`path:${normalizePath(relativeToRoot)}`);
+      } else {
+        invalidated.add(`path:${normalizePath(absolutePath)}`);
+      }
+    }
+  }
+
+  return [...invalidated].sort(compareStrings);
+}
+
+function createCompatReport(input: {
+  preset: DocsCompatPreset;
+  diagnostics: DocsDiagnostic[];
+}): DocsCompatReport {
+  return {
+    schemaVersion: 1,
+    preset: input.preset,
+    transformedFiles: [],
+    unsupportedSyntax: input.diagnostics.filter(
+      (diagnostic) => diagnostic.code === "DOCS_COMPAT_UNSUPPORTED"
+    ),
+  };
+}
+
+async function runPipeline(input: PipelineInput): Promise<PipelineResult> {
+  const diagnostics: DocsDiagnostic[] = [];
+  let config: DocsConfig | undefined;
+  let manifest: DocsManifest | undefined;
+  let searchArtifact: DocsSearchArtifact | undefined;
+
+  try {
+    config = await loadConfig(input.cwd, input.configPath);
+  } catch (error) {
+    diagnostics.push(
+      ...diagnosticsFromUnknownError(error, {
+        code: "DOCS_CONFIG_INVALID",
+        message: "failed to load docsfn config",
+      })
+    );
+  }
+
+  if (config) {
+    const provider = createProvider(config, input.cwd);
+
+    try {
+      manifest = await buildManifest(provider, config);
+    } catch (error) {
+      diagnostics.push(
+        ...diagnosticsFromUnknownError(error, {
+          code: "DOCS_ARTIFACT_INVALID",
+          message: "failed to build docs manifest",
+        })
+      );
+    }
+
+    if (manifest) {
+      try {
+        searchArtifact = await buildSearchIndex(manifest, {
+          search: config.search,
+          auth: config.auth,
+        });
+      } catch (error) {
+        diagnostics.push(
+          ...diagnosticsFromUnknownError(error, {
+            code: "DOCS_SEARCH_BUILD_FAILED",
+            message: "search artifact build failed",
+          })
+        );
+      }
+    }
+  }
+
+  const invalidatedPaths = computeInvalidatedPaths({
+    cwd: input.cwd,
+    config,
+    changedPaths: input.changedPaths,
+  });
+
+  if (invalidatedPaths.length > 0) {
+    diagnostics.push(
+      createDiagnostic({
+        code: "DOCS_ARTIFACT_INVALID",
+        severity: "info",
+        message: `dev rebuild invalidated ${invalidatedPaths.length} path(s)`,
+        details: {
+          invalidatedPaths,
+        },
+      })
+    );
+  }
+
+  const finalizedDiagnostics = stableSortDiagnostics(redactDiagnostics(diagnostics));
+  const preset = config?.compat?.preset ?? "none";
+
+  return {
+    cwd: input.cwd,
+    config,
+    manifest,
+    searchArtifact,
+    diagnostics: finalizedDiagnostics,
+    compatReport: createCompatReport({
+      preset,
+      diagnostics: finalizedDiagnostics,
+    }),
+    invalidatedPaths,
+  };
+}
+
+async function writeArtifacts(outDir: string, result: PipelineResult): Promise<void> {
+  await fs.mkdir(outDir, { recursive: true });
+
+  await fs.writeFile(
+    path.join(outDir, "diagnostics.json"),
+    JSON.stringify(result.diagnostics, null, 2)
+  );
+
+  await fs.writeFile(
+    path.join(outDir, "compat-report.json"),
+    JSON.stringify(result.compatReport, null, 2)
+  );
+
+  if (result.manifest) {
+    await fs.writeFile(
+      path.join(outDir, "manifest.json"),
+      JSON.stringify(result.manifest, null, 2)
+    );
+  }
+
+  const searchEnabled = result.config?.search?.enabled ?? true;
+  if (searchEnabled && result.searchArtifact) {
+    await fs.writeFile(
+      path.join(outDir, "search.json"),
+      JSON.stringify(result.searchArtifact, null, 2)
+    );
   }
 }
 
-async function build(cwd: string, outDir: string) {
-  console.log(pc.blue('ℹ Building docs...'));
-  
-  const config = await loadConfig(cwd);
-  
-  // Initialize provider based on config
-  // For v0, assume FS provider
-  const provider = new FsContentProvider({
-    root: config.provider?.root || cwd,
-    docsDir: config.provider?.docsDir || 'docs',
-    blogDir: config.provider?.blogDir || 'blog',
-    apiDir: config.provider?.apiDir || 'api'
+function printDiagnostics(diagnostics: DocsDiagnostic[]): void {
+  if (diagnostics.length === 0) {
+    console.log(pc.green("✔ No diagnostics reported"));
+    return;
+  }
+
+  const lines = formatDiagnosticsForCli(diagnostics);
+  for (let index = 0; index < diagnostics.length; index += 1) {
+    const diagnostic = diagnostics[index];
+    const line = lines[index] ?? "";
+    const colorize =
+      diagnostic.severity === "error"
+        ? pc.red
+        : diagnostic.severity === "warning"
+          ? pc.yellow
+          : pc.cyan;
+    console.log(colorize(line));
+  }
+}
+
+function printCommandSummary(command: string, result: PipelineResult): void {
+  const total = result.diagnostics.length;
+  const errors = result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").length;
+  const warnings = result.diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length;
+
+  console.log(
+    pc.blue(
+      `ℹ ${command}: ${total} diagnostic(s) (${errors} errors, ${warnings} warnings)`
+    )
+  );
+
+  if (result.invalidatedPaths.length > 0) {
+    console.log(
+      pc.dim(
+        JSON.stringify(
+          {
+            event: "docsfn.dev.invalidate",
+            invalidated: result.invalidatedPaths,
+          },
+          null,
+          2
+        )
+      )
+    );
+  }
+}
+
+function resolveWatchTargets(input: {
+  cwd: string;
+  config: DocsConfig;
+  providerMetadata?: DocsProviderWatchMetadata;
+  outDir: string;
+}): string[] {
+  const targets = new Set<string>();
+  const cwd = path.resolve(input.cwd);
+  const outDir = path.resolve(input.outDir);
+
+  const configFileCandidates = [
+    path.resolve(cwd, "docsfn.config.ts"),
+    path.resolve(cwd, "docsfn.config.mjs"),
+    path.resolve(cwd, "docsfn.config.js"),
+  ];
+  for (const candidate of configFileCandidates) {
+    targets.add(candidate);
+  }
+
+  if (input.providerMetadata?.watchedDirectories?.length) {
+    for (const directory of input.providerMetadata.watchedDirectories) {
+      const resolved = path.resolve(directory);
+      if (resolved === outDir || resolved.startsWith(`${outDir}${path.sep}`)) {
+        continue;
+      }
+      targets.add(resolved);
+    }
+  } else {
+    const directories = resolveCollectionDirectories(input.config);
+    for (const directory of Object.values(directories)) {
+      const resolved = path.resolve(directory);
+      if (resolved === outDir || resolved.startsWith(`${outDir}${path.sep}`)) {
+        continue;
+      }
+      targets.add(resolved);
+    }
+  }
+
+  return [...targets].sort(compareStrings);
+}
+
+async function runValidateCommand(
+  rootArg: string | undefined,
+  options: BuildCommandOptions
+): Promise<void> {
+  const rootValue = options.root ?? rootArg ?? ".";
+  const cwd = path.resolve(rootValue);
+
+  const result = await runPipeline({
+    cwd,
+    configPath: options.config,
   });
 
+  printDiagnostics(result.diagnostics);
+  printCommandSummary("validate", result);
+
+  process.exitCode = hasErrorDiagnostics(result.diagnostics) ? 1 : 0;
+}
+
+async function runBuildCommand(
+  rootArg: string | undefined,
+  options: BuildCommandOptions
+): Promise<void> {
+  const rootValue = options.root ?? rootArg ?? ".";
+  const cwd = path.resolve(rootValue);
+  const outDir = resolveOutDirectory(options, cwd);
+
+  console.log(pc.blue("ℹ Building docs..."));
   const start = Date.now();
-  const manifest = await buildManifest(provider, config);
-  const searchIndex = await buildSearchIndex(manifest);
 
-  // Write output
-  await fs.mkdir(outDir, { recursive: true });
-  await fs.writeFile(
-    path.join(outDir, 'manifest.json'), 
-    JSON.stringify(manifest, null, 2)
-  );
-  await fs.writeFile(
-    path.join(outDir, 'search-index.json'),
-    JSON.stringify(searchIndex)
-  );
+  const result = await runPipeline({
+    cwd,
+    configPath: options.config,
+  });
+  await writeArtifacts(outDir, result);
 
-  console.log(pc.green(`✔ Built in ${Date.now() - start}ms`));
+  printDiagnostics(result.diagnostics);
+  printCommandSummary("build", result);
+
+  if (!hasErrorDiagnostics(result.diagnostics) && result.searchArtifact) {
+    console.log(
+      pc.green(
+        `✔ Built in ${Date.now() - start}ms (${result.searchArtifact.bytes} bytes search artifact)`
+      )
+    );
+  }
+
+  process.exitCode = hasErrorDiagnostics(result.diagnostics) ? 1 : 0;
+}
+
+async function runDevCommand(
+  rootArg: string | undefined,
+  options: BuildCommandOptions
+): Promise<void> {
+  const rootValue = options.root ?? rootArg ?? ".";
+  const cwd = path.resolve(rootValue);
+  const outDir = resolveOutDirectory(options, cwd);
+
+  console.log(pc.blue("ℹ Starting docsfn dev..."));
+
+  const initialResult = await runPipeline({
+    cwd,
+    configPath: options.config,
+  });
+  await writeArtifacts(outDir, initialResult);
+
+  printDiagnostics(initialResult.diagnostics);
+  printCommandSummary("dev:initial", initialResult);
+
+  if (hasErrorDiagnostics(initialResult.diagnostics)) {
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!initialResult.config) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const provider = createProvider(initialResult.config, cwd);
+  let providerMetadata: DocsProviderWatchMetadata | undefined;
+
+  if (typeof provider.watch === "function") {
+    try {
+      const subscription = await provider.watch({
+        config: initialResult.config,
+        onChange: () => undefined,
+      });
+      providerMetadata = subscription.metadata;
+      await subscription.close();
+    } catch {
+      providerMetadata = undefined;
+    }
+  }
+
+  const watchTargets = resolveWatchTargets({
+    cwd,
+    config: initialResult.config,
+    providerMetadata,
+    outDir,
+  });
+
+  console.log(pc.cyan(`ℹ Watching for changes in ${watchTargets.length} location(s)...`));
+
+  const watcher = chokidar.watch(watchTargets, {
+    ignoreInitial: true,
+  });
+
+  let rebuildQueue = Promise.resolve();
+
+  watcher.on("all", (_event, changedPath) => {
+    const absolutePath = path.resolve(changedPath);
+    if (absolutePath === outDir || absolutePath.startsWith(`${outDir}${path.sep}`)) {
+      return;
+    }
+    console.log(pc.dim(`Change detected: ${absolutePath}`));
+
+    rebuildQueue = rebuildQueue
+      .then(async () => {
+        const result = await runPipeline({
+          cwd,
+          configPath: options.config,
+          changedPaths: [absolutePath],
+        });
+        await writeArtifacts(outDir, result);
+        printDiagnostics(result.diagnostics);
+        printCommandSummary("dev:rebuild", result);
+      })
+      .catch((error) => {
+        console.error(
+          pc.red(
+            error instanceof Error
+              ? `dev rebuild failed: ${error.message}`
+              : "dev rebuild failed"
+          )
+        );
+      });
+  });
 }
 
 cli
-  .command('build [root]', 'Build the documentation')
-  .option('--out <dir>', 'Output directory', { default: '.docsfn' })
+  .command("validate [root]", "Validate docs configuration and content")
+  .option("--root <dir>", "Root directory")
+  .option("--config <path>", "Explicit docsfn config path")
   .action(async (root, options) => {
-    const cwd = path.resolve(root || '.');
-    await build(cwd, path.resolve(cwd, options.out));
+    await runValidateCommand(root, options as BuildCommandOptions);
   });
 
 cli
-  .command('dev [root]', 'Start dev mode')
-  .option('--out <dir>', 'Output directory', { default: '.docsfn' })
+  .command("build [root]", "Build the documentation")
+  .option("--root <dir>", "Root directory")
+  .option("--config <path>", "Explicit docsfn config path")
+  .option("--out <dir>", "Output directory (legacy option)")
+  .option("--out-dir <dir>", "Output directory", { default: ".docsfn" })
   .action(async (root, options) => {
-    const cwd = path.resolve(root || '.');
-    const out = path.resolve(cwd, options.out);
-    
-    await build(cwd, out);
+    await runBuildCommand(root, options as BuildCommandOptions);
+  });
 
-    console.log(pc.cyan('ℹ Watching for changes...'));
-    
-    // Watch relevant directories
-    // We should read this from config, but for now hardcode common ones
-    const watcher = chokidar.watch([
-      path.join(cwd, 'docs'),
-      path.join(cwd, 'blog'),
-      path.join(cwd, 'api'),
-      path.join(cwd, 'docsfn.config.js')
-    ], { ignoreInitial: true });
-
-    watcher.on('all', async (event, file) => {
-      console.log(pc.dim(`Change detected: ${file}`));
-      try {
-        await build(cwd, out);
-      } catch (e) {
-        console.error(pc.red('Build failed:'), e);
-      }
-    });
+cli
+  .command("dev [root]", "Start dev mode")
+  .option("--root <dir>", "Root directory")
+  .option("--config <path>", "Explicit docsfn config path")
+  .option("--out <dir>", "Output directory (legacy option)")
+  .option("--out-dir <dir>", "Output directory", { default: ".docsfn" })
+  .action(async (root, options) => {
+    await runDevCommand(root, options as BuildCommandOptions);
   });
 
 cli.help();

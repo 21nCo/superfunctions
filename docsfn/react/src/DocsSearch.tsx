@@ -1,109 +1,193 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { InMemorySearchFn } from 'searchfn';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createDocsSearchRuntime,
+  maybeEmitAnalyticsEvent,
+  type DocsAnalyticsEvent,
+  type DocsSearchArtifact,
+  type DocsSearchRuntime,
+  type DocsSearchRuntimeResultItem,
+  type DocsSearchScope,
+} from "@docsfn/core";
 import {
   Dialog,
   DialogPortal,
   DialogOverlay,
   DialogContent,
-  DialogTitle,
-} from '@uifn/react';
-import { ScrollArea } from '@uifn/react';
+} from "@uifn/react";
+import { ScrollArea } from "@uifn/react";
+
+type SearchScopeFilter = DocsSearchScope | "all";
 
 export interface DocsSearchProps {
-  searchIndex: any; // Snapshot object
+  searchArtifact?: DocsSearchArtifact;
+  searchIndex?: DocsSearchArtifact;
+  loadSearchArtifact?: () => Promise<DocsSearchArtifact>;
   placeholder?: string;
+  initialScope?: SearchScopeFilter;
+  scopes?: SearchScopeFilter[];
+  analytics?: {
+    enabled?: boolean;
+    respectDnt?: boolean;
+    route?: string;
+    onEvent?: (event: DocsAnalyticsEvent) => void;
+  };
 }
 
-export function DocsSearch({ searchIndex, placeholder = 'Search docs...' }: DocsSearchProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const engineRef = useRef<InMemorySearchFn | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+function normalizeScopes(input?: SearchScopeFilter[]): SearchScopeFilter[] {
+  if (!input || input.length === 0) {
+    return ["all", "docs", "api", "blog"];
+  }
+  const unique = Array.from(new Set(input));
+  return unique.sort((left, right) =>
+    left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
+  );
+}
 
-  // ⌘K keyboard shortcut to open
-  useEffect(() =&gt; {
-    const handleKeydown = (e: KeyboardEvent) =&gt; {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
+function createTimestamp(): string {
+  return new Date().toISOString();
+}
+
+export function DocsSearch({
+  searchArtifact,
+  searchIndex,
+  loadSearchArtifact,
+  placeholder = "Search docs...",
+  initialScope = "all",
+  scopes: scopeInput,
+  analytics,
+}: DocsSearchProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<DocsSearchRuntimeResultItem[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [scope, setScope] = useState<SearchScopeFilter>(initialScope);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const runtimeRef = useRef<DocsSearchRuntime | null>(null);
+  const queryRequestRef = useRef(0);
+  const supportedScopes = useMemo(() => normalizeScopes(scopeInput), [scopeInput]);
+
+  useEffect(() => {
+    runtimeRef.current = createDocsSearchRuntime({
+      artifact: searchArtifact ?? searchIndex,
+      loadArtifact: loadSearchArtifact,
+    });
+  }, [searchArtifact, searchIndex, loadSearchArtifact]);
+
+  useEffect(() => {
+    const handleKeydown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
         setIsOpen(true);
       }
     };
-    window.addEventListener('keydown', handleKeydown);
-    return () =&gt; window.removeEventListener('keydown', handleKeydown);
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
   }, []);
 
-  // Initialize search engine from snapshot
-  useEffect(() =&gt; {
-    if (searchIndex && !engineRef.current) {
-      const engine = new InMemorySearchFn({
-        fields: ['title', 'description', 'headings', 'tags', 'body']
-      });
-      engine.importSnapshot(searchIndex);
-      engineRef.current = engine;
+  useEffect(() => {
+    if (!isOpen || !inputRef.current) {
+      return;
     }
-  }, [searchIndex]);
+    inputRef.current.focus();
+  }, [isOpen]);
 
-  // Search for results when query changes
-  useEffect(() =&gt; {
-    if (!query || !engineRef.current) {
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || !query.trim()) {
       setResults([]);
       setSelectedIndex(0);
       return;
     }
-    const hits = engineRef.current.searchDetailed(query, { limit: 10, includeStored: true });
-    setResults(hits);
-    setSelectedIndex(0);
-  }, [query]);
 
-  // Focus input when dialog opens
-  useEffect(() =&gt; {
-    if (isOpen && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [isOpen]);
+    const requestId = queryRequestRef.current + 1;
+    queryRequestRef.current = requestId;
+    void runtime
+      .query({
+        query,
+        scope,
+        limit: 10,
+      })
+      .then((nextResults) => {
+        if (queryRequestRef.current !== requestId) {
+          return;
+        }
+        setResults(nextResults);
+        setSelectedIndex(0);
 
-  // Keyboard navigation for results
-  const handleKeyDown = (e: React.KeyboardEvent) =&gt; {
-    if (results.length === 0) return;
+        maybeEmitAnalyticsEvent({
+          enabled: Boolean(analytics?.enabled),
+          respectDnt: analytics?.respectDnt ?? true,
+          event: {
+            name: "docs.search",
+            timestamp: createTimestamp(),
+            route: analytics?.route ?? window.location.pathname,
+            searchScope: scope === "all" ? undefined : scope,
+            resultCount: nextResults.length,
+          },
+          emit: (event) => analytics?.onEvent?.(event),
+        });
+      })
+      .catch(() => {
+        if (queryRequestRef.current !== requestId) {
+          return;
+        }
+        setResults([]);
+        setSelectedIndex(0);
+      });
+  }, [query, scope, analytics]);
 
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedIndex((prev) =&gt; Math.min(prev + 1, results.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedIndex((prev) =&gt; Math.max(prev - 1, 0));
-    } else if (e.key === 'Enter' && results[selectedIndex]) {
-      e.preventDefault();
-      // Navigate to the selected result
-      window.location.href = results[selectedIndex].document.path;
-      setIsOpen(false);
+  const handleOpenChange = (open: boolean) => {
+    setIsOpen(open);
+    if (!open) {
+      setQuery("");
+      setResults([]);
+      setSelectedIndex(0);
     }
   };
 
-  const handleResultClick = (path: string) =&gt; {
-    window.location.href = path;
+  const handleResultClick = (result: DocsSearchRuntimeResultItem) => {
+    maybeEmitAnalyticsEvent({
+      enabled: Boolean(analytics?.enabled),
+      respectDnt: analytics?.respectDnt ?? true,
+      event: {
+        name: "docs.search_result_click",
+        timestamp: createTimestamp(),
+        route: analytics?.route ?? window.location.pathname,
+        searchScope: result.scope,
+        targetUrl: result.path,
+      },
+      emit: (event) => analytics?.onEvent?.(event),
+    });
+    window.location.href = result.path;
     setIsOpen(false);
   };
 
-  const handleOpenChange = (open: boolean) =&gt; {
-    setIsOpen(open);
-    if (!open) {
-      setQuery('');
-      setResults([]);
-      setSelectedIndex(0);
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (results.length === 0) {
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setSelectedIndex((previous) => Math.min(previous + 1, results.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setSelectedIndex((previous) => Math.max(previous - 1, 0));
+    } else if (event.key === "Enter" && results[selectedIndex]) {
+      event.preventDefault();
+      handleResultClick(results[selectedIndex]);
     }
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <button 
-        className="docsfn-search-trigger" 
-        onClick={() =&gt; setIsOpen(true)}
+      <button
+        className="docsfn-search-trigger"
+        onClick={() => setIsOpen(true)}
         aria-label="Search documentation"
       >
-        <span className="docsfn-search-icon" aria-hidden="true">🔍</span>
+        <span className="docsfn-search-icon" aria-hidden="true">
+          🔍
+        </span>
         <span className="docsfn-search-placeholder">{placeholder}</span>
         <kbd className="docsfn-search-kbd">
           <span>⌘</span>
@@ -113,79 +197,79 @@ export function DocsSearch({ searchIndex, placeholder = 'Search docs...' }: Docs
 
       <DialogPortal>
         <DialogOverlay className="docsfn-search-overlay" />
-        <DialogContent 
-          className="docsfn-search-content"
-          onKeyDown={handleKeyDown}
-        >
+        <DialogContent className="docsfn-search-content" onKeyDown={handleKeyDown}>
           <div className="docsfn-search-header">
-            <span className="docsfn-search-icon" aria-hidden="true">🔍</span>
+            <span className="docsfn-search-icon" aria-hidden="true">
+              🔍
+            </span>
             <input
               ref={inputRef}
               type="text"
               className="docsfn-search-input"
               placeholder={placeholder}
               value={query}
-              onChange={(e) =&gt; setQuery(e.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
               aria-label="Search query"
             />
-            {query && (
-              <button 
-                onClick={() =&gt; setQuery('')}
+            <select
+              value={scope}
+              onChange={(event) => setScope(event.target.value as SearchScopeFilter)}
+              aria-label="Search scope"
+            >
+              {supportedScopes.map((option) => (
+                <option value={option} key={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            {query ? (
+              <button
+                onClick={() => setQuery("")}
                 className="docsfn-search-clear"
                 aria-label="Clear search"
               >
                 ✕
               </button>
-            )}
+            ) : null}
           </div>
 
           <ScrollArea className="docsfn-search-results">
-            {results.length === 0 && query && (
+            {results.length === 0 && query ? (
               <div className="docsfn-search-empty">
                 <p>No results found for &quot;{query}&quot;</p>
               </div>
-            )}
-            
-            {results.length === 0 && !query && (
+            ) : null}
+            {results.length === 0 && !query ? (
               <div className="docsfn-search-empty">
                 <p>Start typing to search...</p>
               </div>
-            )}
-
-            {results.length &gt; 0 && (
+            ) : null}
+            {results.length > 0 ? (
               <div className="docsfn-search-results-list">
-                {results.map((hit, index) =&gt; (
+                {results.map((result, index) => (
                   <button
-                    key={hit.docId}
-                    onClick={() =&gt; handleResultClick(hit.document.path)}
-                    className={`docsfn-search-item ${index === selectedIndex ? 'selected' : ''}`}
+                    key={`${result.id}:${result.path}`}
+                    onClick={() => handleResultClick(result)}
+                    className={`docsfn-search-item ${index === selectedIndex ? "selected" : ""}`}
                     data-selected={index === selectedIndex}
                   >
                     <div className="docsfn-search-item-header">
                       <span className="docsfn-search-item-kind">
-                        {hit.document.kind === 'page' ? '📄' : hit.document.kind === 'post' ? '📝' : '🔧'}
+                        {result.kind === "page" ? "📄" : result.kind === "post" ? "📝" : "🔧"}
                       </span>
-                      <span className="docsfn-search-item-title">{hit.document.title}</span>
+                      <span className="docsfn-search-item-title">{result.title}</span>
                     </div>
-                    {hit.document.description && (
-                      <p className="docsfn-search-item-desc">{hit.document.description}</p>
-                    )}
+                    {result.summary ? (
+                      <p className="docsfn-search-item-desc">{result.summary}</p>
+                    ) : null}
                     <div className="docsfn-search-item-footer">
-                      <span className="docsfn-search-item-path">{hit.document.path}</span>
+                      <span className="docsfn-search-item-path">{result.path}</span>
                     </div>
                   </button>
                 ))}
               </div>
-            )}
+            ) : null}
           </ScrollArea>
-
-          <div className="docsfn-search-footer">
-            <div className="docsfn-search-commands">
-              <kbd>↑↓</kbd> Navigate
-              <kbd>↵</kbd> Select
-              <kbd>Esc</kbd> Close
-            </div>
-          </div>
         </DialogContent>
       </DialogPortal>
     </Dialog>

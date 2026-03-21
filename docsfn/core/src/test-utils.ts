@@ -1,19 +1,62 @@
 import {
+  DocsCollection,
   DocsContentProvider,
+  DocsProviderListEntriesInput,
+  DocsProviderLoadEntryInput,
+  DocsSourceEntry,
   RawContentEntry,
   DocPage,
   BlogPost,
   ApiReference,
 } from "./types";
+import { createSourceEntryId } from "./provider";
 
 /**
  * Mock content provider for testing
  */
 export class MockContentProvider implements DocsContentProvider {
+  readonly providerId = "mock-content";
+
   constructor(private entries: RawContentEntry[]) {}
 
   async list(): Promise<RawContentEntry[]> {
     return this.entries;
+  }
+
+  async listEntries(
+    input: DocsProviderListEntriesInput
+  ): Promise<DocsSourceEntry[]> {
+    const allowedCollections = new Set<DocsCollection>(input.collections);
+    return this.entries
+      .map((entry) => this.rawEntryToSourceEntry(entry))
+      .filter((entry) => allowedCollections.has(entry.collection));
+  }
+
+  async loadEntry(input: DocsProviderLoadEntryInput): Promise<DocsSourceEntry> {
+    return input.entry;
+  }
+
+  private rawEntryToSourceEntry(entry: RawContentEntry): DocsSourceEntry {
+    const collection =
+      entry.kind === "api"
+        ? "api"
+        : entry.kind === "post"
+          ? "blog"
+          : entry.kind === "asset"
+            ? "assets"
+            : "docs";
+    const relativePath = entry.id;
+
+    return {
+      id: createSourceEntryId(collection, relativePath),
+      collection,
+      relativePath,
+      absolutePath: entry.filepath,
+      entryType: entry.kind === "asset" ? "asset" : "content",
+      frontmatter: entry.frontmatter,
+      body: entry.body,
+      bytes: Buffer.byteLength(entry.body ?? "", "utf8"),
+    };
   }
 }
 

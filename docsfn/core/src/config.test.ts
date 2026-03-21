@@ -1,0 +1,179 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it } from "vitest";
+import { isDocsConfigError, loadDocsConfig } from "./config";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.map(async (dirPath) => {
+      await rm(dirPath, { recursive: true, force: true });
+    })
+  );
+  tempDirs.length = 0;
+});
+
+async function createTempDir(): Promise<string> {
+  const dirPath = await mkdtemp(join(tmpdir(), "docsfn-config-test-"));
+  tempDirs.push(dirPath);
+  return dirPath;
+}
+
+function serializeConfig(config: unknown): string {
+  return `export default ${JSON.stringify(config, null, 2)};\n`;
+}
+
+describe("loadDocsConfig", () => {
+  it("loads explicit configPath before default config file", async () => {
+    const cwd = await createTempDir();
+    const explicitConfigPath = join(cwd, "custom.config.mjs");
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Default Config", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: { root: cwd, docsDir: "content/docs" },
+      })
+    );
+
+    await writeFile(
+      explicitConfigPath,
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Explicit Config", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: { root: cwd, docsDir: "content/docs" },
+      })
+    );
+
+    const loaded = await loadDocsConfig({
+      cwd,
+      configPath: explicitConfigPath,
+    });
+
+    expect(loaded.site.title).toBe("Explicit Config");
+  });
+
+  it("loads docsfn.config.ts when present", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.ts"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "TypeScript Config", basePath: "/docs" },
+        compat: { preset: "fumadocs-v15" },
+        content: { root: cwd, docsDir: "content/docs", apiDir: "api" },
+      })
+    );
+
+    const loaded = await loadDocsConfig({ cwd });
+    expect(loaded.site.title).toBe("TypeScript Config");
+    expect(loaded.compat?.preset).toBe("fumadocs-v15");
+  });
+
+  it("fails closed with DOCS_CONFIG_INVALID when config shape is invalid", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        site: { title: "Invalid Config", basePath: "docs" },
+        compat: { preset: "none" },
+        content: { root: cwd },
+      })
+    );
+
+    try {
+      await loadDocsConfig({ cwd });
+      throw new Error("expected loadDocsConfig to throw");
+    } catch (error) {
+      expect(isDocsConfigError(error)).toBe(true);
+      expect((error as { code: string }).code).toBe("DOCS_CONFIG_INVALID");
+      expect((error as Error).message).toContain("site.basePath must start with '/'");
+      expect((error as Error).message).toContain("schemaVersion must be 1");
+    }
+  });
+
+  it("rejects unsupported compatibility presets", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Invalid Compat", basePath: "/docs" },
+        compat: { preset: "unsupported-preset" },
+        content: { root: cwd, docsDir: "content/docs" },
+      })
+    );
+
+    await expect(loadDocsConfig({ cwd })).rejects.toMatchObject({
+      code: "DOCS_CONFIG_INVALID",
+    });
+  });
+
+  it("rejects invalid versions config with multiple defaults", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Invalid Versions", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: { root: cwd, docsDir: "content/docs" },
+        versions: {
+          mode: "path-prefix",
+          versions: [
+            { slug: "v1", label: "Version 1", default: true },
+            { slug: "v2", label: "Version 2", default: true },
+          ],
+        },
+      })
+    );
+
+    await expect(loadDocsConfig({ cwd })).rejects.toMatchObject({
+      code: "DOCS_CONFIG_INVALID",
+    });
+  });
+
+  it("returns deterministic defaults only when no config file exists", async () => {
+    const cwd = await createTempDir();
+
+    const loaded = await loadDocsConfig({ cwd });
+
+    expect(loaded).toMatchObject({
+      schemaVersion: 1,
+      site: {
+        title: "Docs",
+        basePath: "/docs",
+      },
+      compat: {
+        preset: "none",
+      },
+      content: {
+        root: cwd,
+        docsDir: "content/docs",
+        pagesDir: "pages",
+        blogDir: "blog",
+        apiDir: "api",
+        assetsDir: "public",
+        metaFileName: "meta.json",
+      },
+      auth: {
+        enabled: false,
+        mode: "public",
+      },
+      analytics: {
+        enabled: false,
+        provider: "watchfn",
+        respectDnt: true,
+      },
+    });
+  });
+});

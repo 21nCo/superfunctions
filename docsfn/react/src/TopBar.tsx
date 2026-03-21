@@ -1,9 +1,17 @@
-import React from 'react';
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@uifn/react';
+import React from "react";
+import type { DocsTopNavItem } from "@docsfn/core";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@uifn/react";
+import type { DocsPageSurface } from "./DocsLayout";
 
 export interface TopBarLink {
   label: string;
   href: string;
+  external?: boolean;
 }
 
 export interface TopBarDropdown {
@@ -14,6 +22,7 @@ export interface TopBarDropdown {
 export type TopBarItem = TopBarLink | TopBarDropdown;
 
 export interface TopBarProps {
+  surface?: DocsPageSurface;
   logo?: React.ReactNode;
   items?: TopBarItem[];
   searchTrigger?: React.ReactNode;
@@ -23,57 +32,80 @@ export interface TopBarProps {
 }
 
 function isDropdown(item: TopBarItem): item is TopBarDropdown {
-  return 'items' in item;
+  return "items" in item;
 }
 
-export function TopBar({ 
-  logo, 
-  items = [], 
-  searchTrigger, 
+function mapTopNavItems(topNav: DocsTopNavItem[]): TopBarItem[] {
+  return topNav.map((item) => {
+    if (Array.isArray(item.children) && item.children.length > 0) {
+      return {
+        label: item.label,
+        items: item.children.map((child) => ({
+          label: child.label,
+          href: child.href,
+          external: child.external,
+        })),
+      };
+    }
+
+    return {
+      label: item.label,
+      href: item.href,
+      external: item.external,
+    };
+  });
+}
+
+function renderLink(item: TopBarLink, className: string) {
+  return (
+    <a
+      href={item.href}
+      className={className}
+      target={item.external ? "_blank" : undefined}
+      rel={item.external ? "noreferrer noopener" : undefined}
+    >
+      {item.label}
+    </a>
+  );
+}
+
+export function TopBar({
+  surface,
+  logo,
+  items,
+  searchTrigger,
   versionSelector,
   mobileMenuTrigger,
-  className 
+  className,
 }: TopBarProps) {
-  return (
-    <header className={`docsfn-topbar ${className || ''}`}>
-      <div className="docsfn-topbar-container">
-        {/* Logo */}
-        {logo && (
-          <div className="docsfn-topbar-logo">
-            {logo}
-          </div>
-        )}
+  const resolvedItems = items ?? mapTopNavItems(surface?.topNav ?? []);
 
-        {/* Desktop Navigation */}
+  return (
+    <header className={`docsfn-topbar ${className || ""}`}>
+      <div className="docsfn-topbar-container">
+        {logo ? <div className="docsfn-topbar-logo">{logo}</div> : null}
+
         <nav className="docsfn-topbar-nav" aria-label="Main navigation">
-          {items.map((item, index) => {
+          {resolvedItems.map((item, index) => {
             if (isDropdown(item)) {
               return (
-                <DropdownMenu key={index}>
+                <DropdownMenu key={`${item.label}:${index}`}>
                   <DropdownMenuTrigger className="docsfn-topbar-dropdown-trigger">
                     {item.label}
-                    <svg 
-                      width="12" 
-                      height="12" 
-                      viewBox="0 0 12 12" 
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <path 
-                        d="M3 5L6 8L9 5" 
-                        stroke="currentColor" 
-                        strokeWidth="1.5" 
-                        strokeLinecap="round" 
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path
+                        d="M3 5L6 8L9 5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
                         strokeLinejoin="round"
                       />
                     </svg>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="docsfn-topbar-dropdown-content">
                     {item.items.map((subItem, subIndex) => (
-                      <DropdownMenuItem key={subIndex}>
-                        <a href={subItem.href} className="docsfn-topbar-dropdown-item">
-                          {subItem.label}
-                        </a>
+                      <DropdownMenuItem key={`${subItem.label}:${subIndex}`}>
+                        {renderLink(subItem, "docsfn-topbar-dropdown-item")}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>
@@ -82,18 +114,13 @@ export function TopBar({
             }
 
             return (
-              <a 
-                key={index}
-                href={item.href} 
-                className="docsfn-topbar-link"
-              >
-                {item.label}
-              </a>
+              <React.Fragment key={`${item.label}:${index}`}>
+                {renderLink(item, "docsfn-topbar-link")}
+              </React.Fragment>
             );
           })}
         </nav>
 
-        {/* Right side actions */}
         <div className="docsfn-topbar-actions">
           {searchTrigger}
           {versionSelector}

@@ -1,23 +1,62 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { axe } from 'vitest-axe';
-import { Button } from '../react/accordion.test'; // Example import or just use a generic button
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '../react/accordion';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './accordion';
+import { Checkbox } from './checkbox';
+import { Dialog, DialogContent, DialogPortal, DialogTitle, DialogTrigger } from './dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './dropdown-menu';
 
-// We need a proper example to test.
 const AccordionExample = () => (
   <Accordion type="single" collapsible>
     <AccordionItem value="item-1">
-      <AccordionTrigger>Is it accessible?</AccordionTrigger>
+      <AccordionTrigger>Section 1</AccordionTrigger>
       <AccordionContent>Yes.</AccordionContent>
     </AccordionItem>
   </Accordion>
 );
 
-describe.skip('Accessibility', () => {
-  it('Accordion should have no accessibility violations', async () => {
+describe('Accessibility smoke', () => {
+  it('collection family smoke has no axe violations', async () => {
     const { container } = render(<AccordionExample />);
     const results = await axe(container);
-    expect(results).toHaveNoViolations();
+    expect(results.violations).toHaveLength(0);
+  });
+
+  it('form family smoke has no axe violations', async () => {
+    const { container } = render(<Checkbox aria-label="Accept terms" defaultChecked={false} />);
+    const results = await axe(container);
+    expect(results.violations).toHaveLength(0);
+  });
+
+  it('popup family smoke has no axe violations', async () => {
+    const { container } = render(
+      <Dialog>
+        <DialogTrigger>Open Dialog</DialogTrigger>
+        <DialogPortal>
+          <DialogContent>
+            <DialogTitle>Dialog title</DialogTitle>
+            <p>Dialog body</p>
+          </DialogContent>
+        </DialogPortal>
+      </Dialog>
+    );
+
+    fireEvent.click(screen.getByText('Open Dialog'));
+    const results = await axe(container);
+    expect(results.violations).toHaveLength(0);
+  });
+
+  it('menu family smoke has no axe violations', async () => {
+    const { container } = render(
+      <DropdownMenu defaultOpen>
+        <DropdownMenuTrigger>Open Menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Item</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+
+    const results = await axe(container);
+    expect(results.violations).toHaveLength(0);
   });
 });

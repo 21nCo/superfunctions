@@ -1,41 +1,43 @@
-export interface AlertDialogProps {
-  open?: boolean;
-  defaultOpen?: boolean;
-  onOpenChange?: (open: boolean) => void;
+import {
+  createDialog,
+  type DialogActions,
+  type DialogChangeReason,
+  type DialogMachine,
+  type DialogProps,
+  type DialogState,
+} from './dialog';
+
+export interface AlertDialogProps
+  extends Omit<DialogProps, 'role' | 'outsideInteractionBehavior' | 'modal'> {}
+
+export interface AlertDialogState extends DialogState {}
+
+export interface AlertDialogActions extends DialogActions {}
+
+export interface AlertDialogMachine
+  extends Omit<DialogMachine, 'actions' | 'state' | 'getState' | 'setOpen'> {
+  readonly state: AlertDialogState;
+  readonly actions: AlertDialogActions;
+  setOpen: (open: boolean, reason?: DialogChangeReason) => void;
+  getState: () => AlertDialogState;
 }
 
-export interface AlertDialogState {
-  open: boolean;
-}
-
-export function createAlertDialog(props: AlertDialogProps) {
-  // Logic is identical to Dialog, just different role/semantics often
-  const { onOpenChange } = props;
-  let open = props.open !== undefined ? props.open : (props.defaultOpen ?? false);
-
-  const listeners = new Set<(state: AlertDialogState) => void>();
-
-  const getState = (): AlertDialogState => ({ open });
-
-  const notify = () => {
-    const state = getState();
-    listeners.forEach(l => l(state));
-    if (onOpenChange) {
-      onOpenChange(state.open);
-    }
-  };
-
-  const setOpen = (newOpen: boolean) => {
-    open = newOpen;
-    notify();
-  };
+export function createAlertDialog(props: AlertDialogProps): AlertDialogMachine {
+  const dialog = createDialog({
+    ...props,
+    role: 'alertdialog',
+    modal: true,
+    outsideInteractionBehavior: 'disallow',
+    closeOnOutsideInteraction: false,
+  });
 
   return {
-    state: getState(),
-    setOpen,
-    subscribe: (callback: (state: AlertDialogState) => void) => {
-      listeners.add(callback);
-      return () => listeners.delete(callback);
-    }
+    get state() {
+      return dialog.state;
+    },
+    actions: dialog.actions,
+    setOpen: dialog.setOpen,
+    getState: dialog.getState,
+    subscribe: dialog.subscribe,
   };
 }

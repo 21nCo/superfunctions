@@ -1,70 +1,45 @@
 # @uifn/svelte
 
-Accessible, unstyled Svelte components built on `@uifn/core` primitives.
+Unstyled, accessible Svelte primitives built on `@uifn/core`.
+
+## Status
+
+GA
 
 ## Installation
 
 ```bash
-npm install @uifn/svelte
+npm install @uifn/core @uifn/svelte
 ```
 
 ## Usage
 
 ```svelte
-<script>
-  import { Checkbox, CheckboxIndicator } from '@uifn/svelte';
+<script lang="ts">
+  import { Checkbox, CheckboxIndicator } from "@uifn/svelte";
 </script>
 
 <Checkbox>
-  <CheckboxIndicator>
-    <CheckIcon />
-  </CheckboxIndicator>
+  <CheckboxIndicator>✓</CheckboxIndicator>
 </Checkbox>
 ```
 
-## Components
+## Public Surface
 
-- Accordion
-- Alert Dialog
-- Avatar
-- Badge
-- Checkbox
-- Collapsible
-- Combobox
-- Context Menu
-- Dialog
-- Dropdown Menu
-- Hover Card
-- Label
-- Menu Bar
-- Popover
-- Progress
-- Radio Group
-- Scroll Area
-- Select
-- Separator
-- Slider
-- Switch
-- Tabs
-- Toast
-- Toggle
-- Toggle Group
-- Toolbar
-- Tooltip
-- Virtualized List
+`@uifn/svelte` exports the same primitive family names documented in the `uifn` support matrix, including Accordion, Dialog, DropdownMenu, Select, Tabs, Toast, Tooltip, and supporting display helpers such as Avatar, Badge, Label, and VirtualizedList.
 
-## Features
+## Display Helpers Contract
 
-- **Accessible**: WCAG 2.1 Level AA compliant with full keyboard navigation
-- **Unstyled**: No styling opinions, use with any CSS solution
-- **Composable**: Svelte component composition
-- **TypeScript**: Full type definitions included
-- **Controllable**: Both controlled and uncontrolled modes supported
+- `Avatar`, `Badge`, `Label`, `Separator`, and `VirtualizedList` are part of the GA Svelte adapter surface.
+- `AvatarFallback` rendering is deterministic: fallback remains visible until avatar status becomes `loaded`, with optional `delayMs` before fallback appears.
+- `VirtualizedList` is adapter-only and not part of `@uifn/core`.
+- `VirtualizedList` windowing is deterministic: `overscan` defaults to `3`; render contract uses snippet children `children(item, index)` with required `items`, `itemHeight`, and `height`.
 
-## Documentation
+## Compatibility
 
-For detailed documentation and examples, visit the [UIFn documentation](https://github.com/21nCo/super-functions/tree/main/uifn).
+- Svelte: `5.x`
+- Node.js: `18.x`, `20.x`, `22.x`
 
 ## License
 
-Apache-2.0
+MIT

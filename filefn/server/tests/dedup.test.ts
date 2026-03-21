@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createDeduplicationService } from '../src/dedup/service.js';
+import { createFileFn } from '../src/index.js';
 import type { Adapter } from '@superfunctions/db';
 import { Readable } from 'node:stream';
+import { createFakeStorageAdapter } from '@superfunctions/storage';
 
 function createMockDb(): Adapter {
   const storage = new Map<string, Map<string, unknown>>();
@@ -408,6 +410,69 @@ describe('Deduplication Service', () => {
       const isValid = await service.verifyHash('test/verify.txt', wrongHash, storage);
 
       expect(isValid).toBe(false);
+    });
+  });
+
+  describe('Public dedupe config wiring', () => {
+    it('createFileFn uses dedup.enabled to control dedupe behavior', async () => {
+      const storage = createFakeStorageAdapter({
+        capabilities: {
+          signedUploadUrls: true,
+          signedDownloadUrls: true,
+          multipart: true,
+          proxyStreamingUpload: false,
+          proxyStreamingDownload: false,
+        },
+        async statObject(input) {
+          return { key: input.key, size: 3 };
+        },
+      });
+
+      const fileFnWithoutDedup = createFileFn({
+        db: createMockDb(),
+        storage,
+        policies: [{ name: 'user-avatar', contentTypes: ['text/plain'], maxSizeBytes: 1024 }],
+        dedup: { enabled: false },
+        auth: { required: false },
+      });
+
+      const { uploadSessionId: noDedupSessionId } = await fileFnWithoutDedup.createUploadSession(
+        { policy: 'user-avatar', fileName: 'a.txt', size: 3, mimeType: 'text/plain' },
+        { principalId: 'user_123', tenantId: 'org_123' }
+      );
+      await fileFnWithoutDedup.completeUploadPart(
+        { uploadSessionId: noDedupSessionId, partNumber: 1, etag: 'etag-1', size: 3 },
+        { principalId: 'user_123', tenantId: 'org_123' }
+      );
+      await expect(
+        fileFnWithoutDedup.completeUploadSession(
+          { uploadSessionId: noDedupSessionId },
+          { principalId: 'user_123', tenantId: 'org_123' }
+        )
+      ).resolves.toMatchObject({ fileId: expect.any(String), versionId: expect.any(String) });
+
+      const fileFnWithDedup = createFileFn({
+        db: createMockDb(),
+        storage,
+        policies: [{ name: 'user-avatar', contentTypes: ['text/plain'], maxSizeBytes: 1024 }],
+        dedup: { enabled: true },
+        auth: { required: false },
+      });
+
+      const { uploadSessionId: dedupSessionId } = await fileFnWithDedup.createUploadSession(
+        { policy: 'user-avatar', fileName: 'b.txt', size: 3, mimeType: 'text/plain' },
+        { principalId: 'user_123', tenantId: 'org_123' }
+      );
+      await fileFnWithDedup.completeUploadPart(
+        { uploadSessionId: dedupSessionId, partNumber: 1, etag: 'etag-2', size: 3 },
+        { principalId: 'user_123', tenantId: 'org_123' }
+      );
+      await expect(
+        fileFnWithDedup.completeUploadSession(
+          { uploadSessionId: dedupSessionId },
+          { principalId: 'user_123', tenantId: 'org_123' }
+        )
+      ).rejects.toThrow('streaming downloads required for deduplication');
     });
   });
 });

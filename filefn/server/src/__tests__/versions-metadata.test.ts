@@ -50,7 +50,9 @@ function createFakeDbAdapter(): Adapter {
     capabilities: FAKE_CAPABILITIES,
     async create(params) {
       const table = getTable(params.model);
-      const id = params.data.uploadSessionId || params.data.fileId || params.data.versionId || params.data.permissionId || `id_${idCounter++}`;
+      const id = params.model === 'fileVersions'
+        ? (params.data.versionId || params.data.fileId || params.data.uploadSessionId || params.data.permissionId || `id_${idCounter++}`)
+        : (params.data.uploadSessionId || params.data.fileId || params.data.versionId || params.data.permissionId || `id_${idCounter++}`);
       const record = { ...params.data, _id: id };
       table.set(id, record);
       return record;
@@ -113,6 +115,14 @@ function createFakeDbAdapter(): Adapter {
     async getSchemaVersion() { return 0; },
     async setSchemaVersion() {},
     async validateSchema() { return { valid: true }; },
+    internal: {
+      async ensureTable() {},
+      async create() { return {}; },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update() { return 0; },
+      async delete() { return 0; },
+    },
   } as Adapter;
 }
 
@@ -210,6 +220,59 @@ describe('@filefn/server version metadata', () => {
       expect(body.data.mimeType).toBe('image/png');
       expect(body.data.createdAt).toBeDefined();
       expect(body.requestId).toBe('req_070');
+    });
+  });
+
+  describe('TV-VERSION-001: provider getFile({ versionId }) semantics', () => {
+    it('returns metadata for the requested non-current version', async () => {
+      const { fileId, versionId: oldVersionId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
+      const newVersionId = 'ver_new_manual';
+
+      await db.create({
+        model: 'fileVersions',
+        data: {
+          versionId: newVersionId,
+          fileId,
+          storageKey: `uploads/${fileId}/${newVersionId}`,
+          mimeType: 'image/jpeg',
+          size: 4096,
+          checksumSha256Base64: null,
+          createdAt: '2026-03-20T16:00:00.000Z',
+        },
+      });
+
+      await db.update({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        data: {
+          currentVersionId: newVersionId,
+          mimeType: 'image/jpeg',
+          size: 4096,
+          updatedAt: '2026-03-20T16:00:00.000Z',
+        },
+      });
+
+      const result = await fileFn.getFile(
+        { fileId, versionId: oldVersionId },
+        { principalId: 'user_123' },
+      ) as any;
+
+      expect(result.fileId).toBe(fileId);
+      expect(result.versionId).toBe(oldVersionId);
+      expect(result.currentVersionId).toBe(oldVersionId);
+      expect(result.mimeType).toBe('image/png');
+    });
+
+    it('throws FILEFN_NOT_FOUND for cross-file version binding mismatch', async () => {
+      const { fileId: fileId1 } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
+      const { versionId: versionId2 } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
+
+      await expect(
+        fileFn.getFile(
+          { fileId: fileId1, versionId: versionId2 },
+          { principalId: 'user_123' },
+        ),
+      ).rejects.toMatchObject({ code: 'FILEFN_NOT_FOUND' });
     });
   });
 

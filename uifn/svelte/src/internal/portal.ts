@@ -1,21 +1,14 @@
-export function portal(node: HTMLElement, target: HTMLElement | string = 'body') {
-  let targetNode: Element | null = null;
-  
-  function update(newTarget: HTMLElement | string) {
-    targetNode = typeof newTarget === 'string' ? document.querySelector(newTarget) : newTarget;
-    if (targetNode) {
-      targetNode.appendChild(node);
-    }
-  }
+import { createPortalMount } from '@uifn/core/utils/portal';
 
-  update(target);
+export function portal(node: HTMLElement, target: HTMLElement | string = 'body') {
+  const portalMount = createPortalMount(node, target);
 
   return {
-    update,
+    update(newTarget: HTMLElement | string) {
+      portalMount.update(newTarget);
+    },
     destroy() {
-      if (node.parentNode) {
-        node.parentNode.removeChild(node);
-      }
+      portalMount.destroy();
     }
   };
 }

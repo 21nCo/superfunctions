@@ -1,0 +1,25 @@
+# Phase 05
+- Phase goal: Make delete and cleanup semantics fully production-safe, including dedupe-safe storage deletion.
+- In scope:
+  - delete cascade for permissions, shares, artifacts, pending uploads
+  - reference-safe physical deletion
+  - quota adjustments under dedupe/reference sharing
+  - public dedupe configuration wiring
+- Out of scope:
+  - rate limiting and observability
+- Deliverables:
+  - `filefn/server/src/files/service.ts`
+  - `filefn/server/src/upload-sessions/service.ts`
+  - `filefn/server/src/dedup/service.ts`
+  - `filefn/server/src/index.ts`
+  - `filefn/server/src/__tests__/delete-cascade.test.ts`
+  - `filefn/server/tests/dedup.test.ts`
+- Requirements covered: FILE-004, DEDUPE-001, UPLOAD-005
+- Implementation tasks:
+  - Implement delete cascade over all related metadata rows.
+  - Add live-reference checks before physical storage deletion.
+  - Wire dedupe config from public entry points.
+  - Ensure quota deltas reflect last-reference removal only.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/server && npm test -- --run`
+- Stop condition: delete cascade and dedupe vectors pass together.

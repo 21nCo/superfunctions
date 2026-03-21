@@ -157,6 +157,71 @@ const comment = await plug.github['issues.createComment']({
 
 **Returns:** Created comment object
 
+### issues.get
+
+Fetch a single issue by number.
+
+```typescript
+const issue = await plug.github['issues.get']({
+  userId: 'user-123',
+  params: {
+    owner: '21nCo',
+    repo: 'super-functions',
+    issueNumber: 42
+  }
+});
+```
+
+### issues.update
+
+Update an existing issue (title/body/state/labels/assignees).
+
+```typescript
+const issue = await plug.github['issues.update']({
+  userId: 'user-123',
+  params: {
+    owner: '21nCo',
+    repo: 'super-functions',
+    issueNumber: 42,
+    state: 'closed'
+  }
+});
+```
+
+### pulls.create
+
+Create a pull request.
+
+```typescript
+const pr = await plug.github['pulls.create']({
+  userId: 'user-123',
+  params: {
+    owner: '21nCo',
+    repo: 'super-functions',
+    title: 'Conduct phase 1',
+    head: 'feat/conduct-phase-1',
+    base: 'next'
+  }
+});
+```
+
+### pulls.createReview
+
+Create a pull request review comment/approval/change request.
+
+```typescript
+const review = await plug.github['pulls.createReview']({
+  userId: 'user-123',
+  params: {
+    owner: '21nCo',
+    repo: 'super-functions',
+    pullNumber: 42,
+    body: 'Audit summary',
+    event: 'COMMENT'
+  }
+});
+```
+
 ## Triggers
 
 ### issues.opened
@@ -191,6 +256,55 @@ plug.webhooks.on('github', 'issues.opened', async (event) => {
 - `issue`: Issue object
 - `repository`: Repository object
 - `sender`: User who opened the issue
+
+### pull_request.closed
+
+Triggered when a pull request is closed (including merged PRs).
+
+Sample payload shape:
+
+```json
+{
+  "action": "closed",
+  "pull_request": {
+    "id": 9,
+    "number": 42,
+    "title": "Conduct phase 1",
+    "html_url": "https://github.com/21nCo/super-functions/pull/42",
+    "merged": true
+  },
+  "repository": {
+    "name": "super-functions",
+    "owner": { "login": "21nCo" }
+  }
+}
+```
+
+### issue_comment.created
+
+Triggered when an issue comment is created.
+
+Sample payload shape:
+
+```json
+{
+  "action": "created",
+  "issue": {
+    "id": 5,
+    "number": 42,
+    "title": "Issue title",
+    "html_url": "https://github.com/21nCo/super-functions/issues/42"
+  },
+  "comment": {
+    "id": 10,
+    "body": "/conduct spec"
+  },
+  "repository": {
+    "name": "super-functions",
+    "owner": { "login": "21nCo" }
+  }
+}
+```
 
 ## Rate Limits
 

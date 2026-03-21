@@ -115,6 +115,13 @@ export function createRouter(config: FileFnRouterConfig) {
         return fileRoutes.proxyDownloadFile(request, proxyVersionDownloadMatch[1], proxyVersionDownloadMatch[2]);
       }
 
+      if (sharesRoutes) {
+        const proxyShareDownloadMatch = path.match(/^\/proxy\/share-links\/([^/]+)\/download$/);
+        if (proxyShareDownloadMatch && method === 'GET') {
+          return sharesRoutes.proxyDownloadViaShareLink(request, proxyShareDownloadMatch[1]);
+        }
+      }
+
       // Grant routes
       if (grantsRoutes) {
         const permissionsMatch = path.match(/^\/([^/]+)\/permissions$/);
@@ -161,7 +168,12 @@ export function createRouter(config: FileFnRouterConfig) {
 
         const artifactDownloadMatch = path.match(/^\/([^/]+)\/artifacts\/([^/]+)\/download$/);
         if (artifactDownloadMatch && method === 'GET') {
-          return processingRoutes.downloadArtifact(request, artifactDownloadMatch[2]);
+          return processingRoutes.downloadArtifact(request, artifactDownloadMatch[1], artifactDownloadMatch[2]);
+        }
+
+        const proxyArtifactDownloadMatch = path.match(/^\/proxy\/files\/([^/]+)\/artifacts\/([^/]+)\/download$/);
+        if (proxyArtifactDownloadMatch && method === 'GET') {
+          return processingRoutes.proxyDownloadArtifact(request, proxyArtifactDownloadMatch[1], proxyArtifactDownloadMatch[2]);
         }
 
         const processMatch = path.match(/^\/([^/]+)\/process$/);

@@ -1,0 +1,196 @@
+import { InMemorySearchFn } from "searchfn";
+import { createDiagnostic, createDocsError } from "./diagnostics";
+import type { DocsSearchArtifact, DocsSearchScope } from "./search";
+
+export type DocsSearchScopeFilter = DocsSearchScope | "all";
+
+export interface DocsSearchRuntimeResultItem {
+  id: string;
+  scope: DocsSearchScope;
+  kind: "page" | "api" | "post";
+  path: string;
+  title: string;
+  summary: string;
+  score: number;
+}
+
+export interface DocsSearchRuntimeQueryInput {
+  query: string;
+  scope?: DocsSearchScopeFilter;
+  limit?: number;
+}
+
+export interface DocsSearchRuntime {
+  ensureReady(): Promise<void>;
+  query(input: DocsSearchRuntimeQueryInput): Promise<DocsSearchRuntimeResultItem[]>;
+  getScopes(): Promise<DocsSearchScope[]>;
+}
+
+export interface CreateDocsSearchRuntimeInput {
+  artifact?: DocsSearchArtifact;
+  loadArtifact?: () => Promise<DocsSearchArtifact>;
+}
+
+interface ValidatedArtifact {
+  artifact: DocsSearchArtifact;
+  engine: InMemorySearchFn;
+}
+
+function assertValidArtifact(artifact: DocsSearchArtifact): void {
+  if (artifact.schemaVersion !== 1 || artifact.engine !== "searchfn") {
+    throw createDocsError({
+      code: "DOCS_ARTIFACT_INVALID",
+      message: "search artifact schema is invalid",
+      diagnostics: [
+        createDiagnostic({
+          code: "DOCS_ARTIFACT_INVALID",
+          message: "search artifact schema is invalid",
+        }),
+      ],
+    });
+  }
+
+  if (!Array.isArray(artifact.documents) || !artifact.snapshot) {
+    throw createDocsError({
+      code: "DOCS_ARTIFACT_INVALID",
+      message: "search artifact is malformed",
+      diagnostics: [
+        createDiagnostic({
+          code: "DOCS_ARTIFACT_INVALID",
+          message: "search artifact is malformed",
+        }),
+      ],
+    });
+  }
+}
+
+function sortResults(
+  results: DocsSearchRuntimeResultItem[],
+  limit: number
+): DocsSearchRuntimeResultItem[] {
+  return [...results]
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      const titleCompare = left.title.localeCompare(right.title, "en", {
+        sensitivity: "variant",
+        numeric: true,
+      });
+      if (titleCompare !== 0) {
+        return titleCompare;
+      }
+      const pathCompare = left.path.localeCompare(right.path, "en", {
+        sensitivity: "variant",
+        numeric: true,
+      });
+      if (pathCompare !== 0) {
+        return pathCompare;
+      }
+      return left.id.localeCompare(right.id, "en", {
+        sensitivity: "variant",
+        numeric: true,
+      });
+    })
+    .slice(0, Math.max(1, limit));
+}
+
+export function createDocsSearchRuntime(
+  input: CreateDocsSearchRuntimeInput
+): DocsSearchRuntime {
+  let validated: ValidatedArtifact | null = null;
+  let loadingPromise: Promise<ValidatedArtifact> | null = null;
+
+  async function loadValidated(): Promise<ValidatedArtifact> {
+    if (validated) {
+      return validated;
+    }
+    if (loadingPromise) {
+      return loadingPromise;
+    }
+
+    loadingPromise = (async () => {
+      const artifact = input.artifact ?? (input.loadArtifact ? await input.loadArtifact() : null);
+      if (!artifact) {
+        throw createDocsError({
+          code: "DOCS_ARTIFACT_INVALID",
+          message: "search runtime was created without an artifact or loader",
+          diagnostics: [
+            createDiagnostic({
+              code: "DOCS_ARTIFACT_INVALID",
+              message: "search runtime was created without an artifact or loader",
+            }),
+          ],
+        });
+      }
+
+      assertValidArtifact(artifact);
+      const engine = new InMemorySearchFn({
+        fields: artifact.fields,
+        pipeline: {
+          enableEdgeNGrams: true,
+          edgeNGramMinLength: 2,
+        },
+      });
+      engine.importSnapshot(artifact.snapshot);
+      validated = { artifact, engine };
+      return validated;
+    })();
+
+    try {
+      return await loadingPromise;
+    } finally {
+      loadingPromise = null;
+    }
+  }
+
+  return {
+    async ensureReady(): Promise<void> {
+      await loadValidated();
+    },
+    async getScopes(): Promise<DocsSearchScope[]> {
+      const loaded = await loadValidated();
+      return [...loaded.artifact.scopes];
+    },
+    async query(queryInput: DocsSearchRuntimeQueryInput): Promise<DocsSearchRuntimeResultItem[]> {
+      const loaded = await loadValidated();
+      const normalizedQuery = queryInput.query.trim();
+      if (!normalizedQuery) {
+        return [];
+      }
+
+      const scope = queryInput.scope ?? "all";
+      if (scope !== "all" && !loaded.artifact.scopes.includes(scope)) {
+        throw createDocsError({
+          code: "DOCS_CONFIG_INVALID",
+          message: `unknown search scope ${scope}`,
+          diagnostics: [
+            createDiagnostic({
+              code: "DOCS_CONFIG_INVALID",
+              message: `unknown search scope ${scope}`,
+            }),
+          ],
+        });
+      }
+
+      const hits = loaded.engine.searchDetailed(normalizedQuery, {
+        includeStored: true,
+        limit: Math.max(queryInput.limit ?? 20, 20),
+      });
+      const mapped = hits
+        .map((hit) => ({
+          id: String(hit.docId),
+          score: hit.score,
+          scope: String(hit.document?.scope ?? "") as DocsSearchScope,
+          kind: String(hit.document?.kind ?? "") as "page" | "api" | "post",
+          path: String(hit.document?.path ?? ""),
+          title: String(hit.document?.title ?? ""),
+          summary: String(hit.document?.summary ?? ""),
+        }))
+        .filter((item) => item.path.length > 0 && item.title.length > 0)
+        .filter((item) => scope === "all" || item.scope === scope);
+
+      return sortResults(mapped, queryInput.limit ?? 20);
+    },
+  };
+}

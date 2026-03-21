@@ -154,14 +154,21 @@ export function generateDrizzleSchema(
 
     usedImports.add(tableConstructor);
     usedImports.add("text");
-    usedImports.add("bigint");
     usedImports.add("primaryKey");
     usedImports.add("uniqueIndex");
     usedImports.add("index");
 
+    // SQLite has no bigint — use integer instead
+    const tsCol = dialect === "sqlite"
+      ? (name: string) => { usedImports.add("integer"); return `integer("${name}")`; }
+      : (name: string) => { usedImports.add("bigint"); return `bigint("${name}", { mode: "number" })`; };
+
     lines.push(
       `export const ${permissionsVarName} = ${tableConstructor}("${permissionsTableName}", {`,
     );
+    if (nsEnabled) {
+      lines.push(`  __ns: text("__ns"),`);
+    }
     lines.push(`  id: text("id").notNull(),`);
     lines.push(`  resourceType: text("resource_type").notNull(),`);
     lines.push(`  resourceNs: text("resource_ns").notNull(),`);
@@ -171,8 +178,8 @@ export function generateDrizzleSchema(
     lines.push(`  grantKind: text("grant_kind").notNull(),`);
     lines.push(`  sourceRef: text("source_ref"),`);
     lines.push(`  grantedBy: text("granted_by").notNull(),`);
-    lines.push(`  grantedAt: bigint("granted_at", { mode: "number" }).notNull(),`);
-    lines.push(`  revokedAt: bigint("revoked_at", { mode: "number" }),`);
+    lines.push(`  grantedAt: ${tsCol("granted_at")}.notNull(),`);
+    lines.push(`  revokedAt: ${tsCol("revoked_at")},`);
     lines.push(`}, (table) => [`);
     lines.push(`  primaryKey({ columns: [table.id] }),`);
     lines.push(
@@ -197,12 +204,15 @@ export function generateDrizzleSchema(
     lines.push(
       `export const ${membershipsVarName} = ${tableConstructor}("${membershipsTableName}", {`,
     );
+    if (nsEnabled) {
+      lines.push(`  __ns: text("__ns"),`);
+    }
     lines.push(`  id: text("id").notNull(),`);
     lines.push(`  namespace: text("namespace").notNull(),`);
     lines.push(`  actorId: text("actor_id").notNull(),`);
     lines.push(`  principalId: text("principal_id").notNull(),`);
-    lines.push(`  grantedAt: bigint("granted_at", { mode: "number" }).notNull(),`);
-    lines.push(`  revokedAt: bigint("revoked_at", { mode: "number" }),`);
+    lines.push(`  grantedAt: ${tsCol("granted_at")}.notNull(),`);
+    lines.push(`  revokedAt: ${tsCol("revoked_at")},`);
     lines.push(`}, (table) => [`);
     lines.push(`  primaryKey({ columns: [table.id] }),`);
     lines.push(
@@ -221,12 +231,15 @@ export function generateDrizzleSchema(
     lines.push(
       `export const ${hierarchyVarName} = ${tableConstructor}("${hierarchyTableName}", {`,
     );
+    if (nsEnabled) {
+      lines.push(`  __ns: text("__ns"),`);
+    }
     lines.push(`  id: text("id").notNull(),`);
     lines.push(`  namespace: text("namespace").notNull(),`);
     lines.push(`  principalId: text("principal_id").notNull(),`);
     lines.push(`  parentPrincipalId: text("parent_principal_id").notNull(),`);
-    lines.push(`  createdAt: bigint("created_at", { mode: "number" }).notNull(),`);
-    lines.push(`  revokedAt: bigint("revoked_at", { mode: "number" }),`);
+    lines.push(`  createdAt: ${tsCol("created_at")}.notNull(),`);
+    lines.push(`  revokedAt: ${tsCol("revoked_at")},`);
     lines.push(`}, (table) => [`);
     lines.push(`  primaryKey({ columns: [table.id] }),`);
     lines.push(

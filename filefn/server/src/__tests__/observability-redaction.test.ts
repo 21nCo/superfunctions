@@ -121,6 +121,36 @@ describe('@filefn/server observability redaction', () => {
     });
   });
 
+  describe('Upload session token redaction', () => {
+    it('should redact upload session token fields while preserving safe IDs', () => {
+      const context: LogContext = {
+        requestId: 'req_001',
+        uploadSessionToken: 'upls_live_0001_secret',
+        uploadSessionId: 'upl_0001',
+      };
+
+      const redacted = redactSecrets(context);
+
+      expect(redacted.requestId).toBe('req_001');
+      expect(redacted.uploadSessionId).toBe('upl_0001');
+      expect(redacted.uploadSessionToken).toBe('[REDACTED]');
+    });
+
+    it('should recurse into arrays and nested objects for token redaction', () => {
+      const context: LogContext = {
+        requestId: 'req_001',
+        nested: {
+          values: ['safe', 'upls_live_abc123'],
+        },
+      };
+
+      const redacted = redactSecrets(context);
+
+      expect(redacted.requestId).toBe('req_001');
+      expect((redacted.nested as any).values).toEqual(['safe', '[REDACTED]']);
+    });
+  });
+
   describe('Correlation ID patterns', () => {
     it('should recognize standard correlation ID patterns', () => {
       const patterns = [

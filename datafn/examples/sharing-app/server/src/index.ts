@@ -2,8 +2,8 @@ import { serve } from "@hono/node-server";
 import { pathToFileURL } from "node:url";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnServer } from "@datafn/server";
+import { adapter } from "./db.js";
 import schema from "./schema.datafn.js";
 import { getDemoBootstrapPayload } from "./demo/bootstrap.js";
 import {
@@ -16,7 +16,7 @@ import { resolveEffectivePrincipalsForContext, resetAndSeedBaseline } from "./de
 import { validateDemoCrossWorkspaceSharing } from "./demo/share-validation.js";
 
 export async function createSharingDemoApp() {
-  const db = memoryAdapter({ debug: false });
+  const db = adapter;
   await db.initialize();
   await resetAndSeedBaseline(db);
 

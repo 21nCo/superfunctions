@@ -8,47 +8,73 @@
     class?: string;
   }
 
-  let { 
-    type = 'single', 
-    value: valueProp, 
-    defaultValue, 
-    collapsible = false, 
-    disabled = false, 
+  let {
+    type = 'single',
+    value: valueProp,
+    defaultValue,
+    collapsible = false,
+    disabled = false,
     onValueChange,
     children,
     class: className,
     ...rest
   }: Props = $props();
 
-  // Reactive state wrapper for the core machine
-  function createReactiveAccordion(options: AccordionProps) {
-    const machine = createAccordion(options);
-    let state = $state(machine.state);
+  const machine = createAccordion({
+    type,
+    value: valueProp,
+    defaultValue,
+    collapsible,
+    disabled,
+    onValueChange,
+  });
 
-    $effect(() => {
-      // Sync prop changes to machine if needed? 
-      // The machine is created once. Controlled props require sync.
-      // For MVP, we assume uncontrolled or simple init.
-      // Real impl would watch props.
-      
-      return machine.subscribe((newState) => {
-        state = newState;
-      });
+  let state = $state(machine.state);
+
+  $effect(() => {
+    return machine.subscribe((nextState) => {
+      state = nextState;
     });
+  });
 
-    return {
-      get value() { return state.value; },
-      get type() { return type; }, // Use closure or state?
-      get collapsible() { return collapsible; },
-      get disabled() { return disabled; },
-      toggleItem: machine.actions.toggleItem,
-      setValue: machine.actions.setValue
-    };
+  function isSameAccordionValue(
+    current: string | string[],
+    next: string | string[]
+  ): boolean {
+    if (Array.isArray(current) || Array.isArray(next)) {
+      if (!Array.isArray(current) || !Array.isArray(next)) return false;
+      if (current.length !== next.length) return false;
+      for (let i = 0; i < current.length; i += 1) {
+        if (current[i] !== next[i]) return false;
+      }
+      return true;
+    }
+    return current === next;
   }
 
-  const accordion = createReactiveAccordion({ type, value: valueProp, defaultValue, collapsible, disabled, onValueChange });
+  // Keep machine state in sync when running in controlled mode.
+  $effect(() => {
+    if (valueProp !== undefined && !isSameAccordionValue(state.value, valueProp)) {
+      machine.actions.syncValue(valueProp);
+    }
+  });
 
-  setContext('accordion', accordion);
+  setContext('accordion', {
+    get value() {
+      return valueProp !== undefined ? valueProp : state.value;
+    },
+    get type() {
+      return type;
+    },
+    get collapsible() {
+      return collapsible;
+    },
+    get disabled() {
+      return disabled;
+    },
+    toggleItem: machine.actions.toggleItem,
+    setValue: machine.actions.setValue,
+  });
 </script>
 
 <div class={className} data-orientation="vertical" {...rest}>

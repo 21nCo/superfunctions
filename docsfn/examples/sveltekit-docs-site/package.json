@@ -1,0 +1,16 @@
+{
+  "name": "@docsfn/example-sveltekit-docs-site",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --port 6052",
+    "build": "vite build",
+    "preview": "vite preview --port 6052"
+  },
+  "dependencies": {
+    "@sveltejs/adapter-auto": "^3.0.0",
+    "@sveltejs/kit": "^2.0.0",
+    "svelte": "^4.0.0 || ^5.0.0"
+  }
+}

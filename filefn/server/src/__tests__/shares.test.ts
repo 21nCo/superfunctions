@@ -101,6 +101,14 @@ function createFakeDbAdapter(): Adapter {
     async getSchemaVersion() { return 0; },
     async setSchemaVersion() {},
     async validateSchema() { return { valid: true }; },
+    internal: {
+      async ensureTable() {},
+      async create() { return {}; },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update() { return 0; },
+      async delete() { return 0; },
+    },
   } as Adapter;
 }
 
@@ -121,6 +129,14 @@ function createFakeStorageAdapter(): StorageAdapter {
     },
     async signUploadUrl({ key }: { key: string }) {
       return { url: `https://fake-bucket.s3.amazonaws.com/${key}?X-Amz-Signature=fake` };
+    },
+    async openDownloadStream() {
+      return new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
     },
     async put() { return { key: 'test-key', size: 100 }; },
     async get() { return { stream: new ReadableStream(), contentType: 'application/octet-stream', size: 100 }; },
@@ -474,6 +490,46 @@ describe('@filefn/server shares', () => {
       });
 
       expect(shares[0].downloads).toBe(2);
+    });
+
+    it('should defer counter increment for proxy descriptors until proxy stream starts', async () => {
+      await seedFileAndVersion(db, 'file_proxy_count', 'owner_user');
+
+      const proxyOnlyStorage = createFakeStorageAdapter();
+      (proxyOnlyStorage.capabilities as any).signedDownloadUrls = false;
+
+      const sharesService = createSharesService({ db, storage: proxyOnlyStorage, namespace: 'filefn' });
+
+      const { token } = await sharesService.createShareLink(
+        { fileId: 'file_proxy_count' },
+        { principalId: 'owner_user' },
+      );
+
+      const descriptor = await sharesService.downloadViaShareLink(token, {
+        principalId: 'anonymous',
+        isAuthenticated: false,
+      });
+      expect(descriptor.url).toMatch(/^\/proxy\/share-links\//);
+
+      let shares = await db.findMany<FileShareRecord>({
+        model: 'fileShares',
+        where: [{ field: 'fileId', operator: 'eq', value: 'file_proxy_count' }],
+        namespace: 'filefn',
+      });
+      expect(shares[0].downloads).toBe(0);
+
+      const streamResult = await sharesService.getDownloadStreamViaShareLink(token, {
+        principalId: 'anonymous',
+        isAuthenticated: false,
+      });
+      expect(streamResult.contentType).toBe('image/png');
+
+      shares = await db.findMany<FileShareRecord>({
+        model: 'fileShares',
+        where: [{ field: 'fileId', operator: 'eq', value: 'file_proxy_count' }],
+        namespace: 'filefn',
+      });
+      expect(shares[0].downloads).toBe(1);
     });
   });
 });

@@ -1,248 +1,628 @@
-import { describe, it, expect } from "vitest";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
 import { buildManifest } from "./manifest";
-import {
-  MockContentProvider,
-  createMockDocEntry,
-  createMockPostEntry,
-  createMockApiEntry,
-  assertValidDocPage,
-  assertValidBlogPost,
-  assertValidApiReference,
-} from "./test-utils";
+import { resolveOpenApiRoute } from "./openapi";
+import { createSourceEntryId } from "./provider";
+import { buildSearchIndex } from "./search";
+import type {
+  DocsCollection,
+  DocsConfig,
+  DocsContentProvider,
+  DocsProviderListEntriesInput,
+  DocsProviderLoadEntryInput,
+  DocsSourceEntry,
+  RawContentEntry,
+} from "./types";
+
+const FIXTURE_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../test-fixtures/repo"
+);
+
+function createConfig(overrides: Partial<DocsConfig> = {}): DocsConfig {
+  return {
+    schemaVersion: 1,
+    site: {
+      title: "Fixture Docs",
+      basePath: "/docs",
+      ...(overrides.site ?? {}),
+    },
+    compat: {
+      preset: "fumadocs-v15",
+      ...(overrides.compat ?? {}),
+    },
+    versions: overrides.versions,
+    content: {
+      root: "/repo/docs",
+      docsDir: "content/docs",
+      pagesDir: "pages",
+      blogDir: "blog",
+      apiDir: "api",
+      assetsDir: "public",
+      metaFileName: "meta.json",
+      ...(overrides.content ?? {}),
+    },
+    navigation: overrides.navigation,
+    search: overrides.search,
+    auth: overrides.auth,
+    analytics: overrides.analytics,
+  };
+}
+
+class InMemorySourceProvider implements DocsContentProvider {
+  readonly providerId = "in-memory";
+
+  constructor(private readonly entries: DocsSourceEntry[]) {}
+
+  async listEntries(input: DocsProviderListEntriesInput): Promise<DocsSourceEntry[]> {
+    const collections = new Set<DocsCollection>(input.collections);
+    return this.entries.filter((entry) => collections.has(entry.collection));
+  }
+
+  async loadEntry(input: DocsProviderLoadEntryInput): Promise<DocsSourceEntry> {
+    return input.entry;
+  }
+
+  async list(): Promise<RawContentEntry[]> {
+    return this.entries
+      .filter((entry) => entry.entryType !== "control")
+      .map((entry) => ({
+        id: entry.relativePath,
+        kind: entry.collection === "blog" ? "post" : entry.collection === "api" ? "api" : "page",
+        body: entry.body ?? "",
+        frontmatter: entry.frontmatter,
+      }));
+  }
+}
+
+function parseFrontmatter(content: string): {
+  frontmatter: Record<string, unknown>;
+  body: string;
+} {
+  if (!content.startsWith("---\n")) {
+    return { frontmatter: {}, body: content };
+  }
+
+  const end = content.indexOf("\n---\n", 4);
+  if (end === -1) {
+    return { frontmatter: {}, body: content };
+  }
+
+  const block = content.slice(4, end);
+  const body = content.slice(end + 5);
+  const frontmatter: Record<string, unknown> = {};
+  for (const line of block.split("\n")) {
+    const index = line.indexOf(":");
+    if (index <= 0) {
+      continue;
+    }
+    const key = line.slice(0, index).trim();
+    const value = line.slice(index + 1).trim();
+    if (!key) {
+      continue;
+    }
+    if (value === "true") {
+      frontmatter[key] = true;
+      continue;
+    }
+    if (value === "false") {
+      frontmatter[key] = false;
+      continue;
+    }
+    frontmatter[key] = value.replace(/^['"]|['"]$/g, "");
+  }
+
+  return {
+    frontmatter,
+    body,
+  };
+}
+
+async function walkFiles(root: string): Promise<string[]> {
+  const result: string[] = [];
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = resolve(root, entry.name);
+    if (entry.isDirectory()) {
+      result.push(...(await walkFiles(fullPath)));
+      continue;
+    }
+    result.push(fullPath);
+  }
+  return result.sort((left, right) => left.localeCompare(right));
+}
+
+async function loadFixtureDocsEntries(
+  fixtureName: string
+): Promise<DocsSourceEntry[]> {
+  const docsRoot = resolve(FIXTURE_ROOT, fixtureName, "content/docs");
+  const files = await walkFiles(docsRoot);
+  const entries: DocsSourceEntry[] = [];
+
+  for (const filePath of files) {
+    const relativePath = filePath.slice(docsRoot.length + 1).replaceAll("\\", "/");
+    const content = await readFile(filePath, "utf8");
+
+    if (relativePath.endsWith("meta.json")) {
+      entries.push({
+        id: createSourceEntryId("docs", relativePath),
+        collection: "docs",
+        relativePath,
+        absolutePath: filePath,
+        entryType: "control",
+        frontmatter: {},
+        body: content,
+      });
+      continue;
+    }
+
+    if (!relativePath.endsWith(".md") && !relativePath.endsWith(".mdx")) {
+      continue;
+    }
+
+    const parsed = parseFrontmatter(content);
+    entries.push({
+      id: createSourceEntryId("docs", relativePath),
+      collection: "docs",
+      relativePath,
+      absolutePath: filePath,
+      entryType: "content",
+      frontmatter: parsed.frontmatter,
+      body: parsed.body,
+    });
+  }
+
+  return entries;
+}
+
+function routesFromManifest(manifest: Awaited<ReturnType<typeof buildManifest>>): string[] {
+  return Object.keys(manifest.routes).sort((left, right) =>
+    left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
+  );
+}
 
 describe("buildManifest", () => {
-  const basicConfig = {
-    site: {
-      title: "Test Docs",
-      description: "Test documentation site",
-    },
-  };
-
-  it("should build a manifest from doc pages", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry(),
-      createMockDocEntry({
-        id: "guide.md",
-        frontmatter: { title: "Guide", slug: "guide" },
-      }),
+  it("builds canonical routes for root and nested index pages (TV-ROUTE-001)", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("docs", "index.mdx"),
+        collection: "docs",
+        relativePath: "index.mdx",
+        entryType: "content",
+        frontmatter: { title: "Home" },
+        body: "# Home",
+      },
+      {
+        id: createSourceEntryId("docs", "reference/index.mdx"),
+        collection: "docs",
+        relativePath: "reference/index.mdx",
+        entryType: "content",
+        frontmatter: { title: "Reference" },
+        body: "# Reference",
+      },
+      {
+        id: createSourceEntryId("docs", "reference/client.mdx"),
+        collection: "docs",
+        relativePath: "reference/client.mdx",
+        entryType: "content",
+        frontmatter: { title: "Client" },
+        body: "# Client",
+      },
     ]);
 
-    const manifest = await buildManifest(provider, basicConfig);
+    const manifest = await buildManifest(provider, createConfig());
 
-    expect(manifest.site).toEqual(basicConfig.site);
-    expect(Object.keys(manifest.pages)).toHaveLength(2);
-    expect(Object.keys(manifest.posts)).toHaveLength(0);
-    expect(Object.keys(manifest.apis)).toHaveLength(0);
-
-    const testDoc = manifest.pages["test-doc.md"];
-    assertValidDocPage(testDoc);
-    expect(testDoc.title).toBe("Test Document");
-    expect(testDoc.headings).toHaveLength(2); // # Test Doc, ## Section 1
+    expect(manifest.routes["/docs"]).toBe("docs:index.mdx");
+    expect(manifest.routes["/docs/reference"]).toBe("docs:reference/index.mdx");
+    expect(manifest.routes["/docs/reference/client"]).toBe("docs:reference/client.mdx");
   });
 
-  it("should build a manifest from blog posts", async () => {
-    const provider = new MockContentProvider([
-      createMockPostEntry(),
-      createMockPostEntry({
-        id: "another-post.md",
-        frontmatter: {
-          title: "Another Post",
-          date: "2026-01-17",
-          tags: ["news"],
+  it("is deterministic regardless of provider entry order (DET-001)", async () => {
+    const entries: DocsSourceEntry[] = [
+      {
+        id: createSourceEntryId("docs", "index.mdx"),
+        collection: "docs",
+        relativePath: "index.mdx",
+        entryType: "content",
+        frontmatter: { title: "Home" },
+        body: "# Home",
+      },
+      {
+        id: createSourceEntryId("docs", "getting-started.mdx"),
+        collection: "docs",
+        relativePath: "getting-started.mdx",
+        entryType: "content",
+        frontmatter: { title: "Getting Started" },
+        body: "# Getting Started",
+      },
+      {
+        id: createSourceEntryId("docs", "meta.json"),
+        collection: "docs",
+        relativePath: "meta.json",
+        entryType: "control",
+        frontmatter: {},
+        body: JSON.stringify({ pages: ["index", "getting-started"] }),
+      },
+    ];
+    const providerA = new InMemorySourceProvider(entries);
+    const providerB = new InMemorySourceProvider([...entries].reverse());
+
+    const manifestA = await buildManifest(providerA, createConfig());
+    const manifestB = await buildManifest(providerB, createConfig());
+
+    expect(JSON.stringify(manifestA)).toBe(JSON.stringify(manifestB));
+  });
+
+  it("passes top navigation through to the manifest (NAV-002)", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("docs", "index.mdx"),
+        collection: "docs",
+        relativePath: "index.mdx",
+        entryType: "content",
+        frontmatter: { title: "Home" },
+        body: "# Home",
+      },
+    ]);
+
+    const manifest = await buildManifest(
+      provider,
+      createConfig({
+        navigation: {
+          topNav: [
+            { label: "Docs", href: "/docs" },
+            { label: "GitHub", href: "https://github.com/21nCo/super-functions", external: true },
+          ],
         },
-      }),
+      })
+    );
+
+    expect(manifest.topNav).toEqual([
+      { label: "Docs", href: "/docs" },
+      { label: "GitHub", href: "https://github.com/21nCo/super-functions", external: true },
     ]);
-
-    const manifest = await buildManifest(provider, basicConfig);
-
-    expect(Object.keys(manifest.posts)).toHaveLength(2);
-
-    const testPost = manifest.posts["test-post.md"];
-    assertValidBlogPost(testPost);
-    expect(testPost.title).toBe("Test Post");
-    expect(testPost.date).toBe("2026-01-18");
-    expect(testPost.tags).toEqual(["testing", "docs"]);
-    expect(testPost.path).toBe("/blog/test-post");
   });
 
-  it("should build a manifest from API references", async () => {
-    const provider = new MockContentProvider([createMockApiEntry()]);
-
-    const manifest = await buildManifest(provider, basicConfig);
-
-    expect(Object.keys(manifest.apis)).toHaveLength(1);
-
-    const testApi = manifest.apis["test-api.json"];
-    assertValidApiReference(testApi);
-    expect(testApi.title).toBe("Test API Reference");
-    expect(testApi.path).toBe("/api/test-api");
-    expect(testApi.spec).toHaveProperty("openapi");
-    expect(testApi.spec.openapi).toBe("3.0.0");
-  });
-
-  it("should generate routes mapping for all content", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry(),
-      createMockPostEntry(),
-      createMockApiEntry(),
+  it("throws DOCS_ROUTE_CONFLICT for duplicate route claims", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("docs", "reference/index.mdx"),
+        collection: "docs",
+        relativePath: "reference/index.mdx",
+        entryType: "content",
+        frontmatter: { title: "Reference" },
+        body: "# Reference",
+      },
+      {
+        id: createSourceEntryId("docs", "reference.mdx"),
+        collection: "docs",
+        relativePath: "reference.mdx",
+        entryType: "content",
+        frontmatter: { title: "Reference File" },
+        body: "# Reference File",
+      },
     ]);
 
-    const manifest = await buildManifest(provider, basicConfig);
-
-    expect(manifest.routes["/test-doc"]).toBe("test-doc.md");
-    expect(manifest.routes["/blog/test-post"]).toBe("test-post.md");
-    expect(manifest.routes["/api/test-api"]).toBe("test-api.json");
+    await expect(buildManifest(provider, createConfig())).rejects.toThrowError(
+      /DOCS_ROUTE_CONFLICT|claimed by multiple source entries/
+    );
   });
 
-  it("should auto-generate default sidebar from pages", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry({
-        id: "intro.md",
-        frontmatter: { title: "Introduction", slug: "intro" },
-      }),
-      createMockDocEntry({
-        id: "guide.md",
-        frontmatter: { title: "Guide", slug: "guide" },
-      }),
+  it("throws DOCS_VERSION_INVALID when version config has no default", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("docs", "v1/getting-started.mdx"),
+        collection: "docs",
+        relativePath: "v1/getting-started.mdx",
+        entryType: "content",
+        frontmatter: { title: "Getting Started" },
+        body: "# Getting Started",
+      },
     ]);
 
-    const manifest = await buildManifest(provider, basicConfig);
-
-    expect(manifest.sidebars.default).toBeDefined();
-    expect(manifest.sidebars.default.id).toBe("default");
-    expect(manifest.sidebars.default.items).toHaveLength(2);
+    await expect(
+      buildManifest(
+        provider,
+        createConfig({
+          versions: {
+            mode: "path-prefix",
+            versions: [{ slug: "v1", label: "Version 1" }],
+          },
+        })
+      )
+    ).rejects.toThrowError(/DOCS_VERSION_INVALID|default version/);
   });
 
-  it("should extract headings from markdown content", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry({
-        body: `# Main Title
-
-## Section One
-
-Content here.
-
-### Subsection
-
-More content.
-
-## Section Two
-`,
-      }),
+  it("throws DOCS_META_INVALID for orphaned meta references", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("docs", "index.mdx"),
+        collection: "docs",
+        relativePath: "index.mdx",
+        entryType: "content",
+        frontmatter: { title: "Home" },
+        body: "# Home",
+      },
+      {
+        id: createSourceEntryId("docs", "meta.json"),
+        collection: "docs",
+        relativePath: "meta.json",
+        entryType: "control",
+        frontmatter: {},
+        body: JSON.stringify({ pages: ["index", "missing-page"] }),
+      },
     ]);
 
-    const manifest = await buildManifest(provider, basicConfig);
-    const page = manifest.pages["test-doc.md"];
+    await expect(buildManifest(provider, createConfig())).rejects.toThrowError(
+      /DOCS_META_INVALID|missing-page/
+    );
+  });
 
-    expect(page.headings).toHaveLength(4);
-    expect(page.headings[0]).toEqual({
-      level: 1,
-      text: "Main Title",
-      slug: "main-title",
+  it("builds fixture-compatible navigation for searchfn-docs (TV-MIG-001 + TV-NAV-001)", async () => {
+    const entries = await loadFixtureDocsEntries("searchfn-docs");
+    const manifest = await buildManifest(new InMemorySourceProvider(entries), createConfig());
+
+    const routes = routesFromManifest(manifest);
+    expect(routes).toContain("/docs");
+    expect(routes).toContain("/docs/reference/adapters");
+    expect(routes).toContain("/docs/operations/setup");
+    expect(
+      manifest.sidebars.default.items.map((item) => item.text)
+    ).toEqual([
+      "SearchFn",
+      "Getting Started",
+      "Architecture",
+      "Reference",
+      "Integrations",
+      "Operations",
+    ]);
+  });
+
+  it("builds fixture-compatible navigation for datafn-docs (TV-MIG-001)", async () => {
+    const entries = await loadFixtureDocsEntries("datafn-docs");
+    const manifest = await buildManifest(new InMemorySourceProvider(entries), createConfig());
+    const routes = routesFromManifest(manifest);
+    const labels = manifest.sidebars.default.items.map((item) => item.text);
+
+    expect(routes).toContain("/docs");
+    expect(routes).toContain("/docs/documentation/server/routes");
+    expect(routes).toContain("/docs/reference/server/routes");
+    expect(labels[0]).toBe("DataFn");
+    expect(labels).toContain("Documentation");
+    expect(labels).toContain("DFQL");
+    expect(labels).toContain("CLI");
+    expect(labels).toContain("Reference");
+    expect(labels).toContain("Concepts");
+    expect(labels).toContain("@datafn/core");
+    expect(labels.indexOf("Documentation")).toBeLessThan(labels.indexOf("DFQL"));
+    expect(labels.indexOf("DFQL")).toBeLessThan(labels.indexOf("CLI"));
+    expect(labels.indexOf("CLI")).toBeLessThan(labels.indexOf("Reference"));
+  });
+
+  it("normalizes API specs and derives routeable API pages (TV-API-001 + TV-API-002)", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("api", "index.json"),
+        collection: "api",
+        relativePath: "index.json",
+        entryType: "content",
+        frontmatter: { title: "Search API" },
+        body: JSON.stringify({
+          openapi: "3.0.3",
+          info: {
+            title: "Search API",
+            version: "1.0.0",
+            description: "Search endpoints",
+          },
+          paths: {
+            "/index": {
+              post: {
+                tags: ["indexing"],
+                summary: "Index a document",
+                responses: {
+                  "202": { description: "accepted" },
+                },
+              },
+            },
+          },
+          components: {
+            schemas: {
+              IndexRequest: {
+                type: "object",
+                description: "Index payload",
+              },
+            },
+          },
+        }),
+      },
+    ]);
+
+    const manifest = await buildManifest(provider, createConfig());
+    const apiReference = manifest.apis["api:index.json"];
+
+    expect(apiReference.path).toBe("/docs/api");
+    expect(manifest.routes["/docs/api"]).toBe("api:index.json");
+    expect(manifest.routes["/docs/api/tags/indexing"]).toBe("api:index.json");
+    expect(manifest.routes["/docs/api/operations/post-index"]).toBe("api:index.json");
+    expect(apiReference.spec.operations.map((operation: { method: string; path: string }) => `${operation.method} ${operation.path}`)).toEqual(["POST /index"]);
+
+    expect(
+      resolveOpenApiRoute(
+        apiReference.spec,
+        "/docs/api/operations/post-index"
+      )
+    ).toMatchObject({
+      kind: "operation",
     });
-    expect(page.headings[1].text).toBe("Section One");
-    expect(page.headings[2].text).toBe("Subsection");
-    expect(page.headings[3].text).toBe("Section Two");
   });
 
-  it("should handle custom slugs from frontmatter", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry({
+  it("fails with DOCS_ROUTE_NOT_FOUND for missing derived API routes (TV-API-002 negative)", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("api", "index.json"),
+        collection: "api",
+        relativePath: "index.json",
+        entryType: "content",
+        frontmatter: { title: "Search API" },
+        body: JSON.stringify({
+          openapi: "3.0.3",
+          info: {
+            title: "Search API",
+            version: "1.0.0",
+          },
+          paths: {
+            "/index": {
+              post: {
+                responses: {
+                  "202": { description: "accepted" },
+                },
+              },
+            },
+          },
+        }),
+      },
+    ]);
+
+    const manifest = await buildManifest(provider, createConfig());
+    const apiReference = manifest.apis["api:index.json"];
+
+    expect(() =>
+      resolveOpenApiRoute(apiReference.spec, "/docs/api/operations/get-missing")
+    ).toThrowError(/DOCS_ROUTE_NOT_FOUND|was not generated/);
+  });
+
+  it("normalizes blog routes/tags and excludes drafts while deriving embedded surfaces (TV-BLOG-001 + TV-EMBED-001)", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("docs", "reference/client.mdx"),
+        collection: "docs",
+        relativePath: "reference/client.mdx",
+        entryType: "content",
+        frontmatter: { title: "Client API" },
+        body: "# Client API\n\n## Install\n\n## Use",
+      },
+      {
+        id: createSourceEntryId("blog", "alpha.mdx"),
+        collection: "blog",
+        relativePath: "alpha.mdx",
+        entryType: "content",
         frontmatter: {
-          title: "Custom Page",
-          slug: "/custom/path/to/page",
+          title: "Alpha",
+          date: "2026-03-01",
+          tags: ["release"],
         },
-      }),
-    ]);
-
-    const manifest = await buildManifest(provider, basicConfig);
-    const page = manifest.pages["test-doc.md"];
-
-    expect(page.slug).toBe("/custom/path/to/page");
-    expect(page.path).toBe("/custom/path/to/page");
-    expect(manifest.routes["/custom/path/to/page"]).toBe("test-doc.md");
-  });
-
-  it("should handle missing frontmatter fields gracefully", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry({
-        frontmatter: {}, // No title or description
-      }),
-    ]);
-
-    const manifest = await buildManifest(provider, basicConfig);
-    const page = manifest.pages["test-doc.md"];
-
-    expect(page.title).toBe("Untitled");
-    expect(page.description).toBeUndefined();
-  });
-
-  it("should handle empty provider", async () => {
-    const provider = new MockContentProvider([]);
-
-    const manifest = await buildManifest(provider, basicConfig);
-
-    expect(Object.keys(manifest.pages)).toHaveLength(0);
-    expect(Object.keys(manifest.posts)).toHaveLength(0);
-    expect(Object.keys(manifest.apis)).toHaveLength(0);
-    expect(manifest.sidebars.default.items).toHaveLength(0);
-  });
-
-  it("should handle mixed content types", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry({ id: "doc1.md", frontmatter: { title: "Doc 1" } }),
-      createMockPostEntry({
-        id: "post1.md",
-        frontmatter: { title: "Post 1", date: "2026-01-01" },
-      }),
-      createMockDocEntry({ id: "doc2.md", frontmatter: { title: "Doc 2" } }),
-      createMockApiEntry({ id: "api1.json", frontmatter: { title: "API 1" } }),
-      createMockPostEntry({
-        id: "post2.md",
-        frontmatter: { title: "Post 2", date: "2026-01-02" },
-      }),
-    ]);
-
-    const manifest = await buildManifest(provider, basicConfig);
-
-    expect(Object.keys(manifest.pages)).toHaveLength(2);
-    expect(Object.keys(manifest.posts)).toHaveLength(2);
-    expect(Object.keys(manifest.apis)).toHaveLength(1);
-
-    // Sidebar should only include pages, not posts or apis
-    expect(manifest.sidebars.default.items).toHaveLength(2);
-  });
-
-  it("should handle invalid JSON in API reference gracefully", async () => {
-    const provider = new MockContentProvider([
-      createMockApiEntry({
-        body: "not valid json{]}",
-      }),
-    ]);
-
-    const manifest = await buildManifest(provider, basicConfig);
-    const api = manifest.apis["test-api.json"];
-
-    // Should create the API reference but with empty spec
-    expect(api).toBeDefined();
-    expect(api.spec).toEqual({});
-  });
-
-  it("should preserve all frontmatter fields", async () => {
-    const provider = new MockContentProvider([
-      createMockDocEntry({
+        body: "# Alpha\n\nAlpha release notes",
+      },
+      {
+        id: createSourceEntryId("blog", "beta.mdx"),
+        collection: "blog",
+        relativePath: "beta.mdx",
+        entryType: "content",
         frontmatter: {
-          title: "Test",
-          customField: "customValue",
-          nested: { key: "value" },
+          title: "Beta",
+          date: "2026-03-02",
+          tags: ["release", "platform"],
         },
-      }),
+        body: "# Beta\n\nBeta release notes",
+      },
+      {
+        id: createSourceEntryId("blog", "draft.mdx"),
+        collection: "blog",
+        relativePath: "draft.mdx",
+        entryType: "content",
+        frontmatter: {
+          title: "Draft",
+          date: "2026-03-03",
+          draft: true,
+          tags: ["internal"],
+        },
+        body: "# Draft\n\nDraft notes",
+      },
     ]);
 
-    const manifest = await buildManifest(provider, basicConfig);
-    const page = manifest.pages["test-doc.md"];
+    const manifest = await buildManifest(provider, createConfig());
 
-    expect(page.frontmatter.customField).toBe("customValue");
-    expect(page.frontmatter.nested).toEqual({ key: "value" });
+    expect(Object.values(manifest.posts).map((post) => post.slug)).toEqual(["beta", "alpha"]);
+    expect(manifest.routes["/docs/blog/beta"]).toBe("blog:beta.mdx");
+    expect(manifest.routes["/docs/blog/alpha"]).toBe("blog:alpha.mdx");
+    expect(manifest.routes["/docs/blog/draft"]).toBeUndefined();
+    expect(manifest.blog?.listRoute).toBe("/docs/blog");
+    expect(manifest.blog?.feedPath).toBe("/docs/blog/rss.xml");
+    expect(manifest.blog?.postOrder).toEqual(["blog:beta.mdx", "blog:alpha.mdx"]);
+    expect(manifest.blog?.tags.release.path).toBe("/docs/blog/tags/release");
+    expect(manifest.blog?.tags.platform.path).toBe("/docs/blog/tags/platform");
+
+    expect(manifest.embedded?.pages["docs:reference/client.mdx"]).toEqual({
+      pageId: "docs:reference/client.mdx",
+      sourcePath: "/docs/reference/client",
+      pageRoute: "/docs/embedded/page/reference/client",
+      surfaceRoute: "/docs/embedded/surface/reference/client",
+      title: "Client API",
+      tocCount: 2,
+    });
+    expect(manifest.embedded?.hasSidebar).toBe(true);
+    expect(manifest.embedded?.hasSearchTrigger).toBe(true);
+    expect(manifest.embedded?.hasTopNavSlot).toBe(true);
+  });
+
+  it("builds mixed docs/api/blog search scope from manifest-derived routes (TV-SEARCH-001)", async () => {
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId("docs", "index.mdx"),
+        collection: "docs",
+        relativePath: "index.mdx",
+        entryType: "content",
+        frontmatter: { title: "Home", description: "Docs home" },
+        body: "# Home",
+      },
+      {
+        id: createSourceEntryId("blog", "release.mdx"),
+        collection: "blog",
+        relativePath: "release.mdx",
+        entryType: "content",
+        frontmatter: {
+          title: "Release",
+          date: "2026-03-01",
+          tags: ["release"],
+        },
+        body: "# Release\n\nLatest updates",
+      },
+      {
+        id: createSourceEntryId("api", "index.json"),
+        collection: "api",
+        relativePath: "index.json",
+        entryType: "content",
+        frontmatter: { title: "Search API" },
+        body: JSON.stringify({
+          openapi: "3.0.3",
+          info: {
+            title: "Search API",
+            version: "1.0.0",
+            description: "Search endpoints",
+          },
+          paths: {},
+        }),
+      },
+    ]);
+
+    const manifest = await buildManifest(provider, createConfig());
+    const artifact = await buildSearchIndex(manifest, {
+      search: {
+        enabled: true,
+        scopes: ["docs", "api", "blog"],
+        bodyIndexing: "summary",
+      },
+    });
+
+    expect(artifact.engine).toBe("searchfn");
+    expect(artifact.scopes).toEqual(["api", "blog", "docs"]);
+    expect(artifact.documents.map((doc) => doc.scope)).toEqual(["api", "blog", "docs"]);
+    expect(artifact.documents.map((doc) => doc.path)).toEqual([
+      "/docs/api",
+      "/docs/blog/release",
+      "/docs",
+    ]);
   });
 });

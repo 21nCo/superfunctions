@@ -107,6 +107,9 @@ issue = await plug.github.issues.create(
 - **[TypeScript Docs](./typescript/README.md)** - TypeScript SDK documentation
 - **[Python Docs](./python/README.md)** - Python SDK documentation
 - **[Provider Guides](./docs/providers/)** - Per-provider setup guides
+- **[Linear Provider Guide](./docs/providers/linear.md)** - Linear action/trigger contract
+- **[GitHub Provider Guide](./docs/providers/github.md)** - GitHub issue/PR action contract
+- **[ClickUp Provider Guide](./docs/providers/clickup.md)** - ClickUp task/comment action contract
 - **[Examples](./docs/examples/)** - Code examples and tutorials
 
 ## 🔧 CLI Tool
@@ -154,7 +157,21 @@ Currently implemented:
 - ✅ Slack
 - ✅ Discord
 - ✅ Linear
+- ✅ ClickUp
 - ✅ Stripe
+
+### Conduct v0.3 public provider contracts
+
+PlugFn ships the Conduct-required capabilities as reusable public provider contracts:
+
+- Linear actions: `issues.get`, `comments.create`, `issues.search`
+- Linear triggers: `issue.updated`, `issue_comment.created`
+- GitHub actions: `issues.get`, `issues.update`, `pulls.create`, `pulls.createReview`
+- GitHub triggers: `pull_request.closed`, `issue_comment.created`
+- ClickUp actions: `tasks.create`, `tasks.get`, `tasks.update`, `tasks.list`, `comments.create`, `spaces.list`
+- ClickUp triggers: `task.updated`, `task.statusChanged`
+
+These contracts stay inside PlugFn runtime concerns (OAuth, retries, rate limiting, webhook verification) and do not require Conduct-private provider code.
 
 See [SPEC.md](./SPEC.md) for the full list of planned providers (75+).
 

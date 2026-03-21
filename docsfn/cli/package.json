@@ -1,6 +1,7 @@
 {
   "name": "@docsfn/cli",
   "version": "0.0.1",
+  "description": "CLI workflows for docsfn",
   "type": "module",
   "bin": {
     "docsfn": "./bin/docsfn.js"
@@ -18,7 +19,7 @@
     "@types/node": "^20.0.0"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node ./bin/docsfn.js",
     "dev": "tsup --watch"
   },
   "author": "21n",

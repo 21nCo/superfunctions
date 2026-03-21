@@ -7,6 +7,7 @@ import type { Logger } from '../observability/logger.js';
 import type { DeduplicationService } from '../dedup/service.js';
 import type { ProcessingService } from '../processing/service.js';
 import * as errors from '../errors.js';
+import { createHash, randomBytes } from 'crypto';
 import {
   createUploadStartedEvent,
   createPartRecordedEvent,
@@ -75,6 +76,7 @@ export interface UploadSession {
   idempotencyKey?: string | null;
   idempotencyPayloadHash?: string | null;
   completionVersionId?: string | null;
+  uploadSessionTokenHash?: string | null;
 }
 
 function generateDefaultId(): string {
@@ -100,6 +102,51 @@ function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; ten
     hash = hash & hash;
   }
   return hash.toString(16);
+}
+
+function isAnonymousContext(ctx: FileProviderContext): boolean {
+  return !ctx.principalId || ctx.principalId === 'anonymous';
+}
+
+function isAnonymousSession(session: UploadSession): boolean {
+  return session.ownerId === 'anonymous';
+}
+
+function generateUploadSessionToken(): string {
+  return `upls_live_${randomBytes(18).toString('base64url')}`;
+}
+
+function hashUploadSessionToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+async function forEachBodyChunk(
+  body: ReadableStream | Blob | Buffer,
+  onChunk: (chunk: Uint8Array) => Promise<void> | void
+): Promise<void> {
+  if (body instanceof ReadableStream) {
+    const reader = body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      await onChunk(chunk);
+    }
+    return;
+  }
+
+  if (body instanceof Blob) {
+    await onChunk(new Uint8Array(await body.arrayBuffer()));
+    return;
+  }
+
+  if (Buffer.isBuffer(body)) {
+    await onChunk(body);
+    return;
+  }
+
+  throw new Error('Unsupported body type for proxy upload');
 }
 
 function computeStorageKey(
@@ -139,9 +186,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     if (storage.capabilities.signedUploadUrls && storage.capabilities.multipart) {
       return 'multipart-signed-url';
     }
-    if (storage.capabilities.signedUploadUrls) {
-      return 'signed-url';
-    }
     if (storage.capabilities.proxyStreamingUpload) {
       return 'proxy';
     }
@@ -152,7 +196,66 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     return Math.ceil(size / chunkSize);
   }
 
+  function proxyPartKey(storageKey: string, partNumber: number): string {
+    return `${storageKey}.part${partNumber}`;
+  }
+
+  async function deleteProxyTempPartObjects(session: UploadSession): Promise<void> {
+    if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
+      return;
+    }
+
+    const parts = await db.findMany<{ partNumber: number }>({
+      model: 'uploadParts',
+      where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+      select: ['partNumber'],
+      namespace,
+    });
+
+    for (const part of parts) {
+      try {
+        await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber) });
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+  }
+
   return {
+    assertSessionAccess(session: UploadSession, ctx: FileProviderContext, uploadSessionToken?: string): void {
+      // Legacy safety: pre-binding records may not carry ownerId.
+      // Current sessions always persist ownerId, so this only preserves older fixtures.
+      if (!session.ownerId) {
+        return;
+      }
+
+      if (!isAnonymousSession(session)) {
+        if (!ctx.principalId || ctx.principalId !== session.ownerId) {
+          throw errors.forbidden();
+        }
+
+        const sessionTenant = session.tenantId ?? null;
+        const callerTenant = ctx.tenantId ?? null;
+        if (sessionTenant !== callerTenant) {
+          throw errors.forbidden();
+        }
+
+        return;
+      }
+
+      if (!uploadSessionToken) {
+        throw errors.sessionTokenRequired();
+      }
+
+      if (!session.uploadSessionTokenHash) {
+        throw errors.sessionTokenRequired();
+      }
+
+      if (hashUploadSessionToken(uploadSessionToken) !== session.uploadSessionTokenHash) {
+        throw errors.sessionTokenInvalid();
+      }
+    },
+
     async createSession(input: CreateSessionInput, ctx: FileProviderContext): Promise<{
       uploadSessionId: string;
       uploadMode: string;
@@ -160,6 +263,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       totalParts: number;
       expiresAt: string;
       warnings: string[];
+      uploadSessionToken?: string;
     }> {
       const warnings: string[] = [];
 
@@ -176,6 +280,18 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           if (existing.idempotencyPayloadHash !== expectedHash) {
             throw errors.idempotencyConflict();
           }
+
+          let uploadSessionToken: string | undefined;
+          if (isAnonymousSession(existing)) {
+            uploadSessionToken = generateUploadSessionToken();
+            await db.update({
+              model: 'uploadSessions',
+              where: [{ field: 'uploadSessionId', operator: 'eq', value: existing.uploadSessionId }],
+              data: { uploadSessionTokenHash: hashUploadSessionToken(uploadSessionToken) },
+              namespace,
+            });
+          }
+
           return {
             uploadSessionId: existing.uploadSessionId,
             uploadMode: existing.uploadMode,
@@ -183,6 +299,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             totalParts: existing.totalParts,
             expiresAt: existing.expiresAt,
             warnings: [],
+            uploadSessionToken,
           };
         }
       }
@@ -247,9 +364,16 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       let storageUploadId: string | null = null;
+      let uploadSessionToken: string | undefined;
+      let uploadSessionTokenHash: string | null = null;
 
-      // Create multipart upload if supported
-      if (storage.capabilities.multipart && storage.createMultipartUpload) {
+      if (isAnonymousContext(ctx)) {
+        uploadSessionToken = generateUploadSessionToken();
+        uploadSessionTokenHash = hashUploadSessionToken(uploadSessionToken);
+      }
+
+      // Create multipart upload only for multipart mode.
+      if (uploadMode === 'multipart-signed-url' && storage.createMultipartUpload) {
         const result = await storage.createMultipartUpload({
           key: storageKey,
           contentType: input.mimeType,
@@ -277,6 +401,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           tenantId: ctx.tenantId || null,
           idempotencyKey: input.idempotencyKey || null,
           idempotencyPayloadHash: input.idempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
+          uploadSessionTokenHash,
           expiresAt,
           createdAt: now.toISOString(),
         },
@@ -302,16 +427,19 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         fileId: input.fileId,
       });
 
-      return { uploadSessionId, uploadMode, chunkSizeBytes, totalParts, expiresAt, warnings };
+      return { uploadSessionId, uploadMode, chunkSizeBytes, totalParts, expiresAt, warnings, uploadSessionToken };
     },
 
-    async getSessionStatus(uploadSessionId: string, ctx: FileProviderContext): Promise<{
+    async getSessionStatus(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{
       uploadSessionId: string;
       status: string;
       totalParts: number;
+      recordedParts: number[];
       uploadedParts: number[];
+      chunkSizeBytes: number;
+      fileSize: number;
+      expiresAt: string;
     }> {
-      void ctx;
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -322,6 +450,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         throw errors.sessionNotFound();
       }
 
+      this.assertSessionAccess(session, ctx, uploadSessionToken);
+
       const parts = await db.findMany<{ partNumber: number }>({
         model: 'uploadParts',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -329,15 +459,21 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         namespace,
       });
 
+      const recordedParts = parts.map(p => p.partNumber).sort((a, b) => a - b);
+
       return {
         uploadSessionId,
         status: session.status,
         totalParts: session.totalParts,
-        uploadedParts: parts.map(p => p.partNumber).sort((a, b) => a - b),
+        recordedParts,
+        uploadedParts: recordedParts,
+        chunkSizeBytes: session.chunkSizeBytes,
+        fileSize: session.size,
+        expiresAt: session.expiresAt,
       };
     },
 
-    async signPart(uploadSessionId: string, partNumber: number, contentLength: number, ctx: FileProviderContext): Promise<{
+    async signPart(uploadSessionId: string, partNumber: number, contentLength: number, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{
       url: string;
       headers?: Record<string, string>;
       expiresAt: string;
@@ -350,6 +486,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (!session) throw errors.sessionNotFound();
+      this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
@@ -392,7 +529,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       return { url: result.url, headers: result.headers, expiresAt };
     },
 
-    async uploadPartBytes(uploadSessionId: string, partNumber: number, body: ReadableStream | Blob | Buffer, contentLength: number, ctx: FileProviderContext): Promise<{ etag: string; size: number }> {
+    async uploadPartBytes(uploadSessionId: string, partNumber: number, body: ReadableStream | Blob | Buffer, contentLength: number, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ etag: string; size: number }> {
+      void contentLength;
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -400,15 +538,40 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (!session) throw errors.sessionNotFound();
+      this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
+      if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
 
-      // Store part in a temporary location
-      const partKey = `${session.storageKey}.part${partNumber}`;
+      const existingPart = await db.findOne<{ etag: string; size: number }>({
+        model: 'uploadParts',
+        where: [
+          { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
+          { field: 'partNumber', operator: 'eq', value: partNumber },
+        ],
+        namespace,
+      });
 
-      // Use streaming upload to save the part
+      if (existingPart) {
+        const hasher = createHash('sha256');
+        let incomingSize = 0;
+        await forEachBodyChunk(body, (chunk) => {
+          hasher.update(chunk);
+          incomingSize += chunk.byteLength;
+        });
+
+        const incomingEtag = `proxy-sha256-${hasher.digest('hex')}`;
+        if (existingPart.etag === incomingEtag && existingPart.size === incomingSize) {
+          return { etag: incomingEtag, size: incomingSize };
+        }
+
+        throw errors.partConflict(uploadSessionId, partNumber);
+      }
+
+      const partKey = proxyPartKey(session.storageKey, partNumber);
+
       if (!storage.openUploadStream) {
         throw new Error('Storage adapter does not support streaming upload required for proxy mode');
       }
@@ -418,40 +581,24 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         contentType: session.mimeType
       });
 
-      // Convert the body to a ReadableStream if needed and pipe to write stream
+      const hasher = createHash('sha256');
+      let size = 0;
       const writer = writeStream.getWriter();
       try {
-        if (body instanceof ReadableStream) {
-          const reader = body.getReader();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            await writer.write(value);
-          }
-        } else if (body instanceof Blob) {
-          const arrayBuffer = await body.arrayBuffer();
-          await writer.write(new Uint8Array(arrayBuffer));
-        } else if (Buffer.isBuffer(body)) {
-          await writer.write(body);
-        } else {
-          throw new Error('Unsupported body type for proxy upload');
-        }
+        await forEachBodyChunk(body, async (chunk) => {
+          hasher.update(chunk);
+          size += chunk.byteLength;
+          await writer.write(chunk);
+        });
       } finally {
         await writer.close();
       }
 
-      // ETag generation: generic placeholder for proxy mode
-      const etag = `proxy-etag-${partNumber}`;
+      const etag = `proxy-sha256-${hasher.digest('hex')}`;
 
-      // Record completion
-      await db.upsert({
+      await db.create({
         model: 'uploadParts',
-        where: [
-          { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
-          { field: 'partNumber', operator: 'eq', value: partNumber },
-        ],
-        create: { uploadSessionId, partNumber, etag, size: contentLength, checksumSha256Base64: null },
-        update: { etag, size: contentLength },
+        data: { uploadSessionId, partNumber, etag, size, checksumSha256Base64: null },
         namespace,
       });
 
@@ -464,12 +611,11 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         });
       }
 
-      events.emit('part.recorded', createPartRecordedEvent({ uploadSessionId, partNumber, size: contentLength }, ctx.requestId));
-
-      return { etag, size: contentLength };
+      events.emit('part.recorded', createPartRecordedEvent({ uploadSessionId, partNumber, size }, ctx.requestId));
+      return { etag, size };
     },
 
-    async completePart(uploadSessionId: string, partNumber: number, etag: string, size: number, ctx: FileProviderContext): Promise<void> {
+    async completePart(uploadSessionId: string, partNumber: number, etag: string, size: number, ctx: FileProviderContext, uploadSessionToken?: string): Promise<void> {
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -477,13 +623,14 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (!session) throw errors.sessionNotFound();
+      this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
       if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
 
-      const existingPart = await db.findOne<{ partNumber: number; etag: string }>({
+      const existingPart = await db.findOne<{ partNumber: number; etag: string; size: number }>({
         model: 'uploadParts',
         where: [
           { field: 'uploadSessionId', operator: 'eq', value: uploadSessionId },
@@ -493,7 +640,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (existingPart) {
-        if (existingPart.etag === etag) return; // Idempotent success
+        if (existingPart.etag === etag && existingPart.size === size) return; // Idempotent success
         throw errors.partConflict(uploadSessionId, partNumber);
       }
 
@@ -516,7 +663,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       events.emit('part.recorded', createPartRecordedEvent({ uploadSessionId, partNumber, size }, ctx.requestId));
     },
 
-    async completeSession(uploadSessionId: string, ctx: FileProviderContext): Promise<{ fileId: string; versionId: string }> {
+    async completeSession(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{ fileId: string; versionId: string }> {
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -524,6 +671,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (!session) throw errors.sessionNotFound();
+      this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') {
         // Idempotent: return existing result
@@ -585,7 +733,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const writer = writeStream.getWriter();
         try {
             for (const part of sortedParts) {
-                const partKey = `${session.storageKey}.part${part.partNumber}`;
+                const partKey = proxyPartKey(session.storageKey, part.partNumber);
                 const readStream = await storage.openDownloadStream({ key: partKey });
                 const reader = readStream.getReader();
                 
@@ -602,7 +750,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
         // Cleanup parts
         for (const part of sortedParts) {
-             const partKey = `${session.storageKey}.part${part.partNumber}`;
+             const partKey = proxyPartKey(session.storageKey, part.partNumber);
              try {
                  await storage.deleteObject({ key: partKey });
              } catch {
@@ -714,6 +862,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         namespace,
       });
 
+      await db.deleteMany({
+        model: 'uploadParts',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+        namespace,
+      });
+
       // Record quota usage
       if (quota) {
         await quota.recordUsage({ principalId: ctx.principalId, tenantId: ctx.tenantId, bytes: session.size });
@@ -751,8 +905,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       return { fileId, versionId };
     },
 
-    async abortSession(uploadSessionId: string, ctx: FileProviderContext): Promise<void> {
-      void ctx;
+    async abortSession(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<void> {
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -760,6 +913,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       });
 
       if (!session) throw errors.sessionNotFound();
+      this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
 
       // Abort multipart upload
@@ -770,6 +924,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // Ignore abort errors (may already be aborted)
         }
       }
+
+      await deleteProxyTempPartObjects(session);
+      await db.deleteMany({
+        model: 'uploadParts',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+        namespace,
+      });
 
       await db.update({
         model: 'uploadSessions',
@@ -805,6 +966,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                     // ignore
                 }
             }
+
+            await deleteProxyTempPartObjects(session);
+            await db.deleteMany({
+                model: 'uploadParts',
+                where: [{ field: 'uploadSessionId', operator: 'eq', value: session.uploadSessionId }],
+                namespace
+            });
             
             await db.delete({
                 model: 'uploadSessions',

@@ -1,0 +1,2 @@
+id, desc, status, completedAt, completionDoc
+2026-03-20-audit-fix-kevfp02n-spec,Make FileFn production-ready by closing the remaining audit gaps across TypeScript and Python surfaces,1,2026-03-20T17:48:32Z,

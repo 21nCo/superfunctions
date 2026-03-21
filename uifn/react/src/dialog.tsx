@@ -8,6 +8,10 @@ import { useFocusTrap } from './hooks/use-focus-trap';
 import { useOutsideClick } from './hooks/use-outside-click';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { useBodyScrollLock } from './hooks/use-body-scroll-lock';
+import { Slot } from './utils/slot';
+
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
 
 /* -------------------------------------------------------------------------------------------------
  * Dialog Root
@@ -81,13 +85,14 @@ export const Dialog: React.FC<DialogProps> = (props) => {
  * -----------------------------------------------------------------------------------------------*/
 
 export interface DialogTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  asChild?: boolean; // TODO: Implement asChild (Slot) support later or generic polymorphism
+  asChild?: boolean;
 }
 
 export const DialogTrigger = React.forwardRef<HTMLButtonElement, DialogTriggerProps>(
   (props, ref) => {
-    const { children, onClick, ...domProps } = props;
+    const { children, onClick, asChild = false, ...domProps } = props;
     const context = useDialogContext();
+    const TriggerComp = asChild ? Slot : 'button';
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       onClick?.(e);
@@ -97,9 +102,9 @@ export const DialogTrigger = React.forwardRef<HTMLButtonElement, DialogTriggerPr
     };
 
     return (
-      <button
+      <TriggerComp
         ref={ref}
-        type="button"
+        {...(!asChild ? { type: 'button' as const } : undefined)}
         aria-haspopup="dialog"
         aria-expanded={context.open}
         aria-controls={context.open ? 'dialog-content' : undefined} // Ideally use generated ID
@@ -108,7 +113,7 @@ export const DialogTrigger = React.forwardRef<HTMLButtonElement, DialogTriggerPr
         {...domProps}
       >
         {children}
-      </button>
+      </TriggerComp>
     );
   }
 );
@@ -262,7 +267,7 @@ export const DialogTitle = React.forwardRef<HTMLHeadingElement, DialogTitleProps
     const context = useDialogContext();
     const id = useId(props.id);
     
-    React.useLayoutEffect(() => {
+    useIsomorphicLayoutEffect(() => {
         if (id) context.setTitleId(id);
     }, [id, context]);
 
@@ -287,7 +292,7 @@ export const DialogDescription = React.forwardRef<HTMLParagraphElement, DialogDe
     const context = useDialogContext();
     const id = useId(props.id);
 
-    React.useLayoutEffect(() => {
+    useIsomorphicLayoutEffect(() => {
         if (id) context.setDescriptionId(id);
     }, [id, context]);
 

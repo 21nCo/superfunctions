@@ -1,16 +1,24 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import type { DocHeading } from '@docsfn/core';
-  import { ScrollArea, ScrollAreaViewport } from '@uifn/svelte';
+  import { onDestroy, onMount } from "svelte";
+  import type { DocHeading } from "@docsfn/core";
+  import { ScrollArea, ScrollAreaViewport } from "@uifn/svelte";
+  import type { DocsPageSurface } from "./DocsLayout.svelte";
 
-  export let headings: DocHeading[];
+  export let surface: DocsPageSurface | undefined = undefined;
+  export let headings: DocHeading[] | undefined = undefined;
   export let activeHash: string | undefined = undefined;
 
-  let currentHash = activeHash || '';
-  let observer: IntersectionObserver;
+  let currentHash = activeHash || "";
+  let observer: IntersectionObserver | undefined = undefined;
+
+  $: resolvedHeadings = headings ?? surface?.headings ?? [];
 
   // Auto-detect active heading based on scroll position
   onMount(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return;
+    }
+
     if (activeHash !== undefined) {
       currentHash = activeHash;
       return;
@@ -34,7 +42,7 @@
     );
 
     // Observe all heading elements
-    headings.forEach((h) => {
+    resolvedHeadings.forEach((h) => {
       const element = document.getElementById(h.slug);
       if (element) {
         observer.observe(element);
@@ -43,42 +51,44 @@
   });
 
   onDestroy(() => {
-    if (observer) {
-      observer.disconnect();
-    }
+    observer?.disconnect();
   });
 
   function handleClick(e: MouseEvent, slug: string) {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return;
+    }
+
     e.preventDefault();
     const element = document.getElementById(slug);
     if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
       currentHash = `#${slug}`;
       // Update URL without triggering navigation
-      window.history.replaceState(null, '', `#${slug}`);
+      window.history.replaceState(null, "", `#${slug}`);
     }
   }
 </script>
 
-{#if headings.length > 0}
+{#if resolvedHeadings.length > 0}
   <ScrollArea class="docsfn-toc">
     <ScrollAreaViewport class="docsfn-toc-viewport">
       <nav class="docsfn-toc-nav" aria-label="Table of contents">
         <div class="docsfn-toc-title">On this page</div>
         <ul class="docsfn-toc-list">
-          {#each headings as h (h.slug)}
+          {#each resolvedHeadings as h (h.slug)}
             {@const isActive = currentHash === `#${h.slug}`}
-            <li 
+            <li
               class="docsfn-toc-item"
               data-level={h.level}
               style="padding-left: {(h.level - 1) * 12}px"
             >
-              <a 
+              <a
                 href="#{h.slug}"
                 on:click={(e) => handleClick(e, h.slug)}
                 class="docsfn-toc-link {isActive ? 'active' : ''}"
                 data-active={isActive}
-                aria-current={isActive ? 'location' : undefined}
+                aria-current={isActive ? "location" : undefined}
               >
                 {h.text}
               </a>

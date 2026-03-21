@@ -61,7 +61,11 @@ export {
 
 export interface FileFnClient {
   uploadFile(input: UploadInput): UploadHandle;
-  resumeUpload(uploadSessionId: string, file: Blob): UploadHandle;
+  resumeUpload(
+    uploadSessionId: string,
+    file: Blob,
+    options?: { uploadSessionToken?: string }
+  ): UploadHandle;
   getFile(fileId: string): Promise<Record<string, unknown>>;
   downloadUrl(fileId: string, options?: { versionId?: string }): Promise<string>;
   deleteFile(fileId: string): Promise<void>;
@@ -140,10 +144,13 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       return manager.createHandle(input, () => manager.startUpload(input));
     },
 
-    resumeUpload(uploadSessionId: string, file: Blob): UploadHandle {
+    resumeUpload(uploadSessionId: string, file: Blob, options?: { uploadSessionToken?: string }): UploadHandle {
       const manager = new UploadManager(httpClient);
       const dummyInput: UploadInput = { policy: '', file };
-      return manager.createHandle(dummyInput, () => manager.resumeUpload(uploadSessionId, file));
+      return manager.createHandle(
+        dummyInput,
+        () => manager.resumeUpload(uploadSessionId, file, options?.uploadSessionToken)
+      );
     },
 
     async getFile(fileId: string): Promise<Record<string, unknown>> {

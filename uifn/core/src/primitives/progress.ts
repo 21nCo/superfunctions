@@ -1,47 +1,88 @@
+import { clamp, type ChangeMeta, createStore } from './shared';
+
 export interface ProgressProps {
-  value?: number | null; // null for indeterminate
+  value?: number | null;
+  defaultValue?: number | null;
   max?: number;
-  min?: number; // usually 0
+  min?: number;
   onValueChange?: (value: number | null) => void;
 }
 
 export interface ProgressState {
   value: number | null;
+  min: number;
   max: number;
+  mode: 'determinate' | 'indeterminate';
+  ariaValueNow: number | null;
+  lastChangeMeta?: ChangeMeta<number | null>;
 }
 
-export function createProgress(props: ProgressProps) {
-  const { max = 100, min = 0, onValueChange } = props;
-  let value = props.value !== undefined ? props.value : 0;
+export interface ProgressMachine {
+  readonly state: ProgressState;
+  setValue: (value: number | null) => void;
+  getState: () => ProgressState;
+  subscribe: (callback: (state: ProgressState, meta?: ChangeMeta<number | null>) => void) => () => void;
+}
 
-  const listeners = new Set<(state: ProgressState) => void>();
+function normalizeProgressValue(value: number | null, min: number, max: number): number | null {
+  if (value === null) {
+    return null;
+  }
 
-  const getState = (): ProgressState => ({ value, max });
+  return clamp(value, min, max);
+}
 
-  const notify = () => {
-    const state = getState();
-    listeners.forEach(l => l(state));
-    if (onValueChange) {
-      onValueChange(state.value);
-    }
-  };
+function getMode(value: number | null): 'determinate' | 'indeterminate' {
+  return value === null ? 'indeterminate' : 'determinate';
+}
 
-  const setValue = (newValue: number | null) => {
-    if (newValue !== null) {
-        // Clamp
-        value = Math.min(Math.max(newValue, min), max);
-    } else {
-        value = null;
-    }
-    notify();
+export function createProgress(props: ProgressProps): ProgressMachine {
+  const min = props.min ?? 0;
+  const max = props.max ?? 100;
+  const initialRawValue =
+    props.value !== undefined
+      ? props.value
+      : props.defaultValue !== undefined
+        ? props.defaultValue
+        : 0;
+  const initialValue = normalizeProgressValue(initialRawValue, min, max);
+
+  const store = createStore<ProgressState, number | null>({
+    value: initialValue,
+    min,
+    max,
+    mode: getMode(initialValue),
+    ariaValueNow: initialValue,
+  });
+
+  const setValue = (value: number | null) => {
+    const state = store.getState();
+    const normalized = normalizeProgressValue(value, state.min, state.max);
+    const meta: ChangeMeta<number | null> = {
+      source: 'programmatic',
+      reason: 'set-value',
+      previousValue: state.value,
+      nextValue: normalized,
+    };
+
+    store.patchState(
+      {
+        value: normalized,
+        mode: getMode(normalized),
+        ariaValueNow: normalized,
+        lastChangeMeta: meta,
+      },
+      meta
+    );
+    props.onValueChange?.(normalized);
   };
 
   return {
-    state: getState(),
+    get state() {
+      return store.getState();
+    },
     setValue,
-    subscribe: (callback: (state: ProgressState) => void) => {
-      listeners.add(callback);
-      return () => listeners.delete(callback);
-    }
+    getState: store.getState,
+    subscribe: store.subscribe,
   };
 }

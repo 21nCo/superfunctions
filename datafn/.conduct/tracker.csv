@@ -72,3 +72,4 @@ id, desc, status, completedAt, completionDoc
 2026-03-14-r8m3k7x4-issue,Document search provider setup and SearchFn adapter integration in DataFn docs,1,2026-03-14T21:45:00Z,2026-03-14-k9m4x7r3-completion
 2026-03-14-new-s7h4r2p9-spec, Add a dedicated sharing example app that teaches actor and namespace modeling and serves as a Playwright target, 1, 2026-03-14T18:32:33Z, 
 2026-03-15-new-ug0uwash-spec,Rewrite DataFn public docs for beginner-friendly navigation, clear guide/reference boundaries, and no public legacy content,0,,
+2026-03-21-n4k8r2m7-issue,__ns column on global permissions table blocks cross-namespace permission reads for sharedWithMe and permission inspection,0,,

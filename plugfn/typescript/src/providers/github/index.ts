@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Provider } from '../../types/provider.js';
 import { AuthType } from '../../types/provider.js';
 import { TriggerType } from '../../types/trigger.js';
@@ -108,6 +109,35 @@ export const githubProvider: Provider = {
       },
     },
 
+    // Get issue
+    'issues.get': {
+      name: 'issues.get',
+      displayName: 'Get Issue',
+      description: 'Get a single issue by number',
+
+      parameters: z.object({
+        owner: z.string().describe('Repository owner'),
+        repo: z.string().describe('Repository name'),
+        issueNumber: z.number().describe('Issue number'),
+      }),
+
+      returns: z.object({
+        id: z.number(),
+        number: z.number(),
+        title: z.string(),
+        body: z.string().nullable(),
+        state: z.enum(['open', 'closed']).or(z.string()),
+        html_url: z.string(),
+      }),
+
+      execute: async (params: any, context: ActionContext) => {
+        const response = await context.http.get(
+          `${context.provider.baseUrl}/repos/${params.owner}/${params.repo}/issues/${params.issueNumber}`
+        );
+        return response.data;
+      },
+    },
+
     // Create issue
     'issues.create': {
       name: 'issues.create',
@@ -148,6 +178,43 @@ export const githubProvider: Provider = {
       },
     },
 
+    // Update issue
+    'issues.update': {
+      name: 'issues.update',
+      displayName: 'Update Issue',
+      description: 'Update an existing issue in a repository',
+
+      parameters: z.object({
+        owner: z.string().describe('Repository owner'),
+        repo: z.string().describe('Repository name'),
+        issueNumber: z.number().describe('Issue number'),
+        title: z.string().optional().describe('New issue title'),
+        body: z.string().optional().describe('New issue body'),
+        state: z.enum(['open', 'closed']).optional().describe('Issue state'),
+        labels: z.array(z.string()).optional().describe('Issue labels'),
+        assignees: z.array(z.string()).optional().describe('Issue assignees'),
+      }),
+
+      returns: z.object({
+        id: z.number(),
+        number: z.number(),
+        title: z.string(),
+        body: z.string().nullable(),
+        state: z.enum(['open', 'closed']).or(z.string()),
+        html_url: z.string(),
+        updated_at: z.string(),
+      }),
+
+      execute: async (params: any, context: ActionContext) => {
+        const { owner, repo, issueNumber, ...payload } = params;
+        const response = await context.http.patch(
+          `${context.provider.baseUrl}/repos/${owner}/${repo}/issues/${issueNumber}`,
+          payload
+        );
+        return response.data;
+      },
+    },
+
     // Create comment
     'issues.createComment': {
       name: 'issues.createComment',
@@ -177,6 +244,79 @@ export const githubProvider: Provider = {
         return response.data;
       },
     },
+
+    // Create pull request
+    'pulls.create': {
+      name: 'pulls.create',
+      displayName: 'Create Pull Request',
+      description: 'Create a pull request in a repository',
+
+      parameters: z.object({
+        owner: z.string().describe('Repository owner'),
+        repo: z.string().describe('Repository name'),
+        title: z.string().describe('Pull request title'),
+        body: z.string().optional().describe('Pull request body'),
+        head: z.string().describe('Head branch'),
+        base: z.string().describe('Base branch'),
+        draft: z.boolean().optional().describe('Create as draft'),
+      }),
+
+      returns: z.object({
+        id: z.number(),
+        number: z.number(),
+        title: z.string(),
+        state: z.string(),
+        html_url: z.string(),
+        draft: z.boolean().optional(),
+      }),
+
+      execute: async (params: any, context: ActionContext) => {
+        const response = await context.http.post(
+          `${context.provider.baseUrl}/repos/${params.owner}/${params.repo}/pulls`,
+          {
+            title: params.title,
+            body: params.body,
+            head: params.head,
+            base: params.base,
+            draft: params.draft,
+          }
+        );
+        return response.data;
+      },
+    },
+
+    // Create pull request review
+    'pulls.createReview': {
+      name: 'pulls.createReview',
+      displayName: 'Create Pull Request Review',
+      description: 'Create a review on an existing pull request',
+
+      parameters: z.object({
+        owner: z.string().describe('Repository owner'),
+        repo: z.string().describe('Repository name'),
+        pullNumber: z.number().describe('Pull request number'),
+        body: z.string().describe('Review body'),
+        event: z.enum(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']).describe('Review event type'),
+      }),
+
+      returns: z.object({
+        id: z.number(),
+        body: z.string().nullable(),
+        state: z.string(),
+        html_url: z.string(),
+      }),
+
+      execute: async (params: any, context: ActionContext) => {
+        const response = await context.http.post(
+          `${context.provider.baseUrl}/repos/${params.owner}/${params.repo}/pulls/${params.pullNumber}/reviews`,
+          {
+            body: params.body,
+            event: params.event,
+          }
+        );
+        return response.data;
+      },
+    },
   },
 
   triggers: {
@@ -190,12 +330,7 @@ export const githubProvider: Provider = {
         path: '/webhooks/github/issues',
         method: 'POST',
         verifySignature: async (payload, signature, secret) => {
-          // GitHub sends X-Hub-Signature-256
-          const crypto = require('crypto');
-          const hmac = crypto.createHmac('sha256', secret);
-          hmac.update(JSON.stringify(payload));
-          const expectedSignature = `sha256=${hmac.digest('hex')}`;
-          return signature === expectedSignature;
+          return verifyGitHubSignature(payload, signature, secret);
         },
       },
 
@@ -226,6 +361,87 @@ export const githubProvider: Provider = {
         };
       },
     },
+    'pull_request.closed': {
+      name: 'pull_request.closed',
+      displayName: 'Pull Request Closed',
+      description: 'Triggered when a pull request is closed',
+      type: TriggerType.Webhook,
+
+      webhookConfig: {
+        path: '/webhooks/github/pull-request',
+        method: 'POST',
+        verifySignature: async (payload, signature, secret) => {
+          return verifyGitHubSignature(payload, signature, secret);
+        },
+      },
+
+      schema: z.object({
+        action: z.literal('closed'),
+        pull_request: z.object({
+          id: z.number(),
+          number: z.number(),
+          title: z.string(),
+          html_url: z.string(),
+          merged: z.boolean().optional(),
+          state: z.string().optional(),
+        }),
+        repository: z.object({
+          name: z.string(),
+          owner: z.object({
+            login: z.string(),
+          }),
+        }),
+      }),
+
+      handler: async (payload) => {
+        return {
+          event: 'pull_request.closed',
+          data: payload,
+        };
+      },
+    },
+    'issue_comment.created': {
+      name: 'issue_comment.created',
+      displayName: 'Issue Comment Created',
+      description: 'Triggered when an issue comment is created',
+      type: TriggerType.Webhook,
+
+      webhookConfig: {
+        path: '/webhooks/github/issue-comment',
+        method: 'POST',
+        verifySignature: async (payload, signature, secret) => {
+          return verifyGitHubSignature(payload, signature, secret);
+        },
+      },
+
+      schema: z.object({
+        action: z.literal('created'),
+        issue: z.object({
+          id: z.number(),
+          number: z.number(),
+          title: z.string(),
+          html_url: z.string(),
+        }),
+        comment: z.object({
+          id: z.number(),
+          body: z.string(),
+          html_url: z.string().optional(),
+        }),
+        repository: z.object({
+          name: z.string(),
+          owner: z.object({
+            login: z.string(),
+          }),
+        }),
+      }),
+
+      handler: async (payload) => {
+        return {
+          event: 'issue_comment.created',
+          data: payload,
+        };
+      },
+    },
   },
 
   rateLimit: {
@@ -233,4 +449,22 @@ export const githubProvider: Provider = {
     window: 3600000, // 1 hour
   },
 };
+
+function verifyGitHubSignature(payload: any, signature: string, secret: string): boolean {
+  if (!signature || !secret) {
+    return false;
+  }
+
+  const normalizedSignature = signature.startsWith('sha256=') ? signature.slice('sha256='.length) : signature;
+  const expected = createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+
+  const actualBuffer = Buffer.from(normalizedSignature, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(actualBuffer, expectedBuffer);
+}
 

@@ -1,57 +1,92 @@
 <script lang="ts">
-  import type { Version } from '@docsfn/core';
+  import type { Version } from "@docsfn/core";
   import {
     DropdownMenu,
-    DropdownMenuTrigger,
     DropdownMenuContent,
     DropdownMenuItem,
-  } from '@uifn/svelte';
+    DropdownMenuTrigger,
+  } from "@uifn/svelte";
+  import type { DocsPageSurface } from "./DocsLayout.svelte";
 
-  export let versions: Version[];
-  export let currentVersion: string;
+  export interface VersionSwitcherProps {
+    surface?: DocsPageSurface;
+    versions?: Version[];
+    currentVersion?: string;
+    onVersionChange?: (versionSlug: string) => void;
+  }
+
+  export let surface: DocsPageSurface | undefined = undefined;
+  export let versions: Version[] | undefined = undefined;
+  export let currentVersion: string | undefined = undefined;
   export let onVersionChange: ((versionSlug: string) => void) | undefined = undefined;
 
-  $: current = versions.find(v => v.slug === currentVersion);
+  function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  $: resolvedVersions = versions ?? surface?.versions ?? [];
+  $: resolvedCurrentVersion =
+    currentVersion ??
+    surface?.currentVersion ??
+    resolvedVersions.find((version) => version.isDefault)?.slug ??
+    resolvedVersions[0]?.slug;
+  $: current = resolvedVersions.find((version) => version.slug === resolvedCurrentVersion);
 
   function handleChange(versionSlug: string) {
     if (onVersionChange) {
       onVersionChange(versionSlug);
-    } else {
-      // Default behavior: Navigate to same page in different version
-      const currentPath = window.location.pathname;
-      // Replace version in path (e.g., /v2/docs/intro -> /v3/docs/intro)
-      const versionSlugs = versions.map(v => v.slug).join('|');
-      const regex = new RegExp(`^/(${versionSlugs})/`);
-      const newPath = currentPath.replace(regex, `/${versionSlug}/`);
-      window.location.href = newPath;
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const explicitLink = surface?.versionLinks?.[versionSlug];
+    if (explicitLink) {
+      window.location.href = explicitLink;
+      return;
+    }
+
+    const pattern = resolvedVersions.map((version) => escapeRegExp(version.slug)).join("|");
+    if (!pattern) {
+      return;
+    }
+
+    const nextPath = window.location.pathname.replace(
+      new RegExp(`^/(${pattern})/`, "i"),
+      `/${versionSlug}/`
+    );
+    if (nextPath !== window.location.pathname) {
+      window.location.href = nextPath;
     }
   }
 </script>
 
-{#if versions.length > 1}
+{#if resolvedVersions.length > 1 && resolvedCurrentVersion}
   <DropdownMenu>
     <DropdownMenuTrigger class="docsfn-version-switcher-trigger">
-      <span class="docsfn-version-label">{current?.label || currentVersion}</span>
-      <svg 
-        width="12" 
-        height="12" 
-        viewBox="0 0 12 12" 
+      <span class="docsfn-version-label">{current?.label || resolvedCurrentVersion}</span>
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 12 12"
         fill="none"
         aria-hidden="true"
       >
-        <path 
-          d="M3 5L6 8L9 5" 
-          stroke="currentColor" 
-          stroke-width="1.5" 
-          stroke-linecap="round" 
+        <path
+          d="M3 5L6 8L9 5"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
           stroke-linejoin="round"
         />
       </svg>
     </DropdownMenuTrigger>
     <DropdownMenuContent class="docsfn-version-switcher-content">
-      {#each versions as version (version.slug)}
-        {@const isActive = version.slug === currentVersion}
-        <DropdownMenuItem 
+      {#each resolvedVersions as version (version.slug)}
+        {@const isActive = version.slug === resolvedCurrentVersion}
+        <DropdownMenuItem
           on:click={() => handleChange(version.slug)}
           class="docsfn-version-item {isActive ? 'active' : ''}"
           data-active={isActive}
@@ -61,19 +96,19 @@
             <span class="docsfn-version-badge">Default</span>
           {/if}
           {#if isActive}
-            <svg 
-              width="16" 
-              height="16" 
-              viewBox="0 0 16 16" 
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
               fill="none"
               class="docsfn-version-check"
               aria-hidden="true"
             >
-              <path 
-                d="M13 4L6 11L3 8" 
-                stroke="currentColor" 
-                stroke-width="2" 
-                stroke-linecap="round" 
+              <path
+                d="M13 4L6 11L3 8"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
                 stroke-linejoin="round"
               />
             </svg>

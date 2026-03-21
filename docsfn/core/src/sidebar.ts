@@ -1,51 +1,51 @@
-import { DocPage, Sidebar, SidebarItem } from './types';
+import { buildSidebarFromPages } from "./navigation";
+import type { NormalizedPageRecord } from "./normalize";
+import type { DocPage, Sidebar } from "./types";
 
-export function buildAutoSidebar(pages: DocPage[]): Sidebar {
-  const root: SidebarItem[] = [];
-  const map: Record<string, SidebarItem[]> = { '': root };
-
-  // Sort pages by path/slug
-  const sorted = [...pages].sort((a, b) => a.slug.localeCompare(b.slug));
-
-  for (const page of sorted) {
-    const parts = page.slug.split('/');
-    const segments = parts.slice(0, -1);
-    const leaf = parts[parts.length - 1];
-
-    let currentPath = '';
-    let currentLevel = root;
-
-    // Create groups for directories
-    for (const segment of segments) {
-      const parentPath = currentPath;
-      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-
-      if (!map[currentPath]) {
-        const group: SidebarItem = {
-          type: 'group',
-          text: segment.charAt(0).toUpperCase() + segment.slice(1), // simple title case
-          items: [],
-          collapsed: false
-        };
-        map[currentPath] = group.items!;
-        
-        // Find parent list to push this group to
-        const parentList = map[parentPath] || root;
-        parentList.push(group);
-      }
-      currentLevel = map[currentPath];
-    }
-
-    // Add page link
-    currentLevel.push({
-      type: 'link',
-      text: page.title,
-      link: page.path
-    });
-  }
+function pageToNormalized(page: DocPage): NormalizedPageRecord {
+  const sourcePath = page.slug.length > 0 ? page.slug : "index";
+  const segments = sourcePath.split("/").filter(Boolean);
+  const sourceName = segments[segments.length - 1] ?? "index";
+  const sourceDirectory = segments.slice(0, -1).join("/");
 
   return {
-    id: 'default',
-    items: root
+    id: page.id,
+    collection: "docs",
+    sourcePath,
+    sourceDirectory,
+    sourceName,
+    slug: page.slug,
+    path: page.path,
+    version: page.version,
+    title: page.title,
+    description: page.description,
+    body: page.body,
+    headings: page.headings,
+    frontmatter: page.frontmatter,
   };
+}
+
+export function buildAutoSidebar(pages: DocPage[]): Sidebar {
+  const slugs = new Set(pages.map((page) => page.slug));
+  const normalized = pages
+    .map((page) => {
+      const hasChildren = [...slugs].some(
+        (candidate) => candidate !== page.slug && candidate.startsWith(`${page.slug}/`)
+      );
+      if (page.slug.length > 0 && hasChildren) {
+        return pageToNormalized({
+          ...page,
+          slug: `${page.slug}/index`,
+        });
+      }
+      return pageToNormalized(page);
+    })
+    .sort((left, right) =>
+    left.path.localeCompare(right.path, "en", { sensitivity: "variant", numeric: true })
+    );
+  return buildSidebarFromPages({
+    pages: normalized,
+    metaByDirectory: new Map(),
+    id: "default",
+  });
 }

@@ -1,0 +1,33 @@
+# Phase 01
+- Phase goal: Bind upload sessions to the initiating caller and make the resumability contract canonical.
+- In scope:
+  - upload session identity binding and anonymous upload session token flow
+  - canonical upload status payload
+  - browser client resume compatibility
+  - `@filefn/client` package rename and server build-fixture type fixes
+- Out of scope:
+  - proxy upload storage behavior beyond what is needed for canonical status/auth
+- Deliverables:
+  - `filefn/server/src/upload-sessions/service.ts`
+  - `filefn/server/src/upload-sessions/routes.ts`
+  - `filefn/server/src/auth.ts`
+  - `filefn/server/src/errors.ts`
+  - `filefn/server/src/index.ts`
+  - `filefn/client/src/types.ts`
+  - `filefn/client/src/upload-manager.ts`
+  - `filefn/client/src/client.ts`
+  - `filefn/client/src/index.ts`
+  - `filefn/client/package.json`
+  - server test fixture files under `filefn/server/src/__tests__/`
+- Requirements covered: BUILD-001, PKG-001, AUTH-001, UPLOAD-001, CLIENT-001
+- Implementation tasks:
+  - Add upload-session token minting + verification for anonymous flows.
+  - Enforce caller binding for all upload-session follow-up operations.
+  - Return canonical upload status fields.
+  - Update browser client resume logic and anonymous session token storage.
+  - Rename client package to `@filefn/client`.
+  - Fix server test fixture adapter typing so `tsc` passes.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/server && npm test -- --run && npm run typecheck && npm run build`
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/client && npm test -- --run && npm run typecheck && npm run build`
+- Stop condition: upload-session auth and resume tests pass, client package name is canonical, and server typecheck/build are green.

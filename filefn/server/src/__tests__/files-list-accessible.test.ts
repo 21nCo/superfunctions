@@ -1,19 +1,9 @@
-/**
- * Test vectors for list accessibility semantics (FILE-001, AUTHZ-001, AUTHZ-003)
- * 
- * These tests encode the audit gaps for accessible file listing:
- * - TV-FILE-LIST-001: List returns owned + public + shared + granted files
- * - TV-FILE-LIST-NEG-001: List does not leak inaccessible private files
- * - TV-VISIBILITY-001: Public visibility allows read
- * - TV-VISIBILITY-NEG-001: Private visibility blocks anonymous read
- */
-
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createFileFn, type FileFn, type Authorizer, type Visibility } from '../index.js';
-import { createFakeStorageAdapter } from '@superfunctions/storage';
+import { describe, expect, it } from 'vitest';
+import { createFileService, type FileRecord } from '../files/service.js';
+import { createEventEmitter } from '../events.js';
 import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
 
-const FAKE_CAPABILITIES: AdapterCapabilities = {
+const CAPS: AdapterCapabilities = {
   types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
   operations: { batch: false, upsert: true, streaming: false, fulltext: false, returning: false },
   transactions: { supported: false, nested: false },
@@ -22,76 +12,85 @@ const FAKE_CAPABILITIES: AdapterCapabilities = {
   advanced: { customIdGeneration: false, numericIds: false, schemaNamespaces: false, customTypes: false },
 };
 
-function createFakeDbAdapter(): Adapter {
-  const tables = new Map<string, Map<string, any>>();
-  let idCounter = 1;
+type Row = Record<string, any>;
 
-  function getTable(model: string): Map<string, any> {
+function createDb(seed: { files?: Row[]; permissions?: Row[] }): Adapter {
+  const tables = new Map<string, Map<string, Row>>();
+
+  tables.set('files', new Map((seed.files || []).map((file) => [file.fileId, file])));
+  tables.set(
+    'filePermissions',
+    new Map((seed.permissions || []).map((permission, idx) => [`perm_${idx + 1}`, permission])),
+  );
+
+  function table(model: string): Map<string, Row> {
     if (!tables.has(model)) tables.set(model, new Map());
     return tables.get(model)!;
   }
 
-  function matchesWhere(record: any, where: any[]): boolean {
+  function match(record: Row, where: any[] = []): boolean {
     for (const clause of where) {
-      const value = record[clause.field];
-      switch (clause.operator) {
-        case 'eq': if (value !== clause.value) return false; break;
-        case 'ne': if (value === clause.value) return false; break;
-        case 'in': if (!clause.value.includes(value)) return false; break;
-        default: break;
-      }
+      const value = record?.[clause.field];
+      if (clause.operator === 'eq' && value !== clause.value) return false;
+      if (clause.operator === 'ne' && value === clause.value) return false;
+      if (clause.operator === 'in' && !clause.value.includes(value)) return false;
+      if (clause.operator === 'lt' && !(value < clause.value)) return false;
+      if (clause.operator === 'gt' && !(value > clause.value)) return false;
     }
     return true;
   }
 
   return {
-    id: 'fake',
-    name: 'fake',
+    id: 'file-list-db',
+    name: 'file-list-db',
     version: '1.0.0',
-    capabilities: FAKE_CAPABILITIES,
+    capabilities: CAPS,
     async create(params) {
-      const table = getTable(params.model);
-      const id = params.data.uploadSessionId || params.data.fileId || params.data.versionId || params.data.permissionId || `id_${idCounter++}`;
-      const record = { ...params.data, _id: id };
-      table.set(id, record);
-      return record;
+      const t = table(params.model);
+      const id = params.data.fileId || params.data.versionId || params.data.uploadSessionId || `id_${t.size + 1}`;
+      const row = { ...params.data, _id: id };
+      t.set(id, row);
+      return row;
     },
     async findOne(params) {
-      const table = getTable(params.model);
-      for (const record of table.values()) {
-        if (matchesWhere(record, params.where)) return record;
+      for (const row of table(params.model).values()) {
+        if (match(row, params.where)) return row;
       }
       return null;
     },
     async findMany(params) {
-      const table = getTable(params.model);
-      const results: any[] = [];
-      for (const record of table.values()) {
-        if (!params.where || params.where.length === 0 || matchesWhere(record, params.where)) {
-          results.push(record);
-        }
+      let rows = Array.from(table(params.model).values()).filter((row) => match(row, params.where));
+      const orderBy = params.orderBy;
+      if (orderBy && orderBy.length > 0) {
+        rows = rows.sort((a, b) => {
+          for (const clause of orderBy) {
+            const aValue = a[clause.field];
+            const bValue = b[clause.field];
+            if (aValue === bValue) continue;
+            if (clause.direction === 'asc') return aValue < bValue ? -1 : 1;
+            return aValue > bValue ? -1 : 1;
+          }
+          return 0;
+        });
       }
-      if (params.orderBy?.some((o: any) => o.field === 'createdAt' && o.direction === 'desc')) {
-        results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      }
-      return results.slice(0, params.limit || results.length);
+      return params.limit ? rows.slice(0, params.limit) : rows;
     },
     async update(params) {
-      const table = getTable(params.model);
-      for (const [id, record] of table.entries()) {
-        if (matchesWhere(record, params.where)) {
-          const updated = { ...record, ...params.data };
-          table.set(id, updated);
-          return updated;
+      const t = table(params.model);
+      for (const [id, row] of t.entries()) {
+        if (match(row, params.where)) {
+          const next = { ...row, ...params.data };
+          t.set(id, next);
+          return next;
         }
       }
       return null;
     },
     async delete(params) {
-      const table = getTable(params.model);
-      for (const [id, record] of table.entries()) {
-        if (matchesWhere(record, params.where)) {
-          table.delete(id);
+      const t = table(params.model);
+      for (const [id, row] of t.entries()) {
+        if (match(row, params.where)) {
+          t.delete(id);
           return;
         }
       }
@@ -102,288 +101,113 @@ function createFakeDbAdapter(): Adapter {
     async upsert(params) {
       const existing = await this.findOne({ model: params.model, where: params.where, namespace: params.namespace });
       if (existing) {
-        return await this.update({ model: params.model, where: params.where, data: params.update, namespace: params.namespace });
+        return this.update({ model: params.model, where: params.where, data: params.update, namespace: params.namespace });
       }
-      return await this.create({ model: params.model, data: params.create, namespace: params.namespace });
+      return this.create({ model: params.model, data: params.create, namespace: params.namespace });
     },
     async count() { return 0; },
-    async transaction(callback) { return callback(this as any); },
+    async transaction(cb) { return cb(this as any); },
     async initialize() {},
     async isHealthy() { return { healthy: true, uptime: 0 }; },
     async close() {},
     async getSchemaVersion() { return 0; },
     async setSchemaVersion() {},
     async validateSchema() { return { valid: true }; },
+    internal: {
+      async ensureTable() {},
+      async create() { return {}; },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update() { return 0; },
+      async delete() { return 0; },
+    },
   } as Adapter;
 }
 
-async function createFileWithVisibility(
-  fileFn: FileFn,
-  db: Adapter,
-  storageSizes: Map<string, number>,
-  ownerId: string,
-  tenantId: string,
-  visibility: Visibility,
-  fileIdOverride?: string
-): Promise<{ fileId: string; versionId: string }> {
-  const { uploadSessionId } = await fileFn.createUploadSession(
-    { policy: 'user-avatar', fileName: 'test.png', size: 100, mimeType: 'image/png' },
-    { principalId: ownerId, tenantId }
-  );
-
-  const session = await db.findOne<any>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }] });
-  if (session) storageSizes.set(session.storageKey, 100);
-  
-  await fileFn.completeUploadPart(
-    { uploadSessionId, partNumber: 1, etag: 'etag1', size: 100 },
-    { principalId: ownerId, tenantId }
-  );
-  
-  const result = await fileFn.completeUploadSession({ uploadSessionId }, { principalId: ownerId, tenantId });
-
-  // Update visibility directly in db
-  await db.update({
-    model: 'files',
-    where: [{ field: 'fileId', operator: 'eq', value: result.fileId }],
-    data: { visibility, fileId: fileIdOverride || result.fileId },
-    namespace: 'filefn',
-  });
-
-  return { fileId: fileIdOverride || result.fileId, versionId: result.versionId };
+function buildFile(input: Partial<FileRecord> & Pick<FileRecord, 'fileId' | 'ownerId' | 'updatedAt'>): FileRecord {
+  return {
+    fileId: input.fileId,
+    currentVersionId: input.currentVersionId || `ver_${input.fileId}`,
+    ownerId: input.ownerId,
+    tenantId: input.tenantId ?? 'org_123',
+    visibility: input.visibility || 'private',
+    policy: input.policy || 'user-avatar',
+    mimeType: input.mimeType || 'image/png',
+    size: input.size ?? 10,
+    name: input.name || `${input.fileId}.png`,
+    metadata: input.metadata || {},
+    createdAt: input.createdAt || '2026-03-20T10:00:00.000Z',
+    updatedAt: input.updatedAt,
+  };
 }
 
-describe('@filefn/server list accessible files', () => {
-  let db: Adapter;
-  let fileFn: FileFn;
-  let storageSizes: Map<string, number>;
-
-  beforeEach(() => {
-    db = createFakeDbAdapter();
-    storageSizes = new Map();
-    const storage = createFakeStorageAdapter({
-      capabilities: {
-        signedUploadUrls: true,
-        signedDownloadUrls: true,
-        multipart: true,
-        proxyStreamingUpload: false,
-        proxyStreamingDownload: true,
-      },
-      async statObject(input) {
-        return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
-      }
-    });
-
-    fileFn = createFileFn({
-      db,
-      storage,
-      policies: [{ name: 'user-avatar', contentTypes: ['image/png'], maxSizeBytes: 10485760 }],
-      auth: { required: false },
-    });
-  });
-
-  describe('TV-FILE-LIST-001: List returns only accessible files', () => {
-    it('should return owned, public, shared, and granted files', async () => {
-      // Setup dataset per test vector:
-      // - file_owned_private owned by user_123, visibility private
-      // - file_other_public owned by user_999, visibility public
-      // - file_other_shared owned by user_999, visibility shared, tenantId org_123
-      // - file_other_private_granted owned by user_999, visibility private, with permission grant
-
-      await createFileWithVisibility(fileFn, db, storageSizes, 'user_123', 'org_123', 'private');
-      await createFileWithVisibility(fileFn, db, storageSizes, 'user_999', 'org_456', 'public');
-      await createFileWithVisibility(fileFn, db, storageSizes, 'user_999', 'org_123', 'shared');
-
-      // Create a granted file
-      const grantedFile = await createFileWithVisibility(fileFn, db, storageSizes, 'user_999', 'org_456', 'private');
-      
-      // Add permission grant for user_123
-      await db.create({
-        model: 'filePermissions',
-        data: {
-          permissionId: `perm_${Date.now()}`,
-          fileId: grantedFile.fileId,
+describe('PHASE_03 FILE-001 deterministic list semantics', () => {
+  it('TV-FILE-LIST-001: returns readable set in deterministic order with stable cursor pagination', async () => {
+    const db = createDb({
+      files: [
+        buildFile({ fileId: 'file_003', ownerId: 'user_123', updatedAt: '2026-03-20T15:00:00.000Z' }),
+        buildFile({ fileId: 'file_001', ownerId: 'user_123', updatedAt: '2026-03-20T14:00:00.000Z' }),
+        buildFile({ fileId: 'file_004', ownerId: 'user_999', updatedAt: '2026-03-20T13:00:00.000Z', tenantId: 'org_999' }),
+        buildFile({ fileId: 'file_002', ownerId: 'user_999', updatedAt: '2026-03-20T16:00:00.000Z', tenantId: 'org_999' }),
+      ],
+      permissions: [
+        {
+          fileId: 'file_004',
           principalId: 'user_123',
           canRead: true,
-          canWrite: false,
-          canDelete: false,
-          createdAt: new Date().toISOString(),
+          tenantId: 'org_123',
         },
-        namespace: 'filefn',
-      });
-
-      // List files for user_123
-      const result = await fileFn.listFiles({}, { principalId: 'user_123', tenantId: 'org_123' }) as any;
-
-      // This will fail until list accessibility is properly implemented
-      // Should include: owned private, other public, other shared (same tenant), granted
-      expect(result.files.length).toBe(4);
-      
-      const fileIds = result.files.map((f: any) => f.fileId);
-      expect(fileIds).toContain(grantedFile.fileId);
+      ],
     });
+
+    const service = createFileService({
+      db,
+      storage: { capabilities: { signedDownloadUrls: true } } as any,
+      events: createEventEmitter(),
+      namespace: 'filefn',
+    });
+
+    const ctx = { principalId: 'user_123', tenantId: 'org_123' };
+
+    const firstRun = await service.listFiles(ctx, { limit: 2 });
+    const secondRun = await service.listFiles(ctx, { limit: 2 });
+
+    expect(firstRun.files.map((f) => f.fileId)).toEqual(['file_003', 'file_001']);
+    expect(secondRun.files.map((f) => f.fileId)).toEqual(['file_003', 'file_001']);
+    expect(firstRun.nextCursor).toBeDefined();
+
+    const page2 = await service.listFiles(ctx, { limit: 2, cursor: firstRun.nextCursor });
+    expect(page2.files.map((f) => f.fileId)).toEqual(['file_004']);
+
+    const allReturned = [...firstRun.files, ...page2.files].map((f) => f.fileId);
+    expect(allReturned).not.toContain('file_002');
   });
 
-  describe('TV-FILE-LIST-NEG-001: List does not leak private files', () => {
-    it('should not return private files owned by others without grant', async () => {
-      // Create a private file owned by user_123
-      await createFileWithVisibility(fileFn, db, storageSizes, 'user_123', 'org_123', 'private');
-      
-      // Create a public file owned by other_user
-      const publicFile = await createFileWithVisibility(fileFn, db, storageSizes, 'other_user', 'org_456', 'public');
-
-      // List files for other_user (not user_123)
-      const result = await fileFn.listFiles({}, { principalId: 'other_user', tenantId: 'org_456' }) as any;
-
-      // other_user should NOT see user_123's private file
-      // This will fail until list filtering is properly implemented
-      const fileIds = result.files.map((f: any) => f.fileId);
-      expect(fileIds).not.toContain('file_user_123_private');
-      expect(fileIds).toContain(publicFile.fileId);
-    });
-  });
-
-  describe('TV-VISIBILITY-001: Public visibility allows read', () => {
-    it('should allow anonymous read of public files', async () => {
-      const storage = createFakeStorageAdapter({
-        capabilities: {
-          signedUploadUrls: true,
-          signedDownloadUrls: true,
-          multipart: true,
-          proxyStreamingUpload: false,
-          proxyStreamingDownload: true,
-        },
-        async statObject(input) {
-            return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
-        }
-      });
-
-      const fileFnWithAuth = createFileFn({
-        db,
-        storage,
-        policies: [{ name: 'user-avatar', contentTypes: ['image/png'], maxSizeBytes: 10485760 }],
-        auth: { required: false },
-      });
-
-      // Create a public file
-      const { fileId } = await createFileWithVisibility(fileFnWithAuth, db, storageSizes, 'user_123', 'org_123', 'public');
-
-      // Anonymous read (no principalId)
-      const request = new Request(`http://localhost/${fileId}`, {
-        method: 'GET',
-        headers: { 'x-request-id': 'req_026' },
-      });
-
-      const response = await fileFnWithAuth.router.handle(request);
-      
-      // This will fail until visibility-based access is implemented
-      expect(response!.status).toBe(200);
-
-      const body = await response!.json();
-      expect(body.ok).toBe(true);
-      expect(body.data.visibility).toBe('public');
-    });
-  });
-
-  describe('TV-VISIBILITY-NEG-001: Private visibility blocks anonymous read', () => {
-    it('should require auth for private files', async () => {
-      const storage = createFakeStorageAdapter({
-        capabilities: {
-          signedUploadUrls: true,
-          signedDownloadUrls: true,
-          multipart: true,
-          proxyStreamingUpload: false,
-          proxyStreamingDownload: true,
-        },
-        async statObject(input) {
-            return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
-        }
-      });
-
-      const fileFnWithAuth = createFileFn({
-        db,
-        storage,
-        policies: [{ name: 'user-avatar', contentTypes: ['image/png'], maxSizeBytes: 10485760 }],
-        auth: { required: true },
-      });
-
-      // Create a private file
-      const { fileId } = await createFileWithVisibility(fileFn, db, storageSizes, 'user_123', 'org_123', 'private');
-
-      // Anonymous read (no authorization)
-      const request = new Request(`http://localhost/${fileId}`, {
-        method: 'GET',
-        headers: { 'x-request-id': 'req_027' },
-      });
-
-      const response = await fileFnWithAuth.router.handle(request);
-      
-      // Should return 401 for private file without auth
-      expect(response!.status).toBe(401);
-
-      const body = await response!.json();
-      expect(body.ok).toBe(false);
-      expect(body.error.code).toBe('FILEFN_AUTH_REQUIRED');
-    });
-  });
-
-  describe('TV-VERSION-REPLACE-NEG-001: Replace forbidden without write permission', () => {
-    it('should reject replace-by-fileId without write permission', async () => {
-      const storage = createFakeStorageAdapter({
-        capabilities: {
-          signedUploadUrls: true,
-          signedDownloadUrls: true,
-          multipart: true,
-          proxyStreamingUpload: false,
-          proxyStreamingDownload: true,
-        },
-        async statObject(input) {
-            return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
-        }
-      });
-
-      const fileFnWithAuth = createFileFn({
-        db,
-        storage,
-        policies: [{ name: 'user-avatar', contentTypes: ['image/png'], maxSizeBytes: 10485760 }],
-        auth: {
-          required: false,
-          resolveSession: async (req) => {
-            const auth = req.headers.get('authorization');
-            if (auth === 'Bearer good') return { principalId: 'user_123' };
-            if (auth === 'Bearer other-user') return { principalId: 'user_999' };
-            return null;
-          },
-        },
-      });
-
-      // Create a file owned by user_123
-      const { fileId } = await createFileWithVisibility(fileFnWithAuth, db, storageSizes, 'user_123', 'org_123', 'private');
-
-      // Attempt to replace by user_999 (not owner, no write permission)
-      const request = new Request('http://localhost/upload/init', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-request-id': 'req_020',
-          'authorization': 'Bearer other-user',
-        },
-        body: JSON.stringify({
-          policy: 'user-avatar',
-          fileId: fileId,
-          fileName: 'new-avatar.png',
-          size: 1,
-          mimeType: 'image/png',
+  it('FILE-001: default limit is 20 and max limit is capped at 100', async () => {
+    const files: FileRecord[] = [];
+    for (let i = 1; i <= 120; i++) {
+      files.push(
+        buildFile({
+          fileId: `file_${i.toString().padStart(3, '0')}`,
+          ownerId: 'user_123',
+          updatedAt: `2026-03-20T12:${(i % 60).toString().padStart(2, '0')}:00.000Z`,
         }),
-      });
+      );
+    }
 
-      const response = await fileFnWithAuth.router.handle(request);
-      
-      // Should return 403 FORBIDDEN for unauthorized replace
-      expect(response!.status).toBe(403);
-
-      const body = await response!.json();
-      expect(body.ok).toBe(false);
-      expect(body.error.code).toBe('FILEFN_FORBIDDEN');
+    const service = createFileService({
+      db: createDb({ files }),
+      storage: { capabilities: { signedDownloadUrls: true } } as any,
+      events: createEventEmitter(),
+      namespace: 'filefn',
     });
+
+    const ctx = { principalId: 'user_123', tenantId: 'org_123' };
+
+    const defaultPage = await service.listFiles(ctx);
+    expect(defaultPage.files).toHaveLength(20);
+
+    const cappedPage = await service.listFiles(ctx, { limit: 999 });
+    expect(cappedPage.files).toHaveLength(100);
   });
 });

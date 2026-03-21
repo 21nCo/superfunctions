@@ -1,28 +1,29 @@
 {
   "name": "@uifn/vue",
   "version": "0.0.1",
-  "description": "Vue composables built on @uifn/core primitives",
+  "description": "Experimental Vue adapter components for uifn primitives",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest",
-    "lint": "eslint src/"
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@uifn/core": "0.0.1"
   },
   "peerDependencies": {
-    "vue": ">=3.3.0"
+    "vue": ">=3.5.0 <4"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.3",
@@ -36,17 +37,22 @@
   "keywords": [
     "vue",
     "ui",
-    "composables",
+    "components",
     "primitives",
     "headless",
-    "accessible"
+    "accessible",
+    "experimental"
   ],
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "author": "21n",
   "license": "MIT",
+  "engines": {
+    "node": ">=18 <23"
+  },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
   },

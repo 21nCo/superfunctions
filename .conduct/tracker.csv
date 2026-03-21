@@ -9,3 +9,4 @@ id, desc, status, completedAt, completionDoc
 2026-03-11-m7q2k9p4-issue,Fix @datafn/docs Vercel build failure after shared docs-theme styling reuse,1,2026-03-11T12:02:27Z,2026-03-11-m7q2k9p4-completion
 2026-03-12-audit-fix-o4u9k2m7-spec,Consolidate OAuth and reusable shared infrastructure and publish complete root shared-package docs,1,2026-03-12T19:11:53Z,
 2026-03-15-fix-ifnaigab-spec,Rebuild root Superfunctions docs into a beginner-first category-organized external docs site for the ecosystem and shared packages,0,,
+2026-03-18-change-3dhqe3l2-spec,Deliver the Superfunctions package and provider work required by Conduct v0.3.0,1,2026-03-18T10:06:09Z,

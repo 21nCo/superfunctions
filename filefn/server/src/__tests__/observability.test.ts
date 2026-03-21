@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createLogger, redactSecrets, type LogContext, createFileFn, type FileFn, type Logger } from '../index.js';
 import { createFakeStorageAdapter } from '@superfunctions/storage';
 import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
-import type { FileUploadedEvent, FileDeletedEvent } from '../events.js';
+import { createUploadStartedEvent, type FileUploadedEvent, type FileDeletedEvent } from '../events.js';
 
 const FAKE_CAPABILITIES: AdapterCapabilities = {
   types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
@@ -111,6 +111,14 @@ function createFakeDbAdapter(): Adapter {
     async getSchemaVersion() { return 0; },
     async setSchemaVersion() {},
     async validateSchema() { return { valid: true }; },
+    internal: {
+      async ensureTable() {},
+      async create() { return {}; },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update() { return 0; },
+      async delete() { return 0; },
+    },
   } as Adapter;
 }
 
@@ -449,6 +457,27 @@ describe('@filefn/server observability', () => {
 
       expect(outputs.length).toBe(1);
       expect(outputs[0].timestamp).toBeDefined();
+    });
+  });
+
+  describe('Event payload redaction', () => {
+    it('should redact secret-bearing event fields while preserving safe IDs', () => {
+      const event = createUploadStartedEvent({
+        uploadSessionId: 'upl_0001',
+        fileName: 'avatar.png',
+        size: 3,
+        mimeType: 'image/png',
+        policy: 'user-avatar',
+        principalId: 'user_123',
+        tenantId: 'org_123',
+        signedUrl: 'https://storage.example.com/upload?token=secret',
+        uploadSessionToken: 'upls_live_super_secret_token',
+      } as any, 'req_001');
+
+      expect(event.requestId).toBe('req_001');
+      expect(event.uploadSessionId).toBe('upl_0001');
+      expect((event as any).signedUrl).toBe('[REDACTED]');
+      expect((event as any).uploadSessionToken).toBe('[REDACTED]');
     });
   });
 

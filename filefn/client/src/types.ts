@@ -37,6 +37,7 @@ export interface UploadResult {
 
 export interface UploadHandle {
   uploadSessionId: string;
+  uploadSessionToken?: string;
   onProgress(callback: (progress: UploadProgress) => void): void;
   abort(): void;
   done(): Promise<UploadResult>;
@@ -44,6 +45,7 @@ export interface UploadHandle {
 
 export interface InitUploadResponse {
   uploadSessionId: string;
+  uploadSessionToken?: string;
   uploadMode: string;
   chunkSizeBytes: number;
   totalParts: number;
@@ -51,11 +53,14 @@ export interface InitUploadResponse {
 }
 
 export interface UploadStatusResponse {
+  uploadSessionId?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'aborted';
   recordedParts: number[];
+  uploadedParts?: number[];
   totalParts: number;
   chunkSizeBytes: number;
   fileSize: number;
+  expiresAt?: string;
 }
 
 export interface SignPartResponse {

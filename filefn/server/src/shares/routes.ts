@@ -1,11 +1,19 @@
 import type { SharesService } from './service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
+import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
-import { FileFnError, authRequired } from '../errors.js';
+import { FileFnError, authRequired, rateLimited } from '../errors.js';
 
 export interface SharesRouteContext {
   service: SharesService;
   auth: AuthConfig;
+  rateLimiter?: RateLimiter;
+  rateLimits?: {
+    shareDownload?: {
+      windowSeconds: number;
+      maxRequests: number;
+    };
+  };
 }
 
 function getRequestId(request: Request): string | undefined {
@@ -25,7 +33,7 @@ function errorResponse(error: FileFnError, requestId?: string): Response {
 }
 
 export function createSharesRoutes(ctx: SharesRouteContext) {
-  const { service, auth } = ctx;
+  const { service, auth, rateLimiter, rateLimits } = ctx;
 
   async function requireAuth(request: Request): Promise<FileFnPrincipal> {
     const principal = await resolvePrincipal(request, auth);
@@ -37,6 +45,24 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
 
   async function optionalAuth(request: Request): Promise<FileFnPrincipal | null> {
     return resolvePrincipal(request, auth);
+  }
+
+  async function checkRateLimit(
+    principal: FileFnPrincipal | null,
+    categoryLimit?: { windowSeconds: number; maxRequests: number }
+  ): Promise<void> {
+    if (!rateLimiter || !categoryLimit) {
+      return;
+    }
+
+    const result = await rateLimiter.check({
+      key: `share-download:${principal?.tenantId || 'global'}:${principal?.principalId || 'anonymous'}`,
+      windowSeconds: categoryLimit.windowSeconds,
+      limit: categoryLimit.maxRequests,
+    });
+    if (!result.allowed) {
+      throw rateLimited(result.resetAt);
+    }
   }
 
   return {
@@ -73,6 +99,7 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await optionalAuth(request);
+        await checkRateLimit(principal, rateLimits?.shareDownload);
 
         const result = await service.downloadViaShareLink(token, {
           principalId: principal?.principalId || 'anonymous',
@@ -87,6 +114,32 @@ export function createSharesRoutes(ctx: SharesRouteContext) {
           fileName: result.fileName,
           mimeType: result.mimeType,
         }, requestId);
+      } catch (err) {
+        if (err instanceof FileFnError) return errorResponse(err, requestId);
+        throw err;
+      }
+    },
+
+    async proxyDownloadViaShareLink(request: Request, token: string): Promise<Response> {
+      const requestId = getRequestId(request);
+      try {
+        const principal = await optionalAuth(request);
+        await checkRateLimit(principal, rateLimits?.shareDownload);
+
+        const result = await service.getDownloadStreamViaShareLink(token, {
+          principalId: principal?.principalId || 'anonymous',
+          tenantId: principal?.tenantId,
+          isAuthenticated: !!principal,
+          requestId,
+        });
+
+        return new Response(result.stream, {
+          status: 200,
+          headers: {
+            'Content-Type': result.contentType,
+            'Content-Length': result.size.toString(),
+          },
+        });
       } catch (err) {
         if (err instanceof FileFnError) return errorResponse(err, requestId);
         throw err;

@@ -99,6 +99,14 @@ function createFakeDbAdapter(): Adapter {
     async getSchemaVersion() { return 0; },
     async setSchemaVersion() {},
     async validateSchema() { return { valid: true }; },
+    internal: {
+      async ensureTable() {},
+      async create() { return {}; },
+      async findOne() { return null; },
+      async findMany() { return []; },
+      async update() { return 0; },
+      async delete() { return 0; },
+    },
   } as Adapter;
 }
 
@@ -421,6 +429,57 @@ describe('@filefn/server upload sessions', () => {
       const body = await response!.json();
       expect(body.ok).toBe(false);
       expect(body.error.code).toBe('FILEFN_RATE_LIMITED');
+    });
+
+    it('TV-RATE-001: should enforce uploadInit category limits with ISO8601 resetAt', async () => {
+      const fileFnWithCategoryRateLimit = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: { signedUploadUrls: true, signedDownloadUrls: true, multipart: true, proxyStreamingUpload: false, proxyStreamingDownload: true },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png'] }],
+        rateLimit: {
+          limits: {
+            uploadInit: { windowSeconds: 60, maxRequests: 1 },
+          },
+        },
+        auth: { required: false },
+      });
+
+      const request1 = new Request('http://localhost/upload/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-request-id': 'req_rate_1' },
+        body: JSON.stringify({ policy: 'user-avatar', fileName: 'a.png', size: 100, mimeType: 'image/png' }),
+      });
+      const response1 = await fileFnWithCategoryRateLimit.router.handle(request1);
+      expect(response1!.status).toBe(200);
+
+      const request2 = new Request('http://localhost/upload/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-request-id': 'req_rate_2' },
+        body: JSON.stringify({ policy: 'user-avatar', fileName: 'b.png', size: 100, mimeType: 'image/png' }),
+      });
+      const response2 = await fileFnWithCategoryRateLimit.router.handle(request2);
+      expect(response2!.status).toBe(429);
+
+      const body2 = await response2!.json();
+      expect(body2.error.code).toBe('FILEFN_RATE_LIMITED');
+      expect(typeof body2.error.details?.resetAt).toBe('string');
+      expect(Number.isNaN(Date.parse(body2.error.details.resetAt))).toBe(false);
+    });
+
+    it('TV-RATE-NEG-001: should reject legacy non-category rateLimit config', () => {
+      expect(() => createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: { signedUploadUrls: true, signedDownloadUrls: true, multipart: true, proxyStreamingUpload: false, proxyStreamingDownload: true },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png'] }],
+        rateLimit: {
+          limits: {},
+        },
+        auth: { required: false },
+      })).toThrow(/RATE_LIMIT_CONFIG_INVALID/);
     });
   });
 });

@@ -8,6 +8,13 @@ export interface FileRouteContext {
   service: FileService;
   auth: AuthConfig;
   rateLimiter?: RateLimiter;
+  rateLimits?: {
+    download?: {
+      windowSeconds: number;
+      maxRequests: number;
+    };
+  };
+  legacyGlobalRateLimit?: boolean;
 }
 
 function getRequestId(request: Request): string | undefined {
@@ -23,7 +30,7 @@ function errorResponse(error: FileFnError, requestId?: string): Response {
 }
 
 export function createFileRoutes(ctx: FileRouteContext) {
-  const { service, auth, rateLimiter } = ctx;
+  const { service, auth, rateLimiter, rateLimits, legacyGlobalRateLimit = false } = ctx;
 
   async function requireAuth(request: Request): Promise<FileFnPrincipal> {
     const principal = await resolvePrincipal(request, auth);
@@ -33,12 +40,25 @@ export function createFileRoutes(ctx: FileRouteContext) {
     return principal || { principalId: 'anonymous' };
   }
 
-  async function checkRateLimit(key: string): Promise<void> {
-    if (rateLimiter) {
-      const result = await rateLimiter.check({ key });
-      if (!result.allowed) {
-        throw rateLimited(result.resetAt);
-      }
+  async function checkRateLimit(
+    categoryKey: string,
+    principal: FileFnPrincipal,
+    categoryLimit?: { windowSeconds: number; maxRequests: number }
+  ): Promise<void> {
+    if (!rateLimiter) {
+      return;
+    }
+    if (!categoryLimit && !legacyGlobalRateLimit) {
+      return;
+    }
+
+    const result = await rateLimiter.check({
+      key: `${categoryKey}:${principal.tenantId || 'global'}:${principal.principalId}`,
+      windowSeconds: categoryLimit?.windowSeconds,
+      limit: categoryLimit?.maxRequests,
+    });
+    if (!result.allowed) {
+      throw rateLimited(result.resetAt);
     }
   }
 
@@ -49,7 +69,9 @@ export function createFileRoutes(ctx: FileRouteContext) {
         const principal = await requireAuth(request);
         const url = new URL(request.url);
         const cursor = url.searchParams.get('cursor') || undefined;
-        const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+        const rawLimit = url.searchParams.get('limit');
+        const parsedLimit = rawLimit ? parseInt(rawLimit, 10) : undefined;
+        const limit = typeof parsedLimit === 'number' && !Number.isNaN(parsedLimit) ? parsedLimit : undefined;
 
         const result = await service.listFiles(
           { principalId: principal.principalId, tenantId: principal.tenantId, requestId },
@@ -95,20 +117,13 @@ export function createFileRoutes(ctx: FileRouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await requireAuth(request);
-        await checkRateLimit(`download:${principal.tenantId || 'global'}:${principal.principalId}`);
+        await checkRateLimit('download', principal, rateLimits?.download);
 
-        // Use binding-checked download when versionId is specified
-        const result = versionId
-          ? await service.getDownloadUrlWithBinding(fileId, versionId, {
-              principalId: principal.principalId,
-              tenantId: principal.tenantId,
-              requestId,
-            })
-          : await service.getDownloadUrl(fileId, undefined, {
-              principalId: principal.principalId,
-              tenantId: principal.tenantId,
-              requestId,
-            });
+        const result = await service.getDownloadUrl(fileId, versionId, {
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+          requestId,
+        });
 
         return successResponse({ url: result.url, headers: result.headers }, requestId);
       } catch (err) {
@@ -185,7 +200,7 @@ export function createFileRoutes(ctx: FileRouteContext) {
         const requestId = getRequestId(request);
         try {
             const principal = await requireAuth(request);
-            await checkRateLimit(`download:${principal.tenantId || 'global'}:${principal.principalId}`);
+            await checkRateLimit('download', principal, rateLimits?.download);
 
             const result = await service.getDownloadStream(fileId, versionId, {
                 principalId: principal.principalId,

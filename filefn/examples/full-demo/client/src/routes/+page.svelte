@@ -9,7 +9,7 @@
 
   // Use absolute URL to connect directly to server (works with any server)
   // In production, this could be an environment variable
-  const SERVER_URL = 'http://localhost:3001';
+  const SERVER_URL = import.meta.env.VITE_FILEFN_SERVER_URL || 'http://localhost:3001';
   const API_BASE = `${SERVER_URL}/filefn`;
 
   // Client for uploads - uses absolute URL to work with any server
@@ -42,9 +42,23 @@
        throw new Error(body.error?.message || 'Failed to get url');
   }
 
+  function resolveDownloadUrl(rawUrl: string) {
+      if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+          return rawUrl;
+      }
+
+      // Demo API is mounted under /filefn; proxy routes must keep that prefix.
+      if (rawUrl.startsWith('/proxy/')) {
+          return `${API_BASE}${rawUrl}`;
+      }
+
+      return new URL(rawUrl, `${API_BASE}/`).toString();
+  }
+
   async function downloadFile(fileId: string) {
       try {
-          const url = await getDownloadUrl(fileId);
+          const rawUrl = await getDownloadUrl(fileId);
+          const url = resolveDownloadUrl(rawUrl);
           window.open(url, '_blank');
       } catch(e: any) {
           alert('Download error: ' + e.message);

@@ -1,139 +1,140 @@
 # @docsfn/next
 
-Next.js adapter for docsfn - seamlessly integrate documentation into your Next.js App Router applications.
+Next.js App Router site-kit helpers for `docsfn`.
+Supports Next `15` with React `18` and `19`.
 
-## Installation
+## Install
 
 ```bash
-npm install @docsfn/next @docsfn/core
+npm install @docsfn/next @docsfn/core @docsfn/provider-fs @docsfn/react
 ```
 
-## Usage
+## Migration Contract
 
-### Basic Setup
+When migrating existing Fumadocs content, use a `docsfn.config.ts|mjs|js` file with:
+
+- `schemaVersion: 1`
+- `compat.preset: "fumadocs-v15"`
+- `content.docsDir: "content/docs"`
+
+This preserves canonical fixture syntax (`meta.json`, Tabs/Tab imports, Mermaid fences) while failing unsupported constructs with `DOCS_COMPAT_UNSUPPORTED`.
+
+## Minimal Integration
 
 ```tsx
-// app/docs/[...slug]/page.tsx
+// app/docs/[[...slug]]/page.tsx
+import { notFound } from "next/navigation";
 import {
-  generateStaticParams,
-  getPageData,
+  generateStaticParams as generateDocsStaticParams,
+  resolveDocsRouteData,
+  resolveDocsPageSurface,
   generatePageMetadata,
 } from "@docsfn/next";
-import { buildManifest } from "@docsfn/core";
+import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
-import { DocsLayout, DocsContent } from "@docsfn/react";
 
-const provider = new FsContentProvider({ root: "./docs" });
-const manifest = await buildManifest(provider, {
-  site: { title: "My Docs", description: "Documentation site" },
-});
+const root = process.cwd();
+const config = await loadDocsConfig({ cwd: root });
+const provider = new FsContentProvider({ root });
+const manifest = await buildManifest(provider, config);
 
 export async function generateStaticParams() {
-  return generateStaticParams(manifest);
+  return generateDocsStaticParams(manifest, {
+    basePath: config.site.basePath,
+    includeApiRoutes: true,
+  });
 }
 
-export async function generateMetadata({
-  params,
-}: {
-  params: { slug: string[] };
-}) {
-  const page = getPageData(params.slug, manifest);
-  if (!page) return {};
-  return generatePageMetadata(page, manifest.site.title);
+export async function generateMetadata({ params }: { params: { slug?: string[] } }) {
+  const routeEntry = resolveDocsRouteData(params.slug, manifest, {
+    basePath: config.site.basePath,
+  });
+
+  if (!routeEntry || routeEntry.kind !== "page") {
+    return {};
+  }
+
+  const metadata = generatePageMetadata(routeEntry.page, {
+    siteTitle: manifest.site.title,
+    canonicalUrl: config.site.canonicalUrl,
+  });
+
+  return {
+    title: metadata.title,
+    description: metadata.description,
+    alternates: metadata.alternates,
+    openGraph: metadata.openGraph,
+  };
 }
 
-export default async function Page({ params }: { params: { slug: string[] } }) {
-  const page = getPageData(params.slug, manifest);
+export default function Page({ params }: { params: { slug?: string[] } }) {
+  const routeEntry = resolveDocsRouteData(params.slug, manifest, {
+    basePath: config.site.basePath,
+  });
 
-  if (!page) {
+  if (!routeEntry || routeEntry.kind !== "page") {
     notFound();
   }
 
+  const surface = resolveDocsPageSurface({
+    manifest,
+    route: routeEntry.route,
+    page: routeEntry.page,
+    options: {
+      basePath: config.site.basePath,
+      canonicalUrl: config.site.canonicalUrl,
+    },
+  });
+
   return (
-    <DocsLayout sidebar={manifest.sidebars.default}>
-      <DocsContent page={page} />
-    </DocsLayout>
+    <main>
+      <h1>{routeEntry.page.title}</h1>
+      <p>{surface.canonicalPath}</p>
+    </main>
   );
 }
 ```
 
-### Versioned Routes
+## Root and Nested Route Behavior
 
-```tsx
-// app/[version]/docs/[...slug]/page.tsx
-import {
-  generateVersionedStaticParams,
-  getVersionedPageData,
-} from "@docsfn/next";
+- Root docs route resolves when `params.slug` is absent.
+- Nested routes resolve with canonical path semantics.
+- Route misses throw `DOCS_ROUTE_NOT_FOUND` via helper `...OrThrow` variants.
 
-export async function generateStaticParams() {
-  return generateVersionedStaticParams(manifest);
-}
+## Search Artifact Route
 
-export default async function Page({
-  params,
-}: {
-  params: { version: string; slug: string[] };
-}) {
-  const page = getVersionedPageData(params.version, params.slug, manifest);
-  // ... render page
-}
-```
+```ts
+// app/api/search/route.ts
+import { createSearchArtifactResponse } from "@docsfn/next";
 
-### Blog Posts
-
-```tsx
-// app/blog/[slug]/page.tsx
-import { generateBlogParams, getPostData } from "@docsfn/next";
-
-export async function generateStaticParams() {
-  return generateBlogParams(manifest);
-}
-
-export default async function Page({ params }: { params: { slug: string } }) {
-  const post = getPostData(params.slug, manifest);
-  // ... render post
+export async function GET() {
+  return createSearchArtifactResponse({
+    loadArtifact: async () => {
+      // load .docsfn/search.json here
+      return JSON.parse("{}");
+    },
+  });
 }
 ```
 
-## API
+## Optional Security/Analytics Hooks
 
-### `generateStaticParams(manifest)`
+`@docsfn/next` re-exports canonical security/analytics helpers from core:
 
-Generate static params for `[...slug]` routes.
+- auth: `resolveDocsAuthMode`, `assertDocsRouteAccess`, `CANONICAL_DOCS_AUTH_MODES`
+- analytics: `createDocsAnalyticsEmitter`, `maybeEmitAnalyticsEvent`, `CANONICAL_DOCS_ANALYTICS_EVENT_NAMES`
 
-### `generateVersionedStaticParams(manifest)`
+Both remain opt-in; no auth/analytics behavior is forced by default.
 
-Generate static params for versioned `[version]/[...slug]` routes.
+## Fixture-Backed Example
 
-### `getPageData(slug, manifest)`
+Runnable reference app:
 
-Get page data from slug array.
+- `docsfn/examples/next-docs-site`
 
-### `getVersionedPageData(version, slug, manifest)`
+Build it against canonical fixtures:
 
-Get versioned page data.
-
-### `generatePageMetadata(page, siteTitle)`
-
-Generate Next.js metadata for a page.
-
-### `generateBlogParams(manifest)`
-
-Generate static params for blog posts.
-
-### `getPostData(slug, manifest)`
-
-Get blog post data.
-
-### `generateApiParams(manifest)`
-
-Generate static params for API references.
-
-### `getApiData(slug, manifest)`
-
-Get API reference data.
-
-## License
-
-MIT
+```bash
+DOCSFN_FIXTURE_ROOT=../../test-fixtures/repo/searchfn-docs npm --prefix docsfn/examples/next-docs-site run build
+DOCSFN_FIXTURE_ROOT=../../test-fixtures/repo/datafn-docs npm --prefix docsfn/examples/next-docs-site run build
+```

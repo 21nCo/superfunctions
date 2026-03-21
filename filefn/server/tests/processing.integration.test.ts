@@ -268,6 +268,7 @@ describe('ProcessingService Integration', () => {
         expect.objectContaining({
           fileId: 'file_0001',
           versionId: 'ver_0001',
+          idempotencyKey: 'processing:file_0001:ver_0001:test',
         })
       );
     });
@@ -302,7 +303,7 @@ describe('ProcessingService Integration', () => {
           },
           { principalId: 'user_123', requestId: 'req_001' }
         )
-      ).rejects.toThrow('Failed to enqueue processing');
+      ).rejects.toMatchObject({ code: 'FILEFN_PROCESSING_ENQUEUE_FAILED' });
     });
   });
 

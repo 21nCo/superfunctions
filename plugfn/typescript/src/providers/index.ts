@@ -24,3 +24,4 @@ export { icloudProvider } from './icloud/index.js';
 export { imapSmtpProvider } from './imap-smtp/index.js';
 export { forwardingProvider } from './forwarding/index.js';
 export { managedMailProvider } from './managed-mail/index.js';
+export { clickupProvider } from './clickup/index.js';

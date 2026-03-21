@@ -121,6 +121,19 @@ Required mail adapters include `gmail`, `outlook`, `yahoo`, `icloud`, `imap-smtp
 
 Policy guardrails are enforced before outbound provider calls. This includes scope constraints, blocked operations, managed-mailbox opt-in requirements, and finance-risk acknowledgments.
 
+## Conduct v0.3 Provider Contracts
+
+For Conduct dependency alignment, PlugFn public provider contracts include:
+
+- **Linear actions**: `issues.get`, `comments.create`, `issues.search`
+- **Linear triggers**: `issue.updated`, `issue_comment.created` (or documented equivalent)
+- **GitHub actions**: `issues.get`, `issues.update`, `pulls.create`, `pulls.createReview`
+- **GitHub triggers**: `pull_request.closed`, `issue_comment.created`
+- **ClickUp actions**: `tasks.create`, `tasks.get`, `tasks.update`, `tasks.list`, `comments.create`, `spaces.list`
+- **ClickUp triggers**: `task.updated`, `task.statusChanged`
+
+These are public provider-surface contracts (not Conduct-private APIs), and they remain routed through PlugFn runtime concerns (retry, rate-limit, and webhook verification).
+
 ## Security Controls
 
 PlugFn exports security primitives for production operations:

@@ -1,29 +1,30 @@
 {
   "name": "@uifn/react",
   "version": "0.0.1",
-  "description": "React components built on @uifn/core primitives",
+  "description": "GA React adapter for uifn primitives",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest",
-    "lint": "eslint src/"
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@uifn/core": "0.0.1"
   },
   "peerDependencies": {
-    "react": ">=16.8.0",
-    "react-dom": ">=16.8.0"
+    "react": ">=18.2.0 <20",
+    "react-dom": ">=18.2.0 <20"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
@@ -49,10 +50,14 @@
   ],
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "author": "21n",
   "license": "MIT",
+  "engines": {
+    "node": ">=18 <23"
+  },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
   },

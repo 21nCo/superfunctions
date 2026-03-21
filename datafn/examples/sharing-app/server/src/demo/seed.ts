@@ -72,30 +72,35 @@ const BASELINE_MEMBERSHIPS: ReadonlyArray<{
   namespace: WorkspaceNamespace;
   actorId: string;
   principalId: string;
+  grantedAt: number;
 }> = [
   {
     id: "membership:org:acme:user:alice:team:design",
     namespace: "org:acme",
     actorId: "user:alice",
     principalId: "team:design",
+    grantedAt: BASELINE_TS,
   },
   {
     id: "membership:org:acme:user:bob:team:design",
     namespace: "org:acme",
     actorId: "user:bob",
     principalId: "team:design",
+    grantedAt: BASELINE_TS,
   },
   {
     id: "membership:org:globex:user:bob:team:design",
     namespace: "org:globex",
     actorId: "user:bob",
     principalId: "team:design",
+    grantedAt: BASELINE_TS,
   },
   {
     id: "membership:org:globex:user:charlie:team:design",
     namespace: "org:globex",
     actorId: "user:charlie",
     principalId: "team:design",
+    grantedAt: BASELINE_TS,
   },
 ];
 
@@ -172,6 +177,7 @@ async function insertBaselineMemberships(db: Adapter): Promise<void> {
         namespace: membership.namespace,
         actorId: membership.actorId,
         principalId: membership.principalId,
+        grantedAt: membership.grantedAt,
         revokedAt: null,
         __ns: membership.namespace,
       },

@@ -51,3 +51,9 @@ export async function resolvePrincipal(
 
   return null;
 }
+
+export function isAnonymousPrincipal(
+  principal: FileFnPrincipal | null | undefined
+): boolean {
+  return !principal || !principal.principalId || principal.principalId === 'anonymous';
+}

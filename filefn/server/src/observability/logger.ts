@@ -16,6 +16,8 @@ const REDACT_PATTERNS = [
   /https?:\/\/[^\s"']+\?[^\s"']*(?:X-Amz-Signature|Signature|sig|token|key)=[^\s"'&]+/gi,
   /[?&](?:X-Amz-Signature|Signature|sig|token|key)=[^\s"'&]+/gi,
   /Bearer\s+[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/gi,
+  /upls_live_[A-Za-z0-9\-_]+/g,
+  /shr_live_[A-Za-z0-9\-_]+/g,
   /[A-Za-z0-9\-_]{32,}/g,
 ];
 
@@ -29,40 +31,70 @@ function isSafeValue(key: string, value: unknown): boolean {
   return true;
 }
 
+function shouldRedactKey(lowerKey: string): boolean {
+  return (
+    lowerKey.includes('token') ||
+    lowerKey.includes('secret') ||
+    lowerKey.includes('password') ||
+    lowerKey.includes('url') ||
+    lowerKey.includes('signature') ||
+    lowerKey.includes('authorization') ||
+    lowerKey.includes('credential') ||
+    lowerKey.includes('cookie')
+  );
+}
+
+function redactStringValue(key: string, value: string): string {
+  let redacted = value;
+  for (const pattern of REDACT_PATTERNS) {
+    redacted = redacted.replace(pattern, '[REDACTED]');
+  }
+  if (!isSafeValue(key, redacted)) {
+    return '[REDACTED]';
+  }
+  return redacted;
+}
+
+function redactValue(key: string, value: unknown): unknown {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  const lowerKey = key.toLowerCase();
+  if (shouldRedactKey(lowerKey)) {
+    return '[REDACTED]';
+  }
+
+  if (typeof value === 'string') {
+    return redactStringValue(key, value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      if (typeof item === 'string') {
+        return redactStringValue(key, item);
+      }
+      if (item && typeof item === 'object') {
+        return redactSecrets(item as LogContext);
+      }
+      return item;
+    });
+  }
+
+  if (typeof value === 'object') {
+    return redactSecrets(value as LogContext);
+  }
+
+  return value;
+}
+
 function redactSecrets(context: LogContext): LogContext {
   const result: LogContext = {};
 
   for (const [key, value] of Object.entries(context)) {
-    if (value === undefined || value === null) {
-      continue;
-    }
-
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey.includes('token') ||
-      lowerKey.includes('secret') ||
-      lowerKey.includes('password') ||
-      lowerKey.includes('url') ||
-      lowerKey.includes('signature')
-    ) {
-      result[key] = '[REDACTED]';
-      continue;
-    }
-
-    if (typeof value === 'string') {
-      let redacted = value;
-      for (const pattern of REDACT_PATTERNS) {
-        redacted = redacted.replace(pattern, '[REDACTED]');
-      }
-      if (!isSafeValue(key, redacted)) {
-        result[key] = '[REDACTED]';
-      } else {
-        result[key] = redacted;
-      }
-    } else if (typeof value === 'object' && !Array.isArray(value)) {
-      result[key] = redactSecrets(value as LogContext);
-    } else {
-      result[key] = value;
+    const redactedValue = redactValue(key, value);
+    if (redactedValue !== undefined) {
+      result[key] = redactedValue;
     }
   }
 

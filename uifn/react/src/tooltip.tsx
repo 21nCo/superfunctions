@@ -4,6 +4,7 @@ import { useComposedRefs } from './hooks/use-composed-refs';
 import { usePosition, Side, Align } from './hooks/use-position';
 import { useId } from './hooks/use-id';
 import { Portal } from './portal';
+import { Slot } from './utils/slot';
 
 /* -------------------------------------------------------------------------------------------------
  * Tooltip Root
@@ -109,14 +110,24 @@ export interface TooltipTriggerProps extends React.ButtonHTMLAttributes<HTMLButt
 
 export const TooltipTrigger = React.forwardRef<HTMLButtonElement, TooltipTriggerProps>(
   (props, ref) => {
-    const { children, onMouseEnter, onMouseLeave, onFocus, onBlur, onClick, ...domProps } = props;
+    const {
+      children,
+      onMouseEnter,
+      onMouseLeave,
+      onFocus,
+      onBlur,
+      onClick,
+      asChild = false,
+      ...domProps
+    } = props;
     const context = useTooltipContext();
     const composedRef = useComposedRefs(ref, context.triggerRef);
+    const TriggerComp = asChild ? Slot : 'button';
 
     return (
-      <button
+      <TriggerComp
         ref={composedRef}
-        type="button" // default to button
+        {...(!asChild ? { type: 'button' as const } : undefined)}
         aria-describedby={context.open ? context.contentId : undefined}
         data-state={context.open ? 'delayed-open' : 'closed'} // Simplified state
         onMouseEnter={(e) => {
@@ -144,7 +155,7 @@ export const TooltipTrigger = React.forwardRef<HTMLButtonElement, TooltipTrigger
         {...domProps}
       >
         {children}
-      </button>
+      </TriggerComp>
     );
   }
 );

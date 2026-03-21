@@ -1,23 +1,552 @@
-import { DocHeading } from "./types";
+import { transformFumadocsV15 } from "./compat/fumadocs";
+import { createDiagnostic, createDocsError, type DocsError } from "./diagnostics";
+import { assertSafeSource } from "./sanitize";
+import type { DocHeading, DocsCompatPreset, DocsDiagnostic } from "./types";
+
+type CompileFramework = "core" | "react" | "svelte";
+
+export type CompiledContentBlock =
+  | {
+      type: "heading";
+      level: number;
+      text: string;
+      slug: string;
+    }
+  | {
+      type: "paragraph";
+      text: string;
+    }
+  | {
+      type: "code";
+      lang?: string;
+      code: string;
+    }
+  | {
+      type: "mermaid";
+      code: string;
+    }
+  | {
+      type: "tabs";
+      items: string[];
+      tabs: Array<{
+        value: string;
+        content: string;
+      }>;
+    }
+  | {
+      type: "callout";
+      kind: "note" | "tip" | "warning" | "info" | "caution";
+      text: string;
+    }
+  | {
+      type: "component";
+      name: string;
+      body?: string;
+      selfClosing: boolean;
+    };
+
+export interface CompileMarkdownInput {
+  source: string;
+  sourcePath?: string;
+  framework?: CompileFramework;
+  compatPreset?: DocsCompatPreset;
+  allowRawHtml?: boolean;
+}
+
+export interface CompiledContentArtifact {
+  framework: CompileFramework;
+  source: string;
+  transformedSource: string;
+  blocks: CompiledContentBlock[];
+  headings: DocHeading[];
+  toc: DocHeading[];
+  componentsUsed: string[];
+  diagnostics: DocsDiagnostic[];
+}
+
+const HEADING_REGEX = /^(#{1,6})\s+(.*)$/;
+const CODE_FENCE_REGEX = /^```/;
+const TABS_START_REGEX = /^<\s*(DocsTabs|Tabs)\b([^>]*)>/;
+const TABS_END_REGEX = /^<\s*\/\s*(DocsTabs|Tabs)\s*>/;
+const TAB_START_REGEX = /^<\s*(DocsTab|Tab)\b([^>]*)>/;
+const TAB_END_REGEX = /^<\s*\/\s*(DocsTab|Tab)\s*>/;
+const CALLOUT_REGEX = /^>\s*\[!(NOTE|TIP|WARNING|INFO|CAUTION)\]\s*(.*)$/i;
+const COMPONENT_SELF_CLOSING_REGEX = /^<\s*([A-Z][A-Za-z0-9]*)\b[^>]*\/>\s*$/;
+const COMPONENT_START_REGEX = /^<\s*([A-Z][A-Za-z0-9]*)\b[^>]*>\s*$/;
+
+const UNICODE_SLUG_MAP: Record<string, string> = {
+  日: "ri-",
+  本: "ben-",
+  語: "yu-",
+  の: "no",
+  ヘ: "he",
+  テ: "d",
+  デ: "d",
+  ィ: "i",
+  ン: "n",
+  ク: "gu",
+  グ: "gu",
+};
+
+function isDocsError(error: unknown): error is DocsError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name: string }).name === "DocsError"
+  );
+}
+
+function createMdxCompileError(input: {
+  message: string;
+  sourcePath?: string;
+  details?: Record<string, unknown>;
+}): DocsError {
+  return createDocsError({
+    code: "DOCS_MDX_COMPILE_FAILED",
+    message: input.message,
+    diagnostics: [
+      createDiagnostic({
+        code: "DOCS_MDX_COMPILE_FAILED",
+        message: input.message,
+        location: { absolutePath: input.sourcePath },
+        details: input.details,
+      }),
+    ],
+  });
+}
+
+function normalizeSlugText(text: string): string {
+  let candidate = text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u3099\u309a]/g, "");
+  let raw = "";
+  for (const character of candidate) {
+    if (UNICODE_SLUG_MAP[character]) {
+      raw += UNICODE_SLUG_MAP[character];
+      continue;
+    }
+    if (/[A-Za-z0-9]/.test(character)) {
+      raw += character.toLowerCase();
+      continue;
+    }
+    if (/[\s\-_/&()[\]{}.,:;!?'"`~+*<>=|\\]/.test(character)) {
+      raw += "-";
+      continue;
+    }
+    raw += `u${character.codePointAt(0)?.toString(16) ?? ""}-`;
+  }
+
+  const normalized = raw.replace(/-+/g, "-").replace(/(^-|-$)/g, "");
+  return normalized || "section";
+}
+
+function createSlugger(): (text: string) => string {
+  const seen = new Map<string, number>();
+  return (text: string) => {
+    const base = normalizeSlugText(text);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base}-${count}`;
+  };
+}
+
+function isBlockStart(line: string): boolean {
+  const trimmed = line.trim();
+  return (
+    trimmed.length === 0 ||
+    HEADING_REGEX.test(trimmed) ||
+    CODE_FENCE_REGEX.test(trimmed) ||
+    TABS_START_REGEX.test(trimmed) ||
+    CALLOUT_REGEX.test(trimmed) ||
+    COMPONENT_SELF_CLOSING_REGEX.test(trimmed) ||
+    COMPONENT_START_REGEX.test(trimmed)
+  );
+}
+
+function parseTabsItems(rawAttributes: string): string[] {
+  const itemsMatch = rawAttributes.match(/items\s*=\s*\{(\[[^\]]*\])\}/);
+  if (!itemsMatch) {
+    return [];
+  }
+
+  const literal = itemsMatch[1].replaceAll("'", "\"");
+  try {
+    const parsed = JSON.parse(literal);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((value) => typeof value === "string");
+  } catch {
+    return [];
+  }
+}
+
+function parseTabsBlock(input: {
+  lines: string[];
+  startIndex: number;
+  sourcePath?: string;
+}): { block: Extract<CompiledContentBlock, { type: "tabs" }>; nextIndex: number } {
+  const startLine = input.lines[input.startIndex].trim();
+  const startMatch = startLine.match(TABS_START_REGEX);
+  if (!startMatch) {
+    throw createMdxCompileError({
+      message: "invalid tabs block start",
+      sourcePath: input.sourcePath,
+    });
+  }
+
+  const tabs: Array<{ value: string; content: string }> = [];
+  const declaredItems = parseTabsItems(startMatch[2] ?? "");
+  let index = input.startIndex + 1;
+  let foundClosing = false;
+
+  while (index < input.lines.length) {
+    const line = input.lines[index].trim();
+    if (TABS_END_REGEX.test(line)) {
+      foundClosing = true;
+      index += 1;
+      break;
+    }
+
+    const tabStartMatch = line.match(TAB_START_REGEX);
+    if (!tabStartMatch) {
+      index += 1;
+      continue;
+    }
+
+    const tabAttributes = tabStartMatch[2] ?? "";
+    const valueMatch = tabAttributes.match(/value\s*=\s*["']([^"']+)["']/);
+    const value = valueMatch?.[1];
+    if (!value) {
+      throw createMdxCompileError({
+        message: "tab block is missing required value attribute",
+        sourcePath: input.sourcePath,
+      });
+    }
+
+    const inlineContentMatch = line.match(
+      /<\s*(DocsTab|Tab)\b[^>]*>([\s\S]*?)<\s*\/\s*(DocsTab|Tab)\s*>/
+    );
+    if (inlineContentMatch) {
+      tabs.push({
+        value,
+        content: inlineContentMatch[2].trim(),
+      });
+      index += 1;
+      continue;
+    }
+
+    const contentLines: string[] = [];
+    index += 1;
+    let foundTabClose = false;
+    while (index < input.lines.length) {
+      const tabLine = input.lines[index];
+      if (TAB_END_REGEX.test(tabLine.trim())) {
+        foundTabClose = true;
+        index += 1;
+        break;
+      }
+      contentLines.push(tabLine);
+      index += 1;
+    }
+
+    if (!foundTabClose) {
+      throw createMdxCompileError({
+        message: "tab block is missing a closing tag",
+        sourcePath: input.sourcePath,
+      });
+    }
+
+    tabs.push({
+      value,
+      content: contentLines.join("\n").trim(),
+    });
+  }
+
+  if (!foundClosing) {
+    throw createMdxCompileError({
+      message: "tabs block is missing a closing tag",
+      sourcePath: input.sourcePath,
+    });
+  }
+
+  if (tabs.length === 0) {
+    throw createMdxCompileError({
+      message: "tabs block does not contain any tab items",
+      sourcePath: input.sourcePath,
+    });
+  }
+
+  const items = declaredItems.length > 0 ? declaredItems : tabs.map((tab) => tab.value);
+  return {
+    block: {
+      type: "tabs",
+      items,
+      tabs,
+    },
+    nextIndex: index,
+  };
+}
+
+function parseBlocks(input: {
+  source: string;
+  sourcePath?: string;
+}): CompiledContentBlock[] {
+  const lines = input.source.split(/\r?\n/);
+  const blocks: CompiledContentBlock[] = [];
+  const createHeadingSlug = createSlugger();
+  let index = 0;
+
+  while (index < lines.length) {
+    const rawLine = lines[index];
+    const trimmed = rawLine.trim();
+
+    if (trimmed.length === 0) {
+      index += 1;
+      continue;
+    }
+
+    if (CODE_FENCE_REGEX.test(trimmed)) {
+      const lang = trimmed.slice(3).trim() || undefined;
+      index += 1;
+      const codeLines: string[] = [];
+      let foundFenceClose = false;
+      while (index < lines.length) {
+        const codeLine = lines[index];
+        if (CODE_FENCE_REGEX.test(codeLine.trim())) {
+          foundFenceClose = true;
+          index += 1;
+          break;
+        }
+        codeLines.push(codeLine);
+        index += 1;
+      }
+      if (!foundFenceClose) {
+        throw createMdxCompileError({
+          message: "code fence is missing a closing delimiter",
+          sourcePath: input.sourcePath,
+        });
+      }
+      const code = codeLines.join("\n");
+      if (lang?.toLowerCase() === "mermaid") {
+        blocks.push({ type: "mermaid", code });
+      } else {
+        blocks.push({ type: "code", lang, code });
+      }
+      continue;
+    }
+
+    const headingMatch = trimmed.match(HEADING_REGEX);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const text = headingMatch[2].trim();
+      blocks.push({
+        type: "heading",
+        level,
+        text,
+        slug: createHeadingSlug(text),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (TABS_START_REGEX.test(trimmed)) {
+      const parsedTabs = parseTabsBlock({
+        lines,
+        startIndex: index,
+        sourcePath: input.sourcePath,
+      });
+      blocks.push(parsedTabs.block);
+      index = parsedTabs.nextIndex;
+      continue;
+    }
+
+    const calloutMatch = trimmed.match(CALLOUT_REGEX);
+    if (calloutMatch) {
+      const calloutLines: string[] = [];
+      const firstLine = calloutMatch[2]?.trim() ?? "";
+      if (firstLine) {
+        calloutLines.push(firstLine);
+      }
+      index += 1;
+      while (index < lines.length && lines[index].trim().startsWith(">")) {
+        const value = lines[index].replace(/^\s*>\s?/, "").trim();
+        if (value) {
+          calloutLines.push(value);
+        }
+        index += 1;
+      }
+      blocks.push({
+        type: "callout",
+        kind: calloutMatch[1].toLowerCase() as "note" | "tip" | "warning" | "info" | "caution",
+        text: calloutLines.join("\n"),
+      });
+      continue;
+    }
+
+    const selfClosingComponentMatch = trimmed.match(COMPONENT_SELF_CLOSING_REGEX);
+    if (selfClosingComponentMatch) {
+      blocks.push({
+        type: "component",
+        name: selfClosingComponentMatch[1],
+        selfClosing: true,
+      });
+      index += 1;
+      continue;
+    }
+
+    const componentStartMatch = trimmed.match(COMPONENT_START_REGEX);
+    if (componentStartMatch) {
+      const componentName = componentStartMatch[1];
+      index += 1;
+      const bodyLines: string[] = [];
+      let foundComponentClose = false;
+      const componentClosePattern = new RegExp(`^<\\s*\\/\\s*${componentName}\\s*>\\s*$`);
+      while (index < lines.length) {
+        const current = lines[index];
+        if (componentClosePattern.test(current.trim())) {
+          foundComponentClose = true;
+          index += 1;
+          break;
+        }
+        bodyLines.push(current);
+        index += 1;
+      }
+      if (!foundComponentClose) {
+        throw createMdxCompileError({
+          message: `component ${componentName} is missing a closing tag`,
+          sourcePath: input.sourcePath,
+        });
+      }
+      blocks.push({
+        type: "component",
+        name: componentName,
+        body: bodyLines.join("\n").trim(),
+        selfClosing: false,
+      });
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (index < lines.length && !isBlockStart(lines[index])) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+    if (paragraphLines.length > 0) {
+      blocks.push({
+        type: "paragraph",
+        text: paragraphLines.join(" ").trim(),
+      });
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return blocks;
+}
 
 export function extractHeadings(markdown: string): DocHeading[] {
-  const lines = markdown.split("\n");
+  const lines = markdown.split(/\r?\n/);
   const headings: DocHeading[] = [];
-  // Simple regex for ATX headings
-  const regex = /^(#{1,6})\s+(.*)$/;
+  const createSlug = createSlugger();
+  let insideCodeFence = false;
 
-  lines.forEach((line) => {
-    const match = line.match(regex);
-    if (match) {
-      const level = match[1].length;
-      const text = match[2].trim();
-      const slug = text
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/(^-|-$)/g, "");
-      headings.push({ level, text, slug });
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (CODE_FENCE_REGEX.test(trimmed)) {
+      insideCodeFence = !insideCodeFence;
+      continue;
     }
-  });
+
+    if (insideCodeFence) {
+      continue;
+    }
+
+    const match = trimmed.match(HEADING_REGEX);
+    if (!match) {
+      continue;
+    }
+
+    const text = match[2].trim();
+    headings.push({
+      level: match[1].length,
+      text,
+      slug: createSlug(text),
+    });
+  }
 
   return headings;
+}
+
+export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArtifact {
+  try {
+    const framework = input.framework ?? "core";
+    let transformedSource = input.source;
+    const componentsUsed = new Set<string>();
+
+    if (input.compatPreset === "fumadocs-v15") {
+      const compat = transformFumadocsV15({
+        source: transformedSource,
+        sourcePath: input.sourcePath,
+      });
+      transformedSource = compat.transformed;
+      for (const componentName of compat.componentsUsed) {
+        componentsUsed.add(componentName);
+      }
+    }
+
+    assertSafeSource({
+      source: transformedSource,
+      sourcePath: input.sourcePath,
+      allowRawHtml: input.allowRawHtml,
+    });
+
+    const blocks = parseBlocks({
+      source: transformedSource,
+      sourcePath: input.sourcePath,
+    });
+    const headings = blocks
+      .filter((block): block is Extract<CompiledContentBlock, { type: "heading" }> => block.type === "heading")
+      .map((block) => ({
+        level: block.level,
+        text: block.text,
+        slug: block.slug,
+      }));
+
+    if (blocks.some((block) => block.type === "tabs")) {
+      componentsUsed.add("DocsTabs");
+      componentsUsed.add("DocsTab");
+    }
+    if (blocks.some((block) => block.type === "mermaid")) {
+      componentsUsed.add("MermaidBlock");
+    }
+    if (blocks.some((block) => block.type === "callout")) {
+      componentsUsed.add("Callout");
+    }
+
+    return {
+      framework,
+      source: input.source,
+      transformedSource,
+      blocks,
+      headings,
+      toc: headings,
+      componentsUsed: [...componentsUsed].sort((left, right) => left.localeCompare(right)),
+      diagnostics: [],
+    };
+  } catch (error) {
+    if (isDocsError(error)) {
+      throw error;
+    }
+    throw createMdxCompileError({
+      message: "failed to compile markdown content",
+      sourcePath: input.sourcePath,
+      details: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+  }
 }

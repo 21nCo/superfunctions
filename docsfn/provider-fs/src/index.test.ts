@@ -1,239 +1,175 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createDefaultDocsConfig, type DocsConfig } from "@docsfn/core";
+import { afterEach, describe, expect, it } from "vitest";
 import { FsContentProvider } from "./index";
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.map(async (directory) => {
+      await rm(directory, { recursive: true, force: true });
+    })
+  );
+  tempDirs.length = 0;
+});
+
+async function createTempRoot(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "docsfn-provider-fs-"));
+  tempDirs.push(directory);
+  return directory;
+}
+
+function createConfig(root: string, overrides: Partial<DocsConfig> = {}): DocsConfig {
+  const defaults = createDefaultDocsConfig({ cwd: root });
+  return {
+    ...defaults,
+    ...overrides,
+    content: {
+      ...defaults.content,
+      ...(overrides.content ?? {}),
+      root,
+    },
+  };
+}
 
 describe("FsContentProvider", () => {
-  const testRoot = path.join(__dirname, "__test-fixtures__");
+  it("loads docs/pages/blog/api/assets and preserves meta.json as control entry", async () => {
+    const root = await createTempRoot();
+    await mkdir(join(root, "content/docs"), { recursive: true });
+    await mkdir(join(root, "pages"), { recursive: true });
+    await mkdir(join(root, "blog"), { recursive: true });
+    await mkdir(join(root, "api"), { recursive: true });
+    await mkdir(join(root, "public"), { recursive: true });
 
-  beforeEach(async () => {
-    // Create test fixture directory
-    await fs.mkdir(testRoot, { recursive: true });
-  });
-
-  afterEach(async () => {
-    // Clean up test fixtures
-    await fs.rm(testRoot, { recursive: true, force: true });
-  });
-
-  it("should list markdown files from docs directory", async () => {
-    const docsDir = path.join(testRoot, "docs");
-    await fs.mkdir(docsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(docsDir, "intro.md"),
-      `---
-title: Introduction
-description: Getting started
----
-
-# Introduction
-
-Welcome to the docs.
-`
+    await writeFile(join(root, "content/docs/meta.json"), '{"title":"Docs"}\n');
+    await writeFile(
+      join(root, "content/docs/index.mdx"),
+      "---\ntitle: Home\n---\n\n# Home\n"
     );
+    await writeFile(join(root, "pages/changelog.mdx"), "# Changelog\n");
+    await writeFile(join(root, "blog/post-1.mdx"), "# Post\n");
+    await writeFile(join(root, "api/openapi.yaml"), "openapi: 3.0.0\n");
+    await writeFile(join(root, "public/diagram.png"), Buffer.from([0, 1, 2]));
 
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0].id).toBe("intro.md");
-    expect(entries[0].kind).toBe("page");
-    expect(entries[0].frontmatter.title).toBe("Introduction");
-    expect(entries[0].frontmatter.description).toBe("Getting started");
-    expect(entries[0].body).toContain("# Introduction");
-    expect(entries[0].body).toContain("Welcome to the docs.");
-  });
-
-  it("should list files from nested directories", async () => {
-    const docsDir = path.join(testRoot, "docs");
-    await fs.mkdir(path.join(docsDir, "guides"), { recursive: true });
-    await fs.writeFile(
-      path.join(docsDir, "guides", "setup.md"),
-      `---
-title: Setup Guide
----
-
-Setup instructions.
-`
-    );
-
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0].id).toBe("guides/setup.md");
-    expect(entries[0].kind).toBe("page");
-  });
-
-  it("should list both .md and .mdx files", async () => {
-    const docsDir = path.join(testRoot, "docs");
-    await fs.mkdir(docsDir, { recursive: true });
-    await fs.writeFile(path.join(docsDir, "page1.md"), "# Page 1");
-    await fs.writeFile(path.join(docsDir, "page2.mdx"), "# Page 2");
-
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
-
-    expect(entries).toHaveLength(2);
-    const ids = entries.map((e) => e.id).sort();
-    expect(ids).toEqual(["page1.md", "page2.mdx"]);
-  });
-
-  it("should list blog posts from blog directory", async () => {
-    const blogDir = path.join(testRoot, "blog");
-    await fs.mkdir(blogDir, { recursive: true });
-    await fs.writeFile(
-      path.join(blogDir, "my-post.md"),
-      `---
-title: My Blog Post
-date: 2026-01-18
-tags: [news, updates]
----
-
-Blog content.
-`
-    );
-
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
-
-    const posts = entries.filter((e) => e.kind === "post");
-    expect(posts).toHaveLength(1);
-    expect(posts[0].id).toBe("my-post.md");
-    expect(posts[0].frontmatter.title).toBe("My Blog Post");
-    expect(posts[0].frontmatter.tags).toEqual(["news", "updates"]);
-  });
-
-  it("should list API specs from api directory", async () => {
-    const apiDir = path.join(testRoot, "api");
-    await fs.mkdir(apiDir, { recursive: true });
-    await fs.writeFile(
-      path.join(apiDir, "openapi.json"),
-      JSON.stringify({
-        openapi: "3.0.0",
-        info: { title: "Test API", version: "1.0.0" },
-      })
-    );
-
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
-
-    const apis = entries.filter((e) => e.kind === "api");
-    expect(apis).toHaveLength(1);
-    expect(apis[0].id).toBe("openapi.json");
-    expect(apis[0].body).toContain('"openapi"');
-  });
-
-  it("should support custom directory names", async () => {
-    const customDocsDir = path.join(testRoot, "content");
-    await fs.mkdir(customDocsDir, { recursive: true });
-    await fs.writeFile(path.join(customDocsDir, "page.md"), "# Page");
-
-    const provider = new FsContentProvider({
-      root: testRoot,
-      docsDir: "content",
+    const provider = new FsContentProvider({ root });
+    const entries = await provider.listEntries({
+      config: createConfig(root),
+      collections: ["docs", "pages", "blog", "api", "assets"],
     });
-    const entries = await provider.list();
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0].kind).toBe("page");
+    const docsEntries = entries.filter((entry) => entry.collection === "docs");
+    const pageEntries = entries.filter((entry) => entry.collection === "pages");
+    const blogEntries = entries.filter((entry) => entry.collection === "blog");
+    const apiEntries = entries.filter((entry) => entry.collection === "api");
+    const assetEntries = entries.filter((entry) => entry.collection === "assets");
+    const controlEntries = entries.filter((entry) => entry.entryType === "control");
+
+    expect(docsEntries.some((entry) => entry.relativePath === "index.mdx")).toBe(true);
+    expect(pageEntries.some((entry) => entry.relativePath === "changelog.mdx")).toBe(true);
+    expect(blogEntries.some((entry) => entry.relativePath === "post-1.mdx")).toBe(true);
+    expect(apiEntries.some((entry) => entry.relativePath === "openapi.yaml")).toBe(true);
+    expect(assetEntries.some((entry) => entry.relativePath === "diagram.png")).toBe(true);
+    expect(controlEntries.some((entry) => entry.relativePath === "meta.json")).toBe(true);
   });
 
-  it("should handle empty directories", async () => {
-    await fs.mkdir(path.join(testRoot, "docs"), { recursive: true });
-    await fs.mkdir(path.join(testRoot, "blog"), { recursive: true });
+  it("does not expose meta.json as a page in legacy list output", async () => {
+    const root = await createTempRoot();
+    await mkdir(join(root, "content/docs"), { recursive: true });
+    await writeFile(join(root, "content/docs/meta.json"), '{"title":"Docs"}\n');
+    await writeFile(join(root, "content/docs/getting-started.mdx"), "# Getting Started\n");
 
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
+    const provider = new FsContentProvider({ root });
+    const legacyEntries = await provider.list();
 
-    expect(entries).toHaveLength(0);
+    expect(legacyEntries.some((entry) => entry.id === "meta.json")).toBe(false);
+    expect(legacyEntries.some((entry) => entry.id === "getting-started.mdx")).toBe(true);
   });
 
-  it("should handle missing frontmatter", async () => {
-    const docsDir = path.join(testRoot, "docs");
-    await fs.mkdir(docsDir, { recursive: true });
-    await fs.writeFile(
-      path.join(docsDir, "no-frontmatter.md"),
-      "# Just a Heading\n\nNo frontmatter here."
-    );
+  it("assigns missing frontmatter title defaults", async () => {
+    const root = await createTempRoot();
+    await mkdir(join(root, "content/docs"), { recursive: true });
+    await writeFile(join(root, "content/docs/no-frontmatter.mdx"), "# Title\n");
 
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
+    const provider = new FsContentProvider({ root });
+    const entries = await provider.listEntries({
+      config: createConfig(root),
+      collections: ["docs"],
+    });
+    const entry = entries.find((value) => value.relativePath === "no-frontmatter.mdx");
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0].frontmatter).toEqual({});
-    expect(entries[0].body).toContain("# Just a Heading");
+    expect(entry).toBeDefined();
+    expect(entry?.frontmatter.title).toBe("No Frontmatter");
   });
 
-  it("should preserve filepath in entries", async () => {
-    const docsDir = path.join(testRoot, "docs");
-    await fs.mkdir(docsDir, { recursive: true });
-    await fs.writeFile(path.join(docsDir, "test.md"), "# Test");
+  it("ignores unsupported extensions for docs collection", async () => {
+    const root = await createTempRoot();
+    await mkdir(join(root, "content/docs"), { recursive: true });
+    await writeFile(join(root, "content/docs/ignored.txt"), "ignore\n");
+    await writeFile(join(root, "content/docs/kept.mdx"), "# Keep\n");
 
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
+    const provider = new FsContentProvider({ root });
+    const entries = await provider.listEntries({
+      config: createConfig(root),
+      collections: ["docs"],
+    });
 
-    expect(entries[0].filepath).toBeDefined();
-    expect(entries[0].filepath).toContain("test.md");
+    expect(entries.some((entry) => entry.relativePath === "ignored.txt")).toBe(false);
+    expect(entries.some((entry) => entry.relativePath === "kept.mdx")).toBe(true);
   });
 
-  it("should handle YAML API specs", async () => {
-    const apiDir = path.join(testRoot, "api");
-    await fs.mkdir(apiDir, { recursive: true });
-    await fs.writeFile(
-      path.join(apiDir, "spec.yaml"),
-      `openapi: 3.0.0
-info:
-  title: YAML API
-  version: 1.0.0
-`
-    );
+  it("throws DOCS_ENTRY_INVALID when configured docsDir is missing", async () => {
+    const root = await createTempRoot();
+    const provider = new FsContentProvider({ root });
+    const config = createConfig(root, {
+      content: {
+        root,
+        docsDir: "content/missing-docs",
+      },
+    });
 
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
-
-    const apis = entries.filter((e) => e.kind === "api");
-    expect(apis).toHaveLength(1);
-    expect(apis[0].id).toBe("spec.yaml");
-    expect(apis[0].body).toContain("openapi: 3.0.0");
+    await expect(
+      provider.listEntries({
+        config,
+        collections: ["docs"],
+      })
+    ).rejects.toMatchObject({
+      code: "DOCS_ENTRY_INVALID",
+    });
   });
 
-  it("should list all content types together", async () => {
-    // Create docs
-    const docsDir = path.join(testRoot, "docs");
-    await fs.mkdir(docsDir, { recursive: true });
-    await fs.writeFile(path.join(docsDir, "doc.md"), "# Doc");
+  it("throws DOCS_ENTRY_INVALID for unreadable/missing provider roots", async () => {
+    const root = join(await createTempRoot(), "missing-root");
+    const provider = new FsContentProvider({ root });
+    const config = createConfig(root);
 
-    // Create blog
-    const blogDir = path.join(testRoot, "blog");
-    await fs.mkdir(blogDir, { recursive: true });
-    await fs.writeFile(path.join(blogDir, "post.md"), "# Post");
-
-    // Create API
-    const apiDir = path.join(testRoot, "api");
-    await fs.mkdir(apiDir, { recursive: true });
-    await fs.writeFile(path.join(apiDir, "api.json"), "{}");
-
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
-
-    expect(entries).toHaveLength(3);
-    const kinds = entries.map((e) => e.kind).sort();
-    expect(kinds).toEqual(["api", "page", "post"]);
+    await expect(
+      provider.listEntries({
+        config,
+        collections: ["docs"],
+      })
+    ).rejects.toMatchObject({
+      code: "DOCS_ENTRY_INVALID",
+    });
   });
 
-  it("should handle special characters in filenames", async () => {
-    const docsDir = path.join(testRoot, "docs");
-    await fs.mkdir(docsDir, { recursive: true });
-    await fs.writeFile(path.join(docsDir, "what-is-new.md"), "# What is New?");
+  it("emits deterministic ordering regardless of filesystem creation order", async () => {
+    const root = await createTempRoot();
+    await mkdir(join(root, "content/docs"), { recursive: true });
+    await writeFile(join(root, "content/docs/zeta.mdx"), "# Zeta\n");
+    await writeFile(join(root, "content/docs/alpha.mdx"), "# Alpha\n");
 
-    const provider = new FsContentProvider({ root: testRoot });
-    const entries = await provider.list();
+    const provider = new FsContentProvider({ root });
+    const entries = await provider.listEntries({
+      config: createConfig(root),
+      collections: ["docs"],
+    });
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0].id).toBe("what-is-new.md");
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "docs:alpha.mdx",
+      "docs:zeta.mdx",
+    ]);
   });
 });

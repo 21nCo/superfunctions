@@ -1,7 +1,7 @@
 {
   "name": "@uifn/files",
   "version": "0.1.0",
-  "description": "FileFn UI components for file upload/preview",
+  "description": "Experimental file-upload UX state helpers for uifn",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,16 +11,25 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest",
-    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "rm -rf dist"
   },
-  "keywords": ["ui", "file", "upload", "filefn"],
+  "keywords": ["ui", "file", "upload", "filefn", "experimental"],
   "author": "21n",
   "license": "MIT",
+  "engines": {
+    "node": ">=18 <23"
+  },
   "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
   "repository": {
     "type": "git",

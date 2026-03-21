@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { getContext, setContext } from 'svelte';
 
   interface Props {
@@ -12,6 +13,10 @@
   const ctx = getContext<any>('combobox');
 
   let isSelected = $derived(ctx.value === value);
+
+  onMount(() => {
+    ctx.registerItem?.({ value, disabled });
+  });
 
   function handleClick(e: MouseEvent) {
     if (disabled) return;

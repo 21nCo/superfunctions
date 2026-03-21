@@ -2,14 +2,56 @@
 
 ## Overview
 
-UIFn Primitives is a framework-agnostic library of unstyled, accessible UI components that can be adapted for React, Vue, Svelte, Solid, and other modern frontend frameworks. Inspired by Radix UI, these primitives provide the foundation for building design systems and component libraries.
+UIFn Primitives is a framework-agnostic library of unstyled, accessible UI components centered on a shared core plus framework adapters. Inspired by Radix UI, these primitives provide the foundation for building design systems and component libraries.
+
+## Phase 0 Release Contract Baseline (2026-03-20)
+
+This section is normative for package identity, support claims, and compatibility in the current release train.
+
+### Canonical package identities
+
+- `@uifn/core` (GA)
+- `@uifn/react` (GA)
+- `@uifn/svelte` (GA)
+- `@uifn/vue` (Experimental)
+- `@uifn/files` (Experimental)
+
+No deprecated `uifn` alias is published for core in this baseline.
+
+### Support claims
+
+- Unsupported adapters such as Solid and web-components are not part of the current supported matrix.
+- Vue is public but experimental; docs must match shipped API shape.
+- Files is public but experimental; docs and pack output must remain explicit and clean.
+
+### Display-helper contract baseline
+
+- `Avatar`, `Badge`, `Label`, and `Separator` are GA when consumed from `@uifn/react` and `@uifn/svelte`.
+- The same families are Experimental in `@uifn/vue` because the Vue adapter itself is Experimental.
+- `VirtualizedList` is adapter-only (not part of `@uifn/core`) and currently shipped by React and Svelte adapters.
+- Avatar fallback behavior must remain deterministic: fallback appears on image error/missing source and respects optional delay configuration.
+- Virtualized list behavior must remain deterministic: `overscan` defaults to `3` and item rendering follows adapter contracts (`renderItem` in React, snippet children in Svelte).
+
+### Compatibility matrix
+
+- Node.js: `18.x`, `20.x`, `22.x`
+- React: `18.2+`
+- Svelte: `5.x`
+- Vue (experimental): `3.5+`
+- Browsers: current evergreen Chrome, Edge, Firefox, Safari
+
+### Release-gate command
+
+- Command: `npm run verify:uifn-release`
+- Dry run: `npm run verify:uifn-release -- --dry-run`
+- Gate checks: build, lint, test, type, export-map, pack verification for all public `uifn` packages.
 
 ## Core Principles
 
 ### 1. Framework Agnostic
 
 - Core logic implemented in vanilla JavaScript/TypeScript
-- Framework-specific adapters provided for React, Vue, Svelte, Solid, etc.
+- Framework-specific adapters provided for React and Svelte (GA), plus Vue (experimental)
 - Minimal dependencies to reduce bundle size
 - Pure functions and state machines where possible
 
@@ -61,9 +103,7 @@ core/
 adapters/
 ├── react/
 ├── vue/
-├── svelte/
-├── solid/
-└── web-components/
+└── svelte/
 ```
 
 ### State Management

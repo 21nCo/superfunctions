@@ -49,6 +49,8 @@ export const ErrorCodes = {
   SHARE_NOT_FOUND: 'FILEFN_SHARE_NOT_FOUND',
   PERMISSION_NOT_FOUND: 'FILEFN_PERMISSION_NOT_FOUND',
   PROCESSING_ENQUEUE_FAILED: 'FILEFN_PROCESSING_ENQUEUE_FAILED',
+  SESSION_TOKEN_REQUIRED: 'FILEFN_SESSION_TOKEN_REQUIRED',
+  SESSION_TOKEN_INVALID: 'FILEFN_SESSION_TOKEN_INVALID',
 } as const;
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
@@ -158,6 +160,22 @@ export function shareNotFound(): FileFnError {
 
 export function permissionNotFound(): FileFnError {
   return new FileFnError(ErrorCodes.PERMISSION_NOT_FOUND, 'Permission not found', 404);
+}
+
+export function sessionTokenRequired(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.SESSION_TOKEN_REQUIRED,
+    'Upload session token required',
+    401
+  );
+}
+
+export function sessionTokenInvalid(): FileFnError {
+  return new FileFnError(
+    ErrorCodes.SESSION_TOKEN_INVALID,
+    'Invalid upload session token',
+    403
+  );
 }
 
 export function processingEnqueueFailed(): FileFnError {

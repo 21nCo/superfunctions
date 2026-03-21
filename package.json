@@ -28,6 +28,7 @@
     "langfn/*",
     "catchfn/*",
     "chartfn/*",
+    "clifn/*",
     "docsfn/*",
     "drawfn/*",
     "filefn/*",
@@ -52,7 +53,8 @@
     "test:coverage": "turbo run test:coverage",
     "clean": "turbo run clean && rm -rf node_modules",
     "check:duplication": "node scripts/check-duplication.mjs",
-    "gate:audit-fix-o4u9k2m7": "node scripts/gate-audit-fix-o4u9k2m7.mjs"
+    "gate:audit-fix-o4u9k2m7": "node scripts/gate-audit-fix-o4u9k2m7.mjs",
+    "verify:uifn-release": "node scripts/verify-uifn-release.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",

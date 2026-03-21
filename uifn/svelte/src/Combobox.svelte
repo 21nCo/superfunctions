@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createCombobox } from '@uifn/core/primitives/combobox';
+  import type { ComboboxItem } from '@uifn/core/primitives/combobox';
   import { setContext } from 'svelte';
 
   interface Props {
@@ -48,11 +49,30 @@
   let state = $state(machine.state);
   let triggerElement = $state<HTMLElement | null>(null);
   let inputElement = $state<HTMLInputElement | null>(null);
+  let items = $state<ComboboxItem[]>([]);
 
   $effect(() => {
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (valueProp !== undefined && state.value !== valueProp) {
+      machine.actions.syncValue(valueProp);
+    }
+  });
+
+  $effect(() => {
+    if (inputValueProp !== undefined && state.inputValue !== inputValueProp) {
+      machine.actions.syncInputValue(inputValueProp);
+    }
+  });
+
+  $effect(() => {
+    if (openProp !== undefined && state.open !== openProp) {
+      machine.actions.syncOpen(openProp);
+    }
   });
 
   // Derived state
@@ -99,6 +119,21 @@
     inputElement = el;
   }
 
+  function registerItem(item: ComboboxItem) {
+    const existingIndex = items.findIndex((entry) => entry.value === item.value);
+    if (existingIndex === -1) {
+      items = [...items, item];
+    } else {
+      items = items.map((entry, index) => (index === existingIndex ? item : entry));
+    }
+    machine.actions.setItems(items);
+  }
+
+  function unregisterItem(value: string) {
+    items = items.filter((entry) => entry.value !== value);
+    machine.actions.setItems(items);
+  }
+
   setContext('combobox', {
     get value() { return value; },
     get inputValue() { return inputValue; },
@@ -110,7 +145,9 @@
     setInputValue,
     setOpen,
     registerTrigger,
-    registerInput
+    registerInput,
+    registerItem,
+    unregisterItem
   });
 </script>
 

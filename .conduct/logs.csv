@@ -27,3 +27,4 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-14T18:00:00Z,gemini-pro,CLI,audit,Antigravity,,.conduct/audits/2026-03-14-u8k4m2p9-full-audit.md
 2026-03-14T16:18:00Z,gemini-2.5-pro,CLI,audit,Gemini CLI,,.conduct/audits/2026-03-14-a1b2c3-full-audit.md
 2026-03-14T18:50:49Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-15-fix-ifnaigab-spec
+2026-03-18T07:03:15Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec

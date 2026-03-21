@@ -27,12 +27,57 @@ export interface BlogPost {
   path: string;
   title: string;
   date: string; // ISO date
+  publishedAt?: string; // ISO datetime
   author?: string;
   excerpt?: string;
+  summary?: string;
+  draft?: boolean;
   tags: string[];
   body: string;
   frontmatter: Record<string, any>;
   version?: string; // Optional version slug
+}
+
+export interface BlogTagIndex {
+  tag: string;
+  slug: string;
+  path: string;
+  postIds: string[];
+}
+
+export interface BlogArchivePage {
+  page: number;
+  path: string;
+  postIds: string[];
+  totalPages: number;
+  totalPosts: number;
+  pageSize: number;
+}
+
+export interface BlogManifestSurface {
+  listRoute: string;
+  feedPath: string;
+  postOrder: string[];
+  tags: Record<string, BlogTagIndex>;
+  archives: BlogArchivePage[];
+}
+
+export interface EmbeddedPageRoute {
+  pageId: string;
+  sourcePath: string;
+  pageRoute: string;
+  surfaceRoute: string;
+  title: string;
+  tocCount: number;
+}
+
+export interface EmbeddedManifestSurface {
+  pageRoutePrefix: string;
+  surfaceRoutePrefix: string;
+  hasSidebar: boolean;
+  hasSearchTrigger: boolean;
+  hasTopNavSlot: boolean;
+  pages: Record<string, EmbeddedPageRoute>;
 }
 
 export interface DocHeading {
@@ -71,11 +116,14 @@ export interface DocsManifest {
     description?: string;
   };
   versions?: Version[]; // Optional list of versions
+  topNav?: DocsTopNavItem[];
   pages: Record<string, DocPage>; // keyed by ID
   posts: Record<string, BlogPost>;
   apis: Record<string, ApiReference>;
   sidebars: Record<string, Sidebar>; // Can be keyed by version, e.g., 'v2:default'
   routes: Record<string, string>; // path -> ID map for routing
+  blog?: BlogManifestSurface;
+  embedded?: EmbeddedManifestSurface;
 }
 
 export interface RawContentEntry {
@@ -86,6 +134,123 @@ export interface RawContentEntry {
   filepath?: string;
 }
 
-export interface DocsContentProvider {
-  list(): Promise<RawContentEntry[]>;
+export type DocsFramework = "next" | "sveltekit" | "embedded";
+export type DocsCollection = "docs" | "pages" | "blog" | "api" | "assets";
+export type DocsVersionMode = "none" | "path-prefix" | "path-segment";
+export type DocsCompatPreset = "none" | "fumadocs-v15";
+
+export interface DocsSiteConfig {
+  title: string;
+  description?: string;
+  basePath?: `/${string}`;
+  canonicalUrl?: string;
+  defaultLocale?: string;
+  theme?: Record<string, unknown>;
+  editLink?: Record<string, unknown>;
+  pageActions?: Array<Record<string, unknown>>;
 }
+
+export interface DocsVersionConfig {
+  slug: string;
+  label: string;
+  default?: boolean;
+}
+
+export interface DocsTopNavItem {
+  label: string;
+  href: string;
+  external?: boolean;
+  children?: DocsTopNavItem[];
+}
+
+export interface DocsSidebarDefinition {
+  title?: string;
+  root?: boolean;
+  include?: string[];
+}
+
+export interface DocsConfig {
+  schemaVersion: 1;
+  site: DocsSiteConfig;
+  compat?: {
+    preset: DocsCompatPreset;
+    allowRawHtml?: false;
+  };
+  versions?: {
+    mode: DocsVersionMode;
+    versions: DocsVersionConfig[];
+  };
+  content: {
+    root: string;
+    docsDir?: string;
+    pagesDir?: string;
+    blogDir?: string;
+    apiDir?: string;
+    assetsDir?: string;
+    metaFileName?: string;
+  };
+  navigation?: {
+    topNav?: DocsTopNavItem[];
+    sidebars?: Record<string, DocsSidebarDefinition>;
+  };
+  search?: {
+    enabled: boolean;
+    scopes: Array<"docs" | "api" | "blog">;
+    bodyIndexing?: "full" | "summary" | "disabled";
+    maxArtifactBytes?: number;
+  };
+  auth?: {
+    enabled: boolean;
+    mode: "public" | "private" | "mixed";
+  };
+  analytics?: {
+    enabled: boolean;
+    provider: "watchfn";
+    respectDnt: boolean;
+  };
+}
+
+export type DocsErrorCode =
+  | "DOCS_CONFIG_INVALID"
+  | "DOCS_CONFIG_UNSUPPORTED"
+  | "DOCS_PROVIDER_ERROR"
+  | "DOCS_ENTRY_INVALID"
+  | "DOCS_META_INVALID"
+  | "DOCS_ROUTE_CONFLICT"
+  | "DOCS_ROUTE_NOT_FOUND"
+  | "DOCS_VERSION_INVALID"
+  | "DOCS_COMPAT_UNSUPPORTED"
+  | "DOCS_MDX_COMPILE_FAILED"
+  | "DOCS_HTML_UNSAFE"
+  | "DOCS_SEARCH_BUILD_FAILED"
+  | "DOCS_OPENAPI_PARSE_FAILED"
+  | "DOCS_REMOTE_FETCH_FAILED"
+  | "DOCS_AUTH_REQUIRED"
+  | "DOCS_AUTH_FORBIDDEN"
+  | "DOCS_ARTIFACT_INVALID";
+
+export interface DocsDiagnostic {
+  code: DocsErrorCode;
+  severity: "error" | "warning" | "info";
+  message: string;
+  location?: {
+    sourceId?: string;
+    absolutePath?: string;
+    line?: number;
+    column?: number;
+  };
+  details?: Record<string, unknown>;
+  suggestion?: string;
+}
+
+export type {
+  DocsContentProvider,
+  DocsProviderListEntriesInput,
+  DocsProviderLoadEntryInput,
+  DocsProviderLoadAssetResult,
+  DocsProviderWatchInput,
+  DocsProviderWatchMetadata,
+  DocsProviderWatchSubscription,
+  DocsSourceEntry,
+  DocsSourceEntryType,
+} from "./provider";

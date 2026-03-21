@@ -125,4 +125,28 @@ describe('Dialog', () => {
         expect(getByText('First')).toHaveFocus();
     });
   });
+
+  it('supports asChild trigger semantics and forwards ref target', async () => {
+    const anchorRef = React.createRef<HTMLAnchorElement>();
+
+    render(
+      <Dialog>
+        <DialogTrigger asChild ref={anchorRef as unknown as React.Ref<HTMLButtonElement>}>
+          <a href="/docs">Open Docs</a>
+        </DialogTrigger>
+        <DialogPortal>
+          <DialogContent>
+            <DialogTitle>AsChild Dialog</DialogTitle>
+          </DialogContent>
+        </DialogPortal>
+      </Dialog>
+    );
+
+    const trigger = screen.getByRole('link', { name: 'Open Docs' });
+    expect(trigger.tagName).toBe('A');
+    expect(anchorRef.current?.tagName).toBe('A');
+
+    fireEvent.click(trigger);
+    expect(screen.getByText('AsChild Dialog')).toBeVisible();
+  });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Provider } from '../../types/provider.js';
 import { AuthType } from '../../types/provider.js';
 import { TriggerType } from '../../types/trigger.js';
@@ -207,6 +208,164 @@ export const linearProvider: Provider = {
       },
     },
 
+    // Get issue
+    'issues.get': {
+      name: 'issues.get',
+      displayName: 'Get Issue',
+      description: 'Get a single issue by ID',
+
+      parameters: z.object({
+        issueId: z.string().describe('Issue ID'),
+      }),
+
+      returns: z.object({
+        id: z.string(),
+        title: z.string(),
+        identifier: z.string(),
+        description: z.string().nullable(),
+        url: z.string(),
+        state: z
+          .object({
+            id: z.string(),
+            name: z.string(),
+          })
+          .nullable(),
+      }),
+
+      execute: async (params: any, context: ActionContext) => {
+        const query = `
+          query Issue($issueId: String!) {
+            issue(id: $issueId) {
+              id
+              title
+              identifier
+              description
+              url
+              state {
+                id
+                name
+              }
+            }
+          }
+        `;
+
+        const response = await context.http.post(context.provider.baseUrl, {
+          query,
+          variables: {
+            issueId: params.issueId,
+          },
+        });
+
+        return response.data.data.issue;
+      },
+    },
+
+    // Create comment
+    'comments.create': {
+      name: 'comments.create',
+      displayName: 'Create Comment',
+      description: 'Create a comment on a Linear issue',
+
+      parameters: z.object({
+        issueId: z.string().describe('Issue ID'),
+        body: z.string().describe('Comment body'),
+      }),
+
+      returns: z.object({
+        success: z.boolean(),
+        comment: z.object({
+          id: z.string(),
+          body: z.string(),
+          createdAt: z.string(),
+        }),
+      }),
+
+      execute: async (params: any, context: ActionContext) => {
+        const mutation = `
+          mutation CommentCreate($input: CommentCreateInput!) {
+            commentCreate(input: $input) {
+              success
+              comment {
+                id
+                body
+                createdAt
+              }
+            }
+          }
+        `;
+
+        const response = await context.http.post(context.provider.baseUrl, {
+          query: mutation,
+          variables: {
+            input: {
+              issueId: params.issueId,
+              body: params.body,
+            },
+          },
+        });
+
+        return response.data.data.commentCreate;
+      },
+    },
+
+    // Search issues
+    'issues.search': {
+      name: 'issues.search',
+      displayName: 'Search Issues',
+      description: 'Search issues in Linear by query text',
+
+      parameters: z.object({
+        teamId: z.string().optional().describe('Optional team ID'),
+        query: z.string().describe('Search query'),
+        first: z.number().optional().default(20).describe('Number of issues to return'),
+      }),
+
+      returns: z.object({
+        nodes: z.array(
+          z.object({
+            id: z.string(),
+            identifier: z.string(),
+            title: z.string(),
+            url: z.string(),
+            state: z
+              .object({
+                name: z.string(),
+              })
+              .nullable(),
+          })
+        ),
+      }),
+
+      execute: async (params: any, context: ActionContext) => {
+        const query = `
+          query IssueSearch($query: String!, $first: Int!, $teamId: String) {
+            issueSearch(query: $query, first: $first, teamId: $teamId) {
+              nodes {
+                id
+                identifier
+                title
+                url
+                state {
+                  name
+                }
+              }
+            }
+          }
+        `;
+
+        const response = await context.http.post(context.provider.baseUrl, {
+          query,
+          variables: {
+            teamId: params.teamId,
+            query: params.query,
+            first: params.first ?? 20,
+          },
+        });
+
+        return response.data.data.issueSearch;
+      },
+    },
+
     // List teams
     'teams.list': {
       name: 'teams.list',
@@ -281,6 +440,71 @@ export const linearProvider: Provider = {
         };
       },
     },
+    'issue.updated': {
+      name: 'issue.updated',
+      displayName: 'Issue Updated',
+      description: 'Triggered when an issue is updated',
+      type: TriggerType.Webhook,
+
+      webhookConfig: {
+        path: '/webhooks/linear/issue-updated',
+        method: 'POST',
+        verifySignature: async (payload, signature, secret) => {
+          return verifyLinearSignature(payload, signature, secret);
+        },
+      },
+
+      schema: z.object({
+        action: z.literal('update'),
+        data: z.object({
+          id: z.string(),
+          title: z.string().optional(),
+          identifier: z.string().optional(),
+        }),
+      }),
+
+      handler: async (payload) => {
+        return {
+          event: 'issue.updated',
+          data: payload.data,
+        };
+      },
+    },
+    'issue_comment.created': {
+      name: 'issue_comment.created',
+      displayName: 'Issue Comment Created',
+      description: 'Triggered when an issue comment is created',
+      type: TriggerType.Webhook,
+
+      webhookConfig: {
+        path: '/webhooks/linear/issue-comment',
+        method: 'POST',
+        verifySignature: async (payload, signature, secret) => {
+          return verifyLinearSignature(payload, signature, secret);
+        },
+      },
+
+      schema: z.object({
+        action: z.literal('create'),
+        data: z.object({
+          id: z.string(),
+          body: z.string(),
+          issue: z
+            .object({
+              id: z.string(),
+              identifier: z.string().optional(),
+            })
+            .optional(),
+        }),
+      }),
+
+      handler: async (payload) => {
+        return {
+          event: 'issue_comment.created',
+          data: payload.data,
+        };
+      },
+    },
   },
 
   rateLimit: {
@@ -292,4 +516,22 @@ export const linearProvider: Provider = {
     'Content-Type': 'application/json',
   },
 };
+
+function verifyLinearSignature(payload: any, signature: string, secret: string): boolean {
+  if (!signature || !secret) {
+    return false;
+  }
+
+  const normalizedSignature = signature.startsWith('sha256=') ? signature.slice('sha256='.length) : signature;
+  const expected = createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+
+  const actualBuffer = Buffer.from(normalizedSignature, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(actualBuffer, expectedBuffer);
+}
 

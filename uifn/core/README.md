@@ -1,15 +1,10 @@
 # @uifn/core
 
-Framework-agnostic UI primitives and utilities for building accessible, unstyled component libraries.
+Framework-agnostic runtime semantics, state helpers, and accessibility utilities for `uifn` primitives.
 
-## Overview
+## Status
 
-`@uifn/core` provides the foundational logic for UI components without any framework-specific code. It includes:
-
-- **Primitives**: Core state management and behavior for UI components
-- **Utils**: Shared utilities (focus management, ID generation, positioning)
-- **ARIA**: Accessibility helpers and patterns
-- **State**: State machines for complex component behavior
+GA
 
 ## Installation
 
@@ -17,36 +12,30 @@ Framework-agnostic UI primitives and utilities for building accessible, unstyled
 npm install @uifn/core
 ```
 
-## Usage
+## Public Imports
 
-This package is typically used as a dependency by framework-specific adapters like `@uifn/react`, `@uifn/vue`, or `@uifn/svelte`. However, you can use it directly:
-
-```typescript
-import { createCheckbox } from "@uifn/core/primitives/checkbox";
+```ts
+import { createDialog } from "@uifn/core/primitives/dialog";
+import { K } from "@uifn/core/aria/keys";
+import { createMachine } from "@uifn/core/state/machine";
 import { generateId } from "@uifn/core/utils/id";
-
-const checkbox = createCheckbox({
-  defaultChecked: false,
-  onCheckedChange: (checked) => {
-    console.log("Checked:", checked);
-  },
-});
-
-// Subscribe to state changes
-checkbox.subscribe((state) => {
-  console.log("State:", state);
-});
-
-// Toggle the checkbox
-checkbox.actions.toggle();
 ```
 
-## Framework Adapters
+## Package Surface
 
-- **React**: `@uifn/react`
-- **Vue**: `@uifn/vue`
-- **Svelte**: `@uifn/svelte`
+- `@uifn/core/primitives/*`
+- `@uifn/core/aria/*`
+- `@uifn/core/state/*`
+- `@uifn/core/utils/*`
+
+`@uifn/core` does not export adapter display helpers (`Avatar`, `Badge`, `Label`, `Separator`, `VirtualizedList`) directly; those are shipped by adapter packages.
+
+## Adapter Packages
+
+- `@uifn/react` (GA)
+- `@uifn/svelte` (GA)
+- `@uifn/vue` (Experimental)
 
 ## License
 
-Apache-2.0
+MIT

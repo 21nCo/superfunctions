@@ -461,7 +461,23 @@
       <p class="status-line">Context unavailable.</p>
     {/if}
   </section>
-
+<section class="panel docs-panel">
+  <div class="editor-panel">
+    <h3>Create document</h3>
+    <label>
+      Title
+      <input data-testid="create-title" bind:value={createTitle} maxlength={200} placeholder="Quarterly Notes" />
+    </label>
+    <label>
+      Content
+      <textarea data-testid="create-content" bind:value={createContent} rows={4} placeholder="Draft" />
+    </label>
+    <button data-testid="create-submit" type="button" on:click={handleCreateDocument}>Create</button>
+    {#if createErrorCode}
+      <p class="status-line error">Create failed: {createErrorCode}</p>
+    {/if}
+  </div>
+</section>
   <section class="panel docs-panel">
     <h2>Documents</h2>
     <div class="docs-layout">
@@ -490,20 +506,9 @@
         {/if}
       </aside>
 
+
       <div class="editor-panel">
-        <h3>Create document</h3>
-        <label>
-          Title
-          <input data-testid="create-title" bind:value={createTitle} maxlength={200} placeholder="Quarterly Notes" />
-        </label>
-        <label>
-          Content
-          <textarea data-testid="create-content" bind:value={createContent} rows={4} placeholder="Draft" />
-        </label>
-        <button data-testid="create-submit" type="button" on:click={handleCreateDocument}>Create</button>
-        {#if createErrorCode}
-          <p class="status-line error">Create failed: {createErrorCode}</p>
-        {/if}
+
 
         <h3>Edit selected document</h3>
         {#if selectedDocument}

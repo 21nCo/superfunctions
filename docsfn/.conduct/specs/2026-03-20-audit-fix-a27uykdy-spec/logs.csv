@@ -1,0 +1,13 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-20T12:57:57Z,GPT-5 Codex,Codex,spec,spec,,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec
+2026-03-20T17:14:33Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_00,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_00-2026-03-20-v4m9k2p7-report.md
+2026-03-20T17:36:11Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_01,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_01-2026-03-20-k7m3p9q2-report.md
+2026-03-20T18:00:04Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_02,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_02-2026-03-20-m2q8t6r1-report.md
+2026-03-21T03:47:19Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_03,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_03-2026-03-21-n8q4k2t1-report.md
+2026-03-21T04:25:23Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_04,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_04-2026-03-21-k4fdxh5f-report.md
+2026-03-21T05:05:23Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_05,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_05-2026-03-21-bvxojfpy-report.md
+2026-03-21T05:41:29Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_06,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_06-2026-03-21-p6h4t9x2-report.md
+2026-03-21T10:10:19Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_07,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_07-2026-03-21-q7m2k9vz-report.md
+2026-03-21T10:32:10Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_08,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_08-2026-03-21-c80c1b83-report.md
+2026-03-21T14:09:12Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_09,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_09-2026-03-21-p9k2m7t4-report.md
+2026-03-21T14:29:50Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_10,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/phase-reports/PHASE_10-2026-03-21-m8q2t7r4-report.md

@@ -1,0 +1,26 @@
+# Phase 02
+- Phase goal: Make upload mode selection and proxy upload behavior fully canonical and deterministic.
+- In scope:
+  - upload mode selection
+  - proxy upload data-plane semantics
+  - init/part/complete idempotency behavior
+  - cleanup of temp part state during completion
+- Out of scope:
+  - file/share/artifact download fallback
+- Deliverables:
+  - `filefn/server/src/upload-sessions/service.ts`
+  - `filefn/server/src/upload-sessions/routes.ts`
+  - `filefn/server/src/__tests__/upload-proxy.test.ts`
+  - `filefn/server/src/__tests__/idempotency-complete.test.ts`
+  - `filefn/server/src/__tests__/upload-gc.test.ts`
+  - `filefn/client/src/__tests__/upload-proxy.test.ts`
+- Requirements covered: UPLOAD-002, UPLOAD-003, UPLOAD-004, UPLOAD-005, CLIENT-001
+- Implementation tasks:
+  - Remove bare `signed-url` mode entirely.
+  - Ensure proxy upload writes durable parts and deterministic conflict behavior.
+  - Make init/part/complete idempotency logic canonical.
+  - Ensure complete cleans proxy temp parts on success.
+- Verification steps:
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/server && npm test -- --run`
+  - `cd /Users/serro/Documents/dev/n/superfunctions/filefn/client && npm test -- --run`
+- Stop condition: upload mode, proxy upload, and idempotency tests pass without regressions.

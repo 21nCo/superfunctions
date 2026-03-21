@@ -7,6 +7,9 @@ import { useFocusTrap } from './hooks/use-focus-trap';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { useBodyScrollLock } from './hooks/use-body-scroll-lock';
 
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
+
 /* -------------------------------------------------------------------------------------------------
  * AlertDialog Root
  * -----------------------------------------------------------------------------------------------*/
@@ -246,7 +249,7 @@ export const AlertDialogTitle = React.forwardRef<HTMLHeadingElement, AlertDialog
     const context = useAlertDialogContext();
     const id = useId(props.id);
     
-    React.useLayoutEffect(() => {
+    useIsomorphicLayoutEffect(() => {
         if (id) context.setTitleId(id);
     }, [id, context]);
 
@@ -271,7 +274,7 @@ export const AlertDialogDescription = React.forwardRef<HTMLParagraphElement, Ale
     const context = useAlertDialogContext();
     const id = useId(props.id);
 
-    React.useLayoutEffect(() => {
+    useIsomorphicLayoutEffect(() => {
         if (id) context.setDescriptionId(id);
     }, [id, context]);
 

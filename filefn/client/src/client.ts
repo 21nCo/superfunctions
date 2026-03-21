@@ -77,6 +77,7 @@ export interface HttpClient {
 
   getUploadStatus(
     uploadSessionId: string,
+    uploadSessionToken?: string,
     signal?: AbortSignal,
   ): Promise<UploadStatusResponse>;
 
@@ -84,6 +85,7 @@ export interface HttpClient {
     uploadSessionId: string,
     partNumber: number,
     contentLength: number,
+    uploadSessionToken?: string,
     signal?: AbortSignal,
   ): Promise<SignPartResponse>;
 
@@ -92,16 +94,19 @@ export interface HttpClient {
     partNumber: number,
     etag: string,
     size: number,
+    uploadSessionToken?: string,
     signal?: AbortSignal,
   ): Promise<CompletePartResponse>;
 
   completeUpload(
     uploadSessionId: string,
+    uploadSessionToken?: string,
     signal?: AbortSignal,
   ): Promise<CompleteUploadResponse>;
 
   abortUpload(
     uploadSessionId: string,
+    uploadSessionToken?: string,
     signal?: AbortSignal,
   ): Promise<AbortUploadResponse>;
 
@@ -109,6 +114,7 @@ export interface HttpClient {
     url: string,
     headers: Record<string, string>,
     body: Blob,
+    uploadSessionToken?: string,
     signal?: AbortSignal,
   ): Promise<{ etag: string; recorded?: boolean }>;
 }
@@ -136,10 +142,14 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     body?: unknown,
     signal?: AbortSignal,
     options: ResolvedRetryOptions = retryOptions,
+    extraHeaders?: Record<string, string>,
   ): Promise<T> {
     return withRetry(
       async () => {
         const headers = await getHeaders();
+        if (extraHeaders) {
+          Object.assign(headers, extraHeaders);
+        }
         const response = await fetch(`${baseUrl}${path}`, {
           method,
           headers,
@@ -212,60 +222,74 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
       await request<void>("DELETE", `/${fileId}`, undefined, signal);
     },
 
-    async getUploadStatus(uploadSessionId, signal) {
+    async getUploadStatus(uploadSessionId, uploadSessionToken, signal) {
       return request<UploadStatusResponse>(
         "GET",
         `/upload/${uploadSessionId}/status`,
         undefined,
         signal,
+        retryOptions,
+        uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
       );
     },
 
-    async signPart(uploadSessionId, partNumber, contentLength, signal) {
+    async signPart(uploadSessionId, partNumber, contentLength, uploadSessionToken, signal) {
       return request<SignPartResponse>(
         "POST",
         `/upload/${uploadSessionId}/parts/${partNumber}/sign`,
         { contentLength },
         signal,
+        retryOptions,
+        uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
       );
     },
 
-    async completePart(uploadSessionId, partNumber, etag, size, signal) {
+    async completePart(uploadSessionId, partNumber, etag, size, uploadSessionToken, signal) {
       return request<CompletePartResponse>(
         "POST",
         `/upload/${uploadSessionId}/parts/${partNumber}/complete`,
         { etag, size },
         signal,
+        retryOptions,
+        uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
       );
     },
 
-    async completeUpload(uploadSessionId, signal) {
+    async completeUpload(uploadSessionId, uploadSessionToken, signal) {
       return request<CompleteUploadResponse>(
         "POST",
         `/upload/${uploadSessionId}/complete`,
         undefined,
         signal,
+        retryOptions,
+        uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
       );
     },
 
-    async abortUpload(uploadSessionId, signal) {
+    async abortUpload(uploadSessionId, uploadSessionToken, signal) {
       return request<AbortUploadResponse>(
         "POST",
         `/upload/${uploadSessionId}/abort`,
         undefined,
         signal,
+        retryOptions,
+        uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : undefined,
       );
     },
 
-    async uploadPartToSignedUrl(url, headers, body, signal) {
+    async uploadPartToSignedUrl(url, headers, body, uploadSessionToken, signal) {
       return withRetry(
         async () => {
           // If URL is relative (proxy upload), prepend baseUrl
           const finalUrl = url.startsWith("/") ? `${baseUrl}${url}` : url;
 
+          const requestHeaders = {
+            ...headers,
+            ...(uploadSessionToken ? { "x-upload-session-token": uploadSessionToken } : {}),
+          };
           const response = await fetch(finalUrl, {
             method: "PUT",
-            headers,
+            headers: requestHeaders,
             body,
             signal,
           });

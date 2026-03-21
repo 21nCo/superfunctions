@@ -1,140 +1,99 @@
 # @docsfn/sveltekit
 
-SvelteKit adapter for docsfn - seamlessly integrate documentation into your SvelteKit applications.
+SvelteKit site-kit helpers for `docsfn`.
+Supports SvelteKit `2` with Svelte `4` and `5`.
 
-## Installation
+## Install
 
 ```bash
-npm install @docsfn/sveltekit @docsfn/core
+npm install @docsfn/sveltekit @docsfn/core @docsfn/provider-fs @docsfn/svelte
 ```
 
-## Usage
+## Migration Contract
 
-### Basic Setup
+When migrating existing Fumadocs content, use a `docsfn.config.ts|mjs|js` file with:
 
-```typescript
-// routes/docs/[slug]/+page.server.ts
-import { createPageLoad } from "@docsfn/sveltekit";
-import { buildManifest } from "@docsfn/core";
+- `schemaVersion: 1`
+- `compat.preset: "fumadocs-v15"`
+- `content.docsDir: "content/docs"`
+
+This keeps canonical compatibility behavior (`meta.json`, Tabs/Tab imports, Mermaid fences) and fails unsupported syntax with `DOCS_COMPAT_UNSUPPORTED`.
+
+## Minimal Integration
+
+```ts
+// src/routes/docs/[...slug]/+page.ts
+import {
+  createPageLoad,
+  resolveDocsPageSurface,
+  resolveDocsRouteDataOrThrow,
+} from "@docsfn/sveltekit";
+import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
 
-const provider = new FsContentProvider({ root: "./docs" });
-const manifest = await buildManifest(provider, {
-  site: { title: "My Docs" },
-});
+const root = process.cwd();
+const config = await loadDocsConfig({ cwd: root });
+const provider = new FsContentProvider({ root });
+const manifest = await buildManifest(provider, config);
 
-export const load = createPageLoad(manifest);
-export const prerender = true;
+export const load = createPageLoad(manifest, {
+  basePath: config.site.basePath,
+  canonicalUrl: config.site.canonicalUrl,
+});
 ```
 
 ```svelte
-<!-- routes/docs/[slug]/+page.svelte -->
+<!-- src/routes/docs/[...slug]/+page.svelte -->
 <script lang="ts">
-  import { DocsLayout, DocsContent } from '@docsfn/svelte';
   export let data;
 </script>
 
-<DocsLayout sidebar={data.manifest.sidebars.default}>
-  <DocsContent page={data.page} />
-</DocsLayout>
+<article>
+  <h1>{data.page.title}</h1>
+  <p>{data.surface.canonicalPath}</p>
+</article>
 ```
 
-### Versioned Routes
+## Static Path + Route Behavior
 
-```typescript
-// routes/[version]/docs/[slug]/+page.server.ts
-import { createVersionedPageLoad } from "@docsfn/sveltekit";
+- Root docs path resolves when `params.slug` is absent.
+- Nested routes resolve with canonical route semantics.
+- Helper `resolveDocsRouteDataOrThrow` throws `DOCS_ROUTE_NOT_FOUND` for misses.
 
-export const load = createVersionedPageLoad(manifest);
-export const prerender = true;
-```
+## Search Artifact Endpoint
 
-### Manual Load Function
+```ts
+// src/routes/api/search/+server.ts
+import { createSearchArtifactResponse } from "@docsfn/sveltekit";
 
-```typescript
-// routes/docs/[slug]/+page.server.ts
-import { loadPageData } from "@docsfn/sveltekit";
-
-export async function load({ params }) {
-  const page = loadPageData(params.slug, manifest);
-
-  return {
-    page,
-    manifest,
-  };
+export async function GET() {
+  return createSearchArtifactResponse({
+    loadArtifact: async () => {
+      // load .docsfn/search.json here
+      return JSON.parse("{}");
+    },
+  });
 }
 ```
 
-### Blog Posts
+## Optional Security/Analytics Hooks
 
-```typescript
-// routes/blog/[slug]/+page.server.ts
-import { createPostLoad } from "@docsfn/sveltekit";
+`@docsfn/sveltekit` re-exports canonical security/analytics helpers from core:
 
-export const load = createPostLoad(manifest);
-export const prerender = true;
+- auth: `resolveDocsAuthMode`, `assertDocsRouteAccess`, `CANONICAL_DOCS_AUTH_MODES`
+- analytics: `createDocsAnalyticsEmitter`, `maybeEmitAnalyticsEvent`, `CANONICAL_DOCS_ANALYTICS_EVENT_NAMES`
+
+Both remain opt-in.
+
+## Fixture-Backed Example
+
+Runnable reference app:
+
+- `docsfn/examples/sveltekit-docs-site`
+
+Build it against canonical fixtures:
+
+```bash
+DOCSFN_FIXTURE_ROOT=../../test-fixtures/repo/searchfn-docs npm --prefix docsfn/examples/sveltekit-docs-site run build
+DOCSFN_FIXTURE_ROOT=../../test-fixtures/repo/datafn-docs npm --prefix docsfn/examples/sveltekit-docs-site run build
 ```
-
-### API References
-
-```typescript
-// routes/api/[slug]/+page.server.ts
-import { createApiLoad } from "@docsfn/sveltekit";
-
-export const load = createApiLoad(manifest);
-export const prerender = true;
-```
-
-## API
-
-### `createPageLoad(manifest)`
-
-Create a load function for pages.
-
-### `createVersionedPageLoad(manifest)`
-
-Create a load function for versioned pages.
-
-### `createPostLoad(manifest)`
-
-Create a load function for blog posts.
-
-### `createApiLoad(manifest)`
-
-Create a load function for API references.
-
-### `loadPageData(slug, manifest)`
-
-Manually load page data (throws 404 if not found).
-
-### `loadVersionedPageData(version, slug, manifest)`
-
-Manually load versioned page data.
-
-### `loadPostData(slug, manifest)`
-
-Manually load blog post data.
-
-### `loadApiData(slug, manifest)`
-
-Manually load API reference data.
-
-### `getStaticPaths(manifest)`
-
-Get all static paths for prerendering.
-
-### `getVersionedStaticPaths(manifest)`
-
-Get all versioned static paths.
-
-### `getBlogPaths(manifest)`
-
-Get all blog post paths.
-
-### `getApiPaths(manifest)`
-
-Get all API reference paths.
-
-## License
-
-MIT

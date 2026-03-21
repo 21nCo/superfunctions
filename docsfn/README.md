@@ -1,81 +1,114 @@
-# DocsFn v1 - Implementation Complete
+# docsfn
 
-## Status: Production Ready (Core) 🎉
-
-5 of 8 phases complete. Core functionality fully implemented and tested.
-
----
-
-## What's Working
-
-✅ **Core Engine** - Manifest building, versioning, search  
-✅ **Testing** - 26 automated tests  
-✅ **UI Components** - 20+ components (React + Svelte)  
-✅ **Framework Adapters** - Next.js + SvelteKit  
-✅ **CLI Tools** - Build + dev modes
-
----
-
-## Quick Start
-
-### Next.js
-
-```tsx
-import { generateStaticParams, getPageData } from "@docsfn/next";
-import { DocsLayout } from "@docsfn/react";
-
-export async function generateStaticParams() {
-  return generateStaticParams(manifest);
-}
-
-export default function Page({ params }) {
-  const page = getPageData(params.slug, manifest);
-  return (
-    <DocsLayout>
-      <DocsContent page={page} />
-    </DocsLayout>
-  );
-}
-```
-
-### SvelteKit
-
-```typescript
-import { createPageLoad } from "@docsfn/sveltekit";
-export const load = createPageLoad(manifest);
-```
-
----
+`docsfn` is the production docs toolchain for the Superfunctions monorepo.
+It provides a canonical core engine, filesystem provider, framework site kits, and CLI workflows to migrate and run repo docs previously authored for Fumadocs.
 
 ## Packages
 
-- `@docsfn/core` - Headless engine
-- `@docsfn/provider-fs` - Filesystem loader
-- `@docsfn/react` - 11 React components
-- `@docsfn/svelte` - 11 Svelte components
-- `@docsfn/next` - Next.js adapter
-- `@docsfn/sveltekit` - SvelteKit adapter
-- `@docsfn/cli` - Build tools
+- `@docsfn/core` — canonical config/schema contracts, manifest/search/openapi pipelines
+- `@docsfn/provider-fs` — filesystem provider for docs/pages/blog/api/assets
+- `@docsfn/react` — React docs UI components
+- `@docsfn/svelte` — Svelte docs UI components
+- `@docsfn/next` — Next.js App Router site-kit helpers
+- `@docsfn/sveltekit` — SvelteKit site-kit helpers
+- `@docsfn/cli` — `docsfn validate|build|dev`
 
----
+## Compatibility Preset
 
-## Optional Phases
+Use `compat.preset: "fumadocs-v15"` when migrating existing repo docs fixtures.
+The preset supports canonical fixture constructs including:
 
-**Phase 6:** Theme system (CSS tokens, dark mode)  
-**Phase 7:** Blog components (list, tags, RSS)  
-**Phase 8:** Examples + polish
+- `meta.json` navigation control files
+- `Tabs` / `Tab` from `fumadocs-ui/components/tabs`
+- Mermaid code fences
+- current fixture frontmatter surface from the spec
 
-**Status:** Not blocking for production use
+Unsupported compatibility syntax fails closed with `DOCS_COMPAT_UNSUPPORTED`.
 
----
+## Canonical Config (Example)
 
-## Ship It?
+```ts
+// docsfn.config.ts
+import type { DocsConfig } from "@docsfn/core";
 
-Current implementation is production-ready for:
+const config: DocsConfig = {
+  schemaVersion: 1,
+  site: {
+    title: "My Docs",
+    basePath: "/docs",
+    canonicalUrl: "https://example.com",
+  },
+  compat: {
+    preset: "fumadocs-v15",
+  },
+  content: {
+    root: process.cwd(),
+    docsDir: "content/docs",
+    pagesDir: "pages",
+    blogDir: "blog",
+    apiDir: "api",
+    assetsDir: "public",
+    metaFileName: "meta.json",
+  },
+  search: {
+    enabled: true,
+    scopes: ["docs", "api", "blog"],
+    bodyIndexing: "summary",
+  },
+  auth: {
+    enabled: false,
+    mode: "public",
+  },
+  analytics: {
+    enabled: false,
+    provider: "watchfn",
+    respectDnt: true,
+  },
+};
 
-- Documentation sites
-- API references
-- Versioned docs
-- Multi-framework projects
+export default config;
+```
 
-**Recommendation:** Deploy as v1.0.0-beta
+## CLI Commands
+
+```bash
+# Validate config/content and fail non-zero on error diagnostics
+npm --prefix docsfn/cli run build -- validate --root /absolute/path/to/site
+
+# Build canonical artifacts
+npm --prefix docsfn/cli run build -- build --root /absolute/path/to/site --out-dir .docsfn
+
+# Dev watcher with structured invalidation diagnostics
+npm --prefix docsfn/cli run build -- dev --root /absolute/path/to/site --out-dir .docsfn
+```
+
+Build outputs:
+
+- `manifest.json`
+- `search.json` (when search is enabled)
+- `diagnostics.json`
+- `compat-report.json`
+
+## Migration Guidance (Fumadocs -> docsfn)
+
+1. Copy canonical fixture (or your docs site) into a docsfn root with `content/docs`.
+2. Add `docsfn.config.ts` with `schemaVersion: 1` and `compat.preset: "fumadocs-v15"`.
+3. Run `docsfn validate` and fix blocking diagnostics.
+4. Run `docsfn build` and inspect `manifest.json`, `search.json`, `compat-report.json`.
+5. Wire your host app through `@docsfn/next` or `@docsfn/sveltekit` helpers.
+6. Run the release matrix before cutting versions:
+
+```bash
+node /Users/serro/Documents/dev/n/superfunctions/docsfn/scripts/release-gate.mjs
+node /Users/serro/Documents/dev/n/superfunctions/docsfn/scripts/migration-check.mjs
+```
+
+## Reference Examples
+
+- Next.js reference site: `docsfn/examples/next-docs-site`
+- SvelteKit reference site: `docsfn/examples/sveltekit-docs-site`
+- Example runbook: `docsfn/examples/README.md`
+
+## Release Checklist
+
+Before release, complete `docsfn/.conduct/release-checklist.md`.

@@ -1,0 +1,3 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-20T11:35:12Z,GPT-5 Codex,Codex,audit,audit,,.conduct/audits/2026-03-20-uhz52fhl-full-audit.md
+2026-03-20T12:57:57Z,GPT-5 Codex,Codex,spec,spec,,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec

@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useLayoutEffect } from 'react';
+import React from 'react';
+import { detectNodeMotion } from '@uifn/core/utils/presence';
 
-// UseLayoutEffect shim for SSR
-const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
 
 export interface PresenceProps {
   present: boolean;
@@ -10,75 +10,78 @@ export interface PresenceProps {
 }
 
 export const Presence: React.FC<PresenceProps> = ({ present, children }) => {
-  const [node, setNode] = useState<HTMLElement | null>(null);
-  const [isPresent, setIsPresent] = useState(present);
-  const prevPresentRef = useRef(present);
-
-  // Immediate state update when present becomes true
-  if (present && !isPresent) {
-    setIsPresent(true);
-  }
+  const [isPresent, setIsPresent] = React.useState(present);
+  const nodeRef = React.useRef<HTMLElement | null>(null);
+  const cleanupTimer = React.useRef<number | null>(null);
 
   useIsomorphicLayoutEffect(() => {
-    const wasPresent = prevPresentRef.current;
-    const hasPresent = present;
-    prevPresentRef.current = hasPresent;
-
-    if (wasPresent && !hasPresent) {
-      // Transitioning to false
-      // Wait for animation
-      const current = node;
-      if (current) {
-        const handleAnimationEnd = (event: AnimationEvent) => {
-           if (event.target === current) {
-             setIsPresent(false);
-           }
-        };
-        const handleTransitionEnd = (event: TransitionEvent) => {
-           if (event.target === current) {
-             setIsPresent(false);
-           }
-        };
-
-        current.addEventListener('animationend', handleAnimationEnd);
-        current.addEventListener('transitionend', handleTransitionEnd);
-        
-        // Safety timeout if no animation
-        const styles = window.getComputedStyle(current);
-        const hasAnimation = styles.animationName !== 'none' && styles.animationName !== '';
-        const hasTransition = styles.transitionDuration !== '0s' && styles.transitionDuration !== '';
-
-        console.log('Presence check:', { hasAnimation, hasTransition, animationName: styles.animationName, transitionDuration: styles.transitionDuration });
-
-        if (!hasAnimation && !hasTransition) {
-            setIsPresent(false);
-        }
-
-        return () => {
-          current.removeEventListener('animationend', handleAnimationEnd);
-          current.removeEventListener('transitionend', handleTransitionEnd);
-        };
-      } else {
-          setIsPresent(false);
-      }
-    } else if (!wasPresent && hasPresent) {
-      // Transitioning to true
+    if (present) {
       setIsPresent(true);
+      return;
     }
-  }, [present, node]);
 
-  if (!isPresent && !present) return null;
+    const node = nodeRef.current;
+    if (!node) {
+      setIsPresent(false);
+      return;
+    }
+
+    const motion = detectNodeMotion(node);
+    const maxDuration = Math.max(motion.animationDurationMs, motion.transitionDurationMs);
+    if (!motion.hasAnimation && !motion.hasTransition) {
+      setIsPresent(false);
+      return;
+    }
+
+    let completed = false;
+    const complete = () => {
+      if (completed) {
+        return;
+      }
+      completed = true;
+      setIsPresent(false);
+    };
+
+    const handleAnimationEnd = (event: AnimationEvent) => {
+      if (event.target === node) {
+        complete();
+      }
+    };
+    const handleTransitionEnd = (event: TransitionEvent) => {
+      if (event.target === node) {
+        complete();
+      }
+    };
+
+    node.addEventListener('animationend', handleAnimationEnd);
+    node.addEventListener('transitionend', handleTransitionEnd);
+    cleanupTimer.current = window.setTimeout(complete, maxDuration + 50);
+
+    return () => {
+      node.removeEventListener('animationend', handleAnimationEnd);
+      node.removeEventListener('transitionend', handleTransitionEnd);
+      if (cleanupTimer.current !== null) {
+        window.clearTimeout(cleanupTimer.current);
+        cleanupTimer.current = null;
+      }
+    };
+  }, [present]);
+
+  if (!isPresent && !present) {
+    return null;
+  }
 
   const child = typeof children === 'function' ? children({ present }) : children;
+  const childRef = (child as unknown as { ref?: React.Ref<HTMLElement> }).ref;
 
   return React.cloneElement(child, {
-    // @ts-ignore
-    ref: (el: HTMLElement) => {
-        setNode(el);
-        // Handle original ref
-        const originalRef = (child as any).ref;
-        if (typeof originalRef === 'function') originalRef(el);
-        else if (originalRef) originalRef.current = el;
+    ref: (el: HTMLElement | null) => {
+      nodeRef.current = el;
+      if (typeof childRef === 'function') {
+        childRef(el);
+      } else if (childRef && typeof childRef === 'object') {
+        (childRef as React.MutableRefObject<HTMLElement | null>).current = el;
+      }
     },
     'data-state': present ? 'open' : 'closed',
   });

@@ -1,28 +1,29 @@
 import * as React from 'react';
+import { createOutsideClickListener } from '@uifn/core/utils/outside-click';
+
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
 
 export function useOutsideClick(
   ref: React.RefObject<HTMLElement>,
   handler: (event: MouseEvent | TouchEvent) => void,
   enabled: boolean = true
 ) {
+  const handlerRef = React.useRef(handler);
+
   React.useEffect(() => {
-    if (!enabled) return;
+    handlerRef.current = handler;
+  }, [handler]);
 
-    const listener = (event: MouseEvent | TouchEvent) => {
-      const el = ref.current;
-      // Do nothing if clicking ref's element or descendent elements
-      if (!el || el.contains(event.target as Node)) {
-        return;
-      }
-      handler(event);
-    };
+  useIsomorphicLayoutEffect(() => {
+    if (!enabled || !ref.current) return;
 
-    document.addEventListener('mousedown', listener);
-    document.addEventListener('touchstart', listener);
+    const outsideClick = createOutsideClickListener(
+      ref.current,
+      (event) => handlerRef.current(event),
+      { enabled: true }
+    );
 
-    return () => {
-      document.removeEventListener('mousedown', listener);
-      document.removeEventListener('touchstart', listener);
-    };
-  }, [ref, handler, enabled]);
+    return () => outsideClick.destroy();
+  }, [enabled, ref]);
 }

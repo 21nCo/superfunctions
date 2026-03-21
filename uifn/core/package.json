@@ -1,7 +1,7 @@
 {
-  "name": "uifn",
+  "name": "@uifn/core",
   "version": "0.0.1",
-  "description": "Framework-agnostic UI primitives - core library",
+  "description": "Framework-agnostic UI primitive semantics for uifn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -11,22 +11,70 @@
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
     },
-    "./primitives/*": {
-      "types": "./dist/primitives/*.d.ts",
-      "import": "./dist/primitives/*.mjs",
-      "require": "./dist/primitives/*.js"
+    "./aria": {
+      "types": "./dist/aria/index.d.ts",
+      "import": "./dist/aria/index.mjs",
+      "require": "./dist/aria/index.js"
+    },
+    "./aria/*": {
+      "types": "./dist/aria/*.d.ts",
+      "import": "./dist/aria/*.mjs",
+      "require": "./dist/aria/*.js"
+    },
+    "./state": {
+      "types": "./dist/state/index.d.ts",
+      "import": "./dist/state/index.mjs",
+      "require": "./dist/state/index.js"
+    },
+    "./state/*": {
+      "types": "./dist/state/*.d.ts",
+      "import": "./dist/state/*.mjs",
+      "require": "./dist/state/*.js"
+    },
+    "./utils": {
+      "types": "./dist/utils/index.d.ts",
+      "import": "./dist/utils/index.mjs",
+      "require": "./dist/utils/index.js"
     },
     "./utils/*": {
       "types": "./dist/utils/*.d.ts",
       "import": "./dist/utils/*.mjs",
       "require": "./dist/utils/*.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.mjs",
+      "require": "./dist/errors.js"
+    },
+    "./primitives/*": {
+      "types": "./dist/primitives/*.d.ts",
+      "import": "./dist/primitives/*.mjs",
+      "require": "./dist/primitives/*.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "aria": [
+        "dist/aria/index.d.ts"
+      ],
+      "state": [
+        "dist/state/index.d.ts"
+      ],
+      "utils": [
+        "dist/utils/index.d.ts"
+      ],
+      "errors": [
+        "dist/errors.d.ts"
+      ]
     }
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest",
-    "lint": "eslint src/"
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "keywords": [
     "ui",
@@ -42,10 +90,14 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "author": "21n",
   "license": "MIT",
+  "engines": {
+    "node": ">=18 <23"
+  },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
   },

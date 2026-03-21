@@ -1,0 +1,1242 @@
+{
+  "site": {
+    "title": "SearchFn Docs"
+  },
+  "topNav": [],
+  "pages": {
+    "docs:index.mdx": {
+      "kind": "page",
+      "id": "docs:index.mdx",
+      "slug": "",
+      "path": "/docs",
+      "title": "SearchFn",
+      "description": "A full-text search engine and adapter system for TypeScript applications.",
+      "body": "\nSearchFn is a full-text search engine for TypeScript applications. It ships its own search runtime — with BM25 scoring, inverted indexes, fuzzy matching, stemming, and a configurable text pipeline — that runs in-memory or in the browser via IndexedDB. The same adapter contract also connects to Postgres, Meilisearch, or Elasticsearch/OpenSearch, so you can choose the right runtime for your use case without changing application code.\n\n## System Architecture\n\nSearchFn has two layers: a **built-in search engine** that handles indexing, tokenization, and ranking in-process, and **backend adapters** that delegate to external search services.\n\n```mermaid\ngraph TD\n    subgraph Core [\"Built-in Search Engine (@searchfn/core)\"]\n        PL[\"Text Pipeline — tokenize, normalize, stem\"]\n        IX[\"Inverted Index\"]\n        SC[\"BM25 Scoring & Ranking\"]\n        FZ[\"Fuzzy Matching — Levenshtein\"]\n    end\n\n    subgraph BuiltIn [\"Built-in Adapters\"]\n        MA[\"MemoryAdapter — in-process\"]\n        IA[\"IndexedDbAdapter — browser-persistent\"]\n    end\n\n    subgraph External [\"External Backend Adapters\"]\n        PA[PostgresAdapter]\n        MEI[MeilisearchAdapter]\n        EA[\"Elasticsearch / OpenSearch\"]\n    end\n\n    subgraph App [\"Application Layer\"]\n        CL[\"SearchClient\"]\n        SV[\"SearchFnServer (HTTP)\"]\n        DP[\"DataFn Provider\"]\n    end\n\n    MA --> Core\n    IA --> Core\n    CL --> MA\n    CL --> IA\n    SV --> PA\n    SV --> MEI\n    SV --> EA\n    SV --> MA\n    DP --> MA\n    DP --> PA\n    DP --> MEI\n    DP --> EA\n```\n\nSearchFn is composed of four packages:\n\n| Package | Purpose |\n| --- | --- |\n| `@searchfn/core` | Built-in search engine — text pipeline, inverted index, BM25 scoring, fuzzy matching, stemming |\n| `@searchfn/adapter-contracts` | Shared adapter interface and request/response types |\n| `@searchfn/adapter-memory` / `@searchfn/adapter-indexeddb` | Built-in engine adapters (in-process + browser-persistent) |\n| `@searchfn/adapter-postgres` / `@searchfn/adapter-meilisearch` / `@searchfn/adapter-elasticsearch` / `@searchfn/adapter-opensearch` | External backend adapters |\n| `@searchfn/client` | Client with validation, defaults, and convenience constructors |\n| `@searchfn/server` | HTTP server with authorization, structured logging, and secret redaction |\n| `@searchfn/datafn-provider` | Bridge that maps any SearchAdapter into a DataFn SearchProvider |\n\n## Built-in Engine vs External Backends\n\n| | Built-in engine (Memory, IndexedDB) | External backends (Postgres, Meilisearch, ES/OS) |\n| --- | --- | --- |\n| **Search logic** | SearchFn's own BM25 scoring, inverted index, fuzzy matching, stemming | Delegates to the backend's native search |\n| **Infrastructure** | Zero — runs in-process or in the browser | Requires running the external service |\n| **Use cases** | Offline-first apps, PWAs, browser-local search, in-process server search, tests | Multi-client shared search, very large datasets, backend-specific features (facets, custom analyzers) |\n\nBoth tiers are production-ready. The built-in engine powers offline-first apps and in-process search; external backends serve use cases that need shared state across clients or backend-specific capabilities. The adapter contract means you pick the right runtime for your requirements without changing application code.\n\n## Next Steps\n\n- [Getting Started](/docs/getting-started) — install packages and run your first search in minutes.\n- [Architecture](/docs/architecture) — search engine internals, package layers, and adapter contract.\n- [Client API](/docs/reference/client) — client constructors, methods, and validation.\n- [Server API](/docs/reference/server) — HTTP endpoints, authorization, and limits.\n- [Adapters](/docs/reference/adapters) — choose the right adapter for your use case.\n- [DataFn Integration](/docs/integrations/datafn) — connect SearchFn to DataFn.\n- [Operations](/docs/operations/setup) — deployment, security, observability, and troubleshooting.\n\n----\nPart of [Super functions](https://github.com/21nCo/super-functions) and built with care at [21n](https://21n.co).\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "System Architecture",
+          "slug": "system-architecture"
+        },
+        {
+          "level": 2,
+          "text": "Built-in Engine vs External Backends",
+          "slug": "built-in-engine-vs-external-backends"
+        },
+        {
+          "level": 2,
+          "text": "Next Steps",
+          "slug": "next-steps"
+        }
+      ],
+      "frontmatter": {
+        "title": "SearchFn",
+        "description": "A full-text search engine and adapter system for TypeScript applications."
+      }
+    },
+    "docs:architecture.mdx": {
+      "kind": "page",
+      "id": "docs:architecture.mdx",
+      "slug": "architecture",
+      "path": "/docs/architecture",
+      "title": "Architecture",
+      "description": "Built-in search engine, package layers, adapter contract, and response semantics.",
+      "body": "\nSearchFn has two core pieces: a **built-in search engine** (`@searchfn/core`) that handles tokenization, indexing, scoring, and ranking in-process, and an **adapter contract** (`SearchAdapter`) that provides a uniform interface across the built-in engine and external backends. Both tiers are production-ready — the built-in engine powers offline-first apps and in-process search, while external backends serve use cases that need shared state or backend-specific capabilities.\n\n## Built-in Search Engine\n\nThe Memory and IndexedDB adapters are not thin wrappers — they run SearchFn's own full-text search engine, implemented in `@searchfn/core`. This is a complete search runtime comparable to libraries like FlexSearch or MiniSearch.\n\n### Text Pipeline\n\nEvery document and query passes through a configurable text pipeline:\n\n1. **Tokenize** — splits text into tokens using Unicode-aware regex (`[\\p{L}\\p{N}]+`)\n2. **Normalize** — lowercases all tokens\n3. **Stop words** — removes common words (built-in sets for English, Spanish, French)\n4. **Stem** — reduces words to root forms (custom English stemmer; optional)\n5. **Edge n-grams** — generates prefix tokens for autocomplete support (optional)\n\n### Inverted Index\n\nDocuments are stored in an inverted index: each unique term maps to a posting list of `(docId, termFrequency)` pairs.\n\n- **MemoryAdapter** stores postings in an in-memory `Map` keyed by `field::term`.\n- **IndexedDbAdapter** stores postings in IndexedDB object stores with LRU caches for hot term lookups.\n\n### BM25 Scoring\n\nSearch queries are scored using a BM25-inspired algorithm:\n\n- **IDF** (inverse document frequency) — terms that appear in fewer documents score higher.\n- **TF** (term frequency) — terms that appear more often in a document contribute more.\n- **Length normalization** — shorter documents get a slight relevance boost.\n- **Prefix penalty** — edge n-gram matches score lower than exact matches (0.7x multiplier).\n\n### Fuzzy Matching\n\nFuzzy search uses Wagner-Fischer Levenshtein distance. When enabled, query terms are expanded against the vocabulary to find terms within the configured edit distance (max 3). Terms are pre-filtered by length difference for performance.\n\n### Field Boosts\n\nThe built-in engine supports per-field relevance boosting — for example, weighting `title` matches higher than `description` matches.\n\n## Package Layers\n\n```mermaid\ngraph TD\n    subgraph Engine [\"@searchfn/core — Built-in Search Engine\"]\n        PL[Text Pipeline]\n        IX[Inverted Index]\n        BM[BM25 Scoring]\n    end\n\n    subgraph Adapters [\"Adapter Packages (@searchfn/adapter-*)\"]\n        MA[\"MemoryAdapter\"]\n        IA[\"IndexedDbAdapter\"]\n        PA[\"PostgresAdapter\"]\n        MEI[\"MeilisearchAdapter\"]\n        EA[\"Elasticsearch / OpenSearch\"]\n    end\n\n    subgraph Wrappers [\"Application Layer\"]\n        CL[\"@searchfn/client\"]\n        SV[\"@searchfn/server\"]\n        DP[\"@searchfn/datafn-provider\"]\n    end\n\n    MA -->|\"uses\"| Engine\n    IA -->|\"uses\"| Engine\n    PA -->|\"delegates to\"| PG[\"Postgres tsvector\"]\n    MEI -->|\"delegates to\"| MS[\"Meilisearch API\"]\n    EA -->|\"delegates to\"| ES[\"ES/OS API\"]\n    CL --> MA\n    CL --> IA\n    SV --> Adapters\n    DP --> Adapters\n```\n\n| Layer | Package | Responsibility |\n| --- | --- | --- |\n| Engine | `@searchfn/core` | Text pipeline, inverted index, BM25 scoring, fuzzy matching, stemming |\n| Contracts | `@searchfn/adapter-contracts` | Shared `SearchAdapter` contract, request/response params, and capability types |\n| Adapters | `@searchfn/adapter-memory`, `@searchfn/adapter-indexeddb`, `@searchfn/adapter-postgres`, `@searchfn/adapter-meilisearch`, `@searchfn/adapter-elasticsearch`, `@searchfn/adapter-opensearch` | Adapter implementations. Memory and IndexedDB use the built-in engine; Postgres, Meilisearch, and ES/OS delegate to external backends. |\n| Client | `@searchfn/client` | Validates inputs, applies defaults, and delegates to an adapter |\n| Server | `@searchfn/server` | Validates HTTP requests, runs authorization, delegates to an adapter, and returns canonical response envelopes |\n| Integration | `@searchfn/datafn-provider` | Maps a `SearchAdapter` into a DataFn `SearchProvider` |\n\n## Adapter Contract\n\n`SearchAdapter` is the boundary between application code and search implementation. Every adapter — built-in or external — implements this interface:\n\n```typescript\ninterface SearchAdapter {\n  readonly name: string;\n  readonly capabilities?: SearchAdapterCapabilities;\n\n  initialize?(params: InitializeParams): Promise<void>;\n  index(params: IndexParams): Promise<void>;\n  search(params: SearchParams): Promise<Array<string | number>>;\n  searchAll?(params: SearchAllParams): Promise<SearchAllResult[]>;\n  remove(params: RemoveParams): Promise<void>;\n  clear(resource: string, signal?: AbortSignal): Promise<void>;\n  dispose?(): Promise<void>;\n}\n```\n\n| Method | Required | Description |\n| --- | --- | --- |\n| `initialize` | Optional | Declare resources and their searchable fields before indexing |\n| `index` | Yes | Index a batch of documents into a resource |\n| `search` | Yes | Search a single resource, returns matching IDs |\n| `searchAll` | Optional | Search across multiple resources, returns IDs with scores |\n| `remove` | Yes | Remove documents by ID from a resource |\n| `clear` | Yes | Remove all documents from a resource |\n| `dispose` | Optional | Release resources (connections, caches, handles) |\n\n### Capabilities\n\nAdapters declare their capabilities so clients and servers can adapt behavior:\n\n```typescript\ninterface SearchAdapterCapabilities {\n  persistent?: boolean;\n  searchAll?: boolean;\n  fuzzy?: boolean;\n  fieldBoosts?: boolean;\n  maxBatchSize?: number;\n}\n```\n\n| Capability | Description |\n| --- | --- |\n| `persistent` | Data survives process restarts (IndexedDB, Postgres, Meilisearch, Elasticsearch) |\n| `searchAll` | Adapter natively supports cross-resource search |\n| `fuzzy` | Adapter supports fuzzy/approximate matching |\n| `fieldBoosts` | Adapter supports per-field relevance boosting |\n| `maxBatchSize` | Maximum documents per `index` call |\n\n## Response Envelope\n\nThe server wraps all responses in a canonical envelope:\n\n**Success:**\n```json\n{\n  \"ok\": true,\n  \"result\": { \"ids\": [\"t-1\", \"t-3\"] }\n}\n```\n\n**Failure:**\n```json\n{\n  \"ok\": false,\n  \"error\": {\n    \"code\": \"DFQL_INVALID\",\n    \"message\": \"Query must be a non-empty string\",\n    \"details\": { \"path\": \"query\" }\n  }\n}\n```\n\n### Error Codes\n\n| Code | Meaning |\n| --- | --- |\n| `DFQL_INVALID` | Malformed request or missing required fields |\n| `LIMIT_EXCEEDED` | Query, limit, or batch size exceeds configured maximums |\n| `DFQL_ABORTED` | Request was cancelled via AbortSignal |\n| `DFQL_UNSUPPORTED` | Adapter does not support the requested operation or dialect |\n| `FORBIDDEN` | Authorization callback denied the request |\n| `INTERNAL` | Unexpected backend or runtime failure |\n\n## Data Flow\n\n### Built-in engine (Memory / IndexedDB)\n\n1. **Pipeline** — text is tokenized, normalized, filtered for stop words, and stemmed.\n2. **Index** — terms are inserted into the inverted index with term frequencies.\n3. **Search** — query text passes through the same pipeline, optional fuzzy expansion runs against the vocabulary, postings are retrieved, and BM25 scoring produces ranked results.\n\n### External backends (Postgres / Meilisearch / ES)\n\n1. **Validation** — client or server validates the request shape and limits.\n2. **Authorization** — server checks the `authorize` callback (if configured).\n3. **Delegation** — the request is translated into the backend's native API.\n4. **Response** — backend results are mapped back to SearchFn's response format.\n\nFor `searchAll`, if the adapter does not implement `searchAll` natively, the client and datafn-provider run per-resource searches concurrently and merge results with deterministic score-based ordering.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Built-in Search Engine",
+          "slug": "built-in-search-engine"
+        },
+        {
+          "level": 3,
+          "text": "Text Pipeline",
+          "slug": "text-pipeline"
+        },
+        {
+          "level": 3,
+          "text": "Inverted Index",
+          "slug": "inverted-index"
+        },
+        {
+          "level": 3,
+          "text": "BM25 Scoring",
+          "slug": "bm25-scoring"
+        },
+        {
+          "level": 3,
+          "text": "Fuzzy Matching",
+          "slug": "fuzzy-matching"
+        },
+        {
+          "level": 3,
+          "text": "Field Boosts",
+          "slug": "field-boosts"
+        },
+        {
+          "level": 2,
+          "text": "Package Layers",
+          "slug": "package-layers"
+        },
+        {
+          "level": 2,
+          "text": "Adapter Contract",
+          "slug": "adapter-contract"
+        },
+        {
+          "level": 3,
+          "text": "Capabilities",
+          "slug": "capabilities"
+        },
+        {
+          "level": 2,
+          "text": "Response Envelope",
+          "slug": "response-envelope"
+        },
+        {
+          "level": 3,
+          "text": "Error Codes",
+          "slug": "error-codes"
+        },
+        {
+          "level": 2,
+          "text": "Data Flow",
+          "slug": "data-flow"
+        },
+        {
+          "level": 3,
+          "text": "Built-in engine (Memory / IndexedDB)",
+          "slug": "built-in-engine-memory-indexeddb"
+        },
+        {
+          "level": 3,
+          "text": "External backends (Postgres / Meilisearch / ES)",
+          "slug": "external-backends-postgres-meilisearch-es"
+        }
+      ],
+      "frontmatter": {
+        "title": "Architecture",
+        "description": "Built-in search engine, package layers, adapter contract, and response semantics."
+      }
+    },
+    "docs:getting-started.mdx": {
+      "kind": "page",
+      "id": "docs:getting-started.mdx",
+      "slug": "getting-started",
+      "path": "/docs/getting-started",
+      "title": "Getting Started",
+      "description": "Install SearchFn, index documents, and run your first search query in minutes.",
+      "body": "\n## Packages\n\nSearchFn is split into focused packages. Install only what you need:\n\n| Package | Purpose |\n| --- | --- |\n| `@searchfn/core` | Built-in search engine (text pipeline, BM25 scoring, inverted index, fuzzy matching) |\n| `@searchfn/adapter-contracts` | Shared adapter interface and types (`SearchAdapter`, params, capabilities) |\n| `@searchfn/adapter-memory` | In-process adapter backed by `@searchfn/core` |\n| `@searchfn/adapter-indexeddb` | Browser-persistent adapter backed by `@searchfn/core` |\n| `@searchfn/adapter-postgres` | Postgres adapter (`tsvector`/`tsquery`) |\n| `@searchfn/adapter-meilisearch` | Meilisearch adapter |\n| `@searchfn/adapter-elasticsearch` | Elasticsearch adapter |\n| `@searchfn/adapter-opensearch` | OpenSearch adapter |\n| `@searchfn/client` | Client API for app code that calls search directly (browser or Node) |\n| `@searchfn/server` | HTTP server exposing `/searchfn/*` endpoints with authorization and logging |\n| `@searchfn/datafn-provider` | DataFn integration — maps any adapter into a DataFn SearchProvider |\n\n## Installation\n\nFor client-side or in-process search (uses the built-in search engine):\n\n```bash\nnpm install @searchfn/client @searchfn/adapter-memory\n```\n\nFor server-side HTTP search API:\n\n```bash\nnpm install @searchfn/server @searchfn/adapter-memory\n```\n\n## Quick Start\n\nThe quickstart uses `MemoryAdapter`, which runs SearchFn's built-in search engine in-process. No external services required — this is the same engine that powers production in-process and offline-first search.\n\n### 1. Create a Client\n\n```typescript\nimport { createSearchClient } from \"@searchfn/client\";\nimport { MemoryAdapter } from \"@searchfn/adapter-memory\";\n\nconst client = createSearchClient({\n  adapter: new MemoryAdapter(),\n  defaults: {\n    limit: 20,\n    limitPerResource: 10,\n    fuzzy: true,\n  },\n});\n```\n\n### 2. Initialize Resources\n\nBefore indexing, declare which resources exist and which fields are searchable:\n\n```typescript\nawait client.initialize?.({\n  resources: [\n    { name: \"tasks\", searchFields: [\"title\", \"description\"] },\n    { name: \"notes\", searchFields: [\"content\"] },\n  ],\n});\n```\n\n### 3. Index Documents\n\n```typescript\nawait client.index({\n  resource: \"tasks\",\n  documents: [\n    { id: \"t-1\", fields: { title: \"Ship docs\", description: \"Write getting started guide\" } },\n    { id: \"t-2\", fields: { title: \"Fix bug\", description: \"Handle retry logic\" } },\n    { id: \"t-3\", fields: { title: \"Plan launch\", description: \"Coordinate docs and release\" } },\n  ],\n});\n```\n\n### 4. Search\n\n```typescript\nconst ids = await client.search({\n  resource: \"tasks\",\n  query: \"docs\",\n  limit: 5,\n});\n\nconsole.log(ids); // [\"t-1\", \"t-3\"]\n```\n\n### 5. Search Across Resources\n\n```typescript\nconst results = await client.searchAll({\n  query: \"docs\",\n  resources: [\"tasks\", \"notes\"],\n  limitPerResource: 5,\n});\n\n// [{ resource: \"tasks\", id: \"t-1\", score: 1.2 }, ...]\n```\n\n## Server Quick Start\n\nThe server wraps any adapter behind HTTP endpoints with built-in validation, authorization, and structured logging.\n\n```typescript\nimport { createSearchFnServer } from \"@searchfn/server\";\nimport { MemoryAdapter } from \"@searchfn/adapter-memory\";\n\nconst server = await createSearchFnServer({\n  adapter: new MemoryAdapter(),\n  basePath: \"/searchfn\",\n});\n\n// Mount server.router with your @superfunctions/http adapter (Express, Fastify, Hono, etc.)\n```\n\nThe server exposes these endpoints under the configured `basePath`:\n\n| Endpoint | Method | Description |\n| --- | --- | --- |\n| `/searchfn/status` | GET | Health check and adapter info |\n| `/searchfn/index` | POST | Index documents into a resource |\n| `/searchfn/search` | POST | Search a single resource |\n| `/searchfn/search-all` | POST | Search across multiple resources |\n| `/searchfn/remove` | POST | Remove documents by ID |\n| `/searchfn/clear` | POST | Clear all documents in a resource |\n\n## Convenience Constructors\n\nFor common setups, use the built-in shorthand constructors:\n\n```typescript\nimport { createMemorySearchClient, createIndexedDbSearchClient } from \"@searchfn/client\";\n\nconst memoryClient = createMemorySearchClient({\n  defaults: { limit: 20, fuzzy: true },\n});\n\nconst browserClient = createIndexedDbSearchClient({\n  adapterConfig: { dbName: \"my-app-search\" },\n  defaults: { limit: 20, fuzzy: true },\n});\n```\n\n## Breaking Change and Migration\n\nThe legacy aggregate adapters package has been removed. SearchFn now ships one package per adapter plus `@searchfn/adapter-contracts`.\n\n### Package Mapping\n\n| Legacy package (aggregate) | New package(s) |\n| --- | --- |\n| `searchfn adapters aggregate` | `@searchfn/adapter-contracts` + one or more leaf adapter packages |\n\n### Import Mapping\n\n| Legacy import (aggregate package path) | New import |\n| --- | --- |\n| `import { MemoryAdapter } from \"<legacy-adapters-package>\"` | `import { MemoryAdapter } from \"@searchfn/adapter-memory\"` |\n| `import { IndexedDbAdapter } from \"<legacy-adapters-package>\"` | `import { IndexedDbAdapter } from \"@searchfn/adapter-indexeddb\"` |\n| `import { PostgresAdapter, getPostgresMigrationSQL } from \"<legacy-adapters-package>\"` | `import { PostgresAdapter, getPostgresMigrationSQL } from \"@searchfn/adapter-postgres\"` |\n| `import { MeilisearchAdapter } from \"<legacy-adapters-package>\"` | `import { MeilisearchAdapter } from \"@searchfn/adapter-meilisearch\"` |\n| `import { ElasticsearchAdapter } from \"<legacy-adapters-package>\"` | `import { ElasticsearchAdapter } from \"@searchfn/adapter-elasticsearch\"` |\n| `import { OpenSearchAdapter } from \"<legacy-adapters-package>\"` | `import { OpenSearchAdapter } from \"@searchfn/adapter-opensearch\"` |\n\n### Dependency Mapping\n\n| Legacy dependency (aggregate package) | New dependency |\n| --- | --- |\n| `searchfn adapters aggregate` | `@searchfn/adapter-memory` (if using `MemoryAdapter`) |\n| `searchfn adapters aggregate` | `@searchfn/adapter-indexeddb` (if using `IndexedDbAdapter`) |\n| `searchfn adapters aggregate` | `@searchfn/adapter-postgres` (if using `PostgresAdapter`) |\n| `searchfn adapters aggregate` | `@searchfn/adapter-meilisearch` (if using `MeilisearchAdapter`) |\n| `searchfn adapters aggregate` | `@searchfn/adapter-elasticsearch` (if using `ElasticsearchAdapter`) |\n| `searchfn adapters aggregate` | `@searchfn/adapter-opensearch` (if using `OpenSearchAdapter`) |\n\n## Next Steps\n\n- [Architecture](/docs/architecture) — search engine internals and adapter contract.\n- [Adapters](/docs/reference/adapters) — choose the right adapter for your use case.\n- [Client API](/docs/reference/client) — full method reference.\n- [Server API](/docs/reference/server) — endpoint details and authorization.\n- [Operations](/docs/operations/setup) — deployment, limits, and production setup.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Packages",
+          "slug": "packages"
+        },
+        {
+          "level": 2,
+          "text": "Installation",
+          "slug": "installation"
+        },
+        {
+          "level": 2,
+          "text": "Quick Start",
+          "slug": "quick-start"
+        },
+        {
+          "level": 3,
+          "text": "1. Create a Client",
+          "slug": "1-create-a-client"
+        },
+        {
+          "level": 3,
+          "text": "2. Initialize Resources",
+          "slug": "2-initialize-resources"
+        },
+        {
+          "level": 3,
+          "text": "3. Index Documents",
+          "slug": "3-index-documents"
+        },
+        {
+          "level": 3,
+          "text": "4. Search",
+          "slug": "4-search"
+        },
+        {
+          "level": 3,
+          "text": "5. Search Across Resources",
+          "slug": "5-search-across-resources"
+        },
+        {
+          "level": 2,
+          "text": "Server Quick Start",
+          "slug": "server-quick-start"
+        },
+        {
+          "level": 2,
+          "text": "Convenience Constructors",
+          "slug": "convenience-constructors"
+        },
+        {
+          "level": 2,
+          "text": "Breaking Change and Migration",
+          "slug": "breaking-change-and-migration"
+        },
+        {
+          "level": 3,
+          "text": "Package Mapping",
+          "slug": "package-mapping"
+        },
+        {
+          "level": 3,
+          "text": "Import Mapping",
+          "slug": "import-mapping"
+        },
+        {
+          "level": 3,
+          "text": "Dependency Mapping",
+          "slug": "dependency-mapping"
+        },
+        {
+          "level": 2,
+          "text": "Next Steps",
+          "slug": "next-steps"
+        }
+      ],
+      "frontmatter": {
+        "title": "Getting Started",
+        "description": "Install SearchFn, index documents, and run your first search query in minutes."
+      }
+    },
+    "docs:integrations/datafn.mdx": {
+      "kind": "page",
+      "id": "docs:integrations/datafn.mdx",
+      "slug": "integrations/datafn",
+      "path": "/docs/integrations/datafn",
+      "title": "DataFn Integration",
+      "description": "Connect SearchFn adapters to DataFn as a search provider.",
+      "body": "\nThe `@searchfn/datafn-provider` package bridges any SearchFn adapter into DataFn's search provider interface. This lets DataFn use SearchFn for full-text search without coupling to a specific search backend.\n\n## Installation\n\n```bash\nnpm install @searchfn/datafn-provider @searchfn/adapter-meilisearch\n```\n\n## Usage\n\nCreate a search provider by passing any SearchFn adapter to `createSearchProvider`:\n\n```typescript\nimport { createSearchProvider } from \"@searchfn/datafn-provider\";\nimport { MeilisearchAdapter } from \"@searchfn/adapter-meilisearch\";\n\nconst adapter = new MeilisearchAdapter({\n  host: process.env.MEILI_URL!,\n  apiKey: process.env.MEILI_API_KEY!,\n});\n\nconst provider = createSearchProvider(adapter, {\n  resourceFields: {\n    tasks: [\"title\", \"description\"],\n    notes: [\"content\", \"tags\"],\n  },\n});\n```\n\nThen pass the provider to your DataFn server:\n\n```typescript\nimport { createDatafnServer } from \"@datafn/server\";\n\nconst server = await createDatafnServer({\n  schema,\n  db: drizzleAdapter({ db, dialect: \"postgres\" }),\n  search: provider,\n});\n```\n\n### Client-Side Setup\n\nPass the same provider (or a client-appropriate adapter) to `createDatafnClient` for local-first search:\n\n```typescript\nimport { createDatafnClient } from \"@datafn/client\";\nimport { createSearchProvider } from \"@searchfn/datafn-provider\";\nimport { IndexedDbAdapter } from \"@searchfn/adapter-indexeddb\";\n\nconst searchProvider = createSearchProvider(\n  new IndexedDbAdapter({\n    dbName: \"my-app-search\",\n    defaults: { prefix: true, fuzzy: 0.2 },\n  }),\n  {\n    resourceFields: {\n      tasks: [\"title\", \"description\"],\n      notes: [\"content\", \"tags\"],\n    },\n  },\n);\n\nconst client = createDatafnClient({\n  schema,\n  clientId,\n  storage,\n  searchProvider,\n});\n```\n\nWith `searchProvider` configured on the client, DFQL `search` blocks and `client.search()` calls execute locally using the IndexedDB adapter. The client falls back to server search when the local index is not yet ready.\n\n## Configuration\n\n| Option | Type | Description |\n| --- | --- | --- |\n| `resourceFields` | `Record<string, string[]>` | Maps resource names to the record fields that should be indexed for search. Falls back to all fields except `id` when omitted. |\n\n### Resource Fields\n\nThe `resourceFields` option controls which record fields become searchable. When DataFn indexes a record, only the fields listed here are sent to the search adapter:\n\n```typescript\nconst provider = createSearchProvider(adapter, {\n  resourceFields: {\n    tasks: [\"title\", \"description\"],\n    notes: [\"content\"],\n  },\n});\n```\n\nIf `resourceFields` is omitted or a resource is not listed, the provider indexes all record fields except `id`.\n\n## Provider Methods\n\nThe provider implements DataFn's `SearchProvider` interface:\n\n| Method | Description |\n| --- | --- |\n| `search` | Search a single resource. Calls `adapter.search` and returns IDs as strings. |\n| `searchAll` | Search across resources. Uses `adapter.searchAll` when available, otherwise runs per-resource searches concurrently (max 10) and merges results by score. |\n| `updateIndices` | Called by DataFn on mutations. For `upsert`, maps records to search documents using `resourceFields` and calls `adapter.index`. For `delete`, calls `adapter.remove`. |\n| `initialize` | Delegates to `adapter.initialize` when the adapter supports it. |\n| `dispose` | Delegates to `adapter.dispose` when the adapter supports it. |\n\n## Behavior\n\n- **Abort signals** — all provider methods forward abort signals to the underlying adapter.\n- **searchAll fallback** — if the adapter does not implement `searchAll`, the provider runs per-resource `search` calls concurrently (up to 10 at a time) and merges results with deterministic score-based ordering.\n- **ID coercion** — the provider returns all IDs as strings to match DataFn's ID format.\n\n## Adapter Recommendations\n\n| Use case | Recommended adapter |\n| --- | --- |\n| Development and tests | `MemoryAdapter` |\n| Small production apps | `PostgresAdapter` |\n| User-facing search | `MeilisearchAdapter` |\n| Large-scale search | `ElasticsearchAdapter` |\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Installation",
+          "slug": "installation"
+        },
+        {
+          "level": 2,
+          "text": "Usage",
+          "slug": "usage"
+        },
+        {
+          "level": 3,
+          "text": "Client-Side Setup",
+          "slug": "client-side-setup"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 3,
+          "text": "Resource Fields",
+          "slug": "resource-fields"
+        },
+        {
+          "level": 2,
+          "text": "Provider Methods",
+          "slug": "provider-methods"
+        },
+        {
+          "level": 2,
+          "text": "Behavior",
+          "slug": "behavior"
+        },
+        {
+          "level": 2,
+          "text": "Adapter Recommendations",
+          "slug": "adapter-recommendations"
+        }
+      ],
+      "frontmatter": {
+        "title": "DataFn Integration",
+        "description": "Connect SearchFn adapters to DataFn as a search provider."
+      }
+    },
+    "docs:operations/observability.mdx": {
+      "kind": "page",
+      "id": "docs:operations/observability.mdx",
+      "slug": "operations/observability",
+      "path": "/docs/operations/observability",
+      "title": "Observability",
+      "description": "Structured logging, health checks, and failure classification for SearchFn.",
+      "body": "\n## Structured Logging\n\nPass a `logger` to `createSearchFnServer` to receive structured log events for every operation:\n\n```typescript\nconst server = await createSearchFnServer({\n  adapter,\n  logger: {\n    info: (msg, ctx) => console.log(JSON.stringify({ level: \"info\", msg, ...ctx })),\n    warn: (msg, ctx) => console.warn(JSON.stringify({ level: \"warn\", msg, ...ctx })),\n    error: (msg, ctx) => console.error(JSON.stringify({ level: \"error\", msg, ...ctx })),\n    debug: (msg, ctx) => console.debug(JSON.stringify({ level: \"debug\", msg, ...ctx })),\n  },\n});\n```\n\n### Log Events\n\nThe server emits these event names:\n- `request.start`\n- `request.end`\n- `request.error`\n- `authorization.denied`\n- `authorization.error`\n- `server.close`\n\n### Log Fields\n\nEach log event includes:\n\n| Field | Type | Description |\n| --- | --- | --- |\n| `operation` | `string` | The action being performed (`search`, `index`, `remove`, etc.) |\n| `adapter` | `string` | Adapter name (`memory`, `postgres`, `meilisearch`, etc.) |\n| `durationMs` | `number` | Time taken for the operation in milliseconds |\n| `status` | `number` | HTTP status code from the response |\n| `success` | `boolean` | Whether the operation succeeded |\n| `errorCode` | `string?` | Error code if the operation failed |\n\nSensitive values are automatically redacted before logging. See [Security](/docs/operations/security) for details.\n\n## Health Endpoint\n\n`GET /searchfn/status` provides a readiness check for load balancers and monitoring:\n\n```json\n{\n  \"ok\": true,\n  \"result\": {\n    \"adapter\": \"postgres\",\n    \"capabilities\": {\n      \"persistent\": true,\n      \"searchAll\": true,\n      \"fuzzy\": true,\n      \"fieldBoosts\": false\n    },\n    \"uptimeMs\": 84200\n  }\n}\n```\n\nUse this endpoint for:\n- Kubernetes readiness probes\n- Load balancer health checks\n- Monitoring dashboards\n\n## Failure Classification\n\nErrors fall into five categories. Use these to build alerts and dashboards:\n\n| Category | Error codes | Cause | Action |\n| --- | --- | --- | --- |\n| Validation | `DFQL_INVALID`, `LIMIT_EXCEEDED` | Malformed request or exceeded limits | Fix client-side request construction |\n| Authorization | `FORBIDDEN` | Auth callback denied access | Check credentials and permissions |\n| Unsupported | `DFQL_UNSUPPORTED` | Adapter doesn't support the operation | Use a different adapter or remove unsupported options |\n| Runtime | `INTERNAL` | Unexpected backend failure | Check backend health and logs |\n| Cancellation | `DFQL_ABORTED` | Client cancelled the request | No action needed (expected behavior) |\n\n### Alerting Recommendations\n\n- **Alert on `INTERNAL` errors** — these indicate backend problems that need investigation.\n- **Monitor `LIMIT_EXCEEDED` rates** — a spike may indicate a client bug or abuse.\n- **Track `durationMs` percentiles** — degrading latency can signal backend capacity issues.\n- **Ignore `DFQL_ABORTED`** — these are normal when users navigate away or cancel searches.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Structured Logging",
+          "slug": "structured-logging"
+        },
+        {
+          "level": 3,
+          "text": "Log Events",
+          "slug": "log-events"
+        },
+        {
+          "level": 3,
+          "text": "Log Fields",
+          "slug": "log-fields"
+        },
+        {
+          "level": 2,
+          "text": "Health Endpoint",
+          "slug": "health-endpoint"
+        },
+        {
+          "level": 2,
+          "text": "Failure Classification",
+          "slug": "failure-classification"
+        },
+        {
+          "level": 3,
+          "text": "Alerting Recommendations",
+          "slug": "alerting-recommendations"
+        }
+      ],
+      "frontmatter": {
+        "title": "Observability",
+        "description": "Structured logging, health checks, and failure classification for SearchFn."
+      }
+    },
+    "docs:operations/security.mdx": {
+      "kind": "page",
+      "id": "docs:operations/security.mdx",
+      "slug": "operations/security",
+      "path": "/docs/operations/security",
+      "title": "Security",
+      "description": "Authorization, secret handling, and credential management for SearchFn.",
+      "body": "\n## Authorization\n\n`createSearchFnServer` supports a per-action `authorize` callback. It is called before every operation with the request context, action name, and payload:\n\n```typescript\nconst server = await createSearchFnServer({\n  adapter,\n  authorize: async (ctx, action, payload) => {\n    if (action === \"status\") return true;\n    if (action === \"search\" || action === \"searchAll\") return !!ctx.user;\n    return ctx.user?.role === \"admin\";\n  },\n});\n```\n\n### Actions\n\n| Action | Endpoint | Typical policy |\n| --- | --- | --- |\n| `status` | `GET /searchfn/status` | Allow all (health checks) |\n| `search` | `POST /searchfn/search` | Authenticated users |\n| `searchAll` | `POST /searchfn/search-all` | Authenticated users |\n| `index` | `POST /searchfn/index` | Admin or service accounts |\n| `remove` | `POST /searchfn/remove` | Admin or service accounts |\n| `clear` | `POST /searchfn/clear` | Admin only |\n\nUnauthorized requests return a `FORBIDDEN` error envelope with no details about the denial reason.\n\n## Secret Redaction\n\nThe server automatically redacts sensitive values in structured logs. The following keys are recursively redacted:\n\n- `apiKey`\n- `password`\n- `secret`\n- `token`\n- `authorization`\n- `connectionString`\n\nError responses never include backend credentials, connection strings, or internal stack traces.\n\n## Credential Management\n\n| Adapter | Credential | Storage recommendation |\n| --- | --- | --- |\n| PostgresAdapter | Connection string (DSN) | Secure secret store or encrypted environment variable |\n| MeilisearchAdapter | API key | Environment-level secret |\n| Elasticsearch/OpenSearch | API key or username/password | Secure runtime secret store |\n\nNever hardcode credentials in application code. Use environment variables at minimum, and a dedicated secret manager (AWS Secrets Manager, HashiCorp Vault, etc.) for production deployments.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Authorization",
+          "slug": "authorization"
+        },
+        {
+          "level": 3,
+          "text": "Actions",
+          "slug": "actions"
+        },
+        {
+          "level": 2,
+          "text": "Secret Redaction",
+          "slug": "secret-redaction"
+        },
+        {
+          "level": 2,
+          "text": "Credential Management",
+          "slug": "credential-management"
+        }
+      ],
+      "frontmatter": {
+        "title": "Security",
+        "description": "Authorization, secret handling, and credential management for SearchFn."
+      }
+    },
+    "docs:operations/setup.mdx": {
+      "kind": "page",
+      "id": "docs:operations/setup.mdx",
+      "slug": "operations/setup",
+      "path": "/docs/operations/setup",
+      "title": "Setup",
+      "description": "Deploy SearchFn in production with proper configuration, limits, and resilience.",
+      "body": "\n## Deployment Steps\n\n1. **Choose an adapter** — pick the adapter that matches your infrastructure. See [Adapters](/docs/reference/adapters) for a comparison.\n2. **Run backend infrastructure** — set up Postgres, Meilisearch, or Elasticsearch/OpenSearch if using a server-side adapter.\n3. **Run migrations** — for PostgresAdapter, execute the migration SQL to create required tables and indexes.\n4. **Initialize resources** — call `initialize()` with your resource definitions before indexing traffic.\n5. **Create the server** — use `createSearchFnServer()` to expose search over HTTP.\n6. **Mount the router** — attach the server router to your HTTP framework using a `@superfunctions/http` adapter.\n\n```typescript\nimport { createSearchFnServer } from \"@searchfn/server\";\nimport { PostgresAdapter } from \"@searchfn/adapter-postgres\";\n\nconst server = await createSearchFnServer({\n  adapter: new PostgresAdapter({\n    connectionString: process.env.SEARCH_DB_URL!,\n  }),\n  basePath: \"/searchfn\",\n});\n\n// Mount server.router with Express, Fastify, Hono, etc.\n```\n\n## Default Limits\n\nThe server enforces these limits by default. Override them in the `limits` configuration:\n\n| Limit | Default | Description |\n| --- | --- | --- |\n| `maxQueryLength` | `1,000` | Maximum search query string length. |\n| `maxLimit` | `10,000` | Maximum `limit` parameter value. |\n| `maxLimitPerResource` | `1,000` | Maximum `limitPerResource` parameter value. |\n| `maxResourcesPerSearchAll` | `50` | Maximum resources in a `searchAll` request. |\n| `maxIndexBatch` | `10,000` | Maximum documents per index request. |\n| `maxPayloadBytes` | `1,048,576` | Maximum request body size (1 MB). |\n\n```typescript\nconst server = await createSearchFnServer({\n  adapter,\n  limits: {\n    maxQueryLength: 500,\n    maxIndexBatch: 5000,\n  },\n});\n```\n\n## Resilience\n\nFor external adapters (Postgres, Meilisearch, Elasticsearch/OpenSearch), configure timeouts and retries to handle transient failures:\n\n```typescript\nconst adapter = new PostgresAdapter({\n  connectionString: process.env.SEARCH_DB_URL!,\n  queryTimeoutMs: 15000,\n  retry: {\n    maxRetries: 3,\n    baseDelayMs: 200,\n    maxDelayMs: 10000,\n  },\n});\n```\n\n- Use conservative timeouts that match your SLA requirements.\n- Bounded retries with exponential backoff and jitter prevent thundering herd problems.\n- Monitor retry rates to detect degraded backends early.\n\n## Environment Variables\n\nKeep all credentials in environment variables or a secret store:\n\n| Variable | Used by | Description |\n| --- | --- | --- |\n| `SEARCH_DB_URL` | PostgresAdapter | Postgres connection string |\n| `MEILI_URL` | MeilisearchAdapter | Meilisearch endpoint |\n| `MEILI_API_KEY` | MeilisearchAdapter | Meilisearch API key |\n| `ES_NODE` | ElasticsearchAdapter | Elasticsearch/OpenSearch endpoint |\n| `ES_API_KEY` | ElasticsearchAdapter | Elasticsearch API key |\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Deployment Steps",
+          "slug": "deployment-steps"
+        },
+        {
+          "level": 2,
+          "text": "Default Limits",
+          "slug": "default-limits"
+        },
+        {
+          "level": 2,
+          "text": "Resilience",
+          "slug": "resilience"
+        },
+        {
+          "level": 2,
+          "text": "Environment Variables",
+          "slug": "environment-variables"
+        }
+      ],
+      "frontmatter": {
+        "title": "Setup",
+        "description": "Deploy SearchFn in production with proper configuration, limits, and resilience."
+      }
+    },
+    "docs:operations/troubleshooting.mdx": {
+      "kind": "page",
+      "id": "docs:operations/troubleshooting.mdx",
+      "slug": "operations/troubleshooting",
+      "path": "/docs/operations/troubleshooting",
+      "title": "Troubleshooting",
+      "description": "Diagnose and resolve common SearchFn errors with error codes and backend-specific playbooks.",
+      "body": "\n## Error Reference\n\n| Error Code | Cause | Resolution |\n| --- | --- | --- |\n| `DFQL_INVALID` | Invalid request shape, missing required fields, or empty query string | Validate the request payload before sending. Check that `resource`, `query`, and `documents` fields are present and correctly typed. |\n| `LIMIT_EXCEEDED` | Query length, result limit, resource count, or batch size exceeds configured maximums | Reduce the request size or increase server limits in the `limits` configuration. |\n| `DFQL_ABORTED` | The caller aborted the request via `AbortSignal` | Expected behavior when users cancel searches. Retry from the client when appropriate. |\n| `DFQL_UNSUPPORTED` | Adapter does not support the requested operation or configuration | Check your adapter's capabilities. For Elasticsearch/OpenSearch, verify the `engine` value is `\"elasticsearch\"` or `\"opensearch\"`. |\n| `FORBIDDEN` | Authorization callback denied the request | Verify the user's credentials and permissions. Check the `authorize` callback logic. |\n| `INTERNAL` | Unexpected backend or runtime failure | Check the structured logs for details. Inspect backend health (database connectivity, service availability). |\n\n## Common Issues\n\n### Search returns no results\n\n1. Verify that `initialize()` was called with the correct `searchFields`.\n2. Verify that documents were indexed with matching field names.\n3. Check that the `resource` name matches between `index` and `search` calls.\n4. Try disabling `fuzzy` to rule out fuzzy matching issues.\n\n### `initialize` not called\n\nCalling `index` or `search` before `initialize` may cause unexpected behavior. Always call `initialize()` with your resource definitions before other operations.\n\n### Adapter disposed\n\nCalling any method after `dispose()` throws `SEARCH_ADAPTER_DISPOSED`. Call `initialize()` again to reinitialize the adapter.\n\n## Backend Playbooks\n\n### Postgres\n\n| Symptom | Check |\n| --- | --- |\n| Connection timeouts | Verify `connectionString` and network access to the database |\n| Slow queries | Check that migration SQL was run (tables and indexes exist) |\n| Missing results | Verify the target `schema` matches your database setup |\n| Retry exhaustion | Increase `retry.maxRetries` or `retry.maxDelayMs` |\n\n### Meilisearch\n\n| Symptom | Check |\n| --- | --- |\n| `FORBIDDEN` errors | Verify the API key has the correct permissions (search, documents, indexes) |\n| Missing results | Check the Meilisearch dashboard for index status and task queue |\n| Timeout errors | Verify `host` is reachable and increase `requestTimeoutMs` if needed |\n| Wrong results | Verify `indexPrefix` matches across your adapter instances |\n\n### Elasticsearch / OpenSearch\n\n| Symptom | Check |\n| --- | --- |\n| `DFQL_UNSUPPORTED` | Verify `engine` is set to `\"elasticsearch\"` or `\"opensearch\"` |\n| Connection errors | Verify `node` URL and authentication credentials |\n| Missing indexes | Ensure `initialize()` was called to create indexes |\n| Cluster health | Check cluster status via `/_cluster/health` endpoint |\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Error Reference",
+          "slug": "error-reference"
+        },
+        {
+          "level": 2,
+          "text": "Common Issues",
+          "slug": "common-issues"
+        },
+        {
+          "level": 3,
+          "text": "Search returns no results",
+          "slug": "search-returns-no-results"
+        },
+        {
+          "level": 3,
+          "text": "`initialize` not called",
+          "slug": "initialize-not-called"
+        },
+        {
+          "level": 3,
+          "text": "Adapter disposed",
+          "slug": "adapter-disposed"
+        },
+        {
+          "level": 2,
+          "text": "Backend Playbooks",
+          "slug": "backend-playbooks"
+        },
+        {
+          "level": 3,
+          "text": "Postgres",
+          "slug": "postgres"
+        },
+        {
+          "level": 3,
+          "text": "Meilisearch",
+          "slug": "meilisearch"
+        },
+        {
+          "level": 3,
+          "text": "Elasticsearch / OpenSearch",
+          "slug": "elasticsearch-opensearch"
+        }
+      ],
+      "frontmatter": {
+        "title": "Troubleshooting",
+        "description": "Diagnose and resolve common SearchFn errors with error codes and backend-specific playbooks."
+      }
+    },
+    "docs:reference/adapters/index.mdx": {
+      "kind": "page",
+      "id": "docs:reference/adapters/index.mdx",
+      "slug": "reference/adapters",
+      "path": "/docs/reference/adapters",
+      "title": "Adapters",
+      "description": "Choose the right search adapter — built-in engine or external backend.",
+      "body": "\nSearchFn ships five adapters that all implement the `SearchAdapter` contract. Two use SearchFn's **built-in search engine** (tokenization, BM25 scoring, inverted index, fuzzy matching). Three delegate to **external search backends**. Swap between them without changing your application code.\n\n## Adapter Comparison\n\n### Built-in Engine\n\nThese adapters run SearchFn's own search engine in-process. No external services required.\n\n| Adapter | Environment | Persistent | Fuzzy | Field Boosts | Best for |\n| --- | --- | --- | --- | --- | --- |\n| [MemoryAdapter](/docs/reference/adapters/memory) | Browser / Node | No | Yes | Yes | In-process server search, tests, CLIs, small-to-moderate datasets |\n| [IndexedDbAdapter](/docs/reference/adapters/indexeddb) | Browser | Yes | Yes | Yes | Offline-first browser apps, PWAs, client-side search |\n\n### External Backends\n\nThese adapters are thin wrappers that translate the `SearchAdapter` contract into the backend's native API.\n\n| Adapter | Environment | Persistent | Fuzzy | Field Boosts | Best for |\n| --- | --- | --- | --- | --- | --- |\n| [PostgresAdapter](/docs/reference/adapters/postgres) | Server | Yes | Yes | No | Production apps already using Postgres |\n| [MeilisearchAdapter](/docs/reference/adapters/meilisearch) | Server | Yes | Yes | No | Dedicated search with typo tolerance and faceting |\n| [Elasticsearch/OpenSearch](/docs/reference/adapters/elastic-opensearch) | Server | Yes | Yes | Yes | Large-scale search with advanced relevance tuning |\n\n## Choosing an Adapter\n\n**MemoryAdapter** runs the full search engine in-process with zero setup. Use it for server-side search where the dataset fits in memory, CLI tools, tests, and any environment where you want search without external dependencies.\n\n**IndexedDbAdapter** is for browser and offline-first apps. It uses the same built-in engine as MemoryAdapter, but persists the inverted index in IndexedDB with LRU caches — search survives page reloads and works offline.\n\nBoth built-in engine adapters are production-ready. **Use an external backend** when your use case specifically needs:\n- Shared search state across multiple clients or servers\n- Datasets that exceed process or browser memory\n- Backend-specific features (Postgres `tsvector` tuning, Meilisearch facets, Elasticsearch analyzers)\n\n**PostgresAdapter** is the simplest external option if you already run Postgres. It uses native `tsvector` full-text search with no additional infrastructure.\n\n**MeilisearchAdapter** gives you a dedicated search engine with built-in typo tolerance and fast indexing. Good for user-facing search with high relevance requirements.\n\n**Elasticsearch/OpenSearch Adapter** is for large-scale deployments that need advanced relevance tuning, field boosts, and cluster scalability.\n\n## Common Interface\n\nAll adapters — built-in and external — support the same operations:\n\n- `initialize` — declare resources and searchable fields\n- `index` — batch index documents\n- `search` — search a single resource by query\n- `remove` — remove documents by ID\n- `clear` — remove all documents from a resource\n- `dispose` — release resources and connections\n\nMost adapters also support `searchAll` (cross-resource search) and `fuzzy` matching. See individual adapter pages for details.\n\n## Lifecycle\n\nEvery adapter follows the same lifecycle:\n\n1. **Construct** — create the adapter with configuration.\n2. **Initialize** — call `initialize()` to declare resources and search fields.\n3. **Use** — call `index`, `search`, `searchAll`, `remove`, `clear`.\n4. **Dispose** — call `dispose()` to release resources. After disposal, call `initialize()` again before further operations.\n\n```typescript\nimport { MemoryAdapter } from \"@searchfn/adapter-memory\";\n\nconst adapter = new MemoryAdapter();\n\nawait adapter.initialize({\n  resources: [{ name: \"tasks\", searchFields: [\"title\", \"description\"] }],\n});\n\nawait adapter.index({\n  resource: \"tasks\",\n  documents: [{ id: \"1\", fields: { title: \"Hello\", description: \"World\" } }],\n});\n\nconst ids = await adapter.search({ resource: \"tasks\", query: \"hello\" });\n\nawait adapter.dispose();\n```\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Adapter Comparison",
+          "slug": "adapter-comparison"
+        },
+        {
+          "level": 3,
+          "text": "Built-in Engine",
+          "slug": "built-in-engine"
+        },
+        {
+          "level": 3,
+          "text": "External Backends",
+          "slug": "external-backends"
+        },
+        {
+          "level": 2,
+          "text": "Choosing an Adapter",
+          "slug": "choosing-an-adapter"
+        },
+        {
+          "level": 2,
+          "text": "Common Interface",
+          "slug": "common-interface"
+        },
+        {
+          "level": 2,
+          "text": "Lifecycle",
+          "slug": "lifecycle"
+        }
+      ],
+      "frontmatter": {
+        "title": "Adapters",
+        "description": "Choose the right search adapter — built-in engine or external backend."
+      }
+    },
+    "docs:reference/adapters/elastic-opensearch.mdx": {
+      "kind": "page",
+      "id": "docs:reference/adapters/elastic-opensearch.mdx",
+      "slug": "reference/adapters/elastic-opensearch",
+      "path": "/docs/reference/adapters/elastic-opensearch",
+      "title": "Elasticsearch / OpenSearch Adapter",
+      "description": "Elastic-compatible adapter for Elasticsearch and OpenSearch clusters.",
+      "body": "\nA single adapter implementation that supports both Elasticsearch and OpenSearch. Select your engine at construction time.\n\n## When to Use\n\n- Large-scale search with millions of documents\n- Advanced relevance tuning with field boosts and custom analyzers\n- Existing Elasticsearch or OpenSearch infrastructure\n\n## Installation\n\n```bash\nnpm install @searchfn/adapter-elasticsearch @searchfn/adapter-opensearch\n```\n\n## Usage\n\n### Elasticsearch\n\n```typescript\nimport { ElasticsearchAdapter } from \"@searchfn/adapter-elasticsearch\";\n\nconst adapter = new ElasticsearchAdapter({\n  node: \"https://es.example.com:9200\",\n  engine: \"elasticsearch\",\n  auth: { apiKey: process.env.ES_API_KEY! },\n  indexPrefix: \"myapp\",\n});\n\nawait adapter.initialize({\n  resources: [{ name: \"tasks\", searchFields: [\"title\", \"description\"] }],\n});\n\nconst ids = await adapter.search({ resource: \"tasks\", query: \"docs\" });\n```\n\n### OpenSearch\n\n```typescript\nimport { OpenSearchAdapter } from \"@searchfn/adapter-opensearch\";\n\nconst adapter = new OpenSearchAdapter({\n  node: \"https://opensearch.example.com:9200\",\n  auth: { username: \"admin\", password: process.env.OS_PASSWORD! },\n  indexPrefix: \"myapp\",\n});\n```\n\n`OpenSearchAdapter` is a convenience wrapper that sets `engine: \"opensearch\"` automatically.\n\n## Configuration\n\n| Option | Type | Default | Description |\n| --- | --- | --- | --- |\n| `node` | `string` | — | Required. Cluster endpoint URL. |\n| `engine` | `\"elasticsearch\" \\| \"opensearch\"` | `\"elasticsearch\"` | Select the engine dialect. |\n| `auth` | `{ username, password } \\| { apiKey }` | — | Cluster authentication credentials. |\n| `indexPrefix` | `string` | `\"searchfn\"` | Prefix for index names (`{prefix}-{resource}`). |\n| `requestTimeoutMs` | `number` | `30000` | Request timeout. |\n| `retry.maxRetries` | `number` | `2` | Retry attempts for transient failures. |\n| `retry.baseDelayMs` | `number` | `100` | Base delay between retries. |\n| `retry.maxDelayMs` | `number` | `5000` | Maximum delay between retries. |\n| `logger` | `AdapterLogger` | — | Optional adapter-level logger. |\n\n## Capabilities\n\n| Capability | Supported |\n| --- | --- |\n| `persistent` | Yes |\n| `searchAll` | Yes |\n| `fuzzy` | Yes |\n| `fieldBoosts` | Yes |\n\n## Behavior\n\n- Single implementation handles both Elasticsearch and OpenSearch with dialect-aware query generation.\n- Index lifecycle (create, delete) is deterministic and idempotent.\n- Results are ordered by score with deterministic tie-breaking.\n- Unsupported `engine` values return `DFQL_UNSUPPORTED`.\n- Keep auth credentials in secure runtime secrets — never hardcode them.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "When to Use",
+          "slug": "when-to-use"
+        },
+        {
+          "level": 2,
+          "text": "Installation",
+          "slug": "installation"
+        },
+        {
+          "level": 2,
+          "text": "Usage",
+          "slug": "usage"
+        },
+        {
+          "level": 3,
+          "text": "Elasticsearch",
+          "slug": "elasticsearch"
+        },
+        {
+          "level": 3,
+          "text": "OpenSearch",
+          "slug": "opensearch"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 2,
+          "text": "Capabilities",
+          "slug": "capabilities"
+        },
+        {
+          "level": 2,
+          "text": "Behavior",
+          "slug": "behavior"
+        }
+      ],
+      "frontmatter": {
+        "title": "Elasticsearch / OpenSearch Adapter",
+        "description": "Elastic-compatible adapter for Elasticsearch and OpenSearch clusters."
+      }
+    },
+    "docs:reference/adapters/indexeddb.mdx": {
+      "kind": "page",
+      "id": "docs:reference/adapters/indexeddb.mdx",
+      "slug": "reference/adapters/indexeddb",
+      "path": "/docs/reference/adapters/indexeddb",
+      "title": "IndexedDB Adapter",
+      "description": "Browser-persistent full-text search using SearchFn's built-in engine with IndexedDB storage.",
+      "body": "\nThe IndexedDB Adapter runs SearchFn's built-in search engine in the browser with persistent storage. It uses the same BM25 scoring, inverted index, fuzzy matching, and text pipeline as the [Memory Adapter](/docs/reference/adapters/memory), but stores the inverted index in IndexedDB so search data survives page reloads and browser restarts.\n\n## When to Use\n\n- Production offline-first browser applications\n- Progressive web apps with local search\n- Client-side search that needs to persist across sessions and work without network\n- Any browser app where you want full-text search without a server round-trip\n\n## Installation\n\n```bash\nnpm install @searchfn/adapter-indexeddb\n```\n\n## Usage\n\n```typescript\nimport { IndexedDbAdapter } from \"@searchfn/adapter-indexeddb\";\n\nconst adapter = new IndexedDbAdapter({\n  dbName: \"my-app-search\",\n});\n\nawait adapter.initialize({\n  resources: [{ name: \"tasks\", searchFields: [\"title\", \"description\"] }],\n});\n\nawait adapter.index({\n  resource: \"tasks\",\n  documents: [\n    { id: \"t-1\", fields: { title: \"Ship docs\", description: \"Write the guide\" } },\n  ],\n});\n\nconst ids = await adapter.search({ resource: \"tasks\", query: \"docs\" });\n```\n\n## Configuration\n\n| Option | Type | Default | Description |\n| --- | --- | --- | --- |\n| `dbName` | `string` | `\"searchfn-adapter\"` | Base database name. Per-resource databases use `{dbName}-{resource}`. |\n| `pipeline` | `PipelineOptions` | Internal defaults | Configure the text pipeline (tokenization, stemming, stop words, n-grams). |\n| `cache.terms` | `number` | `2048` | Maximum entries in the term lookup LRU cache. |\n| `cache.vectors` | `number` | `512` | Maximum entries in the vector LRU cache. |\n\n```typescript\nconst adapter = new IndexedDbAdapter({\n  dbName: \"my-app-search\",\n  cache: { terms: 4096, vectors: 1024 },\n});\n```\n\n## Capabilities\n\n| Capability | Supported |\n| --- | --- |\n| `persistent` | Yes |\n| `searchAll` | Yes |\n| `fuzzy` | Yes |\n| `fieldBoosts` | Yes |\n\n## How It Works\n\nThe IndexedDB Adapter uses the full `@searchfn/core` search engine with IndexedDB as the storage backend:\n\n1. **Indexing** — documents pass through the text pipeline (tokenize, normalize, stop words, stem). Terms and posting lists are written to IndexedDB object stores, with postings stored as delta-varint encoded chunks keyed by `[field, term, chunk]`.\n2. **Searching** — query text passes through the same pipeline. Postings are retrieved from IndexedDB (with LRU caching for hot terms) and scored using BM25 with length normalization.\n3. **Ranking** — results are sorted by score (descending) with deterministic tie-breaking by document ID.\n\n### LRU Caches\n\nTo reduce IndexedDB reads, the adapter maintains two LRU caches:\n\n- **Term cache** (default 2048 entries) — caches frequently accessed posting chunks.\n- **Vector cache** (default 512 entries) — caches computed vectors for faster scoring.\n\nTune these via the `cache` configuration when working with large indexes.\n\n## Behavior\n\n- Data persists in IndexedDB across page reloads within the same browser origin.\n- Each resource gets its own IndexedDB database (`{dbName}-{resource}`).\n- Reads and writes are deterministic across repeated calls.\n- Calling `dispose()` closes all database handles. Call `initialize()` again to reopen.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "When to Use",
+          "slug": "when-to-use"
+        },
+        {
+          "level": 2,
+          "text": "Installation",
+          "slug": "installation"
+        },
+        {
+          "level": 2,
+          "text": "Usage",
+          "slug": "usage"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 2,
+          "text": "Capabilities",
+          "slug": "capabilities"
+        },
+        {
+          "level": 2,
+          "text": "How It Works",
+          "slug": "how-it-works"
+        },
+        {
+          "level": 3,
+          "text": "LRU Caches",
+          "slug": "lru-caches"
+        },
+        {
+          "level": 2,
+          "text": "Behavior",
+          "slug": "behavior"
+        }
+      ],
+      "frontmatter": {
+        "title": "IndexedDB Adapter",
+        "description": "Browser-persistent full-text search using SearchFn's built-in engine with IndexedDB storage."
+      }
+    },
+    "docs:reference/adapters/meilisearch.mdx": {
+      "kind": "page",
+      "id": "docs:reference/adapters/meilisearch.mdx",
+      "slug": "reference/adapters/meilisearch",
+      "path": "/docs/reference/adapters/meilisearch",
+      "title": "Meilisearch Adapter",
+      "description": "External Meilisearch adapter for hosted or self-hosted search backends.",
+      "body": "\nThe Meilisearch Adapter connects to a Meilisearch instance for fast, typo-tolerant search with automatic ranking.\n\n## When to Use\n\n- User-facing search with high relevance requirements\n- Applications that need typo tolerance out of the box\n- Dedicated search infrastructure (hosted or self-hosted Meilisearch)\n\n## Installation\n\n```bash\nnpm install @searchfn/adapter-meilisearch\n```\n\n## Usage\n\n```typescript\nimport { MeilisearchAdapter } from \"@searchfn/adapter-meilisearch\";\n\nconst adapter = new MeilisearchAdapter({\n  host: process.env.MEILI_URL!,\n  apiKey: process.env.MEILI_API_KEY!,\n  indexPrefix: \"myapp\",\n});\n\nawait adapter.initialize({\n  resources: [{ name: \"tasks\", searchFields: [\"title\", \"description\"] }],\n});\n\nawait adapter.index({\n  resource: \"tasks\",\n  documents: [\n    { id: \"t-1\", fields: { title: \"Ship docs\", description: \"Write the guide\" } },\n  ],\n});\n\nconst ids = await adapter.search({ resource: \"tasks\", query: \"docs\" });\n```\n\n## Configuration\n\n| Option | Type | Default | Description |\n| --- | --- | --- | --- |\n| `host` | `string` | — | Required. Meilisearch HTTP endpoint. |\n| `apiKey` | `string` | — | Authentication key. Redacted in logs. |\n| `indexPrefix` | `string` | `\"searchfn\"` | Prefix for Meilisearch index names (`{prefix}-{resource}`). |\n| `requestTimeoutMs` | `number` | `30000` | Request timeout. |\n| `retry.maxRetries` | `number` | `2` | Retry attempts for transient failures. |\n| `retry.baseDelayMs` | `number` | `100` | Base delay between retries. |\n| `retry.maxDelayMs` | `number` | `5000` | Maximum delay between retries. |\n| `logger` | `AdapterLogger` | — | Optional adapter-level logger. |\n\n## Capabilities\n\n| Capability | Supported |\n| --- | --- |\n| `persistent` | Yes |\n| `searchAll` | Yes |\n| `fuzzy` | Yes |\n| `fieldBoosts` | No |\n\n## Behavior\n\n- Creates Meilisearch indexes automatically on `initialize`.\n- `index` performs document upserts — re-indexing the same ID updates the document.\n- `remove` and `clear` are idempotent — calling them on non-existent documents or empty indexes is safe.\n- Authentication failures (invalid API key, insufficient permissions) return `FORBIDDEN`.\n- Keep API keys in environment-level secrets — never hardcode them.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "When to Use",
+          "slug": "when-to-use"
+        },
+        {
+          "level": 2,
+          "text": "Installation",
+          "slug": "installation"
+        },
+        {
+          "level": 2,
+          "text": "Usage",
+          "slug": "usage"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 2,
+          "text": "Capabilities",
+          "slug": "capabilities"
+        },
+        {
+          "level": 2,
+          "text": "Behavior",
+          "slug": "behavior"
+        }
+      ],
+      "frontmatter": {
+        "title": "Meilisearch Adapter",
+        "description": "External Meilisearch adapter for hosted or self-hosted search backends."
+      }
+    },
+    "docs:reference/adapters/memory.mdx": {
+      "kind": "page",
+      "id": "docs:reference/adapters/memory.mdx",
+      "slug": "reference/adapters/memory",
+      "path": "/docs/reference/adapters/memory",
+      "title": "Memory Adapter",
+      "description": "In-process full-text search using SearchFn's built-in engine.",
+      "body": "\nThe Memory Adapter runs SearchFn's built-in search engine entirely in-process. It builds an inverted index in memory, scores results with BM25, and supports fuzzy matching and field boosts — all with zero external dependencies. Data lives in memory and is lost when the process exits.\n\n## When to Use\n\n- Server-side in-process search where the dataset fits in memory\n- CLI tools and background workers with search capabilities\n- Unit and integration tests\n- Any environment where you want full-text search without external services\n\n## Installation\n\n```bash\nnpm install @searchfn/adapter-memory\n```\n\n## Usage\n\n```typescript\nimport { MemoryAdapter } from \"@searchfn/adapter-memory\";\n\nconst adapter = new MemoryAdapter();\n\nawait adapter.initialize({\n  resources: [{ name: \"tasks\", searchFields: [\"title\", \"description\"] }],\n});\n\nawait adapter.index({\n  resource: \"tasks\",\n  documents: [\n    { id: \"t-1\", fields: { title: \"Ship docs\", description: \"Write the guide\" } },\n  ],\n});\n\nconst ids = await adapter.search({ resource: \"tasks\", query: \"docs\", limit: 10 });\n```\n\n## Configuration\n\n| Option | Type | Default | Description |\n| --- | --- | --- | --- |\n| `pipeline` | `PipelineOptions` | Internal defaults | Configure the text pipeline (tokenization, stemming, stop words, n-grams). |\n\n```typescript\nconst adapter = new MemoryAdapter({\n  pipeline: {\n    // Custom pipeline options\n  },\n});\n```\n\n## Capabilities\n\n| Capability | Supported |\n| --- | --- |\n| `persistent` | No |\n| `searchAll` | Yes |\n| `fuzzy` | Yes |\n| `fieldBoosts` | Yes |\n\n## How It Works\n\nThe Memory Adapter uses the full `@searchfn/core` search engine:\n\n1. **Indexing** — documents pass through the text pipeline (tokenize, normalize, stop words, stem). The resulting terms are stored in an in-memory inverted index (`Map<string, Map<docId, PostingInfo>>`) keyed by `field::term`.\n2. **Searching** — query text passes through the same pipeline. If fuzzy matching is enabled, terms are expanded via Levenshtein distance against the vocabulary. Postings are retrieved and scored using BM25 with length normalization.\n3. **Ranking** — results are sorted by score (descending) with deterministic tie-breaking by document ID.\n\nThis is the same search engine that powers the [IndexedDB Adapter](/docs/reference/adapters/indexeddb), with the only difference being storage: memory vs IndexedDB.\n\n## Behavior\n\n- Results use deterministic tie-break ordering by document ID when scores are equal.\n- `searchAll` returns results sorted by score with deterministic ordering.\n- Calling `dispose()` clears all data. Call `initialize()` again before further operations.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "When to Use",
+          "slug": "when-to-use"
+        },
+        {
+          "level": 2,
+          "text": "Installation",
+          "slug": "installation"
+        },
+        {
+          "level": 2,
+          "text": "Usage",
+          "slug": "usage"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 2,
+          "text": "Capabilities",
+          "slug": "capabilities"
+        },
+        {
+          "level": 2,
+          "text": "How It Works",
+          "slug": "how-it-works"
+        },
+        {
+          "level": 2,
+          "text": "Behavior",
+          "slug": "behavior"
+        }
+      ],
+      "frontmatter": {
+        "title": "Memory Adapter",
+        "description": "In-process full-text search using SearchFn's built-in engine."
+      }
+    },
+    "docs:reference/adapters/postgres.mdx": {
+      "kind": "page",
+      "id": "docs:reference/adapters/postgres.mdx",
+      "slug": "reference/adapters/postgres",
+      "path": "/docs/reference/adapters/postgres",
+      "title": "Postgres Adapter",
+      "description": "Production-grade full-text search using Postgres tsvector.",
+      "body": "\nThe Postgres Adapter uses native Postgres full-text search (`tsvector`/`tsquery`) for production-grade search with no additional infrastructure beyond your existing database.\n\n## When to Use\n\n- Production apps already running Postgres\n- Server-side search that needs SQL-level durability and transactions\n- Moderate document volumes where a dedicated search engine is unnecessary\n\n## Installation\n\n```bash\nnpm install @searchfn/adapter-postgres\n```\n\n## Setup\n\nThe adapter requires search tables and indexes in your Postgres database. Run the migration SQL shipped with the package:\n\n```typescript\nimport { getPostgresMigrationSQL } from \"@searchfn/adapter-postgres\";\n\nconst sql = getPostgresMigrationSQL();\n// Execute this SQL against your database to create required tables and indexes\n```\n\n## Usage\n\n```typescript\nimport { PostgresAdapter } from \"@searchfn/adapter-postgres\";\n\nconst adapter = new PostgresAdapter({\n  connectionString: process.env.SEARCH_DB_URL!,\n  schema: \"public\",\n  queryTimeoutMs: 15000,\n});\n\nawait adapter.initialize({\n  resources: [{ name: \"tasks\", searchFields: [\"title\", \"description\"] }],\n});\n\nawait adapter.index({\n  resource: \"tasks\",\n  documents: [\n    { id: \"t-1\", fields: { title: \"Ship docs\", description: \"Write the guide\" } },\n  ],\n});\n\nconst ids = await adapter.search({ resource: \"tasks\", query: \"docs\" });\n```\n\n## Configuration\n\n| Option | Type | Default | Description |\n| --- | --- | --- | --- |\n| `connectionString` | `string` | — | Required. Postgres connection string (DSN). |\n| `schema` | `string` | `\"public\"` | Target database schema. |\n| `queryTimeoutMs` | `number` | `30000` | Timeout for individual queries. |\n| `maxBatchSize` | `number` | `10000` | Maximum documents per index batch. |\n| `retry.maxRetries` | `number` | `2` | Retry attempts for transient failures. |\n| `retry.baseDelayMs` | `number` | `100` | Base delay between retries (with jitter). |\n| `retry.maxDelayMs` | `number` | `5000` | Maximum delay between retries. |\n| `logger` | `PostgresAdapterLogger` | — | Optional adapter-level logger. |\n\n## Capabilities\n\n| Capability | Supported |\n| --- | --- |\n| `persistent` | Yes |\n| `searchAll` | Yes |\n| `fuzzy` | Yes |\n| `fieldBoosts` | No |\n\n## Behavior\n\n- Uses Postgres native `tsvector` full-text search.\n- Supports bounded retries with exponential backoff and jitter for transient database failures.\n- `index` operations use batch inserts up to `maxBatchSize`.\n- Keep connection strings in a secure secret store — never hardcode them.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "When to Use",
+          "slug": "when-to-use"
+        },
+        {
+          "level": 2,
+          "text": "Installation",
+          "slug": "installation"
+        },
+        {
+          "level": 2,
+          "text": "Setup",
+          "slug": "setup"
+        },
+        {
+          "level": 2,
+          "text": "Usage",
+          "slug": "usage"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 2,
+          "text": "Capabilities",
+          "slug": "capabilities"
+        },
+        {
+          "level": 2,
+          "text": "Behavior",
+          "slug": "behavior"
+        }
+      ],
+      "frontmatter": {
+        "title": "Postgres Adapter",
+        "description": "Production-grade full-text search using Postgres tsvector."
+      }
+    },
+    "docs:reference/client.mdx": {
+      "kind": "page",
+      "id": "docs:reference/client.mdx",
+      "slug": "reference/client",
+      "path": "/docs/reference/client",
+      "title": "Client API",
+      "description": "Create and configure a SearchFn client for in-app search.",
+      "body": "\n## Creating a Client\n\nUse `createSearchClient()` to create a search client. The client validates inputs, applies defaults, and delegates to the underlying adapter.\n\n```typescript\nimport { createSearchClient } from \"@searchfn/client\";\nimport { MemoryAdapter } from \"@searchfn/adapter-memory\";\n\nconst client = createSearchClient({\n  adapter: new MemoryAdapter(),\n  defaults: {\n    limit: 20,\n    limitPerResource: 10,\n    fuzzy: true,\n  },\n});\n```\n\n## Configuration\n\n| Option | Type | Description |\n| --- | --- | --- |\n| `adapter` | `SearchAdapter` | Required. The search adapter to use. |\n| `defaults.limit` | `number` | Default result limit for `search` calls. |\n| `defaults.limitPerResource` | `number` | Default per-resource limit for `searchAll` calls. |\n| `defaults.fuzzy` | `boolean \\| number` | Enable fuzzy matching by default. Pass a number for edit distance threshold. |\n\n## Methods\n\n### `initialize`\n\nDeclare resources and their searchable fields. Call before indexing.\n\n```typescript\nawait client.initialize?.({\n  resources: [\n    { name: \"tasks\", searchFields: [\"title\", \"description\"] },\n    { name: \"notes\", searchFields: [\"content\", \"tags\"] },\n  ],\n});\n```\n\n| Parameter | Type | Description |\n| --- | --- | --- |\n| `resources` | `InitializeResourceConfig[]` | Array of resource declarations with name and searchable fields. |\n\n### `index`\n\nIndex a batch of documents into a resource.\n\n```typescript\nawait client.index({\n  resource: \"tasks\",\n  documents: [\n    { id: \"t-1\", fields: { title: \"Ship docs\", description: \"Write the guide\" } },\n    { id: \"t-2\", fields: { title: \"Fix bug\", description: \"Handle retries\" } },\n  ],\n});\n```\n\n| Parameter | Type | Description |\n| --- | --- | --- |\n| `resource` | `string` | Target resource name. |\n| `documents` | `SearchDocument[]` | Documents to index. Each has an `id` and a `fields` record. |\n| `signal` | `AbortSignal?` | Optional abort signal. |\n\n### `search`\n\nSearch a single resource. Returns matching document IDs.\n\n```typescript\nconst ids = await client.search({\n  resource: \"tasks\",\n  query: \"docs\",\n  limit: 10,\n  fuzzy: true,\n  fields: [\"title\"],\n  fieldBoosts: { title: 2.0 },\n});\n```\n\n| Parameter | Type | Description |\n| --- | --- | --- |\n| `resource` | `string` | Resource to search. |\n| `query` | `string` | Search query string. |\n| `fields` | `string[]?` | Restrict search to specific fields. |\n| `limit` | `number?` | Max results to return. |\n| `fuzzy` | `boolean \\| number?` | Enable fuzzy matching. |\n| `fieldBoosts` | `Record<string, number>?` | Per-field relevance boosts (adapter support required). |\n| `signal` | `AbortSignal?` | Optional abort signal. |\n\n**Returns:** `Promise<Array<string | number>>`\n\n### `searchAll`\n\nSearch across multiple resources. Returns results with resource name, ID, and score.\n\n```typescript\nconst results = await client.searchAll({\n  query: \"launch\",\n  resources: [\"tasks\", \"notes\"],\n  limitPerResource: 5,\n});\n\n// [{ resource: \"tasks\", id: \"t-3\", score: 1.5 }, { resource: \"notes\", id: \"n-1\", score: 0.8 }]\n```\n\n| Parameter | Type | Description |\n| --- | --- | --- |\n| `query` | `string` | Search query string. |\n| `resources` | `string[]?` | Resources to search. Omit to search all initialized resources. |\n| `fields` | `string[]?` | Restrict search to specific fields. |\n| `limit` | `number?` | Max total results. |\n| `limitPerResource` | `number?` | Max results per resource. |\n| `fuzzy` | `boolean \\| number?` | Enable fuzzy matching. |\n| `fieldBoosts` | `Record<string, number>?` | Per-field relevance boosts. |\n| `signal` | `AbortSignal?` | Optional abort signal. |\n\n**Returns:** `Promise<SearchAllResult[]>` where each result has `resource`, `id`, and `score`.\n\nIf the adapter does not implement `searchAll` natively, the client runs per-resource searches concurrently and merges results with deterministic score-based ordering.\n\n### `remove`\n\nRemove documents from a resource by ID.\n\n```typescript\nawait client.remove({\n  resource: \"tasks\",\n  ids: [\"t-1\", \"t-2\"],\n});\n```\n\n### `clear`\n\nRemove all documents from a resource.\n\n```typescript\nawait client.clear(\"tasks\");\n```\n\n### `dispose`\n\nRelease resources held by the adapter. After disposal, call `initialize()` again before further operations.\n\n```typescript\nawait client.dispose();\n```\n\n### `adapterInfo`\n\nReturns the adapter name and declared capabilities.\n\n```typescript\nconst info = client.adapterInfo();\n// { name: \"memory\", capabilities: { persistent: false, searchAll: true, fuzzy: true, fieldBoosts: true } }\n```\n\n## Convenience Constructors\n\nShorthand for common adapter setups:\n\n```typescript\nimport { createMemorySearchClient, createIndexedDbSearchClient } from \"@searchfn/client\";\n\nconst memoryClient = createMemorySearchClient({\n  adapterConfig: { pipeline: { /* custom pipeline */ } },\n  defaults: { limit: 20, fuzzy: true },\n});\n\nconst browserClient = createIndexedDbSearchClient({\n  adapterConfig: { dbName: \"my-app-search\", cache: { terms: 4096 } },\n  defaults: { limit: 20, fuzzy: true },\n});\n```\n\n## Validation Limits\n\nThe client validates all inputs before passing them to the adapter:\n\n| Limit | Default |\n| --- | --- |\n| Max query length | `1000` characters |\n| Max `limit` | `10,000` |\n| Max `limitPerResource` | `1,000` |\n| Max resources in `searchAll` | `50` |\n| Max documents per `index` batch | `10,000` |\n\nValidation failures throw `SearchClientValidationError` with a `code` and optional `details.path`.\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Creating a Client",
+          "slug": "creating-a-client"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 2,
+          "text": "Methods",
+          "slug": "methods"
+        },
+        {
+          "level": 3,
+          "text": "`initialize`",
+          "slug": "initialize"
+        },
+        {
+          "level": 3,
+          "text": "`index`",
+          "slug": "index"
+        },
+        {
+          "level": 3,
+          "text": "`search`",
+          "slug": "search"
+        },
+        {
+          "level": 3,
+          "text": "`searchAll`",
+          "slug": "searchall"
+        },
+        {
+          "level": 3,
+          "text": "`remove`",
+          "slug": "remove"
+        },
+        {
+          "level": 3,
+          "text": "`clear`",
+          "slug": "clear"
+        },
+        {
+          "level": 3,
+          "text": "`dispose`",
+          "slug": "dispose"
+        },
+        {
+          "level": 3,
+          "text": "`adapterInfo`",
+          "slug": "adapterinfo"
+        },
+        {
+          "level": 2,
+          "text": "Convenience Constructors",
+          "slug": "convenience-constructors"
+        },
+        {
+          "level": 2,
+          "text": "Validation Limits",
+          "slug": "validation-limits"
+        }
+      ],
+      "frontmatter": {
+        "title": "Client API",
+        "description": "Create and configure a SearchFn client for in-app search."
+      }
+    },
+    "docs:reference/server.mdx": {
+      "kind": "page",
+      "id": "docs:reference/server.mdx",
+      "slug": "reference/server",
+      "path": "/docs/reference/server",
+      "title": "Server API",
+      "description": "Expose SearchFn as an HTTP API with authorization, logging, and secret redaction.",
+      "body": "\n## Creating a Server\n\nUse `createSearchFnServer()` to wrap any adapter behind HTTP endpoints.\n\n```typescript\nimport { createSearchFnServer } from \"@searchfn/server\";\nimport { PostgresAdapter } from \"@searchfn/adapter-postgres\";\n\nconst server = await createSearchFnServer({\n  adapter: new PostgresAdapter({\n    connectionString: process.env.SEARCH_DB_URL!,\n  }),\n  basePath: \"/searchfn\",\n  authorize: async (ctx, action, payload) => {\n    return ctx.user?.role === \"admin\" || action === \"search\" || action === \"status\";\n  },\n});\n\n// Mount server.router with your HTTP framework adapter\n```\n\n## Configuration\n\n| Option | Type | Default | Description |\n| --- | --- | --- | --- |\n| `adapter` | `SearchAdapter` | — | Required. The search adapter to use. |\n| `basePath` | `string` | `\"/searchfn\"` | URL prefix for all endpoints. |\n| `limits` | `Partial<ServerLimits>` | See below | Override default validation limits. |\n| `authorize` | `(ctx, action, payload) => boolean \\| Promise<boolean>` | — | Per-action authorization callback. |\n| `logger` | `SearchFnLogger` | — | Custom structured logger. |\n\n### Server Limits\n\n| Limit | Default | Description |\n| --- | --- | --- |\n| `maxPayloadBytes` | `1,048,576` | Maximum request body size (1 MB). |\n| `maxQueryLength` | `1,000` | Maximum search query string length. |\n| `maxResourcesPerSearchAll` | `50` | Maximum resources in a `searchAll` request. |\n| `maxLimit` | `10,000` | Maximum `limit` parameter. |\n| `maxLimitPerResource` | `1,000` | Maximum `limitPerResource` parameter. |\n| `maxIndexBatch` | `10,000` | Maximum documents per `index` request. |\n\n## Endpoints\n\nAll endpoints are prefixed with the configured `basePath`.\n\n### `GET /searchfn/status`\n\nHealth check and adapter information.\n\n**Response:**\n```json\n{\n  \"ok\": true,\n  \"result\": {\n    \"adapter\": \"postgres\",\n    \"capabilities\": { \"persistent\": true, \"searchAll\": true, \"fuzzy\": true },\n    \"uptimeMs\": 84200\n  }\n}\n```\n\n### `POST /searchfn/index`\n\nIndex documents into a resource.\n\n**Request:**\n```json\n{\n  \"resource\": \"tasks\",\n  \"documents\": [\n    { \"id\": \"t-1\", \"fields\": { \"title\": \"Ship docs\", \"description\": \"Write the guide\" } }\n  ]\n}\n```\n\n**Response:**\n```json\n{ \"ok\": true, \"result\": { \"indexed\": 1 } }\n```\n\n### `POST /searchfn/search`\n\nSearch a single resource.\n\n**Request:**\n```json\n{\n  \"resource\": \"tasks\",\n  \"query\": \"docs\",\n  \"limit\": 10,\n  \"fuzzy\": true,\n  \"fields\": [\"title\"],\n  \"fieldBoosts\": { \"title\": 2.0 }\n}\n```\n\n**Response:**\n```json\n{ \"ok\": true, \"result\": { \"ids\": [\"t-1\", \"t-3\"] } }\n```\n\n### `POST /searchfn/search-all`\n\nSearch across multiple resources.\n\n**Request:**\n```json\n{\n  \"query\": \"docs\",\n  \"resources\": [\"tasks\", \"notes\"],\n  \"limitPerResource\": 5\n}\n```\n\n**Response:**\n```json\n{\n  \"ok\": true,\n  \"result\": {\n    \"results\": [\n      { \"resource\": \"tasks\", \"id\": \"t-1\", \"score\": 1.5 },\n      { \"resource\": \"notes\", \"id\": \"n-2\", \"score\": 0.9 }\n    ]\n  }\n}\n```\n\n### `POST /searchfn/remove`\n\nRemove documents by ID.\n\n**Request:**\n```json\n{ \"resource\": \"tasks\", \"ids\": [\"t-1\", \"t-2\"] }\n```\n\n**Response:**\n```json\n{ \"ok\": true, \"result\": { \"removed\": 2 } }\n```\n\n### `POST /searchfn/clear`\n\nClear all documents from a resource.\n\n**Request:**\n```json\n{ \"resource\": \"tasks\" }\n```\n\n**Response:**\n```json\n{ \"ok\": true, \"result\": { \"cleared\": \"tasks\" } }\n```\n\n## Authorization\n\nThe `authorize` callback is called before every operation. It receives the request context, action name, and request payload:\n\n```typescript\nconst server = await createSearchFnServer({\n  adapter,\n  authorize: async (ctx, action, payload) => {\n    if (action === \"status\") return true;\n    if (action === \"search\" || action === \"searchAll\") return !!ctx.user;\n    return ctx.user?.role === \"admin\";\n  },\n});\n```\n\n| Action | When called |\n| --- | --- |\n| `status` | `GET /searchfn/status` |\n| `index` | `POST /searchfn/index` |\n| `search` | `POST /searchfn/search` |\n| `searchAll` | `POST /searchfn/search-all` |\n| `remove` | `POST /searchfn/remove` |\n| `clear` | `POST /searchfn/clear` |\n\nDenied requests return a `FORBIDDEN` error envelope.\n\n## Structured Logging\n\nPass a `logger` to receive structured log events for every operation:\n\n```typescript\nconst server = await createSearchFnServer({\n  adapter,\n  logger: {\n    info: (msg, ctx) => console.log(msg, ctx),\n    warn: (msg, ctx) => console.warn(msg, ctx),\n    error: (msg, ctx) => console.error(msg, ctx),\n    debug: (msg, ctx) => console.debug(msg, ctx),\n  },\n});\n```\n\nLog context includes: `operation`, `adapter`, `durationMs`, `status`, `success`, and `errorCode` (on failure). Sensitive values (`apiKey`, `password`, `connectionString`, `token`, `authorization`, `secret`) are recursively redacted.\n\n## Closing the Server\n\nCall `close()` to shut down the server and dispose of the adapter:\n\n```typescript\nawait server.close();\n```\n",
+      "headings": [
+        {
+          "level": 2,
+          "text": "Creating a Server",
+          "slug": "creating-a-server"
+        },
+        {
+          "level": 2,
+          "text": "Configuration",
+          "slug": "configuration"
+        },
+        {
+          "level": 3,
+          "text": "Server Limits",
+          "slug": "server-limits"
+        },
+        {
+          "level": 2,
+          "text": "Endpoints",
+          "slug": "endpoints"
+        },
+        {
+          "level": 3,
+          "text": "`GET /searchfn/status`",
+          "slug": "get-searchfn-status"
+        },
+        {
+          "level": 3,
+          "text": "`POST /searchfn/index`",
+          "slug": "post-searchfn-index"
+        },
+        {
+          "level": 3,
+          "text": "`POST /searchfn/search`",
+          "slug": "post-searchfn-search"
+        },
+        {
+          "level": 3,
+          "text": "`POST /searchfn/search-all`",
+          "slug": "post-searchfn-search-all"
+        },
+        {
+          "level": 3,
+          "text": "`POST /searchfn/remove`",
+          "slug": "post-searchfn-remove"
+        },
+        {
+          "level": 3,
+          "text": "`POST /searchfn/clear`",
+          "slug": "post-searchfn-clear"
+        },
+        {
+          "level": 2,
+          "text": "Authorization",
+          "slug": "authorization"
+        },
+        {
+          "level": 2,
+          "text": "Structured Logging",
+          "slug": "structured-logging"
+        },
+        {
+          "level": 2,
+          "text": "Closing the Server",
+          "slug": "closing-the-server"
+        }
+      ],
+      "frontmatter": {
+        "title": "Server API",
+        "description": "Expose SearchFn as an HTTP API with authorization, logging, and secret redaction."
+      }
+    }
+  },
+  "posts": {
+    "blog:alpha.mdx": {
+      "kind": "post",
+      "id": "blog:alpha.mdx",
+      "slug": "alpha",
+      "path": "/docs/blog/alpha",
+      "title": "SearchFn v1.2 Release",
+      "date": "2026-03-02",
+      "publishedAt": "2026-03-02T00:00:00.000Z",
+      "author": "SearchFn Team",
+      "excerpt": "SearchFn now ships deterministic artifact snapshots for docs and search.",
+      "summary": "SearchFn now ships deterministic artifact snapshots for docs and search.",
+      "draft": false,
+      "tags": [
+        "platform",
+        "release"
+      ],
+      "body": "\n# SearchFn v1.2 Release\n\nThis release introduces deterministic manifest and search artifacts, plus blog and embedded docs surfaces.\n",
+      "frontmatter": {
+        "title": "SearchFn v1.2 Release",
+        "date": "2026-03-02",
+        "tags": [
+          "release",
+          "platform"
+        ],
+        "author": "SearchFn Team",
+        "excerpt": "SearchFn now ships deterministic artifact snapshots for docs and search."
+      }
+    }
+  },
+  "apis": {},
+  "sidebars": {
+    "default": {
+      "id": "default",
+      "items": [
+        {
+          "type": "link",
+          "text": "SearchFn",
+          "link": "/docs"
+        },
+        {
+          "type": "link",
+          "text": "Getting Started",
+          "link": "/docs/getting-started"
+        },
+        {
+          "type": "link",
+          "text": "Architecture",
+          "link": "/docs/architecture"
+        },
+        {
+          "type": "group",
+          "text": "Reference",
+          "items": [
+            {
+              "type": "link",
+              "text": "Client API",
+              "link": "/docs/reference/client"
+            },
+            {
+              "type": "link",
+              "text": "Server API",
+              "link": "/docs/reference/server"
+            },
+            {
+              "type": "group",
+              "text": "Adapters",
+              "items": [
+                {
+                  "type": "link",
+                  "text": "Adapters",
+                  "link": "/docs/reference/adapters"
+                },
+                {
+                  "type": "link",
+                  "text": "Memory Adapter",
+                  "link": "/docs/reference/adapters/memory"
+                },
+                {
+                  "type": "link",
+                  "text": "IndexedDB Adapter",
+                  "link": "/docs/reference/adapters/indexeddb"
+                },
+                {
+                  "type": "link",
+                  "text": "Postgres Adapter",
+                  "link": "/docs/reference/adapters/postgres"
+                },
+                {
+                  "type": "link",
+                  "text": "Meilisearch Adapter",
+                  "link": "/docs/reference/adapters/meilisearch"
+                },
+                {
+                  "type": "link",
+                  "text": "Elasticsearch / OpenSearch Adapter",
+                  "link": "/docs/reference/adapters/elastic-opensearch"
+                }
+              ],
+              "collapsed": false
+            }
+          ],
+          "collapsed": false
+        },
+        {
+          "type": "group",
+          "text": "Integrations",
+          "items": [
+            {
+              "type": "link",
+              "text": "DataFn Integration",
+              "link": "/docs/integrations/datafn"
+            }
+          ],
+          "collapsed": false
+        },
+        {
+          "type": "group",
+          "text": "Operations",
+          "items": [
+            {
+              "type": "link",
+              "text": "Setup",
+              "link": "/docs/operations/setup"
+            },
+            {
+              "type": "link",
+              "text": "Security",
+              "link": "/docs/operations/security"
+            },
+            {
+              "type": "link",
+              "text": "Observability",
+              "link": "/docs/operations/observability"
+            },
+            {
+              "type": "link",
+              "text": "Troubleshooting",
+              "link": "/docs/operations/troubleshooting"
+            }
+          ],
+          "collapsed": false
+        }
+      ]
+    }
+  },
+  "blog": {
+    "listRoute": "/docs/blog",
+    "feedPath": "/docs/blog/rss.xml",
+    "postOrder": [
+      "blog:alpha.mdx"
+    ],
+    "tags": {
+      "platform": {
+        "tag": "platform",
+        "slug": "platform",
+        "path": "/docs/blog/tags/platform",
+        "postIds": [
+          "blog:alpha.mdx"
+        ]
+      },
+      "release": {
+        "tag": "release",
+        "slug": "release",
+        "path": "/docs/blog/tags/release",
+        "postIds": [
+          "blog:alpha.mdx"
+        ]
+      }
+    },
+    "archives": [
+      {
+        "page": 1,
+        "path": "/docs/blog",
+        "postIds": [
+          "blog:alpha.mdx"
+        ],
+        "totalPages": 1,
+        "totalPosts": 1,
+        "pageSize": 10
+      }
+    ]
+  },
+  "embedded": {
+    "pageRoutePrefix": "/docs/embedded/page",
+    "surfaceRoutePrefix": "/docs/embedded/surface",
+    "hasSidebar": true,
+    "hasSearchTrigger": true,
+    "hasTopNavSlot": true,
+    "pages": {
+      "docs:architecture.mdx": {
+        "pageId": "docs:architecture.mdx",
+        "sourcePath": "/docs/architecture",
+        "pageRoute": "/docs/embedded/page/architecture",
+        "surfaceRoute": "/docs/embedded/surface/architecture",
+        "title": "Architecture",
+        "tocCount": 14
+      },
+      "docs:getting-started.mdx": {
+        "pageId": "docs:getting-started.mdx",
+        "sourcePath": "/docs/getting-started",
+        "pageRoute": "/docs/embedded/page/getting-started",
+        "surfaceRoute": "/docs/embedded/surface/getting-started",
+        "title": "Getting Started",
+        "tocCount": 15
+      },
+      "docs:index.mdx": {
+        "pageId": "docs:index.mdx",
+        "sourcePath": "/docs",
+        "pageRoute": "/docs/embedded/page/index",
+        "surfaceRoute": "/docs/embedded/surface/index",
+        "title": "SearchFn",
+        "tocCount": 3
+      },
+      "docs:integrations/datafn.mdx": {
+        "pageId": "docs:integrations/datafn.mdx",
+        "sourcePath": "/docs/integrations/datafn",
+        "pageRoute": "/docs/embedded/page/integrations/datafn",
+        "surfaceRoute": "/docs/embedded/surface/integrations/datafn",
+        "title": "DataFn Integration",
+        "tocCount": 8
+      },
+      "docs:operations/observability.mdx": {
+        "pageId": "docs:operations/observability.mdx",
+        "sourcePath": "/docs/operations/observability",
+        "pageRoute": "/docs/embedded/page/operations/observability",
+        "surfaceRoute": "/docs/embedded/surface/operations/observability",
+        "title": "Observability",
+        "tocCount": 6
+      },
+      "docs:operations/security.mdx": {
+        "pageId": "docs:operations/security.mdx",
+        "sourcePath": "/docs/operations/security",
+        "pageRoute": "/docs/embedded/page/operations/security",
+        "surfaceRoute": "/docs/embedded/surface/operations/security",
+        "title": "Security",
+        "tocCount": 4
+      },
+      "docs:operations/setup.mdx": {
+        "pageId": "docs:operations/setup.mdx",
+        "sourcePath": "/docs/operations/setup",
+        "pageRoute": "/docs/embedded/page/operations/setup",
+        "surfaceRoute": "/docs/embedded/surface/operations/setup",
+        "title": "Setup",
+        "tocCount": 4
+      },
+      "docs:operations/troubleshooting.mdx": {
+        "pageId": "docs:operations/troubleshooting.mdx",
+        "sourcePath": "/docs/operations/troubleshooting",
+        "pageRoute": "/docs/embedded/page/operations/troubleshooting",
+        "surfaceRoute": "/docs/embedded/surface/operations/troubleshooting",
+        "title": "Troubleshooting",
+        "tocCount": 9
+      },
+      "docs:reference/adapters/elastic-opensearch.mdx": {
+        "pageId": "docs:reference/adapters/elastic-opensearch.mdx",
+        "sourcePath": "/docs/reference/adapters/elastic-opensearch",
+        "pageRoute": "/docs/embedded/page/reference/adapters/elastic-opensearch",
+        "surfaceRoute": "/docs/embedded/surface/reference/adapters/elastic-opensearch",
+        "title": "Elasticsearch / OpenSearch Adapter",
+        "tocCount": 8
+      },
+      "docs:reference/adapters/index.mdx": {
+        "pageId": "docs:reference/adapters/index.mdx",
+        "sourcePath": "/docs/reference/adapters",
+        "pageRoute": "/docs/embedded/page/reference/adapters",
+        "surfaceRoute": "/docs/embedded/surface/reference/adapters",
+        "title": "Adapters",
+        "tocCount": 6
+      },
+      "docs:reference/adapters/indexeddb.mdx": {
+        "pageId": "docs:reference/adapters/indexeddb.mdx",
+        "sourcePath": "/docs/reference/adapters/indexeddb",
+        "pageRoute": "/docs/embedded/page/reference/adapters/indexeddb",
+        "surfaceRoute": "/docs/embedded/surface/reference/adapters/indexeddb",
+        "title": "IndexedDB Adapter",
+        "tocCount": 8
+      },
+      "docs:reference/adapters/meilisearch.mdx": {
+        "pageId": "docs:reference/adapters/meilisearch.mdx",
+        "sourcePath": "/docs/reference/adapters/meilisearch",
+        "pageRoute": "/docs/embedded/page/reference/adapters/meilisearch",
+        "surfaceRoute": "/docs/embedded/surface/reference/adapters/meilisearch",
+        "title": "Meilisearch Adapter",
+        "tocCount": 6
+      },
+      "docs:reference/adapters/memory.mdx": {
+        "pageId": "docs:reference/adapters/memory.mdx",
+        "sourcePath": "/docs/reference/adapters/memory",
+        "pageRoute": "/docs/embedded/page/reference/adapters/memory",
+        "surfaceRoute": "/docs/embedded/surface/reference/adapters/memory",
+        "title": "Memory Adapter",
+        "tocCount": 7
+      },
+      "docs:reference/adapters/postgres.mdx": {
+        "pageId": "docs:reference/adapters/postgres.mdx",
+        "sourcePath": "/docs/reference/adapters/postgres",
+        "pageRoute": "/docs/embedded/page/reference/adapters/postgres",
+        "surfaceRoute": "/docs/embedded/surface/reference/adapters/postgres",
+        "title": "Postgres Adapter",
+        "tocCount": 7
+      },
+      "docs:reference/client.mdx": {
+        "pageId": "docs:reference/client.mdx",
+        "sourcePath": "/docs/reference/client",
+        "pageRoute": "/docs/embedded/page/reference/client",
+        "surfaceRoute": "/docs/embedded/surface/reference/client",
+        "title": "Client API",
+        "tocCount": 13
+      },
+      "docs:reference/server.mdx": {
+        "pageId": "docs:reference/server.mdx",
+        "sourcePath": "/docs/reference/server",
+        "pageRoute": "/docs/embedded/page/reference/server",
+        "surfaceRoute": "/docs/embedded/surface/reference/server",
+        "title": "Server API",
+        "tocCount": 13
+      }
+    }
+  },
+  "routes": {
+    "/docs": "docs:index.mdx",
+    "/docs/architecture": "docs:architecture.mdx",
+    "/docs/blog/alpha": "blog:alpha.mdx",
+    "/docs/getting-started": "docs:getting-started.mdx",
+    "/docs/integrations/datafn": "docs:integrations/datafn.mdx",
+    "/docs/operations/observability": "docs:operations/observability.mdx",
+    "/docs/operations/security": "docs:operations/security.mdx",
+    "/docs/operations/setup": "docs:operations/setup.mdx",
+    "/docs/operations/troubleshooting": "docs:operations/troubleshooting.mdx",
+    "/docs/reference/adapters": "docs:reference/adapters/index.mdx",
+    "/docs/reference/adapters/elastic-opensearch": "docs:reference/adapters/elastic-opensearch.mdx",
+    "/docs/reference/adapters/indexeddb": "docs:reference/adapters/indexeddb.mdx",
+    "/docs/reference/adapters/meilisearch": "docs:reference/adapters/meilisearch.mdx",
+    "/docs/reference/adapters/memory": "docs:reference/adapters/memory.mdx",
+    "/docs/reference/adapters/postgres": "docs:reference/adapters/postgres.mdx",
+    "/docs/reference/client": "docs:reference/client.mdx",
+    "/docs/reference/server": "docs:reference/server.mdx"
+  }
+}

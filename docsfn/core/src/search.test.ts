@@ -1,267 +1,179 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { buildSearchIndex } from "./search";
-import { DocsManifest, DocPage, BlogPost } from "./types";
-// import { InMemorySearchFn } from 'searchfn'; // Temporarily disabled - workspace linking issue
+import type { DocsManifest } from "./types";
 
-// Tests skipped until searchfn workspace linking is resolved
-
-describe.skip("buildSearchIndex", () => {
-  let basicManifest: DocsManifest;
-
-  beforeEach(() => {
-    basicManifest = {
-      site: {
-        title: "Test Docs",
-        description: "Test documentation",
+function createManifest(): DocsManifest {
+  return {
+    site: {
+      title: "Search Docs",
+      description: "Search fixture",
+    },
+    pages: {
+      "docs:index": {
+        kind: "page",
+        id: "docs:index",
+        slug: "",
+        path: "/docs",
+        title: "Home",
+        description: "Welcome to docs",
+        body: "# Home\n\nWelcome to docs",
+        headings: [{ level: 1, text: "Home", slug: "home" }],
+        frontmatter: {},
       },
-      pages: {},
-      posts: {},
-      apis: {},
-      sidebars: {},
-      routes: {},
-    };
-  });
+      "docs:adapter": {
+        kind: "page",
+        id: "docs:adapter",
+        slug: "reference/adapters/indexeddb",
+        path: "/docs/reference/adapters/indexeddb",
+        title: "IndexedDB Adapter",
+        description: "Adapter guide",
+        body: "# IndexedDB Adapter\n\nAdapter details and setup.",
+        headings: [
+          { level: 1, text: "IndexedDB Adapter", slug: "indexeddb-adapter" },
+          { level: 2, text: "Setup", slug: "setup" },
+        ],
+        frontmatter: {},
+      },
+    },
+    posts: {
+      "blog:release": {
+        kind: "post",
+        id: "blog:release",
+        slug: "release-1",
+        path: "/docs/blog/release-1",
+        title: "Release Notes",
+        date: "2026-03-01",
+        excerpt: "Release highlights",
+        tags: ["release", "platform"],
+        body: "Big release with platform improvements.",
+        frontmatter: {},
+      },
+    },
+    apis: {
+      "api:search": {
+        kind: "api",
+        id: "api:search",
+        slug: "search",
+        path: "/docs/api/search",
+        title: "Search API",
+        spec: {
+          info: {
+            title: "Search API",
+            description: "Search endpoints",
+          },
+        },
+        frontmatter: {},
+      },
+    },
+    sidebars: {},
+    routes: {},
+  };
+}
 
-  it("should create a search index from pages", async () => {
-    const page: DocPage = {
-      kind: "page",
-      id: "test-page",
-      slug: "test-page",
-      path: "/test-page",
-      title: "Test Page Title",
-      description: "This is a test page",
-      body: "Page content with searchable text.",
-      headings: [
-        { level: 1, text: "Main Heading", slug: "main-heading" },
-        { level: 2, text: "Sub Heading", slug: "sub-heading" },
-      ],
-      frontmatter: {},
-    };
-
-    basicManifest.pages["test-page"] = page;
-
-    const snapshot = await buildSearchIndex(basicManifest);
-
-    expect(snapshot).toBeDefined();
-    expect(snapshot).toHaveProperty("docs");
-    expect(snapshot).toHaveProperty("index");
-
-    // Verify we can import and search the snapshot
-    const searchEngine = new InMemorySearchFn({
-      fields: ["title", "description", "headings", "tags", "body"],
-    });
-    searchEngine.importSnapshot(snapshot);
-
-    const results = searchEngine.searchDetailed("Test Page", {
-      includeStored: true,
-    });
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].document.title).toBe("Test Page Title");
-    expect(results[0].document.path).toBe("/test-page");
-  });
-
-  it("should create a search index from blog posts", async () => {
-    const post: BlogPost = {
-      kind: "post",
-      id: "test-post",
-      slug: "test-post",
-      path: "/blog/test-post",
-      title: "Test Blog Post",
-      date: "2026-01-18",
-      excerpt: "A short excerpt",
-      tags: ["testing", "docs"],
-      author: "Test Author",
-      body: "Blog post content here.",
-      frontmatter: {},
-    };
-
-    basicManifest.posts["test-post"] = post;
-
-    const snapshot = await buildSearchIndex(basicManifest);
-
-    const searchEngine = new InMemorySearchFn({
-      fields: ["title", "description", "headings", "tags", "body"],
-    });
-    searchEngine.importSnapshot(snapshot);
-
-    const results = searchEngine.searchDetailed("testing", {
-      includeStored: true,
-    });
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].document.kind).toBe("post");
-    expect(results[0].document.title).toBe("Test Blog Post");
-  });
-
-  it("should index multiple pages and posts", async () => {
-    basicManifest.pages["page1"] = {
-      kind: "page",
-      id: "page1",
-      slug: "page1",
-      path: "/page1",
-      title: "Authentication Guide",
-      description: "Learn about authentication",
-      body: "Authentication is important for security.",
-      headings: [],
-      frontmatter: {},
-    };
-
-    basicManifest.pages["page2"] = {
-      kind: "page",
-      id: "page2",
-      slug: "page2",
-      path: "/page2",
-      title: "API Reference",
-      description: "API documentation",
-      body: "API endpoints and usage.",
-      headings: [],
-      frontmatter: {},
-    };
-
-    basicManifest.posts["post1"] = {
-      kind: "post",
-      id: "post1",
-      slug: "post1",
-      path: "/blog/post1",
-      title: "Release Notes",
-      date: "2026-01-18",
-      tags: ["release", "news"],
-      body: "New features released today.",
-      frontmatter: {},
-    };
-
-    const snapshot = await buildSearchIndex(basicManifest);
-
-    const searchEngine = new InMemorySearchFn({
-      fields: ["title", "description", "headings", "tags", "body"],
-    });
-    searchEngine.importSnapshot(snapshot);
-
-    // Should find authentication page
-    const authResults = searchEngine.searchDetailed("authentication", {
-      includeStored: true,
-    });
-    expect(authResults.length).toBeGreaterThan(0);
-    expect(authResults[0].document.title).toBe("Authentication Guide");
-
-    // Should find release post
-    const releaseResults = searchEngine.searchDetailed("release", {
-      includeStored: true,
-    });
-    expect(releaseResults.length).toBeGreaterThan(0);
-    expect(releaseResults[0].document.title).toBe("Release Notes");
-  });
-
-  it("should index headings text for better search", async () => {
-    const page: DocPage = {
-      kind: "page",
-      id: "advanced",
-      slug: "advanced",
-      path: "/advanced",
-      title: "Advanced Topics",
-      body: "Some content.",
-      headings: [
-        { level: 2, text: "Performance Optimization", slug: "perf" },
-        { level: 2, text: "Security Best Practices", slug: "security" },
-      ],
-      frontmatter: {},
-    };
-
-    basicManifest.pages["advanced"] = page;
-
-    const snapshot = await buildSearchIndex(basicManifest);
-
-    const searchEngine = new InMemorySearchFn({
-      fields: ["title", "description", "headings", "tags", "body"],
-    });
-    searchEngine.importSnapshot(snapshot);
-
-    // Should find page by heading content
-    const results = searchEngine.searchDetailed("optimization", {
-      includeStored: true,
-    });
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].document.title).toBe("Advanced Topics");
-  });
-
-  it("should handle empty manifest", async () => {
-    const snapshot = await buildSearchIndex(basicManifest);
-
-    expect(snapshot).toBeDefined();
-
-    const searchEngine = new InMemorySearchFn({
-      fields: ["title", "description", "headings", "tags", "body"],
-    });
-    searchEngine.importSnapshot(snapshot);
-
-    const results = searchEngine.searchDetailed("anything", {
-      includeStored: true,
-    });
-    expect(results).toHaveLength(0);
-  });
-
-  it("should support edge n-grams for autocomplete", async () => {
-    const page: DocPage = {
-      kind: "page",
-      id: "quickstart",
-      slug: "quickstart",
-      path: "/quickstart",
-      title: "Quickstart Guide",
-      body: "Get started quickly.",
-      headings: [],
-      frontmatter: {},
-    };
-
-    basicManifest.pages["quickstart"] = page;
-
-    const snapshot = await buildSearchIndex(basicManifest);
-
-    const searchEngine = new InMemorySearchFn({
-      fields: ["title", "description", "headings", "tags", "body"],
-      pipeline: {
-        enableEdgeNGrams: true,
-        edgeNGramMinLength: 3,
+describe("buildSearchIndex", () => {
+  it("indexes docs/api/blog scopes with deterministic output (TV-SEARCH-001)", async () => {
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: {
+        enabled: true,
+        scopes: ["docs", "api", "blog"],
+        bodyIndexing: "summary",
       },
     });
-    searchEngine.importSnapshot(snapshot);
 
-    // Should find with partial match
-    const results = searchEngine.searchDetailed("qui", { includeStored: true });
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].document.title).toBe("Quickstart Guide");
+    expect(artifact.engine).toBe("searchfn");
+    expect(artifact.schemaVersion).toBe(1);
+    expect(artifact.scopes).toEqual(["api", "blog", "docs"]);
+    expect(artifact.documents.map((doc) => doc.id)).toEqual([
+      "api:search",
+      "blog:release",
+      "docs:adapter",
+      "docs:index",
+    ]);
+    expect(artifact.documents.find((doc) => doc.id === "docs:adapter")?.headings).toEqual([
+      "IndexedDB Adapter",
+      "Setup",
+    ]);
   });
 
-  it("should store minimal data for client-side display", async () => {
-    const page: DocPage = {
-      kind: "page",
-      id: "test",
-      slug: "test",
-      path: "/test",
-      title: "Test",
-      description: "Description",
-      body: "Very long body content that should not be stored in search index...",
-      headings: [],
-      frontmatter: { customField: "should not be in stored data" },
+  it("is deterministic even when manifest object insertion order changes (DET-001)", async () => {
+    const manifestA = createManifest();
+    const manifestB = createManifest();
+    manifestB.pages = Object.fromEntries(Object.entries(manifestB.pages).reverse());
+    manifestB.posts = Object.fromEntries(Object.entries(manifestB.posts).reverse());
+    manifestB.apis = Object.fromEntries(Object.entries(manifestB.apis).reverse());
+
+    const artifactA = await buildSearchIndex(manifestA, {
+      search: { enabled: true, scopes: ["docs", "api", "blog"] },
+    });
+    const artifactB = await buildSearchIndex(manifestB, {
+      search: { enabled: true, scopes: ["docs", "api", "blog"] },
+    });
+
+    expect(JSON.stringify(artifactA)).toBe(JSON.stringify(artifactB));
+  });
+
+  it("throws DOCS_SEARCH_BUILD_FAILED for empty search scopes", async () => {
+    await expect(
+      buildSearchIndex(createManifest(), {
+        search: {
+          enabled: true,
+          scopes: [],
+        },
+      })
+    ).rejects.toThrowError(/DOCS_SEARCH_BUILD_FAILED|scopes cannot be empty/);
+  });
+
+  it("throws DOCS_SEARCH_BUILD_FAILED for duplicate source ids across scopes", async () => {
+    const manifest = createManifest();
+    manifest.posts = {
+      "docs:adapter": {
+        kind: "post",
+        id: "docs:adapter",
+        slug: "duplicate",
+        path: "/docs/blog/duplicate",
+        title: "Duplicate",
+        date: "2026-03-01",
+        tags: [],
+        body: "duplicate id",
+        frontmatter: {},
+      },
     };
 
-    basicManifest.pages["test"] = page;
+    await expect(
+      buildSearchIndex(manifest, {
+        search: {
+          enabled: true,
+          scopes: ["docs", "blog"],
+        },
+      })
+    ).rejects.toThrowError(/DOCS_SEARCH_BUILD_FAILED|duplicated/);
+  });
 
-    const snapshot = await buildSearchIndex(basicManifest);
-
-    const searchEngine = new InMemorySearchFn({
-      fields: ["title", "description", "headings", "tags", "body"],
+  it("emits warning diagnostics when artifact exceeds configured max bytes", async () => {
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: {
+        enabled: true,
+        scopes: ["docs", "api", "blog"],
+        maxArtifactBytes: 100,
+      },
     });
-    searchEngine.importSnapshot(snapshot);
 
-    const results = searchEngine.searchDetailed("test", {
-      includeStored: true,
+    expect(artifact.diagnostics.some((diagnostic) => diagnostic.severity === "warning")).toBe(
+      true
+    );
+    expect(artifact.bytes).toBeGreaterThan(100);
+  });
+
+  it("supports disabled body indexing", async () => {
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: {
+        enabled: true,
+        scopes: ["docs"],
+        bodyIndexing: "disabled",
+      },
     });
-    const stored = results[0].document;
 
-    // Should only store minimal display data
-    expect(stored).toHaveProperty("kind");
-    expect(stored).toHaveProperty("path");
-    expect(stored).toHaveProperty("title");
-    expect(stored).not.toHaveProperty("body");
-    expect(stored).not.toHaveProperty("frontmatter");
+    expect(artifact.bodyIndexing).toBe("disabled");
+    expect(artifact.documents.length).toBe(2);
   });
 });

@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { K } from '@uifn/core/aria/keys';
+import { moveRovingFocus } from '@uifn/core/utils/roving-focus';
 
 export interface UseRovingFocusProps {
   getItems: () => HTMLElement[];
@@ -16,51 +16,29 @@ export function useRovingFocus({ getItems, orientation, loop = true }: UseRoving
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       const items = getItems();
-      if (!items.length) return;
-
-      const currentIndex = items.findIndex((item) => item === event.target || item.contains(event.target as Node));
-      if (currentIndex === -1) return;
-
-      let nextIndex = currentIndex;
-
-      const isHorizontal = orientation !== 'vertical';
-      const isVertical = orientation !== 'horizontal';
-
-      switch (event.key) {
-        case K.ARROW_DOWN:
-          if (isVertical) nextIndex = currentIndex + 1;
-          break;
-        case K.ARROW_UP:
-          if (isVertical) nextIndex = currentIndex - 1;
-          break;
-        case K.ARROW_RIGHT:
-          if (isHorizontal) nextIndex = currentIndex + 1;
-          break;
-        case K.ARROW_LEFT:
-          if (isHorizontal) nextIndex = currentIndex - 1;
-          break;
-        case K.HOME:
-          nextIndex = 0;
-          break;
-        case K.END:
-          nextIndex = items.length - 1;
-          break;
-        default:
-          return;
+      if (!items.length) {
+        return;
       }
 
-      if (nextIndex !== currentIndex) {
+      const currentIndex = items.findIndex(
+        (item) => item === event.target || item.contains(event.target as Node)
+      );
+      if (currentIndex === -1) {
+        return;
+      }
+
+      const result = moveRovingFocus({
+        items,
+        key: event.key,
+        itemCount: items.length,
+        currentIndex,
+        orientation,
+        loop,
+      });
+      if (result.moved) {
         event.preventDefault();
-
-        if (loop) {
-          nextIndex = (nextIndex + items.length) % items.length;
-        } else {
-          nextIndex = Math.max(0, Math.min(nextIndex, items.length - 1));
-        }
-
-        const nextItem = items[nextIndex];
-        nextItem?.focus();
-        setCurrentInfo({ id: nextItem.id, index: nextIndex });
+        const nextItem = items[result.nextIndex];
+        setCurrentInfo({ id: nextItem?.id ?? null, index: result.nextIndex });
       }
     },
     [getItems, orientation, loop]

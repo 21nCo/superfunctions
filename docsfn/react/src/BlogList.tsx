@@ -1,5 +1,5 @@
-import React from 'react';
-import type { BlogPost, DocsManifest } from '@docsfn/core';
+import React from "react";
+import type { BlogPost } from "@docsfn/core";
 
 export interface BlogListProps {
   posts: BlogPost[];
@@ -7,38 +7,55 @@ export interface BlogListProps {
   onTagClick?: (tag: string) => void;
 }
 
+function comparePosts(left: BlogPost, right: BlogPost): number {
+  const leftDate = Date.parse(left.publishedAt ?? left.date);
+  const rightDate = Date.parse(right.publishedAt ?? right.date);
+  if (Number.isFinite(leftDate) && Number.isFinite(rightDate) && leftDate !== rightDate) {
+    return rightDate - leftDate;
+  }
+  return left.slug.localeCompare(right.slug, "en", {
+    sensitivity: "variant",
+    numeric: true,
+  });
+}
+
 export function BlogList({ posts, selectedTag, onTagClick }: BlogListProps) {
-  // Sort by date descending
-  const sortedPosts = [...posts].sort((a, b) => 
-    new Date(b.date).getTime() - new Date(a.date).getTime()
+  const normalizedTag =
+    typeof selectedTag === "string" && selectedTag.length > 0
+      ? selectedTag.toLowerCase()
+      : undefined;
+
+  const sortedPosts = [...posts].sort((left, right) =>
+    comparePosts(left, right)
   );
 
-  const filteredPosts = selectedTag
-    ? sortedPosts.filter(post => post.tags.includes(selectedTag))
+  const filteredPosts = normalizedTag
+    ? sortedPosts.filter((post) => post.tags.some((tag) => tag === normalizedTag))
     : sortedPosts;
 
-  // Get all unique tags
   const allTags = Array.from(
-    new Set(posts.flatMap(post => post.tags))
-  ).sort();
+    new Set(posts.flatMap((post) => post.tags))
+  ).sort((left, right) =>
+    left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
+  );
 
   return (
     <div className="docsfn-blog-list">
       {allTags.length > 0 && (
         <div className="docsfn-blog-tags">
           <button
-            onClick={() => onTagClick?.('')}
-            className={`docsfn-blog-tag ${!selectedTag ? 'active' : ''}`}
-            data-active={!selectedTag}
+            onClick={() => onTagClick?.("")}
+            className={`docsfn-blog-tag ${!normalizedTag ? "active" : ""}`}
+            data-active={!normalizedTag}
           >
             All
           </button>
-          {allTags.map(tag => (
+          {allTags.map((tag) => (
             <button
               key={tag}
               onClick={() => onTagClick?.(tag)}
-              className={`docsfn-blog-tag ${selectedTag === tag ? 'active' : ''}`}
-              data-active={selectedTag === tag}
+              className={`docsfn-blog-tag ${normalizedTag === tag ? "active" : ""}`}
+              data-active={normalizedTag === tag}
             >
               {tag}
             </button>
@@ -50,23 +67,24 @@ export function BlogList({ posts, selectedTag, onTagClick }: BlogListProps) {
         {filteredPosts.length === 0 ? (
           <p className="docsfn-blog-empty">No posts found.</p>
         ) : (
-          filteredPosts.map(post => (
+          filteredPosts.map((post) => (
             <article key={post.id} className="docsfn-blog-post">
               <a href={post.path} className="docsfn-blog-post-link">
                 <time className="docsfn-blog-post-date">
-                  {new Date(post.date).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
+                  {new Date(post.publishedAt ?? post.date).toLocaleDateString("en-US", {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
                   })}
                 </time>
                 <h2 className="docsfn-blog-post-title">{post.title}</h2>
-                {post.excerpt && (
-                  <p className="docsfn-blog-post-excerpt">{post.excerpt}</p>
-                )}
+                {post.excerpt || post.summary ? (
+                  <p className="docsfn-blog-post-excerpt">{post.excerpt ?? post.summary}</p>
+                ) : null}
+                {post.author ? <p className="docsfn-blog-post-author">By {post.author}</p> : null}
                 {post.tags.length > 0 && (
                   <div className="docsfn-blog-post-tags">
-                    {post.tags.map(tag => (
+                    {post.tags.map((tag) => (
                       <span key={tag} className="docsfn-blog-post-tag">
                         {tag}
                       </span>

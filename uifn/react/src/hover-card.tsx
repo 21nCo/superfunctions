@@ -3,6 +3,7 @@ import { useControllableState } from './hooks/use-controllable-state';
 import { useComposedRefs } from './hooks/use-composed-refs';
 import { usePosition, Side, Align } from './hooks/use-position';
 import { Portal } from './portal';
+import { Slot } from './utils/slot';
 
 /* -------------------------------------------------------------------------------------------------
  * HoverCard Root
@@ -121,18 +122,27 @@ export const HoverCard: React.FC<HoverCardProps> = (props) => {
  * -----------------------------------------------------------------------------------------------*/
 
 export interface HoverCardTriggerProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
-  asChild?: boolean; // Placeholder for polymorphism support in future
+  asChild?: boolean;
 }
 
 // HoverCardTrigger is often a link
 export const HoverCardTrigger = React.forwardRef<HTMLAnchorElement, HoverCardTriggerProps>(
   (props, ref) => {
-    const { children, onMouseEnter, onMouseLeave, onFocus, onBlur, ...domProps } = props;
+    const {
+      children,
+      onMouseEnter,
+      onMouseLeave,
+      onFocus,
+      onBlur,
+      asChild = false,
+      ...domProps
+    } = props;
     const context = useHoverCardContext();
     const composedRef = useComposedRefs(ref, context.triggerRef);
+    const TriggerComp = asChild ? Slot : 'a';
 
     return (
-      <a
+      <TriggerComp
         ref={composedRef}
         data-state={context.open ? 'open' : 'closed'}
         onMouseEnter={(e) => {
@@ -155,7 +165,7 @@ export const HoverCardTrigger = React.forwardRef<HTMLAnchorElement, HoverCardTri
         {...domProps}
       >
         {children}
-      </a>
+      </TriggerComp>
     );
   }
 );

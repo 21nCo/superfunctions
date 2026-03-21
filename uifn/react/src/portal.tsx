@@ -7,16 +7,17 @@ export interface PortalProps {
 }
 
 export const Portal: React.FC<PortalProps> = ({ children, container }) => {
-  const [mounted, setMounted] = React.useState(false);
+  const mountNode = container ?? (typeof document !== 'undefined' ? document.body : null);
+  if (!mountNode) {
+    return null;
+  }
 
-  React.useLayoutEffect(() => {
-    setMounted(true);
-    return () => setMounted(false);
-  }, []);
-
-  const mountNode = container || (typeof document !== 'undefined' ? document.body : null);
-
-  if (!mounted || !mountNode) return null;
-
-  return ReactDOM.createPortal(children, mountNode);
+  try {
+    return ReactDOM.createPortal(children, mountNode);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Portals are not currently supported')) {
+      return null;
+    }
+    throw error;
+  }
 };

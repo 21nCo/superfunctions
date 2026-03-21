@@ -69,6 +69,21 @@ export interface FileArtifactRecord {
   createdAt: string;
 }
 
+interface FileRecord {
+  fileId: string;
+  ownerId: string;
+  tenantId: string | null;
+  visibility: 'private' | 'shared' | 'public';
+}
+
+interface FilePermissionRecord {
+  fileId: string;
+  principalId?: string;
+  userId?: string;
+  tenantId?: string | null;
+  canRead?: boolean;
+}
+
 function generateId(): string {
   return `art_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -92,6 +107,80 @@ export function createProcessingService(config: ProcessingServiceConfig) {
   } = config;
 
   const QUEUE_NAME = 'filefn.processing';
+
+  async function getReadableGrantFileIds(ctx: FileProviderContext): Promise<Set<string>> {
+    if (!ctx.principalId) {
+      return new Set<string>();
+    }
+
+    const grants = await db.findMany<FilePermissionRecord>({
+      model: 'filePermissions',
+      where: [],
+      namespace,
+    });
+
+    const readable = new Set<string>();
+    for (const grant of grants) {
+      if (!grant?.canRead) continue;
+      if (
+        grant.principalId === ctx.principalId ||
+        grant.userId === ctx.principalId ||
+        (grant.tenantId && grant.tenantId === ctx.tenantId)
+      ) {
+        readable.add(grant.fileId);
+      }
+    }
+
+    return readable;
+  }
+
+  function canReadByVisibility(file: FileRecord, ctx: FileProviderContext): boolean {
+    if (file.visibility === 'public') return true;
+    if (file.ownerId === ctx.principalId) return true;
+    if (file.visibility === 'shared' && file.tenantId && file.tenantId === ctx.tenantId) return true;
+    return false;
+  }
+
+  async function requireReadableFile(fileId: string, ctx: FileProviderContext): Promise<FileRecord> {
+    const file = await db.findOne<FileRecord>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+      namespace,
+    });
+
+    if (!file) {
+      throw errors.notFound('File');
+    }
+
+    if (canReadByVisibility(file, ctx)) {
+      return file;
+    }
+
+    const grantFileIds = await getReadableGrantFileIds(ctx);
+    if (grantFileIds.has(fileId)) {
+      return file;
+    }
+
+    throw errors.forbidden();
+  }
+
+  async function getBoundArtifact(fileId: string, artifactId: string): Promise<FileArtifactRecord> {
+    const artifact = await db.findOne<FileArtifactRecord>({
+      model: 'fileArtifacts',
+      where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
+      namespace,
+    });
+
+    if (!artifact) {
+      throw errors.notFound('Artifact');
+    }
+
+    if (artifact.fileId !== fileId) {
+      throw errors.notFound('Artifact');
+    }
+
+    return artifact;
+  }
 
   return {
     isEnabled(): boolean {
@@ -126,6 +215,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         const queue = flowFn.getQueue(QUEUE_NAME);
         if (queue) {
           try {
+            const processorKey = processors.map((processor) => processor.name).sort().join(',');
             const result = await queue.add({
               fileId: input.fileId,
               versionId: input.versionId,
@@ -134,6 +224,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               size: input.size,
               fileName: input.fileName,
               tenantId: input.tenantId,
+              idempotencyKey: `processing:${input.fileId}:${input.versionId}:${processorKey}`,
             });
             return { enqueued: true, jobId: result.jobId };
           } catch {
@@ -303,6 +394,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       return artifacts;
     },
 
+    async listArtifactsForFile(
+      fileId: string,
+      ctx: FileProviderContext,
+    ): Promise<FileArtifactRecord[]> {
+      await requireReadableFile(fileId, ctx);
+      return this.listArtifacts(fileId, ctx);
+    },
+
     async getArtifactDownloadUrl(
       artifactId: string,
       ctx: FileProviderContext
@@ -327,7 +426,46 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         return { url: result.url, headers: result.headers };
       }
 
-      return { url: `proxy://${artifact.storageKey}` };
+      return { url: `/proxy/files/${artifact.fileId}/artifacts/${artifact.artifactId}/download` };
+    },
+
+    async getArtifactDownloadUrlForFile(
+      fileId: string,
+      artifactId: string,
+      ctx: FileProviderContext,
+    ): Promise<{ url: string; headers?: Record<string, string> }> {
+      await requireReadableFile(fileId, ctx);
+      const artifact = await getBoundArtifact(fileId, artifactId);
+
+      if (storage.capabilities.signedDownloadUrls && storage.signDownloadUrl) {
+        const result = await storage.signDownloadUrl({
+          key: artifact.storageKey,
+          expiresInSeconds: 900,
+        });
+        return { url: result.url, headers: result.headers };
+      }
+
+      return { url: `/proxy/files/${fileId}/artifacts/${artifactId}/download` };
+    },
+
+    async getArtifactDownloadStreamForFile(
+      fileId: string,
+      artifactId: string,
+      ctx: FileProviderContext,
+    ): Promise<{ stream: ReadableStream; contentType: string; size: number }> {
+      await requireReadableFile(fileId, ctx);
+      const artifact = await getBoundArtifact(fileId, artifactId);
+
+      if (!storage.openDownloadStream) {
+        throw new Error('Storage adapter does not support streaming');
+      }
+
+      const stream = await storage.openDownloadStream({ key: artifact.storageKey });
+      return {
+        stream: stream as unknown as ReadableStream,
+        contentType: artifact.mimeType,
+        size: artifact.size,
+      };
     },
   };
 }

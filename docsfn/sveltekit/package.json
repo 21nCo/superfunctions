@@ -1,7 +1,7 @@
 {
   "name": "@docsfn/sveltekit",
   "version": "0.0.1",
-  "description": "SvelteKit adapter for docsfn",
+  "description": "SvelteKit 2 adapter for docsfn",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

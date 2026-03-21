@@ -6,6 +6,56 @@ export interface FileFnEvent {
   requestId?: string;
 }
 
+const SECRET_EVENT_PATTERNS = [
+  /https?:\/\/[^\s"']+\?[^\s"']*(?:X-Amz-Signature|Signature|sig|token|key)=[^\s"'&]+/gi,
+  /[?&](?:X-Amz-Signature|Signature|sig|token|key)=[^\s"'&]+/gi,
+  /Bearer\s+[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+/gi,
+  /upls_live_[A-Za-z0-9\-_]+/g,
+];
+
+function shouldRedactEventKey(key: string): boolean {
+  const lowerKey = key.toLowerCase();
+  return (
+    lowerKey.includes('token') ||
+    lowerKey.includes('secret') ||
+    lowerKey.includes('password') ||
+    lowerKey.includes('signature') ||
+    lowerKey.includes('url') ||
+    lowerKey.includes('authorization')
+  );
+}
+
+function sanitizeEventValue(key: string, value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (shouldRedactEventKey(key)) return '[REDACTED]';
+
+  if (typeof value === 'string') {
+    let sanitized = value;
+    for (const pattern of SECRET_EVENT_PATTERNS) {
+      sanitized = sanitized.replace(pattern, '[REDACTED]');
+    }
+    return sanitized;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeEventValue(key, item));
+  }
+
+  if (typeof value === 'object') {
+    return sanitizeEventData(value as Record<string, unknown>);
+  }
+
+  return value;
+}
+
+function sanitizeEventData<T extends Record<string, unknown>>(data: T): T {
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    sanitized[key] = sanitizeEventValue(key, value);
+  }
+  return sanitized as T;
+}
+
 export interface UploadStartedEvent extends FileFnEvent {
   type: 'upload.started';
   uploadSessionId: string;
@@ -86,11 +136,12 @@ export function createUploadStartedEvent(
   data: Omit<UploadStartedEvent, 'type' | 'timestamp' | 'requestId'>,
   requestId?: string
 ): UploadStartedEvent {
+  const sanitizedData = sanitizeEventData(data);
   return {
     type: 'upload.started',
     timestamp: new Date().toISOString(),
     requestId,
-    ...data,
+    ...sanitizedData,
   };
 }
 
@@ -98,11 +149,12 @@ export function createPartRecordedEvent(
   data: Omit<PartRecordedEvent, 'type' | 'timestamp' | 'requestId'>,
   requestId?: string
 ): PartRecordedEvent {
+  const sanitizedData = sanitizeEventData(data);
   return {
     type: 'part.recorded',
     timestamp: new Date().toISOString(),
     requestId,
-    ...data,
+    ...sanitizedData,
   };
 }
 
@@ -110,11 +162,12 @@ export function createFileUploadedEvent(
   data: Omit<FileUploadedEvent, 'type' | 'timestamp' | 'requestId'>,
   requestId?: string
 ): FileUploadedEvent {
+  const sanitizedData = sanitizeEventData(data);
   return {
     type: 'file:uploaded',
     timestamp: new Date().toISOString(),
     requestId,
-    ...data,
+    ...sanitizedData,
   };
 }
 
@@ -122,11 +175,12 @@ export function createFileDeletedEvent(
   data: Omit<FileDeletedEvent, 'type' | 'timestamp' | 'requestId'>,
   requestId?: string
 ): FileDeletedEvent {
+  const sanitizedData = sanitizeEventData(data);
   return {
     type: 'file:deleted',
     timestamp: new Date().toISOString(),
     requestId,
-    ...data,
+    ...sanitizedData,
   };
 }
 

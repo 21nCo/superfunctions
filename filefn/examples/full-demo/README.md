@@ -30,7 +30,7 @@ This project demonstrates the full capabilities of FileFn including:
    npm run dev
    ```
 
-   Server will start on `http://localhost:3000`.
+   Server will start on `http://localhost:3001`.
 
 3. **Start Client**
    Navigate to `examples/full-demo/client`:
@@ -41,9 +41,28 @@ This project demonstrates the full capabilities of FileFn including:
    ```
 
    Client will start on `http://localhost:5173`.
+   If the demo server is on a different port, set `VITE_FILEFN_SERVER_URL` when starting the client.
 
 4. **Verify**
    - Open `http://localhost:5173`
    - Upload a file (e.g., an image)
    - See it appear in the list
    - Click Download or Delete
+
+## Automated Smoke Check (Optional)
+
+With the server running, execute:
+
+```bash
+node filefn/examples/full-demo/smoke.mjs
+```
+
+This verifies upload, list, download, and delete using the demo's canonical `@filefn/*` package flow.
+
+If default ports are already in use, run:
+
+```bash
+PORT=3101 npm --prefix filefn/examples/full-demo/server run dev
+VITE_FILEFN_SERVER_URL=http://localhost:3101 npm --prefix filefn/examples/full-demo/client run dev -- --port 5174
+FILEFN_DEMO_BASE_URL=http://localhost:3101/filefn FILEFN_DEMO_CLIENT_BASE=http://localhost:5174 node filefn/examples/full-demo/smoke.mjs
+```
