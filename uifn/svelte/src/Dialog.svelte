@@ -1,6 +1,16 @@
 <script lang="ts">
   import { createDialog } from '@uifn/core/primitives/dialog';
   import { setContext } from 'svelte';
+  import { createSveltePublicId } from './internal/id';
+
+  interface DialogContext {
+    open: boolean;
+    modal: boolean;
+    baseId: string;
+    setOpen: (value: boolean) => void;
+    setTriggerElement: (element: HTMLElement) => void;
+    triggerElement: HTMLElement | null;
+  }
 
   interface Props {
     open?: boolean;
@@ -11,14 +21,19 @@
   }
 
   let { open: openProp, defaultOpen, onOpenChange, modal = true, children }: Props = $props();
+  const initialOpen = (() => openProp)();
+  const initialDefaultOpen = (() => defaultOpen)();
+  const notifyOpenChange = (open: boolean) => onOpenChange?.(open);
 
   const machine = createDialog({
-    open: openProp,
-    defaultOpen,
-    onOpenChange
+    open: initialOpen,
+    defaultOpen: initialDefaultOpen,
+    onOpenChange: notifyOpenChange
   });
 
   let state = $state(machine.state);
+  let triggerElement = $state<HTMLElement | null>(null);
+  let previousOpen = initialOpen ?? initialDefaultOpen ?? false;
 
   $effect(() => {
     return machine.subscribe((newState) => {
@@ -29,11 +44,7 @@
   // Sync prop changes
   $effect(() => {
     if (openProp !== undefined && openProp !== state.open) {
-      // machine.actions.setOpen(openProp); // This might cause loop if not careful, but needed for controlled
-      // Actually `createDialog` doesn't handle prop updates automatically.
-      // We should probably rely on the machine's internal state if uncontrolled, 
-      // or override it if controlled.
-      // But for this simple machine, let's just use it as state holder.
+      machine.actions.syncOpen(openProp);
     }
   });
 
@@ -49,12 +60,27 @@
   // Derive actual open state
   let isOpen = $derived(openProp !== undefined ? openProp : state.open);
 
-  const baseId = `dialog-${Math.random().toString(36).substr(2, 9)}`;
+  const baseId = createSveltePublicId(undefined, {
+    prefix: 'dialog',
+    slot: 'root',
+  });
 
-  setContext('dialog', {
+  $effect(() => {
+    if (previousOpen && !isOpen) {
+      queueMicrotask(() => {
+        triggerElement?.focus();
+      });
+    }
+
+    previousOpen = isOpen;
+  });
+
+  setContext<DialogContext>('dialog', {
     get open() { return isOpen; },
     get modal() { return modal; },
     setOpen,
+    get triggerElement() { return triggerElement; },
+    setTriggerElement: (element: HTMLElement) => { triggerElement = element; },
     baseId
   });
 </script>

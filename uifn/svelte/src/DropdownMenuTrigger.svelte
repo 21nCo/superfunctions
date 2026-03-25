@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface DropdownMenuContext {
+    open: boolean;
+    contentId: string;
+    setOpen: (value: boolean) => void;
+    setTriggerElement: (el: HTMLElement) => void;
+    setOpenFocusTarget: (value: 'first' | 'last') => void;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -9,7 +18,11 @@
   }
 
   let { children, class: className, onClick, onKeyDown, ...rest }: Props = $props();
-  const context = getContext<any>('dropdown-menu');
+  const context = getRequiredContext<DropdownMenuContext>(
+    'dropdown-menu',
+    'DropdownMenuTrigger',
+    'DropdownMenu components must be used within a DropdownMenu'
+  );
   let ref = $state<HTMLElement>();
 
   onMount(() => {
@@ -24,6 +37,7 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
+      context.setOpenFocusTarget(e.key === 'ArrowUp' ? 'last' : 'first');
       if (!context.open) context.setOpen(true);
     }
     onKeyDown?.(e);
@@ -35,6 +49,7 @@
   type="button"
   aria-haspopup="menu"
   aria-expanded={context.open}
+  aria-controls={context.open ? context.contentId : undefined}
   data-state={context.open ? 'open' : 'closed'}
   onclick={handleClick}
   onkeydown={handleKeyDown}

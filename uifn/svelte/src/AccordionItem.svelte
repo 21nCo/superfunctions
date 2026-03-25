@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getContext, setContext } from 'svelte';
+  import { setContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
   
   interface Props {
     value: string;
@@ -9,19 +10,24 @@
   }
 
   let { value, disabled = false, children, class: className, ...rest }: Props = $props();
+  const getValue = () => value;
 
-  const accordion = getContext<any>('accordion');
+  const accordion = getRequiredContext<any>(
+    'accordion',
+    'AccordionItem',
+    'Accordion components must be used within Accordion'
+  );
   
   let open = $derived(
     accordion.type === 'single' 
-      ? accordion.value === value 
-      : (accordion.value as string[]).includes(value)
+      ? accordion.value === getValue() 
+      : (accordion.value as string[]).includes(getValue())
   );
   
   let itemDisabled = $derived(accordion.disabled || disabled);
 
   setContext('accordion-item', { 
-    value, 
+    get value() { return getValue(); },
     get open() { return open }, 
     get disabled() { return itemDisabled } 
   });

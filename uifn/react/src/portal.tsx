@@ -7,6 +7,16 @@ export interface PortalProps {
 }
 
 export const Portal: React.FC<PortalProps> = ({ children, container }) => {
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return null;
+  }
+
   const mountNode = container ?? (typeof document !== 'undefined' ? document.body : null);
   if (!mountNode) {
     return null;

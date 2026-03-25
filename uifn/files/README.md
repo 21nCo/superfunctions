@@ -1,12 +1,12 @@
 # @uifn/files
 
-Experimental file UX state helpers in the `uifn` package family.
+Experimental file UX helper/state factories in the `uifn` package family.
 
 ## Status
 
-Experimental
+Experimental. This package is public but not part of the GA adapter bar.
 
-Phase 06 boundary decision: `@uifn/files` remains public inside the `uifn` package family as an Experimental package.
+The canonical package matrix and compatibility matrix live in the root `uifn/README.md`.
 
 ## Installation
 
@@ -14,9 +14,15 @@ Phase 06 boundary decision: `@uifn/files` remains public inside the `uifn` packa
 npm install @uifn/files
 ```
 
+## Usage
+
+```ts
+import { createFileDropzone, createUploadProgressList } from "@uifn/files";
+```
+
 ## Public API
 
-This package currently exports typed factory helpers (not framework UI components):
+Canonical helper factories (preferred imports):
 
 - `createFileDropzone`
 - `createUploadProgressList`
@@ -25,11 +31,20 @@ This package currently exports typed factory helpers (not framework UI component
 - `createPricingPlans`
 - `createUsageAnalytics`
 
-The package boundary is intentionally narrow: it provides file UX state/helper factories and does not claim parity with the core primitives adapter catalog.
+Compatibility aliases (still shipped, but secondary to the `create*` helpers above):
 
-## Compatibility
+- `FileDropzone`
+- `UploadProgressList`
+- `FileList`
+- `QuotaUsageBar`
+- `PricingPlans`
+- `UsageAnalytics`
 
-- Node.js: `18.x`, `20.x`, `22.x`
+`@uifn/files` does not claim framework component exports, primitive-family parity, or GA adapter status.
+
+## Release Policy
+
+See the root `uifn/README.md` for the compatibility matrix and the `verify:uifn-release` contract. This package remains Experimental and is only expected to satisfy truthful package-boundary, export-map, and pack-hygiene checks.
 
 ## License
 

@@ -22,6 +22,7 @@
     itemHeight, 
     children, 
     height, 
+    // Public helper contract: default overscan remains 3.
     overscan = 3, 
     class: className,
     style,

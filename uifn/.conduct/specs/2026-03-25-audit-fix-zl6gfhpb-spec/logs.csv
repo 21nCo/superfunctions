@@ -1,0 +1,13 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-25T06:20:11Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec
+2026-03-25T07:29:02Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_00,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_00-2026-03-25-04qlb2ak-report.md
+2026-03-25T07:38:15Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_01,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_01-2026-03-25-073815-report.md
+2026-03-25T07:53:51Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_02,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_02-2026-03-25-5j1qvzwb-report.md
+2026-03-25T08:13:32Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_03,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_03-2026-03-25-omyswvpq-report.md
+2026-03-25T08:30:14Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_04,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_04-2026-03-25-083014-report.md
+2026-03-25T09:28:11Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_05,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_05-2026-03-25-k7p9m2qx-report.md
+2026-03-25T10:42:42Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_06,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_06-2026-03-25-b7k4n2qd-report.md
+2026-03-25T11:07:34Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_07,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_07-2026-03-25-q4m8n1zr-report.md
+2026-03-25T11:15:02Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_08,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_08-2026-03-25-x6d9r2mv-report.md
+2026-03-25T11:42:09Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_09,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_09-2026-03-25-o02go6gh-report.md
+2026-03-25T11:53:55Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_10,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/phase-reports/PHASE_10-2026-03-25-r6t5zpzo-report.md

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createSwitch } from './switch';
 
 describe('switch primitive', () => {
@@ -11,6 +11,8 @@ describe('switch primitive', () => {
 
     machine.actions.toggle();
     expect(machine.state.checked).toBe(true);
+    expect(machine.state.ariaChecked).toBe('true');
+    expect(machine.state.pressed).toBe(true);
     expect(machine.actions.getFormValue()).toEqual({ alerts: 'on' });
   });
 
@@ -23,5 +25,24 @@ describe('switch primitive', () => {
     machine.actions.toggle();
     expect(machine.state.checked).toBe(false);
     expect(machine.state.lastError?.code).toBe('UIFN_ERR_DISABLED_INTERACTION');
+  });
+
+  it('keeps controlled checked state stable until syncChecked is applied', () => {
+    const onCheckedChange = vi.fn();
+    const machine = createSwitch({
+      checked: false,
+      name: 'alerts',
+      onCheckedChange,
+    });
+
+    machine.actions.toggle();
+    expect(onCheckedChange).toHaveBeenCalledWith(true);
+    expect(machine.state.checked).toBe(false);
+    expect(machine.actions.getFormValue()).toEqual({});
+
+    machine.actions.syncChecked(true);
+    expect(machine.state.checked).toBe(true);
+    expect(machine.state.ariaChecked).toBe('true');
+    expect(machine.state.pressed).toBe(true);
   });
 });

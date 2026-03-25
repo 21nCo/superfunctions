@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface ContextMenuContext {
+    setOpen: (value: boolean) => void;
+  }
 
   interface Props {
     disabled?: boolean;
@@ -10,7 +14,11 @@
   }
 
   let { disabled = false, onSelect, onClick, children, class: className, ...rest }: Props = $props();
-  const context = getContext<any>('context-menu');
+  const context = getRequiredContext<ContextMenuContext>(
+    'context-menu',
+    'ContextMenuItem',
+    'ContextMenuItem must be used within a ContextMenu'
+  );
 
   function handleSelect(e: Event) {
     if (disabled) return;

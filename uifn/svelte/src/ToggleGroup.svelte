@@ -27,13 +27,18 @@
     class: className,
     ...rest
   }: Props = $props();
+  const initialType = (() => type)();
+  const initialValue = (() => valueProp)();
+  const initialDefaultValue = (() => defaultValue)();
+  const initialDisabled = (() => disabled)();
+  const notifyValueChange = (value: string | string[]) => onValueChange?.(value);
 
   const machine = createToggleGroup({
-    type,
-    value: valueProp,
-    defaultValue,
-    disabled,
-    onValueChange
+    type: initialType,
+    value: initialValue,
+    defaultValue: initialDefaultValue,
+    disabled: initialDisabled,
+    onValueChange: notifyValueChange
   });
 
   let state = $state(machine.state);

@@ -1,10 +1,12 @@
 # @uifn/core
 
-Framework-agnostic runtime semantics, state helpers, and accessibility utilities for `uifn` primitives.
+Framework-agnostic runtime semantics, state helpers, accessibility utilities, and canonical errors for `uifn` primitives.
 
 ## Status
 
-GA
+GA. This package is part of the release-blocking `uifn` surface.
+
+The canonical package matrix and compatibility matrix live in the root `uifn/README.md`.
 
 ## Installation
 
@@ -21,20 +23,23 @@ import { createMachine } from "@uifn/core/state/machine";
 import { generateId } from "@uifn/core/utils/id";
 ```
 
-## Package Surface
+## Public Surface
 
-- `@uifn/core/primitives/*`
+- `@uifn/core`
+- `@uifn/core/aria`
 - `@uifn/core/aria/*`
+- `@uifn/core/state`
 - `@uifn/core/state/*`
+- `@uifn/core/utils`
 - `@uifn/core/utils/*`
+- `@uifn/core/errors`
+- `@uifn/core/primitives/*`
 
-`@uifn/core` does not export adapter display helpers (`Avatar`, `Badge`, `Label`, `Separator`, `VirtualizedList`) directly; those are shipped by adapter packages.
+`@uifn/core` does not export adapter display helpers such as `Avatar`, `Badge`, `Label`, `Separator`, or `VirtualizedList`, and it does not define public adapter-only helper behavior such as `AvatarFallback` delay handling.
 
-## Adapter Packages
+## Release Policy
 
-- `@uifn/react` (GA)
-- `@uifn/svelte` (GA)
-- `@uifn/vue` (Experimental)
+See the root `uifn/README.md` for the compatibility matrix and the `verify:uifn-release` contract.
 
 ## License
 

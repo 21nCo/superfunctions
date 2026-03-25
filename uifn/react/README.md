@@ -4,7 +4,9 @@ Unstyled, accessible React primitives built on `@uifn/core`.
 
 ## Status
 
-GA
+GA. This package is release-blocking together with `@uifn/core` and `@uifn/svelte`.
+
+The canonical package matrix and compatibility matrix live in the root `uifn/README.md`.
 
 ## Installation
 
@@ -28,25 +30,26 @@ export function Example() {
 
 ## Public Surface
 
-`@uifn/react` exports component families including:
+`@uifn/react` currently ships the family names Accordion, AlertDialog, Avatar, Badge, Checkbox, Collapsible, Combobox, ContextMenu, Dialog, DropdownMenu, HoverCard, Label, MenuBar, Popover, Progress, RadioGroup, ScrollArea, Select, Separator, Slider, Switch, Tabs, Toast, Toggle, ToggleGroup, Toolbar, Tooltip, and VirtualizedList.
 
-- Accordion, AlertDialog, Avatar, Badge, Checkbox, Collapsible, Combobox
-- ContextMenu, Dialog, DropdownMenu, HoverCard, Label, MenuBar, Popover
-- Progress, RadioGroup, ScrollArea, Select, Separator, Slider, Switch
-- Tabs, Toast, Toggle, ToggleGroup, Toolbar, Tooltip, VirtualizedList
-- `Portal`, `Presence`, and `Slot` helper exports
+The root React entry point is the authoritative source for the exact currently shipped symbols. This README intentionally names family roots and helper exports only; it does not imply unsupported extras such as `TooltipProvider`, `TooltipArrow`, `ComboboxEmpty`, or combobox multiple selection.
 
-## Display Helpers Contract
+Helper exports:
+
+- `Portal`
+- `Presence`
+- `Slot`
+
+Display-helper contract:
 
 - `Avatar`, `Badge`, `Label`, `Separator`, and `VirtualizedList` are part of the GA React adapter surface.
-- `AvatarFallback` rendering is deterministic: it renders whenever the image is not in the `loaded` state, with optional `delayMs` gating before fallback appears.
+- `AvatarFallback` rendering is deterministic: it renders when the avatar image is not in the `loaded` state and optional `delayMs` postpones fallback visibility until that delay elapses.
 - `VirtualizedList` is adapter-only and not part of `@uifn/core`.
-- `VirtualizedList` windowing is deterministic: `overscan` defaults to `3`; render contract is `renderItem(item, index)` with required `items`, `itemHeight`, and `height`.
+- `VirtualizedList` defaults `overscan` to `3`.
 
-## Compatibility
+## Release Policy
 
-- React: `18.2+`
-- Node.js: `18.x`, `20.x`, `22.x`
+See the root `uifn/README.md` for the compatibility matrix, the release-blocking package matrix, and the `verify:uifn-release` contract.
 
 ## License
 

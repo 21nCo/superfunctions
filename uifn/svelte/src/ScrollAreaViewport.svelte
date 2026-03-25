@@ -1,5 +1,11 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface ScrollAreaContext {
+    setViewport: (el: HTMLElement) => void;
+    updateMetrics: () => void;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -7,12 +13,24 @@
   }
 
   let { children, class: className, ...rest }: Props = $props();
-  const context = getContext<any>('scroll-area');
+  const context = getRequiredContext<ScrollAreaContext>(
+    'scroll-area',
+    'ScrollAreaViewport',
+    'ScrollAreaViewport must be used within a ScrollArea'
+  );
   let ref = $state<HTMLElement>();
 
   onMount(() => {
-    if (ref) context.setViewport(ref);
+    if (ref) {
+      context.setViewport(ref);
+      context.updateMetrics();
+    }
   });
+
+  function handleScroll(event: Event) {
+    rest.onscroll?.(event);
+    context.updateMetrics();
+  }
 </script>
 
 <div
@@ -21,6 +39,7 @@
   class={className}
   style="width: 100%; height: 100%; border-radius: inherit; overflow: scroll;"
   {...rest}
+  onscroll={handleScroll}
 >
   {@render children?.()}
 </div>

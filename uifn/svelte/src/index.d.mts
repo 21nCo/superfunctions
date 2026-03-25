@@ -54,6 +54,8 @@ export { default as DialogPortal } from './DialogPortal.svelte';
 export { default as DialogOverlay } from './DialogOverlay.svelte';
 export { default as DialogContent } from './DialogContent.svelte';
 export { default as DialogClose } from './DialogClose.svelte';
+export { default as DialogTitle } from './DialogTitle.svelte';
+export { default as DialogDescription } from './DialogDescription.svelte';
 export { default as AlertDialog } from './AlertDialog.svelte';
 export { default as AlertDialogTrigger } from './AlertDialogTrigger.svelte';
 export { default as AlertDialogPortal } from './AlertDialogPortal.svelte';

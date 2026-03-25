@@ -1,4 +1,5 @@
 import React, { createContext, useContext } from 'react';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Progress Root
@@ -64,8 +65,11 @@ export interface ProgressIndicatorProps extends React.HTMLAttributes<HTMLDivElem
 
 export const ProgressIndicator = React.forwardRef<HTMLDivElement, ProgressIndicatorProps>(
   (props, ref) => {
-    const context = useContext(ProgressContext);
-    if (!context) throw new Error('ProgressIndicator must be used within Progress');
+    const context = assertReactContext(
+      useContext(ProgressContext),
+      'ProgressIndicator',
+      'ProgressIndicator must be used within Progress'
+    );
 
     const percent = context.value !== null ? (context.value / context.max) * 100 : undefined;
 

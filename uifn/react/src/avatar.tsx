@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { AvatarStatus } from '@uifn/core/primitives/avatar';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Avatar Root
@@ -13,9 +14,11 @@ interface AvatarContextValue {
 const AvatarContext = createContext<AvatarContextValue | undefined>(undefined);
 
 const useAvatarContext = () => {
-    const context = useContext(AvatarContext);
-    if (!context) throw new Error('Avatar components must be used within an Avatar');
-    return context;
+    return assertReactContext(
+      useContext(AvatarContext),
+      'Avatar',
+      'Avatar components must be used within an Avatar'
+    );
 };
 
 export interface AvatarProps extends React.HTMLAttributes<HTMLSpanElement> {
@@ -91,6 +94,7 @@ export const AvatarFallback = React.forwardRef<HTMLSpanElement, AvatarFallbackPr
     const [canRender, setCanRender] = useState(delayMs === undefined);
 
     useEffect(() => {
+        // The fallback delay is part of the public helper contract.
         if (delayMs !== undefined) {
             const timer = setTimeout(() => setCanRender(true), delayMs);
             return () => clearTimeout(timer);
@@ -98,7 +102,7 @@ export const AvatarFallback = React.forwardRef<HTMLSpanElement, AvatarFallbackPr
     }, [delayMs]);
 
     if (context.status === 'loaded') return null;
-    if (!canRender && context.status === 'loading') return null;
+    if (!canRender) return null;
 
     return (
       <span

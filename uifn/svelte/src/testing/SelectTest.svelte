@@ -7,11 +7,11 @@
   import SelectItem from '../SelectItem.svelte';
   import SelectItemIndicator from '../SelectItemIndicator.svelte';
 
-  let { defaultValue = '' } = $props();
+  let { defaultValue = '', triggerLabel = 'Select an item' } = $props();
 </script>
 
 <Select {defaultValue}>
-  <SelectTrigger>
+  <SelectTrigger aria-label={triggerLabel}>
     <SelectValue placeholder="Select an item" />
   </SelectTrigger>
   <SelectContent>

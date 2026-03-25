@@ -36,6 +36,7 @@ export interface ScrollAreaState {
 export interface ScrollAreaActions {
   setViewportMetrics: (metrics: Partial<ScrollMetrics>) => void;
   onViewportScroll: (position: { top?: number; left?: number }) => void;
+  scrollTo: (position: { top?: number; left?: number }) => void;
   dragVerticalThumb: (positionPercent: number) => void;
   dragHorizontalThumb: (positionPercent: number) => void;
 }
@@ -107,6 +108,22 @@ function toScrollOffset(positionPercent: number, scrollSize: number, clientSize:
   return (clamp(positionPercent, 0, 100) / 100) * maxScroll;
 }
 
+function clampViewport(viewport: ScrollMetrics): ScrollMetrics {
+  return {
+    ...viewport,
+    scrollTop: clamp(
+      viewport.scrollTop,
+      0,
+      Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    ),
+    scrollLeft: clamp(
+      viewport.scrollLeft,
+      0,
+      Math.max(0, viewport.scrollWidth - viewport.clientWidth)
+    ),
+  };
+}
+
 export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
   const viewport = createDefaultViewport();
   const computed = resolveStateFromViewport(viewport);
@@ -124,10 +141,10 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
   const actions: ScrollAreaActions = {
     setViewportMetrics(metrics) {
       const state = store.getState();
-      const nextViewport: ScrollMetrics = {
+      const nextViewport = clampViewport({
         ...state.viewport,
         ...metrics,
-      };
+      });
       const nextComputed = resolveStateFromViewport(nextViewport);
       store.patchState({
         viewport: nextViewport,
@@ -138,17 +155,11 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
     },
     onViewportScroll(position) {
       const state = store.getState();
-      const nextViewport: ScrollMetrics = {
+      const nextViewport = clampViewport({
         ...state.viewport,
-        scrollTop:
-          position.top !== undefined
-            ? clamp(position.top, 0, Math.max(0, state.viewport.scrollHeight - state.viewport.clientHeight))
-            : state.viewport.scrollTop,
-        scrollLeft:
-          position.left !== undefined
-            ? clamp(position.left, 0, Math.max(0, state.viewport.scrollWidth - state.viewport.clientWidth))
-            : state.viewport.scrollLeft,
-      };
+        scrollTop: position.top !== undefined ? position.top : state.viewport.scrollTop,
+        scrollLeft: position.left !== undefined ? position.left : state.viewport.scrollLeft,
+      });
       const nextComputed = resolveStateFromViewport(nextViewport);
       const meta: ChangeMeta<number> = {
         source: 'user',
@@ -156,6 +167,33 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
         previousValue: state.viewport.scrollTop,
         nextValue: nextViewport.scrollTop,
         inputModality: 'pointer',
+      };
+      store.patchState(
+        {
+          viewport: nextViewport,
+          vertical: nextComputed.vertical,
+          horizontal: nextComputed.horizontal,
+          cornerVisible: nextComputed.cornerVisible,
+          lastInteraction: 'viewport',
+          lastChangeMeta: meta,
+          lastError: null,
+        },
+        meta
+      );
+    },
+    scrollTo(position) {
+      const state = store.getState();
+      const nextViewport = clampViewport({
+        ...state.viewport,
+        scrollTop: position.top !== undefined ? position.top : state.viewport.scrollTop,
+        scrollLeft: position.left !== undefined ? position.left : state.viewport.scrollLeft,
+      });
+      const nextComputed = resolveStateFromViewport(nextViewport);
+      const meta: ChangeMeta<number> = {
+        source: 'programmatic',
+        reason: 'programmatic-scroll',
+        previousValue: state.viewport.scrollTop,
+        nextValue: nextViewport.scrollTop,
       };
       store.patchState(
         {
@@ -190,10 +228,10 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
         state.viewport.scrollHeight,
         state.viewport.clientHeight
       );
-      const nextViewport: ScrollMetrics = {
+      const nextViewport = clampViewport({
         ...state.viewport,
         scrollTop: nextScrollTop,
-      };
+      });
       const nextComputed = resolveStateFromViewport(nextViewport);
       const meta: ChangeMeta<number> = {
         source: 'user',
@@ -238,10 +276,10 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
         state.viewport.scrollWidth,
         state.viewport.clientWidth
       );
-      const nextViewport: ScrollMetrics = {
+      const nextViewport = clampViewport({
         ...state.viewport,
         scrollLeft: nextScrollLeft,
-      };
+      });
       const nextComputed = resolveStateFromViewport(nextViewport);
       const meta: ChangeMeta<number> = {
         source: 'user',

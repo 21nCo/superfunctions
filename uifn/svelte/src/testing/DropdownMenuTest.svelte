@@ -16,5 +16,6 @@
     <DropdownMenuSeparator />
     <DropdownMenuItem>Item 1</DropdownMenuItem>
     <DropdownMenuItem disabled>Item 2</DropdownMenuItem>
+    <DropdownMenuItem>Item 3</DropdownMenuItem>
   </DropdownMenuContent>
 </DropdownMenu>

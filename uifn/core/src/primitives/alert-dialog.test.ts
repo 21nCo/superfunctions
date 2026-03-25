@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetIdCounters } from '../utils/id';
 import { createAlertDialog } from './alert-dialog';
 
 describe('alert-dialog primitive', () => {
+  beforeEach(() => {
+    resetIdCounters();
+  });
+
   it('disallows outside click and records documented error', () => {
     const alertDialog = createAlertDialog({
       defaultOpen: true,
@@ -20,6 +25,7 @@ describe('alert-dialog primitive', () => {
       returnFocusId: 'alert-trigger',
     });
 
+    expect(alertDialog.state.scrollLocked).toBe(true);
     alertDialog.actions.onEscapeKeyDown();
     expect(alertDialog.state.open).toBe(false);
     expect(alertDialog.state.focusedElementId).toBe('alert-trigger');

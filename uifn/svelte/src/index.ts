@@ -66,6 +66,8 @@ import DialogPortal from './DialogPortal.svelte';
 import DialogOverlay from './DialogOverlay.svelte';
 import DialogContent from './DialogContent.svelte';
 import DialogClose from './DialogClose.svelte';
+import DialogTitle from './DialogTitle.svelte';
+import DialogDescription from './DialogDescription.svelte';
 
 import AlertDialog from './AlertDialog.svelte';
 import AlertDialogTrigger from './AlertDialogTrigger.svelte';
@@ -186,6 +188,8 @@ export {
   DialogOverlay,
   DialogContent,
   DialogClose,
+  DialogTitle,
+  DialogDescription,
   AlertDialog,
   AlertDialogTrigger,
   AlertDialogPortal,

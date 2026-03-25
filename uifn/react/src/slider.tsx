@@ -1,5 +1,6 @@
 import React, { createContext, useContext } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Slider Root
@@ -97,8 +98,11 @@ export interface SliderTrackProps extends React.HTMLAttributes<HTMLSpanElement> 
 
 export const SliderTrack = React.forwardRef<HTMLSpanElement, SliderTrackProps>(
   (props, ref) => {
-    const context = useContext(SliderContext);
-    if (!context) throw new Error('SliderTrack must be used within Slider');
+    const context = assertReactContext(
+      useContext(SliderContext),
+      'SliderTrack',
+      'SliderTrack must be used within Slider'
+    );
 
     return (
       <span
@@ -132,8 +136,11 @@ export interface SliderRangeProps extends React.HTMLAttributes<HTMLSpanElement> 
 
 export const SliderRange = React.forwardRef<HTMLSpanElement, SliderRangeProps>(
   (props, ref) => {
-    const context = useContext(SliderContext);
-    if (!context) throw new Error('SliderRange must be used within SliderTrack');
+    const context = assertReactContext(
+      useContext(SliderContext),
+      'SliderRange',
+      'SliderRange must be used within SliderTrack'
+    );
 
     // Calculate percentage based on value[0] if single thumb, or range if multiple?
     // Supporting only single thumb for simplicity first or range from 0 to value[0].
@@ -176,8 +183,11 @@ export interface SliderThumbProps extends React.HTMLAttributes<HTMLSpanElement> 
 export const SliderThumb = React.forwardRef<HTMLSpanElement, SliderThumbProps>(
   (props, ref) => {
     const { index = 0, style, ...domProps } = props;
-    const context = useContext(SliderContext);
-    if (!context) throw new Error('SliderThumb must be used within Slider');
+    const context = assertReactContext(
+      useContext(SliderContext),
+      'SliderThumb',
+      'SliderThumb must be used within Slider'
+    );
 
     const value = context.value[index] || context.min;
     const percent = ((value - context.min) / (context.max - context.min)) * 100;

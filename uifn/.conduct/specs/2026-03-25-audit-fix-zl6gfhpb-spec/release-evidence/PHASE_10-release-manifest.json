@@ -1,0 +1,115 @@
+{
+  "generatedAt": "2026-03-25T11:53:03Z",
+  "status": "blocked",
+  "specFolder": "2026-03-25-audit-fix-zl6gfhpb-spec",
+  "gitCommit": "b69090aaa83f0515924aa9b11df3b1fcd4de3a1a",
+  "workspaceRoot": "/Users/serro/.codex/worktrees/e328/superfunctions",
+  "verifiedPackages": {
+    "@uifn/core": {
+      "version": "0.0.1",
+      "status": "ga",
+      "node": ">=18 <23",
+      "peerDependencies": {},
+      "packageChecks": "pass"
+    },
+    "@uifn/react": {
+      "version": "0.0.1",
+      "status": "ga",
+      "node": ">=18 <23",
+      "peerDependencies": {
+        "react": ">=18.2.0 <20",
+        "react-dom": ">=18.2.0 <20"
+      },
+      "packageChecks": "pass"
+    },
+    "@uifn/svelte": {
+      "version": "0.0.1",
+      "status": "ga",
+      "node": ">=18 <23",
+      "peerDependencies": {
+        "svelte": ">=5.0.0 <6"
+      },
+      "packageChecks": "pass"
+    },
+    "@uifn/vue": {
+      "version": "0.0.1",
+      "status": "experimental",
+      "node": ">=18 <23",
+      "peerDependencies": {
+        "vue": ">=3.5.0 <4"
+      },
+      "packageChecks": "pass"
+    },
+    "@uifn/files": {
+      "version": "0.1.0",
+      "status": "experimental",
+      "node": ">=18 <23",
+      "peerDependencies": {},
+      "packageChecks": "pass"
+    }
+  },
+  "compatibilityMatrix": {
+    "node": [
+      "18.x",
+      "20.x",
+      "22.x"
+    ],
+    "react": "18.2+",
+    "svelte": "5.x",
+    "vueExperimental": "3.5+",
+    "browsers": [
+      "Chrome",
+      "Edge",
+      "Firefox",
+      "Safari"
+    ]
+  },
+  "cleanInstall": {
+    "command": "npm ci",
+    "status": "fail",
+    "code": "EUSAGE",
+    "reason": "Root package.json and package-lock.json are out of sync in this worktree due unrelated monorepo changes.",
+    "details": [
+      "Missing: @filefn/viewer@0.1.0 from lock file",
+      "Missing: @types/node@22.19.15 from lock file"
+    ]
+  },
+  "releaseGate": {
+    "command": "npm run verify:uifn-release",
+    "status": "fail",
+    "result": {
+      "consumerSmoke": "pass",
+      "manualA11y": "fail",
+      "warningPolicy": "pass",
+      "coverageMatrix": "pass"
+    },
+    "failure": {
+      "scope": "manual-a11y",
+      "code": "UIFN_ERR_MANUAL_EVIDENCE_INVALID",
+      "message": "Manual accessibility evidence MUST come from real browser and assistive-technology runs."
+    }
+  },
+  "docsAndExportsReview": {
+    "status": "pass",
+    "notes": [
+      "Root/package docs still limit public claims to shipped exports.",
+      "Compatibility matrix and manifest peer ranges remain aligned."
+    ]
+  },
+  "evidenceArtifacts": {
+    "coverageMatrix": "uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-coverage-matrix.md",
+    "consumerSmokeMarkdown": "uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-consumer-smoke.md",
+    "consumerSmokeJson": "uifn/.conduct/release-evidence/consumer-smoke.json",
+    "manualAccessibilityMarkdown": "uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md",
+    "manualAccessibilityJson": "uifn/.conduct/release-evidence/manual-a11y.json",
+    "rcReport": "uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_10-rc-report.md"
+  },
+  "nonGaPackages": [
+    "@uifn/vue",
+    "@uifn/files"
+  ],
+  "blockers": [
+    "Real manual browser + assistive-technology evidence for React and Svelte has not been recorded.",
+    "Root clean-install verification cannot be proven from this worktree until the unrelated lockfile drift is resolved."
+  ]
+}

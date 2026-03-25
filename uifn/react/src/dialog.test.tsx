@@ -1,152 +1,111 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import {
   Dialog,
-  DialogTrigger,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
   DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
   DialogPortal,
-  DialogOverlay
+  DialogTitle,
+  DialogTrigger,
 } from './dialog';
 
 describe('Dialog', () => {
-  it('renders and opens via trigger', async () => {
+  it('locks scroll, focuses content, closes on outside click, and restores focus', async () => {
     render(
       <Dialog>
-        <DialogTrigger>Open Dialog</DialogTrigger>
+        <DialogTrigger>Open dialog</DialogTrigger>
         <DialogPortal>
-          <DialogOverlay />
+          <DialogOverlay data-testid="overlay" />
           <DialogContent>
-            <DialogTitle>Title</DialogTitle>
-            <DialogDescription>Description</DialogDescription>
-            <DialogClose>Close</DialogClose>
+            <DialogTitle>Dialog title</DialogTitle>
+            <DialogDescription>Dialog description</DialogDescription>
+            <button>Primary action</button>
+            <DialogClose>Close dialog</DialogClose>
           </DialogContent>
         </DialogPortal>
       </Dialog>
     );
 
-    // Initial state: Content not visible
-    expect(screen.queryByText('Title')).not.toBeInTheDocument();
-
-    // Click trigger
-    fireEvent.click(screen.getByText('Open Dialog'));
-
-    // Content visible
-    expect(screen.getByText('Title')).toBeVisible();
-    expect(screen.getByText('Description')).toBeVisible();
-  });
-
-  it('closes via close button', async () => {
-    render(
-      <Dialog defaultOpen>
-        <DialogPortal>
-          <DialogContent>
-            <DialogTitle>Title</DialogTitle>
-            <DialogClose>Close</DialogClose>
-          </DialogContent>
-        </DialogPortal>
-      </Dialog>
-    );
-
-    expect(screen.getByText('Title')).toBeVisible();
-    
-    fireEvent.click(screen.getByText('Close'));
+    const trigger = screen.getByRole('button', { name: 'Open dialog' });
+    fireEvent.click(trigger);
 
     await waitFor(() => {
-        expect(screen.queryByText('Title')).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeVisible();
+      expect(document.body.style.overflow).toBe('hidden');
+      expect(screen.getByRole('button', { name: 'Primary action' })).toHaveFocus();
+    });
+
+    fireEvent.mouseDown(screen.getByTestId('overlay'));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(document.body.style.overflow).toBe('');
+      expect(trigger).toHaveFocus();
     });
   });
 
-  it('closes via escape key', async () => {
-    render(
-      <Dialog defaultOpen>
-        <DialogPortal>
-          <DialogContent>
-            <DialogTitle>Title</DialogTitle>
-          </DialogContent>
-        </DialogPortal>
-      </Dialog>
-    );
+  it('syncs controlled open state through onOpenChange and escape', async () => {
+    const ControlledDialog = () => {
+      const [open, setOpen] = React.useState(false);
+
+      return (
+        <>
+          <span data-testid="dialog-state">{open ? 'open' : 'closed'}</span>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger>Open controlled dialog</DialogTrigger>
+            <DialogPortal>
+              <DialogContent>
+                <DialogTitle>Controlled title</DialogTitle>
+              </DialogContent>
+            </DialogPortal>
+          </Dialog>
+        </>
+      );
+    };
+
+    render(<ControlledDialog />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open controlled dialog' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeVisible();
+      expect(screen.getByTestId('dialog-state')).toHaveTextContent('open');
+    });
 
     fireEvent.keyDown(document, { key: 'Escape' });
+
     await waitFor(() => {
-        expect(screen.queryByText('Title')).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByTestId('dialog-state')).toHaveTextContent('closed');
     });
   });
 
-  it('closes via outside click', async () => {
-    render(
-      <Dialog defaultOpen>
-        <DialogPortal>
-            <DialogOverlay data-testid="overlay" />
-            <DialogContent>
-                <DialogTitle>Title</DialogTitle>
-            </DialogContent>
-        </DialogPortal>
-      </Dialog>
-    );
-
-    // Clicking the overlay is effectively clicking outside the content (but inside the overlay div)
-    // My implementation detects clicks on document.
-    // If I click the overlay (which is in the portal, but outside content), it should trigger.
-    
-    // Actually, my useOutsideClick attaches to document.
-    // If I fire mousedown on the overlay, useOutsideClick checks if target is contained in Content ref.
-    // Overlay is sibling to Content in Portal (usually).
-    
-    const overlay = screen.getByTestId('overlay');
-    fireEvent.mouseDown(overlay);
-
-    await waitFor(() => {
-        expect(screen.queryByText('Title')).not.toBeInTheDocument();
-    });
-  });
-  
-  it('traps focus', async () => {
-    // This is hard to test perfectly in JSDOM, but we can check if the first element is focused on open
-    const { getByText } = render(
-      <Dialog>
-        <DialogTrigger>Open</DialogTrigger>
-        <DialogPortal>
-          <DialogContent>
-            <button>First</button>
-            <button>Second</button>
-          </DialogContent>
-        </DialogPortal>
-      </Dialog>
-    );
-
-    fireEvent.click(getByText('Open'));
-    
-    await waitFor(() => {
-        expect(getByText('First')).toHaveFocus();
-    });
-  });
-
-  it('supports asChild trigger semantics and forwards ref target', async () => {
+  it('supports asChild trigger semantics and forwards the underlying ref target', async () => {
     const anchorRef = React.createRef<HTMLAnchorElement>();
 
     render(
       <Dialog>
         <DialogTrigger asChild ref={anchorRef as unknown as React.Ref<HTMLButtonElement>}>
-          <a href="/docs">Open Docs</a>
+          <a href="#docs">Open docs</a>
         </DialogTrigger>
         <DialogPortal>
           <DialogContent>
-            <DialogTitle>AsChild Dialog</DialogTitle>
+            <DialogTitle>AsChild dialog</DialogTitle>
           </DialogContent>
         </DialogPortal>
       </Dialog>
     );
 
-    const trigger = screen.getByRole('link', { name: 'Open Docs' });
+    const trigger = screen.getByRole('link', { name: 'Open docs' });
     expect(trigger.tagName).toBe('A');
     expect(anchorRef.current?.tagName).toBe('A');
 
     fireEvent.click(trigger);
-    expect(screen.getByText('AsChild Dialog')).toBeVisible();
+
+    expect(screen.getByRole('dialog')).toBeVisible();
+    expect(screen.getByText('AsChild dialog')).toBeVisible();
   });
 });

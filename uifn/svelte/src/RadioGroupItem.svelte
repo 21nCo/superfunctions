@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getContext, setContext } from 'svelte';
+  import { setContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     value: string;
@@ -9,28 +10,37 @@
   }
 
   let { value, disabled = false, children, class: className, ...rest }: Props = $props();
+  const getValue = () => value;
 
-  const group = getContext<any>('radio-group');
+  const group = getRequiredContext<any>(
+    'radio-group',
+    'RadioGroupItem',
+    'RadioGroupItem must be used within RadioGroup'
+  );
 
-  let checked = $derived(group.value === value);
+  let checked = $derived(group.value === getValue());
   let itemDisabled = $derived(group.disabled || disabled);
+  let itemDisabledValue = $derived(itemDisabled);
 
   function handleClick() {
-    if (itemDisabled) return;
-    group.setValue(value);
+    if (itemDisabledValue) return;
+    group.setValue(getValue());
   }
 
   function handleKeyDown(e: KeyboardEvent) {
       // Basic keyboard support
       // Roving focus ideally
-      if (itemDisabled) return;
+      if (itemDisabledValue) return;
       if (e.key === ' ') {
           e.preventDefault();
-          group.setValue(value);
+          group.setValue(getValue());
       }
   }
 
-  setContext('radio-group-item', { checked, disabled: itemDisabled });
+  setContext('radio-group-item', {
+    get checked() { return checked; },
+    get disabled() { return itemDisabledValue; }
+  });
 </script>
 
 <button
