@@ -3,7 +3,7 @@ import type { AuthFnClientOptions, AuthFnErrorEnvelope } from './types.js';
 interface RequestOptions {
   method: 'GET' | 'POST' | 'DELETE';
   path: string;
-  body?: Record<string, unknown>;
+  body?: unknown;
   csrf?: boolean;
 }
 
@@ -12,6 +12,7 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
   const baseUrl = (options.baseUrl ?? '/auth').replace(/\/$/, '');
   const credentials = options.credentials ?? 'include';
   const cookieAccessor = options.cookieAccessor ?? defaultCookieAccessor;
+  const cookiePrefix = options.cookiePrefix?.trim();
 
   return {
     requestJson: async <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> => {
@@ -22,7 +23,11 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       }
 
       if (request.csrf) {
-        const csrfToken = readCookieValue(cookieAccessor(), `${readCookiePrefix(cookieAccessor())}.csrf`);
+        const cookieHeader = cookieAccessor();
+        const csrfToken = readCookieValue(
+          cookieHeader,
+          `${cookiePrefix || readCookiePrefix(cookieHeader)}.csrf`
+        );
         if (csrfToken) {
           headers.set('x-authfn-csrf', csrfToken);
         }

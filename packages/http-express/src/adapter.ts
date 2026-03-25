@@ -88,8 +88,16 @@ async function convertToExpressResponse(
     expressResponse.statusMessage = webResponse.statusText;
   }
 
+  const setCookies = webResponse.headers.getSetCookie?.() ?? [];
+  if (setCookies.length > 0) {
+    expressResponse.setHeader('set-cookie', setCookies);
+  }
+
   // Set headers
   webResponse.headers.forEach((value, key) => {
+    if (key.toLowerCase() === 'set-cookie') {
+      return;
+    }
     expressResponse.setHeader(key, value);
   });
 

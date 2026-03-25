@@ -64,7 +64,7 @@ function escapeLikeWildcards(value: string): string {
 
 function buildWhere(tbl: any, where: WhereClause[] | undefined) {
   if (!where || where.length === 0) return undefined;
-  const { and, or, not, eq, ne, gt, gte, lt, lte, inArray, sql } = drizzleOps;
+  const { and, or, not, eq, ne, gt, gte, lt, lte, inArray, isNull, isNotNull, sql } = drizzleOps;
   const parts = where.map((clause) => {
     const col = tbl[clause.field];
     const op = clause.operator;
@@ -72,8 +72,14 @@ function buildWhere(tbl: any, where: WhereClause[] | undefined) {
 
     switch (op) {
       case 'eq':
+        if (val === null) {
+          return isNull(col);
+        }
         return eq(col, val);
       case 'ne':
+        if (val === null) {
+          return isNotNull(col);
+        }
         return ne(col, val);
       case 'gt':
         return gt(col, val);

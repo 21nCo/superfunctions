@@ -810,6 +810,7 @@ function createOAuthSharedSchemas(): TableSchema[] {
         {
           type: mapOAuthFieldType(field.type),
           required: !field.nullable,
+          unique: field.primaryKey || field.unique,
           fieldName: field.name
         }
       ])

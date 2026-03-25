@@ -409,6 +409,13 @@ export interface AuthFnPlugin {
   validateConfig?: (config: AuthFnConfig) => void;
 }
 
+export interface AuthFnBundledPluginDescriptor<TArgs extends unknown[] = unknown[]> {
+  __functionCall: string;
+  __args?: TArgs;
+}
+
+export type AuthFnSchemaPluginInput = AuthFnPlugin | AuthFnBundledPluginDescriptor;
+
 export interface AuthFnConfig {
   database: Adapter;
   namespace?: string;
@@ -419,6 +426,10 @@ export interface AuthFnConfig {
   plugins: AuthFnPlugin[];
   openApi?: boolean | { title: string; version: string };
   observability?: AuthFnObservabilityConfig;
+}
+
+export interface AuthFnSchemaConfig extends Omit<AuthFnConfig, 'plugins'> {
+  plugins: AuthFnSchemaPluginInput[];
 }
 
 export interface AuthFnInstance {
