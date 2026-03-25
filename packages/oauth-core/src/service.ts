@@ -1,8 +1,9 @@
-import type { OAuthStateStore } from "@superfunctions/oauth-storage";
+import type { OAuthStateStore, OAuthStoredSubject } from "@superfunctions/oauth-storage";
 import type {
   AuthorizationRequest,
   AuthorizationResult,
   OAuthCallbackInput,
+  OAuthIntentSubject,
   OAuthProviderDescriptor,
   OAuthService,
   OAuthTokenSet
@@ -14,6 +15,19 @@ export interface OAuthProviderRuntimeConfig {
   clientId: string;
   allowlistedRedirectUris?: string[];
 }
+
+export interface OAuthProviderRuntimeConfigResolverInput {
+  providerId: string;
+  subject: OAuthIntentSubject;
+  redirectUri: string;
+  scopes: string[];
+  prompt?: string;
+  loginHint?: string;
+}
+
+export type OAuthProviderRuntimeConfigResolver = (
+  input: OAuthProviderRuntimeConfigResolverInput
+) => Promise<OAuthProviderRuntimeConfig> | OAuthProviderRuntimeConfig;
 
 export interface OAuthCodeExchangeInput {
   provider: OAuthProviderDescriptor;
@@ -38,7 +52,8 @@ export interface OAuthRevokeInput {
 
 export interface OAuthServiceDependencies {
   providers: Record<string, OAuthProviderDescriptor>;
-  providerRuntimeConfig: Record<string, OAuthProviderRuntimeConfig>;
+  providerRuntimeConfig?: Record<string, OAuthProviderRuntimeConfig>;
+  resolveProviderRuntimeConfig?: OAuthProviderRuntimeConfigResolver;
   stateStore: OAuthStateStore;
   exchangeCodeForToken: (input: OAuthCodeExchangeInput) => Promise<OAuthTokenSet>;
   refreshToken?: (input: OAuthRefreshInput) => Promise<OAuthTokenSet>;
@@ -49,7 +64,8 @@ export interface OAuthServiceDependencies {
 
 export class DefaultOAuthService implements OAuthService {
   private readonly providers: Record<string, OAuthProviderDescriptor>;
-  private readonly providerRuntimeConfig: Record<string, OAuthProviderRuntimeConfig>;
+  private readonly providerRuntimeConfig?: Record<string, OAuthProviderRuntimeConfig>;
+  private readonly resolveProviderRuntimeConfig?: OAuthProviderRuntimeConfigResolver;
   private readonly stateStore: OAuthStateStore;
   private readonly exchangeCodeForToken: (input: OAuthCodeExchangeInput) => Promise<OAuthTokenSet>;
   private readonly refreshTokenHandler?: (input: OAuthRefreshInput) => Promise<OAuthTokenSet>;
@@ -60,6 +76,7 @@ export class DefaultOAuthService implements OAuthService {
   constructor(dependencies: OAuthServiceDependencies) {
     this.providers = dependencies.providers;
     this.providerRuntimeConfig = dependencies.providerRuntimeConfig;
+    this.resolveProviderRuntimeConfig = dependencies.resolveProviderRuntimeConfig;
     this.stateStore = dependencies.stateStore;
     this.exchangeCodeForToken = dependencies.exchangeCodeForToken;
     this.refreshTokenHandler = dependencies.refreshToken;
@@ -70,7 +87,18 @@ export class DefaultOAuthService implements OAuthService {
 
   async createAuthorizationRequest(input: AuthorizationRequest): Promise<AuthorizationResult> {
     const provider = this.getProvider(input.providerId);
-    const runtime = this.getProviderRuntimeConfig(input.providerId);
+    const subject = normalizeAuthorizationSubject(input);
+    const scopes =
+      input.scopes && input.scopes.length > 0 ? [...input.scopes] : [...provider.defaultScopes];
+    const runtime = await this.getProviderRuntimeConfig({
+      providerId: input.providerId,
+      subject,
+      redirectUri: input.redirectUri,
+      scopes,
+      prompt: input.prompt,
+      loginHint: input.loginHint
+    });
+
     assertRedirectUriAllowed(input.redirectUri, runtime.allowlistedRedirectUris ?? []);
 
     const issuedAt = this.now();
@@ -78,16 +106,14 @@ export class DefaultOAuthService implements OAuthService {
     const expiresAt = new Date(issuedAt.getTime() + this.stateTtlMs).toISOString();
     const stateId = generateStateId();
     const nonce = generateNonce();
-    const scopes = input.scopes && input.scopes.length > 0 ? input.scopes : provider.defaultScopes;
     const pkce = provider.supportsPkce ? generatePkcePair() : undefined;
 
     await this.stateStore.put({
       stateId,
-      tenantId: input.tenantId,
-      userId: input.userId,
       providerId: provider.id,
+      subject: toStoredSubject(subject),
       redirectUri: input.redirectUri,
-      requestedScopes: [...scopes],
+      requestedScopes: scopes,
       codeVerifier: pkce?.codeVerifier,
       nonce,
       createdAt,
@@ -191,18 +217,70 @@ export class DefaultOAuthService implements OAuthService {
   private getProvider(providerId: string): OAuthProviderDescriptor {
     const provider = this.providers[providerId];
     if (!provider) {
-      throw new OAuthCoreError("VALIDATION_ERROR", `Unknown OAuth provider: ${providerId}`);
+      throw new OAuthCoreError("OAUTH_PROVIDER_UNSUPPORTED", `Unknown OAuth provider: ${providerId}`, { status: 400 });
     }
 
     return provider;
   }
 
-  private getProviderRuntimeConfig(providerId: string): OAuthProviderRuntimeConfig {
-    const runtime = this.providerRuntimeConfig[providerId];
-    if (!runtime) {
-      throw new OAuthCoreError("VALIDATION_ERROR", `Missing runtime OAuth config for provider: ${providerId}`);
+  private async getProviderRuntimeConfig(
+    input: OAuthProviderRuntimeConfigResolverInput
+  ): Promise<OAuthProviderRuntimeConfig> {
+    if (this.resolveProviderRuntimeConfig) {
+      try {
+        const resolved = await this.resolveProviderRuntimeConfig(input);
+        if (!resolved?.clientId) {
+          throw new OAuthCoreError("OAUTH_RUNTIME_CONFIG_INVALID", "Resolved OAuth runtime config missing clientId", {
+            status: 500,
+            details: { providerId: input.providerId }
+          });
+        }
+
+        return resolved;
+      } catch (error) {
+        if (error instanceof OAuthCoreError) {
+          throw error;
+        }
+
+        throw new OAuthCoreError("OAUTH_RUNTIME_CONFIG_INVALID", "Failed to resolve OAuth runtime config", {
+          status: 500,
+          details: { providerId: input.providerId }
+        });
+      }
+    }
+
+    const runtime = this.providerRuntimeConfig?.[input.providerId];
+    if (!runtime?.clientId) {
+      throw new OAuthCoreError("OAUTH_RUNTIME_CONFIG_INVALID", `Missing runtime OAuth config for provider: ${input.providerId}`, {
+        status: 500,
+        details: { providerId: input.providerId }
+      });
     }
 
     return runtime;
   }
+}
+
+function normalizeAuthorizationSubject(input: AuthorizationRequest): OAuthIntentSubject {
+  if ("subject" in input) {
+    return input.subject;
+  }
+
+  return {
+    kind: "connection",
+    tenantId: input.tenantId,
+    userId: input.userId,
+    connectionId: input.connectionId
+  };
+}
+
+function toStoredSubject(subject: OAuthIntentSubject): OAuthStoredSubject {
+  if (subject.kind === "connection") {
+    return { ...subject };
+  }
+
+  return {
+    ...subject,
+    metadata: subject.metadata ? { ...subject.metadata } : undefined
+  };
 }

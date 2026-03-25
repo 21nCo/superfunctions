@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { OAuthService, OAuthProviderDescriptor } from "../index.js";
+import type { OAuthIntentSubject, OAuthProviderDescriptor, OAuthService } from "../index.js";
 
 describe("oauth-core exports", () => {
   it("exposes compile-time contracts", () => {
@@ -13,6 +13,11 @@ describe("oauth-core exports", () => {
     };
 
     expect(descriptor.id).toBe("example");
+    const subject: OAuthIntentSubject = {
+      kind: "browser-auth",
+      intentId: "intent_01"
+    };
+    expect(subject.kind).toBe("browser-auth");
     expectType<OAuthService>();
   });
 });

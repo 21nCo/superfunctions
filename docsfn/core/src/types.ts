@@ -91,7 +91,7 @@ export interface SidebarItem {
   text: string;
   link?: string; // for links
   items?: SidebarItem[]; // for groups
-  collapsed?: boolean;
+  expanded?: boolean; // if true, group is always open regardless of active page
 }
 
 export interface Sidebar {

@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createFileFn, type FileFn } from '../index.js';
-import { createFakeStorageAdapter } from '@superfunctions/storage';
+import { createEventEmitter } from '../events.js';
+import { createPolicyRegistry } from '../policies.js';
+import { createProcessingService } from '../processing/service.js';
+import { createFakeStorageAdapter, createRoutedStorageAdapter, type StorageAdapter, type StorageAdapterCapabilities } from '@superfunctions/storage';
 import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
 
 const FAKE_CAPABILITIES: AdapterCapabilities = {
@@ -125,20 +128,41 @@ function createFakeDbAdapter(): Adapter {
   } as Adapter;
 }
 
-async function createFileViaUpload(fileFn: FileFn, db: Adapter, storageSizes: Map<string, number>, principalId: string, tenantId?: string): Promise<{ fileId: string; versionId: string }> {
+async function createFileViaUpload(
+  fileFn: FileFn,
+  db: Adapter,
+  storageSizes: Map<string, number>,
+  principalId: string,
+  tenantId?: string,
+  inputOverrides: Partial<{
+    fileName: string;
+    size: number;
+    mimeType: string;
+    fileId: string;
+    metadata: Record<string, unknown>;
+  }> = {},
+): Promise<{ fileId: string; versionId: string }> {
+  const uploadInput = {
+    policy: 'user-avatar',
+    fileName: 'avatar.png',
+    size: 2097152,
+    mimeType: 'image/png',
+    ...inputOverrides,
+  };
+
   const { uploadSessionId } = await fileFn.createUploadSession(
-    { policy: 'user-avatar', fileName: 'avatar.png', size: 2097152, mimeType: 'image/png' },
+    uploadInput,
     { principalId, tenantId }
   );
 
   // Helper to get storageKey
   const session = await db.findOne<any>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }] });
   if (session) {
-    storageSizes.set(session.storageKey, 2097152);
+    storageSizes.set(session.storageKey, uploadInput.size);
   }
   
   await fileFn.completeUploadPart(
-    { uploadSessionId, partNumber: 1, etag: 'etag1', size: 2097152 },
+    { uploadSessionId, partNumber: 1, etag: 'etag1', size: uploadInput.size },
     { principalId, tenantId }
   );
   
@@ -183,6 +207,65 @@ describe('@filefn/server files', () => {
       expect(file.fileId).toBe(fileId);
       expect(file.ownerId).toBe('user_123');
       expect(file.mimeType).toBe('image/png');
+    });
+
+    it('should persist upload metadata on the resulting file record', async () => {
+      const metadata = {
+        source: 'camera',
+        tags: ['avatar', 'profile'],
+        nested: { draft: true },
+      };
+
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123', 'org_123', { metadata });
+
+      const file = await fileFn.getFile({ fileId }, { principalId: 'user_123', tenantId: 'org_123' }) as any;
+
+      expect(file.metadata).toEqual(metadata);
+    });
+
+    it('TV-API-001: getFile route uses the canonical success envelope and echoes requestId', async () => {
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123', 'org_123');
+
+      const fileFnWithAuth = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: {
+            signedUploadUrls: true,
+            signedDownloadUrls: true,
+            multipart: true,
+            proxyStreamingUpload: false,
+            proxyStreamingDownload: true,
+          },
+          async statObject(input) {
+            return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
+          },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png', 'image/jpeg'] }],
+        auth: {
+          required: false,
+          resolveSession: async () => ({ principalId: 'user_123', tenantId: 'org_123' }),
+        },
+      });
+
+      const response = await fileFnWithAuth.router.handle(
+        new Request(`http://localhost/${fileId}`, {
+          method: 'GET',
+          headers: { 'x-request-id': 'req_file_get' },
+        }),
+      );
+
+      expect(response!.status).toBe(200);
+      const body = await response!.json();
+      expect(body).toMatchObject({
+        ok: true,
+        warnings: [],
+        requestId: 'req_file_get',
+        data: {
+          fileId,
+          ownerId: 'user_123',
+          mimeType: 'image/png',
+        },
+      });
     });
   });
 
@@ -352,6 +435,36 @@ describe('@filefn/server files', () => {
       const file = await fileFn.getFile({ fileId }, { principalId: 'user_123' }) as any;
       expect(file.currentVersionId).toBe(v2);
     });
+
+    it('should update file metadata when a replacement upload carries new metadata', async () => {
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123');
+      const replacementMetadata = { source: 'editor', crop: 'square' };
+
+      const { uploadSessionId } = await fileFn.createUploadSession(
+        {
+          policy: 'user-avatar',
+          fileName: 'avatar.png',
+          size: 500,
+          mimeType: 'image/png',
+          fileId,
+          metadata: replacementMetadata,
+        },
+        { principalId: 'user_123' }
+      );
+
+      const session = await db.findOne<any>({ model: 'uploadSessions', where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }] });
+      if (session) storageSizes.set(session.storageKey, 500);
+
+      await fileFn.completeUploadPart(
+        { uploadSessionId, partNumber: 1, etag: 'etag_replacement', size: 500 },
+        { principalId: 'user_123' }
+      );
+
+      await fileFn.completeUploadSession({ uploadSessionId }, { principalId: 'user_123' });
+
+      const file = await fileFn.getFile({ fileId }, { principalId: 'user_123' }) as any;
+      expect(file.metadata).toEqual(replacementMetadata);
+    });
   });
 
   describe('List files', () => {
@@ -362,6 +475,158 @@ describe('@filefn/server files', () => {
 
       const result = await fileFn.listFiles({}, { principalId: 'user_123' }) as any;
       expect(result.files.length).toBe(2);
+    });
+  });
+
+  describe('TV-STORAGE-001: artifact routing can differ from original file routing', () => {
+    function createTargetAdapter(
+      name: string,
+      storageCalls: string[],
+      objects: Map<string, Uint8Array>,
+    ): StorageAdapter {
+      const capabilities: StorageAdapterCapabilities = {
+        signedUploadUrls: true,
+        signedDownloadUrls: true,
+        multipart: true,
+        proxyStreamingUpload: true,
+        proxyStreamingDownload: true,
+      };
+
+      return {
+        name,
+        capabilities,
+        async statObject({ key }) {
+          return { key, size: objects.get(`${name}:${key}`)?.length ?? 0 };
+        },
+        async deleteObject({ key }) {
+          storageCalls.push(`${name}:delete:${key}`);
+          objects.delete(`${name}:${key}`);
+        },
+        async createMultipartUpload({ key }) {
+          storageCalls.push(`${name}:multipart:${key}`);
+          return { uploadId: `${name}-upload` };
+        },
+        async signMultipartUploadPartUrl({ key, partNumber }) {
+          return { url: `https://${name}.local/${key}/${partNumber}` };
+        },
+        async completeMultipartUpload() {},
+        async abortMultipartUpload() {},
+        async signDownloadUrl({ key }) {
+          storageCalls.push(`${name}:download:${key}`);
+          return { url: `https://${name}.local/${key}` };
+        },
+        async openUploadStream({ key }) {
+          storageCalls.push(`${name}:upload-stream:${key}`);
+          const chunks: Uint8Array[] = [];
+          return new WritableStream<Uint8Array>({
+            write(chunk) {
+              chunks.push(chunk);
+            },
+            close() {
+              const size = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+              const combined = new Uint8Array(size);
+              let offset = 0;
+              for (const chunk of chunks) {
+                combined.set(chunk, offset);
+                offset += chunk.byteLength;
+              }
+              objects.set(`${name}:${key}`, combined);
+            },
+          });
+        },
+        async openDownloadStream({ key }) {
+          storageCalls.push(`${name}:download-stream:${key}`);
+          const payload = objects.get(`${name}:${key}`) ?? new TextEncoder().encode('abc');
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(payload);
+              controller.close();
+            },
+          });
+        },
+      };
+    }
+
+    it('reads originals from the file target and writes artifacts to the artifact target', async () => {
+      const storageCalls: string[] = [];
+      const objects = new Map<string, Uint8Array>([
+        ['durable-bucket:uploads/file_001/ver_001-image.png', new TextEncoder().encode('abc')],
+      ]);
+      const storage = createRoutedStorageAdapter({
+        adapters: {
+          durable: createTargetAdapter('durable-bucket', storageCalls, objects),
+          temporary: createTargetAdapter('temporary-bucket', storageCalls, objects),
+        },
+      });
+
+      await db.create({
+        model: 'files',
+        data: {
+          fileId: 'file_001',
+          currentVersionId: 'ver_001',
+          ownerId: 'user_123',
+          tenantId: 'org_123',
+          visibility: 'private',
+          policy: 'artifact-offload',
+          mimeType: 'image/png',
+          size: 3,
+          name: 'image.png',
+          metadata: {},
+          createdAt: '2026-03-22T00:00:00.000Z',
+          updatedAt: '2026-03-22T00:00:00.000Z',
+        },
+      });
+
+      const processing = createProcessingService({
+        db,
+        storage,
+        policies: createPolicyRegistry([
+          {
+            name: 'artifact-offload',
+            contentTypes: ['image/png'],
+            storageTarget: 'durable',
+            artifactStorageTarget: 'temporary',
+          },
+        ]),
+        events: createEventEmitter(),
+        processors: [
+          {
+            name: 'thumbnail',
+            supportedMimeTypes: ['image/png'],
+            async process(input, getData) {
+              return {
+                success: true,
+                artifacts: [
+                  {
+                    kind: 'thumbnail',
+                    data: await getData(),
+                    mimeType: 'image/png',
+                    storageKey: `${input.storageKey}.thumb.png`,
+                  },
+                ],
+              };
+            },
+          },
+        ],
+        namespace: 'filefn',
+      });
+
+      const result = await processing.runProcessing(
+        {
+          fileId: 'file_001',
+          versionId: 'ver_001',
+          storageKey: 'uploads/file_001/ver_001-image.png',
+          mimeType: 'image/png',
+          size: 3,
+          fileName: 'image.png',
+          tenantId: 'org_123',
+        },
+        { principalId: 'user_123', tenantId: 'org_123', requestId: 'req_artifact_route' },
+      );
+
+      expect(result.artifactsCreated).toBe(1);
+      expect(storageCalls).toContain('durable-bucket:download-stream:uploads/file_001/ver_001-image.png');
+      expect(storageCalls).toContain('temporary-bucket:upload-stream:uploads/file_001/ver_001-image.png.thumb.png');
     });
   });
 
@@ -438,6 +703,220 @@ describe('@filefn/server files', () => {
       expect(body.error.code).toBe('FILEFN_RATE_LIMITED');
       expect(typeof body.error.details?.resetAt).toBe('string');
       expect(Number.isNaN(Date.parse(body.error.details.resetAt))).toBe(false);
+    });
+  });
+
+  describe('Render descriptors', () => {
+    it('TV-API-001 / TV-VIEW-001: render route returns a canonical artifact descriptor envelope', async () => {
+      const pdfFileFn = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: {
+            signedUploadUrls: true,
+            signedDownloadUrls: true,
+            multipart: true,
+            proxyStreamingUpload: false,
+            proxyStreamingDownload: true,
+          },
+          async statObject(input) {
+            return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
+          },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png', 'image/jpeg', 'application/pdf'] }],
+        auth: { required: false },
+      });
+
+      const { fileId, versionId } = await createFileViaUpload(
+        pdfFileFn,
+        db,
+        storageSizes,
+        'user_123',
+        'org_123',
+        {
+          fileName: 'note.pdf',
+          mimeType: 'application/pdf',
+          size: 4096,
+        },
+      );
+
+      await db.create({
+        model: 'fileArtifacts',
+        namespace: 'filefn',
+        data: {
+          artifactId: 'art_pdf_large_001',
+          fileId,
+          versionId,
+          kind: 'pdf-preview-page-1-large',
+          storageKey: `artifacts/${fileId}/preview-large.png`,
+          mimeType: 'image/png',
+          size: 1024,
+          metadata: {},
+          createdAt: '2026-03-22T00:00:00.000Z',
+        },
+      });
+
+      const fileFnWithAuth = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: {
+            signedUploadUrls: true,
+            signedDownloadUrls: false,
+            multipart: true,
+            proxyStreamingUpload: false,
+            proxyStreamingDownload: true,
+          },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png', 'application/pdf'] }],
+        auth: {
+          required: false,
+          resolveSession: async () => ({ principalId: 'user_123', tenantId: 'org_123' }),
+        },
+      });
+
+      const response = await fileFnWithAuth.router.handle(
+        new Request(`http://localhost/${fileId}/render?intent=preview`, {
+          method: 'GET',
+          headers: { 'x-request-id': 'req_api_001' },
+        }),
+      );
+
+      expect(response).not.toBeNull();
+      expect(response!.status).toBe(200);
+
+      const body = await response!.json();
+      expect(body).toMatchObject({
+        ok: true,
+        warnings: [],
+        requestId: 'req_api_001',
+        data: {
+          fileId,
+          versionId,
+          intent: 'preview',
+          state: 'ready',
+          mimeType: 'image/png',
+          source: {
+            mode: 'artifact',
+            artifactId: 'art_pdf_large_001',
+            artifactKind: 'pdf-preview-page-1-large',
+          },
+        },
+      });
+      expect(body.data.source.url).toMatch(/^\/proxy\/files\//);
+      expect(body.data.source.url.startsWith('proxy://')).toBe(false);
+    });
+
+    it('TV-FILE-002: render route returns deterministic PDF placeholder when preview artifacts are unavailable', async () => {
+      const pdfFileFn = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: {
+            signedUploadUrls: true,
+            signedDownloadUrls: true,
+            multipart: true,
+            proxyStreamingUpload: false,
+            proxyStreamingDownload: true,
+          },
+          async statObject(input) {
+            return { key: input.key, size: storageSizes.get(input.key) ?? 1024 };
+          },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png', 'image/jpeg', 'application/pdf'] }],
+        auth: { required: false },
+      });
+
+      const { fileId, versionId } = await createFileViaUpload(
+        pdfFileFn,
+        db,
+        storageSizes,
+        'user_123',
+        'org_123',
+        {
+          fileName: 'waiting.pdf',
+          mimeType: 'application/pdf',
+          size: 2048,
+        },
+      );
+
+      const fileFnWithAuth = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: {
+            signedUploadUrls: true,
+            signedDownloadUrls: true,
+            multipart: true,
+            proxyStreamingUpload: false,
+            proxyStreamingDownload: true,
+          },
+        }),
+        policies: [{ name: 'user-avatar', contentTypes: ['image/png', 'application/pdf'] }],
+        auth: {
+          required: false,
+          resolveSession: async () => ({ principalId: 'user_123', tenantId: 'org_123' }),
+        },
+      });
+
+      const response = await fileFnWithAuth.router.handle(
+        new Request(`http://localhost/${fileId}/render?intent=preview&versionId=${versionId}`, {
+          method: 'GET',
+        }),
+      );
+
+      expect(response!.status).toBe(200);
+      const body = await response!.json();
+      expect(body.data).toMatchObject({
+        fileId,
+        versionId,
+        intent: 'preview',
+        state: 'processing',
+        source: {
+          mode: 'placeholder',
+          placeholderKind: 'pdf-processing',
+        },
+      });
+      expect(body.data.warnings).toEqual(['PDF preview artifact is not available yet.']);
+    });
+
+    it('TV-API-001 negative: unknown render target returns FILEFN_NOT_FOUND and echoes requestId', async () => {
+      const response = await fileFn.router.handle(
+        new Request('http://localhost/file_missing/render?intent=thumbnail', {
+          method: 'GET',
+          headers: { 'x-request-id': 'req_render_missing' },
+        }),
+      );
+
+      expect(response!.status).toBe(404);
+      const body = await response!.json();
+      expect(body).toMatchObject({
+        ok: false,
+        requestId: 'req_render_missing',
+        error: {
+          code: 'FILEFN_NOT_FOUND',
+        },
+      });
+    });
+
+    it('returns a stable invalid-render-intent error code', async () => {
+      const { fileId } = await createFileViaUpload(fileFn, db, storageSizes, 'user_123', 'org_123');
+
+      const response = await fileFn.router.handle(
+        new Request(`http://localhost/${fileId}/render?intent=poster`, {
+          method: 'GET',
+          headers: { 'x-request-id': 'req_render_invalid' },
+        }),
+      );
+
+      expect(response!.status).toBe(400);
+      const body = await response!.json();
+      expect(body).toMatchObject({
+        ok: false,
+        requestId: 'req_render_invalid',
+        error: {
+          code: 'FILEFN_INVALID_RENDER_INTENT',
+          details: {
+            intent: 'poster',
+          },
+        },
+      });
     });
   });
 });

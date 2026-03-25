@@ -1,5 +1,3 @@
-payments, subscriptions (com: polar, etc) - Abstraction, Analytics
-Other names considered: subFn
 
 # Problem
 - There are too many payment providers and many app stores to integrate with for a software provider to enable subscriptions or payments
@@ -14,4 +12,4 @@ Other names considered: subFn
 - `@billfn/server` - Server SDK for backend servers (typescript, python)
 - `@billfn/admin` - Admin SDK for managing plans, payments, configuration etc
 - `@uifn/billing` - UI library for displaying subscription information
-- Admin UI - Admin UI for managing plans, payments, configuration etc
+- Admin UI - Admin UI for managing plans, payments, configuration etc (connects to `@billfn/admin` exposed endpoints)

@@ -11,6 +11,26 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./search-runtime": {
+      "types": "./dist/search-runtime.d.ts",
+      "import": "./dist/search-runtime.js",
+      "require": "./dist/search-runtime.cjs"
+    },
+    "./search": {
+      "types": "./dist/search.d.ts",
+      "import": "./dist/search.js",
+      "require": "./dist/search.cjs"
+    },
+    "./analytics": {
+      "types": "./dist/analytics.d.ts",
+      "import": "./dist/analytics.js",
+      "require": "./dist/analytics.cjs"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js",
+      "require": "./dist/browser.cjs"
     }
   },
   "scripts": {
@@ -21,7 +41,8 @@
   "dependencies": {
     "yaml": "^2.8.1",
     "zod": "^3.0.0",
-    "searchfn": "*"
+    "searchfn": "*",
+    "marked": "^12.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -89,6 +89,11 @@ export function createRouter(config: FileFnRouterConfig) {
         return fileRoutes.downloadFile(request, downloadMatch[1]);
       }
 
+      const renderMatch = path.match(/^\/([^/]+)\/render$/);
+      if (renderMatch && method === 'GET') {
+        return fileRoutes.renderFile(request, renderMatch[1]);
+      }
+
       const versionsMatch = path.match(/^\/([^/]+)\/versions$/);
       if (versionsMatch && method === 'GET') {
         return fileRoutes.listVersions(request, versionsMatch[1]);

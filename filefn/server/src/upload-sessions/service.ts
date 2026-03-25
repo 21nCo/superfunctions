@@ -1,7 +1,12 @@
 import type { Adapter } from '@superfunctions/db';
-import type { StorageAdapter } from '@superfunctions/storage';
+import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
-import type { Policy, PolicyRegistry } from '../policies.js';
+import {
+  matchesContentType,
+  resolveStorageTarget,
+  type Policy,
+  type PolicyRegistry,
+} from '../policies.js';
 import type { FileFnEventEmitter } from '../events.js';
 import type { Logger } from '../observability/logger.js';
 import type { DeduplicationService } from '../dedup/service.js';
@@ -71,11 +76,13 @@ export interface UploadSession {
   storageUploadId: string | null;
   ownerId: string;
   tenantId: string | null;
+  metadata?: Record<string, unknown> | null;
   expiresAt: string;
   createdAt: string;
   idempotencyKey?: string | null;
   idempotencyPayloadHash?: string | null;
   completionVersionId?: string | null;
+  uploadSessionToken?: string | null;
   uploadSessionTokenHash?: string | null;
 }
 
@@ -182,11 +189,12 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     generateId = generateDefaultId,
   } = config;
 
-  function selectUploadMode(): string {
-    if (storage.capabilities.signedUploadUrls && storage.capabilities.multipart) {
+  function selectUploadMode(storageTarget: string): string {
+    const capabilities = getStorageCapabilities(storage, storageTarget);
+    if (capabilities.signedUploadUrls && capabilities.multipart) {
       return 'multipart-signed-url';
     }
-    if (storage.capabilities.proxyStreamingUpload) {
+    if (capabilities.proxyStreamingUpload) {
       return 'proxy';
     }
     throw errors.noSupportedUploadMode();
@@ -204,6 +212,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
     if (session.uploadMode !== 'proxy' || !storage.deleteObject) {
       return;
     }
+    const policy = policies.get(session.policy);
+    const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
 
     const parts = await db.findMany<{ partNumber: number }>({
       model: 'uploadParts',
@@ -214,7 +224,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
     for (const part of parts) {
       try {
-        await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber) });
+        await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: storageTarget });
       } catch {
         // Best-effort cleanup.
       }
@@ -283,13 +293,23 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
           let uploadSessionToken: string | undefined;
           if (isAnonymousSession(existing)) {
-            uploadSessionToken = generateUploadSessionToken();
-            await db.update({
-              model: 'uploadSessions',
-              where: [{ field: 'uploadSessionId', operator: 'eq', value: existing.uploadSessionId }],
-              data: { uploadSessionTokenHash: hashUploadSessionToken(uploadSessionToken) },
-              namespace,
-            });
+            if (existing.uploadSessionToken) {
+              uploadSessionToken = existing.uploadSessionToken;
+            } else {
+              // Older sessions may only have the hash persisted. Preserve access by
+              // minting and persisting a replacement token once, then replay it
+              // deterministically for future idempotent responses.
+              uploadSessionToken = generateUploadSessionToken();
+              await db.update({
+                model: 'uploadSessions',
+                where: [{ field: 'uploadSessionId', operator: 'eq', value: existing.uploadSessionId }],
+                data: {
+                  uploadSessionToken,
+                  uploadSessionTokenHash: hashUploadSessionToken(uploadSessionToken),
+                },
+                namespace,
+              });
+            }
           }
 
           return {
@@ -312,7 +332,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       // Validate constraints
       if (policy.contentTypes && policy.contentTypes.length > 0) {
-        if (!policy.contentTypes.includes(input.mimeType)) {
+        if (!policy.contentTypes.some((pattern) => matchesContentType(pattern, input.mimeType))) {
           throw errors.policyContentTypeNotAllowed(input.policy, input.mimeType);
         }
       }
@@ -346,7 +366,8 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
-      const uploadMode = selectUploadMode();
+      const storageTarget = resolveStorageTarget(policy);
+      const uploadMode = selectUploadMode(storageTarget);
       const chunkSizeBytes = defaultChunkSizeBytes;
       const totalParts = computeTotalParts(input.size, chunkSizeBytes);
       const uploadSessionId = generateId();
@@ -376,6 +397,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (uploadMode === 'multipart-signed-url' && storage.createMultipartUpload) {
         const result = await storage.createMultipartUpload({
           key: storageKey,
+          target: storageTarget,
           contentType: input.mimeType,
         });
         storageUploadId = result.uploadId;
@@ -399,8 +421,10 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           storageUploadId,
           ownerId: ctx.principalId || 'anonymous',
           tenantId: ctx.tenantId || null,
+          metadata: input.metadata ?? {},
           idempotencyKey: input.idempotencyKey || null,
           idempotencyPayloadHash: input.idempotencyKey ? hashPayload(input, { principalId: ctx.principalId, tenantId: ctx.tenantId }) : null,
+          uploadSessionToken: uploadSessionToken || null,
           uploadSessionTokenHash,
           expiresAt,
           createdAt: now.toISOString(),
@@ -512,6 +536,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       const result = await storage.signMultipartUploadPartUrl({
         key: session.storageKey,
+        target: policies.get(session.policy) ? resolveStorageTarget(policies.get(session.policy)!) : undefined,
         uploadId: session.storageUploadId!,
         partNumber,
         expiresInSeconds: signedUrlTtlSeconds,
@@ -571,6 +596,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       }
 
       const partKey = proxyPartKey(session.storageKey, partNumber);
+      const storageTarget = policies.get(session.policy) ? resolveStorageTarget(policies.get(session.policy)!) : undefined;
 
       if (!storage.openUploadStream) {
         throw new Error('Storage adapter does not support streaming upload required for proxy mode');
@@ -578,6 +604,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       const writeStream = await storage.openUploadStream({
         key: partKey,
+        target: storageTarget,
         contentType: session.mimeType
       });
 
@@ -711,10 +738,25 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         }
       }
 
+      if (session.fileId && fileWriteChecker) {
+        const canWrite = await fileWriteChecker.canWriteFile(session.fileId, ctx);
+        if (!canWrite) {
+          throw errors.forbidden({ fileId: session.fileId, operation: 'replace' });
+        }
+      }
+      const policy = policies.get(session.policy);
+      const policyStorageTarget = policy ? resolveStorageTarget(policy) : undefined;
+
       // Complete multipart upload
-      if (session.uploadMode === 'multipart-signed-url' && storage.capabilities.multipart && storage.completeMultipartUpload && session.storageUploadId) {
+      if (
+        session.uploadMode === 'multipart-signed-url' &&
+        getStorageCapabilities(storage, policyStorageTarget).multipart &&
+        storage.completeMultipartUpload &&
+        session.storageUploadId
+      ) {
         await storage.completeMultipartUpload({
           key: session.storageKey,
+          target: policyStorageTarget,
           uploadId: session.storageUploadId,
           parts: parts.sort((a, b) => a.partNumber - b.partNumber).map(p => ({ partNumber: p.partNumber, etag: p.etag })),
         });
@@ -727,6 +769,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const sortedParts = parts.sort((a, b) => a.partNumber - b.partNumber);
         const writeStream = await storage.openUploadStream({ 
             key: session.storageKey,
+            target: policyStorageTarget,
             contentType: session.mimeType
         });
 
@@ -734,7 +777,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         try {
             for (const part of sortedParts) {
                 const partKey = proxyPartKey(session.storageKey, part.partNumber);
-                const readStream = await storage.openDownloadStream({ key: partKey });
+                const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
                 const reader = readStream.getReader();
                 
                 // Pipe the part to the final file
@@ -752,7 +795,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         for (const part of sortedParts) {
              const partKey = proxyPartKey(session.storageKey, part.partNumber);
              try {
-                 await storage.deleteObject({ key: partKey });
+                 await storage.deleteObject({ key: partKey, target: policyStorageTarget });
              } catch {
                  // ignore
              }
@@ -762,7 +805,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       // Validate size if supported
       if (storage.statObject) {
         try {
-          const stat = await storage.statObject({ key: session.storageKey });
+          const stat = await storage.statObject({ key: session.storageKey, target: policyStorageTarget });
           if (stat.size !== session.size) {
             throw errors.uploadSizeMismatch(session.size, stat.size);
           }
@@ -775,7 +818,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       const now = new Date().toISOString();
       const fileId = session.fileId || `file_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       const versionId = `ver_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      const policy = policies.get(session.policy);
+      const metadata = session.metadata ?? {};
 
       // Check for deduplication
       let finalStorageKey = session.storageKey;
@@ -786,6 +829,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         const dedupResult = await dedup.computeAndCheckDuplicate(
           session.storageKey,
           session.tenantId,
+          policyStorageTarget ?? null,
           storage
         );
 
@@ -799,7 +843,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           // Delete the newly uploaded file since we're reusing an existing one
           if (storage.deleteObject && finalStorageKey !== session.storageKey) {
             try {
-              await storage.deleteObject({ key: session.storageKey });
+              await storage.deleteObject({ key: session.storageKey, target: policyStorageTarget });
             } catch {
               // Ignore deletion errors - storage cleanup is non-critical
             }
@@ -814,7 +858,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         await db.update({
           model: 'files',
           where: [{ field: 'fileId', operator: 'eq', value: fileId }],
-          data: { currentVersionId: versionId, size: session.size, mimeType: session.mimeType, updatedAt: now },
+          data: {
+            currentVersionId: versionId,
+            size: session.size,
+            mimeType: session.mimeType,
+            metadata,
+            updatedAt: now,
+          },
           namespace,
         });
       } else {
@@ -830,7 +880,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
             mimeType: session.mimeType,
             size: session.size,
             name: session.fileName,
-            metadata: {},
+            metadata,
             createdAt: now,
             updatedAt: now,
           },
@@ -917,9 +967,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
 
       // Abort multipart upload
-      if (storage.capabilities.multipart && storage.abortMultipartUpload && session.storageUploadId) {
+      const policy = policies.get(session.policy);
+      const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
+      if (
+        getStorageCapabilities(storage, storageTarget).multipart &&
+        storage.abortMultipartUpload &&
+        session.storageUploadId
+      ) {
         try {
-          await storage.abortMultipartUpload({ key: session.storageKey, uploadId: session.storageUploadId });
+          await storage.abortMultipartUpload({ key: session.storageKey, target: storageTarget, uploadId: session.storageUploadId });
         } catch {
           // Ignore abort errors (may already be aborted)
         }
@@ -955,10 +1011,13 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         let abortedMultipart = 0;
 
         for (const session of expiredSessions) {
+            const policy = policies.get(session.policy);
+            const storageTarget = policy ? resolveStorageTarget(policy) : undefined;
             if (session.storageUploadId && storage.abortMultipartUpload) {
                 try {
                     await storage.abortMultipartUpload({
                         key: session.storageKey,
+                        target: storageTarget,
                         uploadId: session.storageUploadId
                     });
                     abortedMultipart++;

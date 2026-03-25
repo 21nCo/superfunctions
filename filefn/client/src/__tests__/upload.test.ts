@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createFileFnClient, type UploadProgress } from '../index.js';
+import { createFileFnClient, generateFileId, type UploadProgress } from '../index.js';
 
 const mockFetch = vi.fn();
 
@@ -40,6 +40,15 @@ describe('createFileFnClient', () => {
     expect(client.resumeUpload).toBeDefined();
     expect(typeof client.resumeUpload).toBe('function');
   });
+
+  it('should export generateFileId()', () => {
+    const first = generateFileId();
+    const second = generateFileId();
+
+    expect(first).toMatch(/^file_/);
+    expect(second).toMatch(/^file_/);
+    expect(first).not.toBe(second);
+  });
 });
 
 describe('uploadFile', () => {
@@ -71,6 +80,7 @@ describe('uploadFile', () => {
       policy: 'user-avatar',
       file,
       fileName: 'avatar.png',
+      fileId: 'file_0001',
     });
 
     const result = await handle.done();
@@ -108,7 +118,7 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
       .mockResolvedValueOnce(createMockResponse({ fileId: 'file_0002', versionId: 'ver_0002' }));
 
-    const handle = client.uploadFile({ policy: 'attachments', file });
+    const handle = client.uploadFile({ policy: 'attachments', file, fileId: 'file_0002' });
     const result = await handle.done();
 
     expect(result).toEqual({ fileId: 'file_0002', versionId: 'ver_0002' });
@@ -136,7 +146,7 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
       .mockResolvedValueOnce(createMockResponse({ fileId: 'file_0003', versionId: 'ver_0003' }));
 
-    const handle = client.uploadFile({ policy: 'test', file });
+    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_0003' });
     handle.onProgress((progress) => progressEvents.push({ ...progress }));
 
     await handle.done();
@@ -176,7 +186,7 @@ describe('uploadFile', () => {
         return Promise.reject(new DOMException('Aborted', 'AbortError'));
       });
 
-    const handle = client.uploadFile({ policy: 'test', file });
+    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_abort' });
     handle.onProgress((progress) => progressEvents.push({ ...progress }));
 
     setTimeout(() => handle.abort(), 10);
@@ -205,7 +215,7 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
       .mockResolvedValueOnce(createMockResponse({ fileId: 'file_0005', versionId: 'ver_0005' }));
 
-    await client.uploadFile({ policy: 'test', file }).done();
+    await client.uploadFile({ policy: 'test', file, fileId: 'file_0005' }).done();
 
     const initCall = mockFetch.mock.calls[0];
     expect(initCall[1].headers.Authorization).toBe('Bearer token123');
@@ -278,10 +288,46 @@ describe('retry behavior', () => {
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
       .mockResolvedValueOnce(createMockResponse({ fileId: 'file_retry', versionId: 'ver_retry' }));
 
-    const result = await client.uploadFile({ policy: 'test', file }).done();
+    const result = await client.uploadFile({ policy: 'test', file, fileId: 'file_retry' }).done();
 
     expect(result).toEqual({ fileId: 'file_retry', versionId: 'ver_retry' });
     expect(mockFetch).toHaveBeenCalledTimes(6);
+  });
+
+  it('TV-CLIENT-001 negative: should reject when the server completes with a different fileId', async () => {
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    const file = createMockBlob(100);
+
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse({
+        uploadSessionId: 'session_mismatch',
+        uploadMode: 'multipart-signed-url',
+        chunkSizeBytes: 100,
+        totalParts: 1,
+        expiresAt: '2025-01-01T00:00:00Z',
+      }))
+      .mockResolvedValueOnce(createMockResponse({
+        url: 'https://storage.test/upload/part1',
+        headers: {},
+        expiresAt: '2025-01-01T00:00:00Z',
+      }))
+      .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag1"' }))
+      .mockResolvedValueOnce(createMockResponse({ recorded: true }))
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_other', versionId: 'ver_other' }));
+
+    const handle = client.uploadFile({
+      policy: 'test',
+      file,
+      fileId: 'file_expected',
+    });
+
+    await expect(handle.done()).rejects.toMatchObject({
+      code: 'FILEFN_CLIENT_FILE_ID_MISMATCH',
+      details: {
+        expectedFileId: 'file_expected',
+        actualFileId: 'file_other',
+      },
+    });
   });
 
   it('should not retry on 4xx client errors', async () => {

@@ -1,7 +1,8 @@
 import type { Adapter } from '@superfunctions/db';
-import type { StorageAdapter } from '@superfunctions/storage';
+import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
+import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 
 export interface Processor {
@@ -50,6 +51,7 @@ export interface FlowFnProvider {
 export interface ProcessingServiceConfig {
   db: Adapter;
   storage: StorageAdapter;
+  policies?: Pick<PolicyRegistry, 'get'>;
   events: FileFnEventEmitter;
   processors?: Processor[];
   flowFn?: FlowFnProvider;
@@ -74,6 +76,7 @@ interface FileRecord {
   ownerId: string;
   tenantId: string | null;
   visibility: 'private' | 'shared' | 'public';
+  policy: string;
 }
 
 interface FilePermissionRecord {
@@ -95,10 +98,16 @@ function supportsProcessor(processor: Processor, mimeType: string): boolean {
   return processor.supportedMimeTypes.includes(mimeType);
 }
 
+function buildProcessingIdempotencyKey(fileId: string, versionId: string, processors: Processor[]): string {
+  const processorKey = processors.map((processor) => processor.name).sort().join(',');
+  return `processing:${fileId}:${versionId}:${processorKey}`;
+}
+
 export function createProcessingService(config: ProcessingServiceConfig) {
   const {
     db,
     storage,
+    policies,
     events,
     processors = [],
     flowFn,
@@ -164,6 +173,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     throw errors.forbidden();
   }
 
+  function getFileStorageTarget(file: Pick<FileRecord, 'policy'>): string {
+    return resolveStorageTarget(policies?.get(file.policy) ?? {});
+  }
+
+  function getArtifactStorageTarget(file: Pick<FileRecord, 'policy'>): string {
+    return resolveArtifactStorageTarget(policies?.get(file.policy) ?? {});
+  }
+
   async function getBoundArtifact(fileId: string, artifactId: string): Promise<FileArtifactRecord> {
     const artifact = await db.findOne<FileArtifactRecord>({
       model: 'fileArtifacts',
@@ -215,7 +232,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         const queue = flowFn.getQueue(QUEUE_NAME);
         if (queue) {
           try {
-            const processorKey = processors.map((processor) => processor.name).sort().join(',');
             const result = await queue.add({
               fileId: input.fileId,
               versionId: input.versionId,
@@ -224,7 +240,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
               size: input.size,
               fileName: input.fileName,
               tenantId: input.tenantId,
-              idempotencyKey: `processing:${input.fileId}:${input.versionId}:${processorKey}`,
+              idempotencyKey: buildProcessingIdempotencyKey(input.fileId, input.versionId, processors),
             });
             return { enqueued: true, jobId: result.jobId };
           } catch {
@@ -262,12 +278,20 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         return { artifactsCreated: 0, errors: [] };
       }
 
+      const file = await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: input.fileId }],
+        namespace,
+      });
+      const fileStorageTarget = getFileStorageTarget(file ?? { policy: '' });
+      const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
+
       let dataCache: Uint8Array | null = null;
       const getData = async (): Promise<Uint8Array> => {
         if (dataCache) return dataCache;
 
         if (storage.openDownloadStream) {
-          const stream = await storage.openDownloadStream({ key: input.storageKey });
+          const stream = await storage.openDownloadStream({ key: input.storageKey, target: fileStorageTarget });
           const reader = stream.getReader();
           const chunks: Uint8Array[] = [];
           while (true) {
@@ -307,6 +331,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
             if (storage.openUploadStream) {
               const stream = await storage.openUploadStream({
                 key: artifact.storageKey,
+                target: artifactStorageTarget,
                 contentType: artifact.mimeType,
               });
               const writer = stream.getWriter();
@@ -418,9 +443,17 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         throw errors.notFound('Artifact');
       }
 
-      if (storage.capabilities.signedDownloadUrls && storage.signDownloadUrl) {
+      const file = await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: artifact.fileId }],
+        namespace,
+      });
+      const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
+
+      if (getStorageCapabilities(storage, artifactStorageTarget).signedDownloadUrls && storage.signDownloadUrl) {
         const result = await storage.signDownloadUrl({
           key: artifact.storageKey,
+          target: artifactStorageTarget,
           expiresInSeconds: 900,
         });
         return { url: result.url, headers: result.headers };
@@ -436,10 +469,17 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     ): Promise<{ url: string; headers?: Record<string, string> }> {
       await requireReadableFile(fileId, ctx);
       const artifact = await getBoundArtifact(fileId, artifactId);
+      const file = await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+      const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
 
-      if (storage.capabilities.signedDownloadUrls && storage.signDownloadUrl) {
+      if (getStorageCapabilities(storage, artifactStorageTarget).signedDownloadUrls && storage.signDownloadUrl) {
         const result = await storage.signDownloadUrl({
           key: artifact.storageKey,
+          target: artifactStorageTarget,
           expiresInSeconds: 900,
         });
         return { url: result.url, headers: result.headers };
@@ -460,7 +500,13 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         throw new Error('Storage adapter does not support streaming');
       }
 
-      const stream = await storage.openDownloadStream({ key: artifact.storageKey });
+      const file = await db.findOne<FileRecord>({
+        model: 'files',
+        where: [{ field: 'fileId', operator: 'eq', value: fileId }],
+        namespace,
+      });
+      const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
+      const stream = await storage.openDownloadStream({ key: artifact.storageKey, target: artifactStorageTarget });
       return {
         stream: stream as unknown as ReadableStream,
         contentType: artifact.mimeType,

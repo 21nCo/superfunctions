@@ -2,7 +2,7 @@ import type { FileService } from './service.js';
 import type { FileFnPrincipal, AuthConfig } from '../auth.js';
 import type { RateLimiter } from '@superfunctions/middleware';
 import { resolvePrincipal } from '../auth.js';
-import { FileFnError, authRequired, rateLimited } from '../errors.js';
+import { FileFnError, authRequired, invalidRenderIntent, rateLimited } from '../errors.js';
 
 export interface FileRouteContext {
   service: FileService;
@@ -22,7 +22,7 @@ function getRequestId(request: Request): string | undefined {
 }
 
 function successResponse(data: unknown, requestId?: string): Response {
-  return Response.json({ ok: true, data, requestId }, { status: 200 });
+  return Response.json({ ok: true, data, warnings: [], requestId }, { status: 200 });
 }
 
 function errorResponse(error: FileFnError, requestId?: string): Response {
@@ -31,6 +31,7 @@ function errorResponse(error: FileFnError, requestId?: string): Response {
 
 export function createFileRoutes(ctx: FileRouteContext) {
   const { service, auth, rateLimiter, rateLimits, legacyGlobalRateLimit = false } = ctx;
+  const validRenderIntents = new Set(['thumbnail', 'preview', 'full', 'download']);
 
   async function requireAuth(request: Request): Promise<FileFnPrincipal> {
     const principal = await resolvePrincipal(request, auth);
@@ -126,6 +127,34 @@ export function createFileRoutes(ctx: FileRouteContext) {
         });
 
         return successResponse({ url: result.url, headers: result.headers }, requestId);
+      } catch (err) {
+        if (err instanceof FileFnError) return errorResponse(err, requestId);
+        throw err;
+      }
+    },
+
+    async renderFile(request: Request, fileId: string): Promise<Response> {
+      const requestId = getRequestId(request);
+      try {
+        const principal = await requireAuth(request);
+        const url = new URL(request.url);
+        const intent = url.searchParams.get('intent') || undefined;
+        const versionId = url.searchParams.get('versionId') || undefined;
+
+        if (!intent || !validRenderIntents.has(intent)) {
+          throw invalidRenderIntent(intent);
+        }
+
+        const descriptor = await service.getRenderDescriptor(fileId, {
+          intent: intent as 'thumbnail' | 'preview' | 'full' | 'download',
+          versionId,
+        }, {
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+          requestId,
+        });
+
+        return successResponse(descriptor, requestId);
       } catch (err) {
         if (err instanceof FileFnError) return errorResponse(err, requestId);
         throw err;

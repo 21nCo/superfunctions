@@ -3,7 +3,7 @@ import type { StorageAdapter } from '@superfunctions/storage';
 import type { FileProvider } from '@superfunctions/files';
 import { type RateLimiter, createRateLimiter } from '@superfunctions/middleware';
 import { getSchema } from './schema.js';
-import { createPolicyRegistry, type Policy } from './policies.js';
+import { createNucleusPolicies, createPolicyRegistry, type Policy } from './policies.js';
 import { createEventEmitter, type FileFnEventEmitter } from './events.js';
 import { createUploadSessionService, type QuotaProvider } from './upload-sessions/service.js';
 import { createUploadSessionRoutes } from './upload-sessions/routes.js';
@@ -106,6 +106,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const events = createEventEmitter();
   const deduplication = createDeduplicationService({
     db,
+    policies: policyRegistry,
     namespace,
     enabled: dedup?.enabled ?? false,
   });
@@ -141,12 +142,24 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const fileService = createFileService({
     db,
     storage,
+    policies: policyRegistry,
     events,
     logger,
     quota,
     authorizer,
     namespace,
     signedUrlTtlSeconds,
+  });
+
+  const processingService = createProcessingService({
+    db,
+    storage,
+    policies: policyRegistry,
+    events,
+    processors: processingConfig?.processors,
+    flowFn: processingConfig?.flowFn,
+    namespace,
+    enabled: processingConfig?.enabled ?? true,
   });
 
   const uploadService = createUploadSessionService({
@@ -158,6 +171,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     quota,
     dedup: deduplication,
     fileWriteChecker: fileService,
+    processingService,
     namespace,
     defaultChunkSizeBytes,
     uploadSessionTtlSeconds,
@@ -199,6 +213,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
   const sharesService = createSharesService({
     db,
     storage,
+    policies: policyRegistry,
     namespace,
     signedUrlTtlSeconds,
   });
@@ -210,16 +225,6 @@ export function createFileFn(config: FileFnConfig): FileFn {
     rateLimits: {
       shareDownload: routeRateLimits?.shareDownload,
     },
-  });
-
-  const processingService = createProcessingService({
-    db,
-    storage,
-    events,
-    processors: processingConfig?.processors,
-    flowFn: processingConfig?.flowFn,
-    namespace,
-    enabled: processingConfig?.enabled ?? true,
   });
 
   const processingRoutes = createProcessingRoutes({
@@ -301,7 +306,18 @@ export function createFileFn(config: FileFnConfig): FileFn {
 
 // Re-exports
 export { getSchema, getSchemaMap } from './schema.js';
-export { createPolicyRegistry, validatePolicyConstraints, computeStoragePath } from './policies.js';
+export {
+  DEFAULT_STORAGE_TARGET,
+  NUCLEUS_ALLOWED_CONTENT_TYPES,
+  NUCLEUS_MAX_SIZE_BYTES,
+  computeStoragePath,
+  createNucleusPolicies,
+  createPolicyRegistry,
+  matchesContentType,
+  resolveArtifactStorageTarget,
+  resolveStorageTarget,
+  validatePolicyConstraints,
+} from './policies.js';
 export type { Policy, PolicyRegistry, Visibility } from './policies.js';
 export { createEventEmitter } from './events.js';
 export type { FileFnEvent, FileFnEventTypes, FileFnEventEmitter } from './events.js';

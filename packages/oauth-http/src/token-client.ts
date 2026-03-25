@@ -1,12 +1,21 @@
-import type { OAuthProviderDescriptor } from "@superfunctions/oauth-core";
 import type {
+  OAuthClientSecretResolver,
+  OAuthResolvedClientSecret,
   OAuthRevocationRequest,
+  OAuthSecretResolverContext,
+  OAuthTokenAuthMethod,
   OAuthTokenEndpointRequest,
   OAuthTokenEndpointResponse,
   OAuthTokenGrantType,
   OAuthTokenHttpClient
 } from "./index.js";
-import { OAuthHttpError, normalizeOAuthErrorBody, unsupportedTokenAuthMethodError } from "./errors.js";
+import {
+  OAuthHttpError,
+  invalidRuntimeConfigError,
+  normalizeOAuthErrorBody,
+  secretResolutionFailedError,
+  unsupportedTokenAuthMethodError
+} from "./errors.js";
 import { DEFAULT_OAUTH_RETRY_POLICY, decideRetry, type OAuthRetryPolicy } from "./retry-policy.js";
 
 interface HeadersLike {
@@ -48,6 +57,12 @@ export interface DisconnectWithRevokeResult {
   connectionDeleted: boolean;
 }
 
+interface ResolvedRequestCredentials {
+  clientId: string;
+  clientSecret: string;
+  tokenAuthMethod: OAuthTokenAuthMethod;
+}
+
 export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
   private readonly fetcher: OAuthFetchLike;
   private readonly retryPolicy: OAuthRetryPolicy;
@@ -60,8 +75,15 @@ export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
   }
 
   async exchangeToken(input: OAuthTokenEndpointRequest): Promise<OAuthTokenEndpointResponse> {
-    const authMethod = getTokenAuthMethod(input.provider.tokenAuthMethod);
-    const endpointRequest = createTokenRequest(input, authMethod);
+    const credentials = await resolveRequestCredentials(input, {
+      provider: input.provider,
+      operation: "exchange",
+      clientId: input.clientId,
+      grantType: input.grantType,
+      redirectUri: input.redirectUri,
+      scopes: input.scopes
+    });
+    const endpointRequest = createTokenRequest(input, credentials);
     const response = await this.executeWithRetry(input.provider.tokenUrl, endpointRequest);
     const contentType = response.headers.get("content-type");
     const rawBodyText = await response.text();
@@ -84,8 +106,13 @@ export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
       return;
     }
 
-    const authMethod = getTokenAuthMethod(input.provider.tokenAuthMethod);
-    const endpointRequest = createRevokeRequest(input, authMethod);
+    const credentials = await resolveRequestCredentials(input, {
+      provider: input.provider,
+      operation: "revoke",
+      clientId: input.clientId,
+      tokenTypeHint: input.tokenTypeHint
+    });
+    const endpointRequest = createRevokeRequest(input, credentials);
     const response = await this.executeWithRetry(input.provider.revocationUrl, endpointRequest);
     if (response.ok) {
       return;
@@ -179,9 +206,62 @@ export async function disconnectWithRevoke(
   };
 }
 
+async function resolveRequestCredentials(
+  input: Pick<OAuthTokenEndpointRequest | OAuthRevocationRequest, "clientId" | "clientSecret" | "clientSecretResolver" | "provider">,
+  context: OAuthSecretResolverContext
+): Promise<ResolvedRequestCredentials> {
+  if (!input.clientId) {
+    throw invalidRuntimeConfigError("OAuth runtime config missing clientId", {
+      providerId: input.provider.id,
+      operation: context.operation
+    });
+  }
+
+  const tokenAuthMethod = getTokenAuthMethod(input.provider.tokenAuthMethod);
+  if (input.clientSecret) {
+    return {
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      tokenAuthMethod
+    };
+  }
+
+  const resolvedSecret = await resolveClientSecret(input.clientSecretResolver, context);
+  return {
+    clientId: input.clientId,
+    clientSecret: resolvedSecret.clientSecret,
+    tokenAuthMethod: resolvedSecret.tokenAuthMethod ?? tokenAuthMethod
+  };
+}
+
+async function resolveClientSecret(
+  resolver: OAuthClientSecretResolver | undefined,
+  context: OAuthSecretResolverContext
+): Promise<OAuthResolvedClientSecret> {
+  if (!resolver) {
+    throw invalidRuntimeConfigError("OAuth runtime config missing clientSecret or clientSecretResolver", {
+      providerId: context.provider.id,
+      operation: context.operation
+    });
+  }
+
+  let resolved: OAuthResolvedClientSecret;
+  try {
+    resolved = await resolver(context);
+  } catch (error) {
+    throw secretResolutionFailedError(context, error);
+  }
+
+  if (!resolved?.clientSecret) {
+    throw secretResolutionFailedError(context, undefined, "resolved OAuth client secret is empty");
+  }
+
+  return resolved;
+}
+
 function createTokenRequest(
   input: OAuthTokenEndpointRequest,
-  tokenAuthMethod: "client_secret_post" | "client_secret_basic"
+  credentials: ResolvedRequestCredentials
 ): RequestInitLike {
   const params = new URLSearchParams();
   params.set("grant_type", input.grantType);
@@ -222,14 +302,14 @@ function createTokenRequest(
 
   return {
     method: "POST",
-    headers: createAuthHeaders(input.clientId, input.clientSecret, tokenAuthMethod, params),
+    headers: createAuthHeaders(credentials, params),
     body: params.toString()
   };
 }
 
 function createRevokeRequest(
   input: OAuthRevocationRequest,
-  tokenAuthMethod: "client_secret_post" | "client_secret_basic"
+  credentials: ResolvedRequestCredentials
 ): RequestInitLike {
   const params = new URLSearchParams();
   params.set("token", input.token);
@@ -239,15 +319,13 @@ function createRevokeRequest(
 
   return {
     method: "POST",
-    headers: createAuthHeaders(input.clientId, input.clientSecret, tokenAuthMethod, params),
+    headers: createAuthHeaders(credentials, params),
     body: params.toString()
   };
 }
 
 function createAuthHeaders(
-  clientId: string,
-  clientSecret: string,
-  tokenAuthMethod: "client_secret_post" | "client_secret_basic",
+  credentials: ResolvedRequestCredentials,
   params: URLSearchParams
 ): Record<string, string> {
   const headers: Record<string, string> = {
@@ -255,12 +333,12 @@ function createAuthHeaders(
     accept: "application/json, application/x-www-form-urlencoded, text/plain"
   };
 
-  if (tokenAuthMethod === "client_secret_post") {
-    params.set("client_id", clientId);
-    params.set("client_secret", clientSecret);
+  if (credentials.tokenAuthMethod === "client_secret_post") {
+    params.set("client_id", credentials.clientId);
+    params.set("client_secret", credentials.clientSecret);
   } else {
-    params.set("client_id", clientId);
-    const auth = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64");
+    params.set("client_id", credentials.clientId);
+    const auth = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`, "utf8").toString("base64");
     headers.authorization = `Basic ${auth}`;
   }
 
@@ -354,33 +432,32 @@ function createTokenEndpointError(input: {
   });
 }
 
-function getTokenAuthMethod(
-  method: OAuthProviderDescriptor["tokenAuthMethod"] | string | undefined
-): "client_secret_post" | "client_secret_basic" {
-  if (!method || method === "client_secret_post") {
+function getTokenAuthMethod(tokenAuthMethod: string | undefined): OAuthTokenAuthMethod {
+  if (!tokenAuthMethod) {
     return "client_secret_post";
   }
 
-  if (method === "client_secret_basic") {
-    return "client_secret_basic";
+  if (tokenAuthMethod === "client_secret_post" || tokenAuthMethod === "client_secret_basic") {
+    return tokenAuthMethod;
   }
 
-  throw unsupportedTokenAuthMethodError(method);
+  throw unsupportedTokenAuthMethodError(tokenAuthMethod);
 }
 
-function parseFormBody(rawBodyText: string): Record<string, unknown> {
+function parseFormBody(rawBodyText: string): Record<string, string> {
   const params = new URLSearchParams(rawBodyText);
-  const payload: Record<string, unknown> = {};
+  const result: Record<string, string> = {};
+
   for (const [key, value] of params.entries()) {
-    payload[key] = value;
+    result[key] = value;
   }
 
-  return payload;
+  return result;
 }
 
-function safeParseJson(rawBodyText: string): Record<string, unknown> | null {
+function safeParseJson(rawBodyText: string): unknown {
   try {
-    return JSON.parse(rawBodyText) as Record<string, unknown>;
+    return JSON.parse(rawBodyText) as unknown;
   } catch {
     return null;
   }
@@ -395,11 +472,9 @@ function asNumber(value: unknown): number | undefined {
     return value;
   }
 
-  if (typeof value === "string" && value.length > 0) {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) {
-      return numeric;
-    }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
   }
 
   return undefined;
@@ -410,22 +485,39 @@ function ensureOAuthHttpError(error: unknown): OAuthHttpError {
     return error;
   }
 
-  return new OAuthHttpError("OAuth HTTP operation failed", {
+  return new OAuthHttpError(error instanceof Error ? error.message : "OAuth HTTP request failed", {
     code: "INTERNAL_ERROR",
     status: 500,
-    retryable: false,
-    details: { cause: String(error) }
+    retryable: false
   });
 }
 
 function getGlobalFetch(): OAuthFetchLike {
-  const globalFetch = (globalThis as { fetch?: unknown }).fetch;
-  if (typeof globalFetch !== "function") {
-    throw new OAuthHttpError("No fetch implementation configured for OAuth HTTP client", {
+  const fetcher = globalThis.fetch;
+  if (!fetcher) {
+    throw new OAuthHttpError("global fetch is not available", {
       code: "INTERNAL_ERROR",
-      status: 500
+      status: 500,
+      retryable: false
     });
   }
 
-  return globalFetch as OAuthFetchLike;
+  return async (url, init) => {
+    const response = await fetcher(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body
+    });
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      headers: {
+        get(name: string) {
+          return response.headers.get(name);
+        }
+      },
+      text: () => response.text()
+    };
+  };
 }

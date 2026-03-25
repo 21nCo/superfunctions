@@ -13,7 +13,9 @@
       "svelte": "./dist/index.js",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./theme.css": "./dist/theme.css",
+    "./theme-base.css": "./dist/theme-base.css"
   },
   "peerDependencies": {
     "svelte": "^4.0.0 || ^5.0.0"

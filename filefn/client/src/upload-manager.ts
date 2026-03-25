@@ -1,17 +1,177 @@
 import type { HttpClient } from "./client.js";
 import type {
+  PendingLocalDescriptor,
   UploadInput,
   UploadHandle,
   UploadProgress,
   UploadResult,
   UploadStatusResponse,
 } from "./types.js";
+import type {
+  PendingLocalSourceMetadata,
+  UploadPreprocessor,
+  UploadPreprocessorContext,
+} from "./preprocessing/types.js";
 
 interface UploadSession {
   uploadSessionId: string;
   totalParts: number;
   chunkSizeBytes: number;
   fileSize: number;
+}
+
+export interface PreparedUploadInput {
+  fileId: string;
+  file: File | Blob;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  metadata?: Record<string, unknown>;
+  policy: string;
+  idempotencyKey?: string;
+  localSource: PendingLocalSourceMetadata;
+}
+
+const FILE_ID_MISMATCH_ERROR = 'FILEFN_CLIENT_FILE_ID_MISMATCH';
+
+function createClientError(code: string, message: string, details?: Record<string, unknown>): Error & {
+  code: string;
+  details?: Record<string, unknown>;
+} {
+  const error = new Error(message) as Error & {
+    code: string;
+    details?: Record<string, unknown>;
+  };
+  error.code = code;
+  if (details) {
+    error.details = details;
+  }
+  return error;
+}
+
+function currentFileName(file: File | Blob, fallback?: string): string {
+  if (fallback) {
+    return fallback;
+  }
+  if (typeof File !== 'undefined' && file instanceof File) {
+    return file.name;
+  }
+  return 'blob';
+}
+
+function currentMimeType(file: File | Blob): string {
+  return file.type || 'application/octet-stream';
+}
+
+function derivePendingLocalSource(
+  fileName: string,
+  mimeType: string,
+  size: number,
+): PendingLocalSourceMetadata {
+  if (mimeType.startsWith('image/')) {
+    return {
+      mode: 'local-object-url',
+      kind: 'image',
+      fileName,
+      mimeType,
+      size,
+      opfsDataFile: 'data.bin',
+      previewBehavior: 'direct-image',
+    };
+  }
+
+  if (mimeType === 'application/pdf') {
+    return {
+      mode: 'local-object-url',
+      kind: 'pdf',
+      fileName,
+      mimeType,
+      size,
+      opfsDataFile: 'data.bin',
+      previewBehavior: 'deterministic-placeholder',
+    };
+  }
+
+  return {
+    mode: 'local-object-url',
+    kind: 'binary',
+    fileName,
+    mimeType,
+    size,
+    opfsDataFile: 'data.bin',
+    previewBehavior: 'download-only',
+  };
+}
+
+export function generateFileId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return `file_${cryptoApi.randomUUID().replace(/-/g, '')}`;
+  }
+
+  return `file_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export async function prepareUploadInput(
+  input: UploadInput,
+  preprocessors: UploadPreprocessor[] = [],
+): Promise<PreparedUploadInput> {
+  const fileId = input.fileId ?? generateFileId();
+  let prepared: PreparedUploadInput = {
+    fileId,
+    file: input.file,
+    fileName: currentFileName(input.file, input.fileName),
+    mimeType: currentMimeType(input.file),
+    size: input.file.size,
+    metadata: input.metadata,
+    policy: input.policy,
+    idempotencyKey: input.idempotencyKey,
+    localSource: derivePendingLocalSource(
+      currentFileName(input.file, input.fileName),
+      currentMimeType(input.file),
+      input.file.size,
+    ),
+  };
+
+  for (const preprocessor of preprocessors) {
+    const context: UploadPreprocessorContext = {
+      fileId,
+      file: prepared.file,
+      fileName: prepared.fileName,
+      mimeType: prepared.mimeType,
+      metadata: prepared.metadata,
+      localSource: prepared.localSource,
+    };
+    const matches = await preprocessor.matches(context);
+    if (!matches) {
+      continue;
+    }
+
+    const result = await preprocessor.process(context);
+    const nextFile = result.file;
+    const nextFileName = result.fileName || currentFileName(nextFile, prepared.fileName);
+    const nextMimeType = result.mimeType || currentMimeType(nextFile) || prepared.mimeType;
+    const nextMetadata = result.metadata ?? prepared.metadata;
+    const nextLocalSource = {
+      ...derivePendingLocalSource(nextFileName, nextMimeType, nextFile.size),
+      ...result.localSource,
+      fileName: nextFileName,
+      mimeType: nextMimeType,
+      size: nextFile.size,
+    };
+
+    prepared = {
+      ...prepared,
+      file: nextFile,
+      fileName: nextFileName,
+      mimeType: nextMimeType,
+      size: nextFile.size,
+      metadata: nextMetadata,
+      localSource: nextLocalSource,
+    };
+  }
+
+  return prepared;
 }
 
 export class UploadManager {
@@ -23,7 +183,10 @@ export class UploadManager {
   private bytesUploaded = 0;
   private uploadSessionToken?: string;
 
-  constructor(private readonly httpClient: HttpClient) {
+  constructor(
+    private readonly httpClient: HttpClient,
+    private readonly preprocessors: UploadPreprocessor[] = [],
+  ) {
     this.abortController = new AbortController();
   }
 
@@ -32,10 +195,12 @@ export class UploadManager {
     startUpload: () => Promise<UploadResult>,
   ): UploadHandle {
     let uploadPromise: Promise<UploadResult> | null = null;
+    const fileId = input.fileId ?? generateFileId();
 
     const handle: UploadHandle = {
       uploadSessionId: "",
       uploadSessionToken: undefined,
+      fileId,
       onProgress: (callback) => {
         this.progressCallbacks.push(callback);
       },
@@ -58,22 +223,18 @@ export class UploadManager {
 
   async startUpload(input: UploadInput): Promise<UploadResult> {
     const signal = this.abortController.signal;
-    this.file = input.file;
-
-    const fileName =
-      input.fileName || (input.file instanceof File ? input.file.name : "blob");
-    const mimeType = input.file.type || "application/octet-stream";
-    const size = input.file.size;
+    const prepared = await prepareUploadInput(input, [...this.preprocessors, ...(input.preprocessors || [])]);
+    this.file = prepared.file;
 
     const rawInit = await this.httpClient.initUpload(
       {
-        policy: input.policy,
-        fileName,
-        size,
-        mimeType,
-        metadata: input.metadata,
-        fileId: input.fileId,
-        idempotencyKey: input.idempotencyKey,
+        policy: prepared.policy,
+        fileName: prepared.fileName,
+        size: prepared.size,
+        mimeType: prepared.mimeType,
+        metadata: prepared.metadata,
+        fileId: prepared.fileId,
+        idempotencyKey: prepared.idempotencyKey,
       },
       signal,
     );
@@ -110,7 +271,7 @@ export class UploadManager {
       uploadSessionId,
       totalParts: initResponse.totalParts ?? 1,
       chunkSizeBytes: initResponse.chunkSizeBytes ?? 0,
-      fileSize: size,
+      fileSize: prepared.size,
     };
     this.uploadSessionToken = initResponse.uploadSessionToken;
 
@@ -121,6 +282,18 @@ export class UploadManager {
       this.uploadSessionToken,
       signal,
     );
+
+    if (result.fileId !== prepared.fileId) {
+      throw createClientError(
+        FILE_ID_MISMATCH_ERROR,
+        'Server completed upload with a different fileId than the client requested',
+        {
+          expectedFileId: prepared.fileId,
+          actualFileId: result.fileId,
+        },
+      );
+    }
+
     return result;
   }
 

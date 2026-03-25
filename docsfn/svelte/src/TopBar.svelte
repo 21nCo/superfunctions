@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DocsTopNavItem } from "@docsfn/core";
+  import type { DocsTopNavItem } from "@docsfn/core/browser";
   import {
     DropdownMenu,
     DropdownMenuContent,

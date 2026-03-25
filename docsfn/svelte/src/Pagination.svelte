@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
   import type { DocsPageSurface } from "./DocsLayout.svelte";
 
   export interface PaginationPage {
@@ -12,8 +12,6 @@
   export let nextPage: PaginationPage | undefined = undefined;
   export let sectionContext: string | undefined = undefined;
 
-  let handleKeyDown: ((e: KeyboardEvent) => void) | undefined = undefined;
-
   $: resolvedPrevPage = prevPage ?? surface?.pagination?.prev;
   $: resolvedNextPage = nextPage ?? surface?.pagination?.next;
 
@@ -22,24 +20,21 @@
       return;
     }
 
-    handleKeyDown = (e: KeyboardEvent) => {
-      // Alt + Arrow Left = Previous page
-      if (e.altKey && e.key === "ArrowLeft" && resolvedPrevPage) {
-        window.location.href = resolvedPrevPage.path;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const p = prevPage ?? surface?.pagination?.prev;
+      const n = nextPage ?? surface?.pagination?.next;
+      if (e.altKey && e.key === "ArrowLeft" && p) {
+        window.location.href = p.path;
       }
-      // Alt + Arrow Right = Next page
-      if (e.altKey && e.key === "ArrowRight" && resolvedNextPage) {
-        window.location.href = resolvedNextPage.path;
+      if (e.altKey && e.key === "ArrowRight" && n) {
+        window.location.href = n.path;
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
-  });
-
-  onDestroy(() => {
-    if (typeof window !== "undefined" && handleKeyDown) {
+    return () => {
       window.removeEventListener("keydown", handleKeyDown);
-    }
+    };
   });
 </script>
 
@@ -79,7 +74,7 @@
           </div>
         </a>
       {:else}
-        <div class="docsfn-pagination-spacer" />
+        <div class="docsfn-pagination-spacer"></div>
       {/if}
 
       {#if resolvedNextPage}
@@ -109,7 +104,7 @@
           </svg>
         </a>
       {:else}
-        <div class="docsfn-pagination-spacer" />
+        <div class="docsfn-pagination-spacer"></div>
       {/if}
     </div>
   </nav>

@@ -5,6 +5,7 @@ export interface UploadClient {
     policy: string;
     file: File;
     metadata?: Record<string, unknown>;
+    fileId?: string;
   }): Promise<{ fileId: string; versionId: string }>;
 }
 
@@ -201,6 +202,7 @@ export class OfflineSync {
         policy: pendingUpload.policy,
         file,
         metadata: pendingUpload.metadata,
+        fileId: pendingUpload.fileId,
       });
 
       // Delete from store on success

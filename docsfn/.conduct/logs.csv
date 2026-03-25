@@ -1,3 +1,11 @@
 timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-20T11:35:12Z,GPT-5 Codex,Codex,audit,audit,,.conduct/audits/2026-03-20-uhz52fhl-full-audit.md
 2026-03-20T12:57:57Z,GPT-5 Codex,Codex,spec,spec,,.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec
+2026-03-22T10:00:00Z,Claude Opus 4,unknown,document-issue,unknown-agent,,.conduct/issues/2026-03-22-k8f4m2q7-issue.md
+2026-03-22T14:00:00Z,Claude Opus 4.6,unknown,spec,unknown-agent,,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec
+2026-03-22T23:58:00Z,Claude Opus 4.6,Cursor,document-issue,unknown-agent,,docsfn/.conduct/issues/2026-03-22-r7k4m2n9-issue.md
+2026-03-22T18:45:00Z,claude-4.6-sonnet-medium-thinking,Cursor,execute-issue,unknown-agent,,docsfn/.conduct/issue-completions/2026-03-22-m4k8v2p9-completion.md
+2026-03-22T23:59:00Z,Claude Opus 4.6,Cursor,document-issue,unknown-agent,,docsfn/.conduct/issues/2026-03-22-q9x3k7m2-issue.md
+2026-03-22T20:30:00Z,claude-sonnet-4-6,Cursor,execute-issue,claude-sonnet-4-6,,docsfn/.conduct/issue-completions/2026-03-22-p7k4m8r2-completion.md
+2026-03-22T23:59:30Z,Claude Opus 4.6,unknown,document-issue,unknown-agent,,docsfn/.conduct/issues/2026-03-22-v8k3m7q2-issue.md
+2026-03-22T20:45:00Z,claude-sonnet-4-6,Cursor,execute-issue,unknown-agent,,docsfn/.conduct/issue-completions/2026-03-22-n5q8k3m1-completion.md

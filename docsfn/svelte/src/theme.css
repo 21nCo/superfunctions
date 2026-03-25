@@ -1,0 +1,590 @@
+/* @docsfn/svelte — default theme
+ *
+ * Import this file in your app to get a complete default visual theme for all
+ * docsfn-* component class hooks.  Consumers can override any value by
+ * redefining the --docsfn-color-* / --docsfn-font-* custom properties after
+ * this import.
+ *
+ * Usage:
+ *   import "@docsfn/svelte/theme.css";
+ */
+
+/* ─── CSS custom properties ─────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+  --docsfn-color-bg: #fafafa;
+  --docsfn-color-surface: #ffffff;
+  --docsfn-color-surface-raised: #f8fafc;
+  --docsfn-color-fg: #0f172a;
+  --docsfn-color-muted: #64748b;
+  --docsfn-color-border: #e2e8f0;
+  --docsfn-color-primary: #2563eb;
+  --docsfn-color-primary-hover: #1d4ed8;
+  --docsfn-color-primary-fg: #ffffff;
+  --docsfn-color-accent-soft: rgb(37 99 235 / 0.08);
+  --docsfn-color-code-bg: #f1f5f9;
+  --docsfn-color-code-fg: #0f172a;
+  --docsfn-color-code-border: #e2e8f0;
+  --docsfn-font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --docsfn-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --docsfn-space-unit: 0.25rem;
+  --docsfn-transition-theme: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --docsfn-color-bg: #0f172a;
+    --docsfn-color-surface: #1e293b;
+    --docsfn-color-surface-raised: #334155;
+    --docsfn-color-fg: #f8fafc;
+    --docsfn-color-muted: #94a3b8;
+    --docsfn-color-border: #334155;
+    --docsfn-color-primary: #3b82f6;
+    --docsfn-color-primary-hover: #60a5fa;
+    --docsfn-color-primary-fg: #0f172a;
+    --docsfn-color-accent-soft: rgb(59 130 246 / 0.15);
+    --docsfn-color-code-bg: #0f172a;
+    --docsfn-color-code-fg: #e2e8f0;
+    --docsfn-color-code-border: #475569;
+  }
+}
+
+/* ─── Three-column page layout ──────────────────────────────────────────── */
+.docsfn-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.docsfn-container {
+  display: grid;
+  grid-template-columns: 16rem 1fr 14rem;
+  flex: 1;
+  max-width: 90rem;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.docsfn-sidebar-col {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 1rem 0.75rem;
+  background: var(--docsfn-color-surface);
+  border-right: 1px solid var(--docsfn-color-border);
+}
+
+.docsfn-main {
+  min-width: 0;
+  padding: 1.5rem 2rem;
+}
+
+.docsfn-toc-col {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 1rem 0.75rem;
+  border-left: 1px solid var(--docsfn-color-border);
+}
+
+@media (max-width: 1279px) {
+  .docsfn-container {
+    grid-template-columns: 16rem 1fr;
+  }
+  .docsfn-toc-col {
+    display: none;
+  }
+}
+
+@media (max-width: 1023px) {
+  .docsfn-container {
+    grid-template-columns: 1fr;
+  }
+  .docsfn-sidebar-col {
+    display: none;
+  }
+}
+
+/* ─── Top bar ────────────────────────────────────────────────────────────── */
+.docsfn-topbar {
+  border-bottom: 1px solid var(--docsfn-color-border);
+  background: var(--docsfn-color-surface);
+  transition: var(--docsfn-transition-theme);
+}
+
+.docsfn-topbar-container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.65rem 1rem;
+}
+
+.docsfn-topbar-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+}
+
+.docsfn-topbar-link {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--docsfn-color-muted);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.docsfn-topbar-link:hover {
+  color: var(--docsfn-color-primary);
+}
+
+.docsfn-topbar-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--docsfn-color-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.docsfn-topbar-dropdown-trigger:hover {
+  color: var(--docsfn-color-primary);
+}
+
+.docsfn-topbar-dropdown-item {
+  font-size: 0.875rem;
+  color: var(--docsfn-color-fg);
+  text-decoration: none;
+}
+
+/* ─── Sidebar ────────────────────────────────────────────────────────────── */
+.docsfn-sidebar {
+  width: 100%;
+}
+
+.docsfn-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  align-items: stretch;
+}
+
+.docsfn-sidebar-link {
+  display: block;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  color: var(--docsfn-color-muted);
+  text-decoration: none;
+  line-height: 1.35;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.docsfn-sidebar-link:hover {
+  color: var(--docsfn-color-fg);
+  background: var(--docsfn-color-accent-soft);
+}
+
+.docsfn-sidebar-link.active {
+  color: var(--docsfn-color-primary);
+  font-weight: 600;
+  background: var(--docsfn-color-accent-soft);
+}
+
+.docsfn-sidebar-separator {
+  border: none;
+  border-top: 1px solid var(--docsfn-color-border);
+  margin: 0.5rem 0;
+}
+
+.docsfn-sidebar-group {
+  margin: 0.15rem 0;
+}
+
+.docsfn-sidebar-group-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  margin: 0;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--docsfn-color-fg);
+  list-style: none;
+  cursor: pointer;
+  border-radius: 0.375rem;
+  background: transparent;
+  border: none;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.docsfn-sidebar-group-trigger:hover {
+  background: var(--docsfn-color-accent-soft);
+}
+
+.docsfn-sidebar-group-text {
+  flex: 1;
+}
+
+.docsfn-sidebar-group-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  padding: 0.15rem 0 0.25rem 0.5rem;
+  margin: 0.1rem 0 0.25rem;
+  border-left: 1px solid var(--docsfn-color-border);
+}
+
+.docsfn-sidebar-group > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.docsfn-sidebar-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.docsfn-sidebar-group:not([open]) .docsfn-sidebar-group-icon svg {
+  transform: rotate(-90deg);
+}
+
+.docsfn-sidebar-group .docsfn-sidebar-group-icon svg {
+  display: block;
+  transition: transform 0.15s ease;
+}
+
+.docsfn-sidebar-viewport {
+  max-height: min(100vh - 4rem, 100%);
+  overflow-y: auto;
+}
+
+/* ─── Breadcrumbs ────────────────────────────────────────────────────────── */
+.docsfn-breadcrumbs {
+  margin: 0 0 0.5rem;
+}
+
+.docsfn-breadcrumbs-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.docsfn-breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.docsfn-breadcrumb-link {
+  color: var(--docsfn-color-muted);
+  text-decoration: none;
+}
+
+.docsfn-breadcrumb-link:hover {
+  color: var(--docsfn-color-primary);
+  text-decoration: underline;
+}
+
+.docsfn-breadcrumb-current {
+  color: var(--docsfn-color-fg);
+  font-weight: 500;
+}
+
+.docsfn-breadcrumb-separator {
+  color: var(--docsfn-color-muted);
+  flex-shrink: 0;
+}
+
+/* ─── Pagination ─────────────────────────────────────────────────────────── */
+.docsfn-pagination {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--docsfn-color-border);
+}
+
+.docsfn-pagination-links {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .docsfn-pagination-links {
+    grid-template-columns: 1fr;
+  }
+}
+
+.docsfn-pagination-prev,
+.docsfn-pagination-next {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--docsfn-color-border);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.docsfn-pagination-prev:hover,
+.docsfn-pagination-next:hover {
+  border-color: var(--docsfn-color-primary);
+  background: var(--docsfn-color-accent-soft);
+}
+
+.docsfn-pagination-label {
+  font-size: 0.75rem;
+  color: var(--docsfn-color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.docsfn-pagination-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--docsfn-color-fg);
+}
+
+.docsfn-pagination-spacer {
+  min-height: 1px;
+}
+
+/* ─── Table of Contents ──────────────────────────────────────────────────── */
+.docsfn-toc-title {
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--docsfn-color-muted);
+  margin: 0 0 0.65rem;
+}
+
+.docsfn-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.docsfn-toc-item {
+  margin: 0.2rem 0;
+}
+
+.docsfn-toc-link {
+  display: block;
+  color: var(--docsfn-color-muted);
+  text-decoration: none;
+  line-height: 1.35;
+  padding: 0.2rem 0;
+  border-radius: 0.25rem;
+}
+
+.docsfn-toc-link:hover,
+.docsfn-toc-link.active {
+  color: var(--docsfn-color-primary);
+}
+
+.docsfn-toc-viewport {
+  max-height: min(100vh - 2rem, 100%);
+  overflow-y: auto;
+}
+
+/* ─── Content (compiled docs body) ──────────────────────────────────────── */
+.docsfn-content {
+  font-size: 1rem;
+  line-height: 1.65;
+  transition: var(--docsfn-transition-theme);
+}
+
+.docsfn-content :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--docsfn-color-fg);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  scroll-margin-top: 1rem;
+}
+
+.docsfn-content :where(h1) {
+  font-size: 1.75rem;
+  margin: 0 0 0.75rem;
+}
+
+.docsfn-content :where(h2) {
+  font-size: 1.35rem;
+  margin: 1.75rem 0 0.65rem;
+}
+
+.docsfn-content :where(h3) {
+  font-size: 1.15rem;
+  margin: 1.35rem 0 0.5rem;
+}
+
+.docsfn-content :where(h4, h5, h6) {
+  margin: 1.15rem 0 0.4rem;
+}
+
+.docsfn-content :where(p) {
+  margin: 0.75rem 0;
+}
+
+.docsfn-content :where(p:first-child) {
+  margin-top: 0;
+}
+
+.docsfn-content :where(p:last-child) {
+  margin-bottom: 0;
+}
+
+.docsfn-content :where(ul, ol) {
+  margin: 0.75rem 0;
+  padding-left: 1.35rem;
+}
+
+.docsfn-content :where(li) {
+  margin: 0.3rem 0;
+}
+
+.docsfn-content :where(a):not([data-docsfn-tabs] a) {
+  color: var(--docsfn-color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.docsfn-content :where(a:hover):not([data-docsfn-tabs] a) {
+  color: var(--docsfn-color-primary-hover);
+}
+
+.docsfn-content :not(pre) > code {
+  font-family: var(--docsfn-font-mono);
+  font-size: 0.9em;
+  padding: 0.12em 0.35em;
+  border-radius: 0.25rem;
+  background: var(--docsfn-color-code-bg);
+  border: 1px solid var(--docsfn-color-code-border);
+  transition: var(--docsfn-transition-theme);
+}
+
+.docsfn-content pre[data-docsfn-code="true"],
+.docsfn-content pre[data-docsfn-mermaid="true"] {
+  padding: 1rem 1.1rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--docsfn-color-code-border);
+  background: var(--docsfn-color-code-bg);
+  color: var(--docsfn-color-code-fg);
+  overflow-x: auto;
+  font-family: var(--docsfn-font-mono);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  transition: var(--docsfn-transition-theme);
+}
+
+.docsfn-content aside[data-docsfn-callout] {
+  margin: 1.25rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--docsfn-color-border);
+  background: var(--docsfn-color-surface-raised);
+  transition: var(--docsfn-transition-theme);
+}
+
+.docsfn-content aside[data-docsfn-callout] :where(p:first-child) {
+  margin-top: 0;
+}
+
+.docsfn-content aside[data-docsfn-callout] :where(p:last-child) {
+  margin-bottom: 0;
+}
+
+.docsfn-content [data-docsfn-tabs="true"] {
+  margin: 1.25rem 0;
+  border: 1px solid var(--docsfn-color-border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--docsfn-color-surface);
+  transition: var(--docsfn-transition-theme);
+}
+
+.docsfn-content [data-docsfn-tabs="true"] [role="tablist"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--docsfn-color-border);
+  background: var(--docsfn-color-surface-raised);
+}
+
+.docsfn-content [data-docsfn-tabs="true"] button[role="tab"] {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--docsfn-color-muted);
+  cursor: pointer;
+}
+
+.docsfn-content [data-docsfn-tabs="true"] button[role="tab"][aria-selected="true"] {
+  color: var(--docsfn-color-fg);
+  border-color: var(--docsfn-color-border);
+  background: var(--docsfn-color-surface);
+}
+
+.docsfn-content [data-docsfn-tabs="true"] [role="tabpanel"] pre {
+  margin: 0;
+  padding: 1rem;
+  background: var(--docsfn-color-code-bg);
+  border: none;
+  font-family: var(--docsfn-font-mono);
+  font-size: 0.8rem;
+}
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+.docsfn-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+.docsfn-content :where(th, td) {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--docsfn-color-border);
+  text-align: left;
+}
+
+.docsfn-content :where(th) {
+  font-weight: 600;
+  background: var(--docsfn-color-surface-raised);
+}
+
+/* ─── API reference scroll regions ──────────────────────────────────────── */
+.docsfn-api-endpoints-scroll,
+.docsfn-api-schemas-scroll {
+  max-height: min(70vh, 32rem);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.docsfn-search-results {
+  max-height: min(60vh, 24rem);
+  overflow-y: auto;
+}

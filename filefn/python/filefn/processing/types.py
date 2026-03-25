@@ -38,6 +38,12 @@ class ThumbnailConfig(BaseModel):
     quality: Optional[int] = 80
     format: Optional[str] = 'jpeg' # 'jpeg' | 'png' | 'webp'
 
+class PdfPreviewConfig(BaseModel):
+    sizes: Optional[List[ThumbnailSize]] = None
+    density: Optional[int] = 144
+    quality: Optional[int] = 85
+    format: Optional[str] = 'png'
+
 class CompressionConfig(BaseModel):
     algorithm: Optional[str] = 'gzip'
     level: Optional[int] = 6

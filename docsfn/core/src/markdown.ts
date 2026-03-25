@@ -1,3 +1,4 @@
+import { marked } from "marked";
 import { transformFumadocsV15 } from "./compat/fumadocs";
 import { createDiagnostic, createDocsError, type DocsError } from "./diagnostics";
 import { assertSafeSource } from "./sanitize";
@@ -10,11 +11,19 @@ export type CompiledContentBlock =
       type: "heading";
       level: number;
       text: string;
+      html: string;
       slug: string;
     }
   | {
       type: "paragraph";
       text: string;
+      html: string;
+    }
+  | {
+      type: "list";
+      ordered: boolean;
+      items: Array<{ text: string }>;
+      html: string;
     }
   | {
       type: "code";
@@ -37,6 +46,11 @@ export type CompiledContentBlock =
       type: "callout";
       kind: "note" | "tip" | "warning" | "info" | "caution";
       text: string;
+      html: string;
+    }
+  | {
+      type: "table";
+      html: string;
     }
   | {
       type: "component";
@@ -73,6 +87,26 @@ const TAB_END_REGEX = /^<\s*\/\s*(DocsTab|Tab)\s*>/;
 const CALLOUT_REGEX = /^>\s*\[!(NOTE|TIP|WARNING|INFO|CAUTION)\]\s*(.*)$/i;
 const COMPONENT_SELF_CLOSING_REGEX = /^<\s*([A-Z][A-Za-z0-9]*)\b[^>]*\/>\s*$/;
 const COMPONENT_START_REGEX = /^<\s*([A-Z][A-Za-z0-9]*)\b[^>]*>\s*$/;
+const LIST_UNORDERED_REGEX = /^[-*+]\s+/;
+const LIST_ORDERED_REGEX = /^\d+[.)]\s+/;
+const TABLE_ROW_REGEX = /^\|.+\|/;
+
+const UNSAFE_HREF_RE = /(\bhref\s*=\s*["'])\s*javascript:[^"']*/gi;
+const EVENT_ATTR_RE = /\s+on[a-z][a-z0-9]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi;
+
+function sanitizeMarkdownHtml(html: string): string {
+  return html
+    .replace(UNSAFE_HREF_RE, "$1#")
+    .replace(EVENT_ATTR_RE, "");
+}
+
+function renderInlineHtml(text: string): string {
+  return sanitizeMarkdownHtml(marked.parseInline(text, { async: false }) as string);
+}
+
+function renderBlockHtml(text: string): string {
+  return sanitizeMarkdownHtml(marked.parse(text.trim(), { async: false }) as string);
+}
 
 const UNICODE_SLUG_MAP: Record<string, string> = {
   日: "ri-",
@@ -152,6 +186,15 @@ function createSlugger(): (text: string) => string {
   };
 }
 
+function isListStart(line: string): boolean {
+  const trimmed = line.trim();
+  return LIST_UNORDERED_REGEX.test(trimmed) || LIST_ORDERED_REGEX.test(trimmed);
+}
+
+function isTableStart(line: string): boolean {
+  return TABLE_ROW_REGEX.test(line.trim());
+}
+
 function isBlockStart(line: string): boolean {
   const trimmed = line.trim();
   return (
@@ -161,8 +204,94 @@ function isBlockStart(line: string): boolean {
     TABS_START_REGEX.test(trimmed) ||
     CALLOUT_REGEX.test(trimmed) ||
     COMPONENT_SELF_CLOSING_REGEX.test(trimmed) ||
-    COMPONENT_START_REGEX.test(trimmed)
+    COMPONENT_START_REGEX.test(trimmed) ||
+    isListStart(line) ||
+    isTableStart(line)
   );
+}
+
+function parseTableBlock(input: {
+  lines: string[];
+  startIndex: number;
+}): { block: Extract<CompiledContentBlock, { type: "table" }>; nextIndex: number } {
+  const rawLines: string[] = [];
+  let index = input.startIndex;
+
+  while (index < input.lines.length) {
+    const trimmed = input.lines[index].trim();
+    if (trimmed.length === 0 || !TABLE_ROW_REGEX.test(trimmed)) {
+      break;
+    }
+    rawLines.push(input.lines[index]);
+    index++;
+  }
+
+  const html = renderBlockHtml(rawLines.join("\n"));
+  return { block: { type: "table", html }, nextIndex: index };
+}
+
+function parseListBlock(input: {
+  lines: string[];
+  startIndex: number;
+}): { block: Extract<CompiledContentBlock, { type: "list" }>; nextIndex: number } {
+  const firstTrimmed = input.lines[input.startIndex].trim();
+  const ordered = LIST_ORDERED_REGEX.test(firstTrimmed);
+  const rawLines: string[] = [];
+  const items: Array<{ text: string }> = [];
+  let index = input.startIndex;
+
+  while (index < input.lines.length) {
+    const rawLine = input.lines[index];
+    const trimmed = rawLine.trim();
+
+    if (trimmed.length === 0) {
+      // Blank line: part of a loose list only if next non-blank is a list line or indented continuation
+      let peek = index + 1;
+      while (peek < input.lines.length && input.lines[peek].trim().length === 0) {
+        peek++;
+      }
+      if (peek < input.lines.length) {
+        const nextLine = input.lines[peek];
+        const nextTrimmed = nextLine.trim();
+        const nextIsListContinuation =
+          LIST_UNORDERED_REGEX.test(nextTrimmed) ||
+          LIST_ORDERED_REGEX.test(nextTrimmed) ||
+          nextLine.startsWith("  ") ||
+          nextLine.startsWith("\t");
+        if (nextIsListContinuation) {
+          rawLines.push(rawLine);
+          index = peek;
+          continue;
+        }
+      }
+      break;
+    }
+
+    const isTopLevel =
+      (LIST_UNORDERED_REGEX.test(trimmed) || LIST_ORDERED_REGEX.test(trimmed)) &&
+      !rawLine.startsWith("  ") &&
+      !rawLine.startsWith("\t");
+    const isIndentedContinuation =
+      (rawLine.startsWith("  ") || rawLine.startsWith("\t")) && rawLines.length > 0;
+
+    if (!isTopLevel && !isIndentedContinuation) {
+      break;
+    }
+
+    if (isTopLevel) {
+      const text = trimmed
+        .replace(LIST_UNORDERED_REGEX, "")
+        .replace(LIST_ORDERED_REGEX, "")
+        .trim();
+      items.push({ text });
+    }
+
+    rawLines.push(rawLine);
+    index++;
+  }
+
+  const html = renderBlockHtml(rawLines.join("\n"));
+  return { block: { type: "list", ordered, items, html }, nextIndex: index };
 }
 
 function parseTabsItems(rawAttributes: string): string[] {
@@ -346,9 +475,17 @@ function parseBlocks(input: {
         type: "heading",
         level,
         text,
+        html: renderInlineHtml(text),
         slug: createHeadingSlug(text),
       });
       index += 1;
+      continue;
+    }
+
+    if (isListStart(trimmed)) {
+      const parsedList = parseListBlock({ lines, startIndex: index });
+      blocks.push(parsedList.block);
+      index = parsedList.nextIndex;
       continue;
     }
 
@@ -378,10 +515,12 @@ function parseBlocks(input: {
         }
         index += 1;
       }
+      const calloutText = calloutLines.join("\n");
       blocks.push({
         type: "callout",
         kind: calloutMatch[1].toLowerCase() as "note" | "tip" | "warning" | "info" | "caution",
-        text: calloutLines.join("\n"),
+        text: calloutText,
+        html: renderBlockHtml(calloutText),
       });
       continue;
     }
@@ -429,15 +568,24 @@ function parseBlocks(input: {
       continue;
     }
 
+    if (isTableStart(trimmed)) {
+      const parsedTable = parseTableBlock({ lines, startIndex: index });
+      blocks.push(parsedTable.block);
+      index = parsedTable.nextIndex;
+      continue;
+    }
+
     const paragraphLines: string[] = [];
     while (index < lines.length && !isBlockStart(lines[index])) {
       paragraphLines.push(lines[index].trim());
       index += 1;
     }
     if (paragraphLines.length > 0) {
+      const paragraphText = paragraphLines.join(" ").trim();
       blocks.push({
         type: "paragraph",
-        text: paragraphLines.join(" ").trim(),
+        text: paragraphText,
+        html: renderInlineHtml(paragraphText),
       });
       continue;
     }

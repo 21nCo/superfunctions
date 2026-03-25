@@ -5,5 +5,7 @@ describe('@filefn/client', () => {
     const mod = await import('./index.js');
     expect(mod.createFileFnClient).toBeDefined();
     expect(typeof mod.createFileFnClient).toBe('function');
+    expect(mod.generateFileId).toBeDefined();
+    expect(mod.createHeicPreprocessor).toBeDefined();
   });
 });

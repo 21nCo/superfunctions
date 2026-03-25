@@ -25,16 +25,21 @@ export async function loadLibraryConfig(
     // and loaded.config = {...}
     // Prefer loaded.config over loaded.default to avoid getting wrapped object
     if (loaded.config !== undefined) {
-      return loaded.config;
+      return resolveConfigValue(loaded.config);
     }
     if (loaded.default !== undefined) {
-      return loaded.default;
+      return resolveConfigValue(loaded.default);
     }
-    return loaded;
+    return resolveConfigValue(loaded);
   }
   
   // JS/MJS - use dynamic import
   const fileUrl = pathToFileURL(configPath).href;
   const loaded = await import(fileUrl);
-  return loaded.default || loaded.config || loaded;
+  return resolveConfigValue(loaded.default ?? loaded.config ?? loaded);
+}
+
+async function resolveConfigValue(value: any): Promise<any> {
+  const resolved = typeof value === 'function' ? value() : value;
+  return await Promise.resolve(resolved);
 }

@@ -115,7 +115,9 @@ function normalizeTrustPolicy(policy?: SourceTrustPolicy): SourceTrustPolicy {
 export function resolveUnsafeHtmlAllowlist(
   input: ResolveUnsafeHtmlAllowlistInput
 ): string[] {
-  const raw = (input.value ?? process.env[RAW_HTML_ALLOWLIST_ENV] ?? "").trim();
+  const envValue =
+    typeof process !== "undefined" && process.env ? process.env[RAW_HTML_ALLOWLIST_ENV] : undefined;
+  const raw = (input.value ?? envValue ?? "").trim();
   if (!raw) {
     return [];
   }

@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 from .. import errors
 from ..models import FileProviderContext, FileRecord, FileShareRecord, FileVersionRecord
+from ..policies import resolve_storage_target
+from ..routed_storage import get_storage_capabilities
 
 
 class CreateShareLinkInput(BaseModel):
@@ -20,6 +22,7 @@ class CreateShareLinkInput(BaseModel):
 class SharesServiceConfig(BaseModel):
     db: Any
     storage: Any
+    policies: Optional[Any] = None
     namespace: str = "filefn"
     signed_url_ttl_seconds: int = 900
 
@@ -31,8 +34,13 @@ class SharesService:
     def __init__(self, config: SharesServiceConfig):
         self.db = config.db
         self.storage = config.storage
+        self.policies = config.policies
         self.namespace = config.namespace
         self.signed_url_ttl_seconds = config.signed_url_ttl_seconds
+
+    def _storage_target_for_file(self, file: FileRecord) -> str:
+        policy = self.policies.get(file.policy) if self.policies else None
+        return resolve_storage_target(policy)
 
     def _hash_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -65,6 +73,14 @@ class SharesService:
 
     async def _can_share_file(self, file: FileRecord, ctx: FileProviderContext) -> bool:
         return file.ownerId == ctx.principalId
+
+    async def _increment_downloads(self, token_hash: str, current_downloads: int) -> None:
+        await self.db.update(
+            model="fileShares",
+            where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
+            data={"downloads": current_downloads + 1},
+            namespace=self.namespace,
+        )
 
     async def create_share_link(self, input: CreateShareLinkInput, ctx: FileProviderContext) -> Dict[str, Any]:
         file = await self._get_file(input.fileId)
@@ -141,14 +157,17 @@ class SharesService:
             raise errors.not_found("Version")
         if version.fileId != file.fileId:
             raise errors.not_found("Version")
+        storage_target = self._storage_target_for_file(file)
 
         descriptor: Dict[str, Any]
-        if hasattr(self.storage, "sign_download_url"):
+        if hasattr(self.storage, "sign_download_url") and get_storage_capabilities(self.storage, storage_target).get("signedDownloadUrls"):
             try:
                 result = await self.storage.sign_download_url(
                     key=version.storageKey,
                     expires_in_seconds=self.signed_url_ttl_seconds,
+                    target=storage_target,
                 )
+                await self._increment_downloads(token_hash, share.downloads)
                 descriptor = {
                     "url": result["url"],
                     "headers": result.get("headers"),
@@ -168,14 +187,52 @@ class SharesService:
                 "mimeType": file.mimeType,
             }
 
-        await self.db.update(
+        return descriptor
+
+    async def get_download_stream_via_share_link(
+        self,
+        token: str,
+        ctx: FileProviderContext,
+        is_authenticated: bool = False,
+    ) -> Dict[str, Any]:
+        token_hash = self._hash_token(token)
+        data = await self.db.find_one(
             model="fileShares",
             where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
-            data={"downloads": share.downloads + 1},
             namespace=self.namespace,
         )
+        if not data:
+            raise errors.share_not_found()
 
-        return descriptor
+        share = FileShareRecord(**data)
+        if share.revokedAt:
+            raise errors.share_revoked()
+        if share.expiresAt and self._as_utc(share.expiresAt) <= datetime.now(timezone.utc):
+            raise errors.share_expired()
+        if share.maxDownloads is not None and share.downloads >= share.maxDownloads:
+            raise errors.share_downloads_exceeded()
+        if share.requiresAuth and not is_authenticated:
+            raise errors.auth_required()
+
+        file = await self._get_file(share.fileId)
+        if not file:
+            raise errors.share_not_found()
+
+        version_id = share.versionId or file.currentVersionId
+        version = await self._get_version(version_id)
+        if not version or version.fileId != file.fileId:
+            raise errors.not_found("Version")
+
+        storage_target = self._storage_target_for_file(file)
+        stream = await self.storage.open_download_stream(key=version.storageKey, target=storage_target)
+        await self._increment_downloads(token_hash, share.downloads)
+        return {
+            "stream": stream,
+            "contentType": version.mimeType,
+            "size": version.size,
+            "fileName": file.name,
+            "mimeType": file.mimeType,
+        }
 
     async def revoke_share_link(self, file_id: str, token: str, ctx: FileProviderContext) -> None:
         file = await self._get_file(file_id)

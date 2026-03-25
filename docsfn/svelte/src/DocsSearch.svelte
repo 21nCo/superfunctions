@@ -1,22 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { maybeEmitAnalyticsEvent, type DocsAnalyticsEvent } from "@docsfn/core/analytics";
+  import type { DocsSearchArtifact, DocsSearchScope } from "@docsfn/core/search";
   import {
     createDocsSearchRuntime,
-    maybeEmitAnalyticsEvent,
-    type DocsAnalyticsEvent,
-    type DocsSearchArtifact,
     type DocsSearchRuntime,
     type DocsSearchRuntimeResultItem,
-    type DocsSearchScope,
-  } from "@docsfn/core";
-  import {
-    Dialog,
-    DialogPortal,
-    DialogOverlay,
-    DialogContent,
-    ScrollArea,
-    ScrollAreaViewport,
-  } from "@uifn/svelte";
+  } from "@docsfn/core/search-runtime";
+  import { Dialog, DialogPortal, DialogOverlay, DialogContent } from "@uifn/svelte";
 
   type SearchScopeFilter = DocsSearchScope | "all";
 
@@ -200,8 +191,7 @@
         {/if}
       </div>
 
-      <ScrollArea class="docsfn-search-results">
-        <ScrollAreaViewport>
+      <div class="docsfn-search-results">
           {#if results.length === 0 && query}
             <div class="docsfn-search-empty">
               <p>No results found for "{query}"</p>
@@ -234,8 +224,7 @@
               {/each}
             </div>
           {/if}
-        </ScrollAreaViewport>
-      </ScrollArea>
+      </div>
     </DialogContent>
   </DialogPortal>
 </Dialog>

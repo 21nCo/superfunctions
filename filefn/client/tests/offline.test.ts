@@ -97,6 +97,9 @@ describe('OPFSStore', () => {
         getDirectory: async () => mockRoot,
       },
     });
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:pending-local'),
+    });
   });
 
   describe('TV-CLIENT-OFFLINE-NEG-001: OPFS unavailable', () => {
@@ -180,6 +183,44 @@ describe('OPFSStore', () => {
       expect(retrieved!.size).toBe(testData.length);
       expect(retrieved!.mimeType).toBe('text/plain');
       expect(new Uint8Array(retrieved!.fileData)).toEqual(testData);
+      expect(retrieved!.fileId).toBe('offline_001');
+      expect(retrieved!.localSource).toMatchObject({
+        mode: 'local-object-url',
+        previewBehavior: 'download-only',
+      });
+    });
+
+    it('TV-CLIENT-002: should resolve a pending-local descriptor by fileId', async () => {
+      const store = new OPFSStore();
+      await store.init();
+
+      await store.stagePendingUpload({
+        uploadSessionId: 'offline_img_001',
+        fileId: 'file_local_img',
+        policy: 'images',
+        fileName: 'photo.jpg',
+        size: 12,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('image-bytes').buffer,
+        createdAt: new Date().toISOString(),
+        retryCount: 0,
+      });
+
+      const descriptor = await store.getPendingLocalDescriptor('file_local_img');
+
+      expect(descriptor).toEqual({
+        fileId: 'file_local_img',
+        uploadSessionId: 'offline_img_001',
+        state: 'pending-local',
+        source: expect.objectContaining({
+          mode: 'local-object-url',
+          kind: 'image',
+          fileName: 'photo.jpg',
+          mimeType: 'image/jpeg',
+          previewBehavior: 'direct-image',
+          url: 'blob:pending-local',
+        }),
+      });
     });
 
     it('should list all pending uploads', async () => {

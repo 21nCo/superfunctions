@@ -1,17 +1,18 @@
 
-## Phase 1
+## Release 0
 - Recurring subscriptions billing
+- One time payments (like lifetime plan etc)
 - App store integration
 - Plugins
   - Dodo payments provider
 
-## Phase 2
+## Release 1
 - Usage based billing, limits, credits etc (AI workflows)
 - UI components
   - Usage analytics
 - Play store integration
 
-## Phase 3
+## Release 2
 - Admin UI
 - Analytics and reporting
 - Plugins

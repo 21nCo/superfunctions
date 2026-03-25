@@ -1,9 +1,13 @@
+import type { OAuthSecretResolverContext } from "./index.js";
+
 export type OAuthHttpErrorCode =
   | "OAUTH_TOKEN_EXCHANGE_FAILED"
   | "OAUTH_TOKEN_REFRESH_FAILED"
   | "PROVIDER_RATE_LIMITED"
   | "VALIDATION_ERROR"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "OAUTH_RUNTIME_CONFIG_INVALID"
+  | "OAUTH_SECRET_RESOLUTION_FAILED";
 
 export interface OAuthHttpErrorOptions {
   code: OAuthHttpErrorCode;
@@ -34,6 +38,34 @@ export function unsupportedTokenAuthMethodError(tokenAuthMethod: string): OAuthH
     status: 400,
     retryable: false,
     details: { tokenAuthMethod }
+  });
+}
+
+export function invalidRuntimeConfigError(message: string, details?: Record<string, unknown>): OAuthHttpError {
+  return new OAuthHttpError(message, {
+    code: "OAUTH_RUNTIME_CONFIG_INVALID",
+    status: 500,
+    retryable: false,
+    details
+  });
+}
+
+export function secretResolutionFailedError(
+  context: OAuthSecretResolverContext,
+  cause?: unknown,
+  message: string = "failed to resolve OAuth client secret"
+): OAuthHttpError {
+  return new OAuthHttpError(message, {
+    code: "OAUTH_SECRET_RESOLUTION_FAILED",
+    status: 500,
+    retryable: false,
+    details: {
+      providerId: context.provider.id,
+      operation: context.operation,
+      grantType: context.grantType,
+      hasResolver: true,
+      causeMessage: cause instanceof Error ? cause.message : undefined
+    }
   });
 }
 

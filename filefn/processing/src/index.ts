@@ -8,6 +8,7 @@ export type {
   ProcessingJobResult,
   ThumbnailConfig,
   ThumbnailSize,
+  PdfPreviewConfig,
   CompressionConfig,
   OCRConfig,
   ImageTransformOperation,
@@ -26,6 +27,11 @@ export {
   createThumbnailProcessor,
   THUMBNAIL_SUPPORTED_MIME_TYPES,
 } from './processors/thumbnail.js';
+
+export {
+  createPdfPreviewProcessor,
+  PDF_PREVIEW_SUPPORTED_MIME_TYPES,
+} from './processors/pdf-preview.js';
 
 export {
   createCompressionProcessor,

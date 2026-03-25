@@ -1,6 +1,9 @@
 import sharp from 'sharp';
 import type { Processor, ProcessorInput, ProcessorResult, ThumbnailConfig, ThumbnailSize } from '../types.js';
 
+const UNSUPPORTED_MIME_TYPE_ERROR = 'FILEFN_PROCESSING_UNSUPPORTED_MIME_TYPE';
+const THUMBNAIL_FAILED_ERROR = 'FILEFN_PROCESSING_THUMBNAIL_FAILED';
+
 const DEFAULT_SIZES: ThumbnailSize[] = [
   { name: 'small', width: 150, height: 150 },
   { name: 'medium', width: 300, height: 300 },
@@ -21,7 +24,7 @@ export function createThumbnailProcessor(config: ThumbnailConfig = { sizes: DEFA
         return {
           success: false,
           artifacts: [],
-          error: `Unsupported MIME type: ${input.mimeType}`,
+          error: UNSUPPORTED_MIME_TYPE_ERROR,
         };
       }
 
@@ -59,10 +62,11 @@ export function createThumbnailProcessor(config: ThumbnailConfig = { sizes: DEFA
           artifacts,
         };
       } catch (error) {
+        void error;
         return {
           success: false,
           artifacts: [],
-          error: error instanceof Error ? error.message : 'Unknown thumbnail generation error',
+          error: THUMBNAIL_FAILED_ERROR,
         };
       }
     },
@@ -100,3 +104,4 @@ async function generateThumbnail(
 }
 
 export { SUPPORTED_MIME_TYPES as THUMBNAIL_SUPPORTED_MIME_TYPES };
+export { THUMBNAIL_FAILED_ERROR, UNSUPPORTED_MIME_TYPE_ERROR };

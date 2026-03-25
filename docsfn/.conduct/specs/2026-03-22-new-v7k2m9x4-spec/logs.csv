@@ -1,0 +1,14 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-22T14:00:00Z,Claude Opus 4.6,unknown,spec,unknown-agent,,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec
+2026-03-22T15:02:00Z,unknown,Cursor,execute,unknown-agent,PHASE_00,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_00-2026-03-22-n4w8k2p9-report.md
+2026-03-22T15:40:00Z,unknown,Cursor,execute,unknown-agent,PHASE_01,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_01-2026-03-22-m3k9p2w7x4-report.md
+2026-03-22T16:15:00Z,unknown,Cursor,execute,unknown-agent,PHASE_02,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_02-2026-03-22-r4k9m2w7p3-report.md
+2026-03-22T18:30:00Z,unknown,Cursor,execute,unknown-agent,PHASE_07,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_07-2026-03-22-k9m2n8p4-report.md
+2026-03-22T18:45:00Z,Composer,Cursor,execute,unknown-agent,PHASE_03,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_03-2026-03-22-z8k3m9n2p5-report.md
+2026-03-22T19:32:00Z,Composer,Cursor,execute,unknown-agent,PHASE_04,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_04-2026-03-22-q4n8k2m7w9-report.md
+2026-03-22T20:05:00Z,Composer,Cursor,execute,unknown-agent,PHASE_05,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_05-2026-03-22-m7k2n9p4w8-report.md
+2026-03-22T21:10:00Z,Composer,Cursor,execute,unknown-agent,PHASE_06,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_06-2026-03-22-p3k9n2m7w4-report.md
+2026-03-22T11:35:00Z,Composer,Cursor,execute,unknown-agent,PHASE_08,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_08-2026-03-22-n8k4m2p7w1-report.md
+2026-03-22T11:48:00Z,Composer,Cursor,execute,unknown-agent,PHASE_09,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_09-2026-03-22-p4k9m2n7w3-report.md
+2026-03-22T12:05:00Z,Composer,Cursor,execute,unknown-agent,PHASE_10,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_10-2026-03-22-x7k2m9n4p1-report.md
+2026-03-22T23:52:00Z,Composer,Cursor,execute,unknown-agent,PHASE_11,docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/phase-reports/PHASE_11-2026-03-22-h4k9m2n7w3-report.md

@@ -36,13 +36,14 @@ graph TD;
       source: `> [!NOTE] Keep this deterministic\n> across builds.`,
       sourcePath: "content/docs/note.mdx",
     });
-    expect(compiled.blocks).toEqual([
-      {
-        type: "callout",
-        kind: "note",
-        text: "Keep this deterministic\nacross builds.",
-      },
-    ]);
+    expect(compiled.blocks).toHaveLength(1);
+    expect(compiled.blocks[0]).toMatchObject({
+      type: "callout",
+      kind: "note",
+      text: "Keep this deterministic\nacross builds.",
+    });
+    expect(typeof (compiled.blocks[0] as { html: string }).html).toBe("string");
+    expect((compiled.blocks[0] as { html: string }).html.length).toBeGreaterThan(0);
   });
 
   it("rejects unsupported fumadocs constructs (TV-MIG-001 negative)", () => {

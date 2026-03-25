@@ -2,6 +2,17 @@ from typing import Callable, List, Optional, Protocol, Dict, Union, Any
 from dataclasses import dataclass, field
 from pydantic import BaseModel
 
+DEFAULT_STORAGE_TARGET = "durable"
+NUCLEUS_MAX_SIZE_BYTES = 100 * 1024 * 1024
+NUCLEUS_ALLOWED_CONTENT_TYPES = [
+    "image/*",
+    "audio/*",
+    "video/*",
+    "application/pdf",
+    "text/markdown",
+    "text/plain",
+]
+
 @dataclass
 class PolicyStoragePathContext:
     fileName: str
@@ -16,11 +27,19 @@ class Policy:
                  contentTypes: Optional[List[str]] = None,
                  maxSizeBytes: Optional[int] = None,
                  visibility: Optional[str] = None, # 'public' | 'private' | 'shared'
+                 storageTarget: Optional[str] = None,
+                 artifactStorageTarget: Optional[str] = None,
+                 lifecycle: Optional[str] = None,
+                 renderProfile: Optional[str] = None,
                  storagePath: Optional[Callable[[PolicyStoragePathContext], str]] = None):
         self.name = name
         self.contentTypes = contentTypes
         self.maxSizeBytes = maxSizeBytes
         self.visibility = visibility
+        self.storageTarget = storageTarget
+        self.artifactStorageTarget = artifactStorageTarget
+        self.lifecycle = lifecycle
+        self.renderProfile = renderProfile
         self.storagePath = storagePath
 
 class PolicyRegistry(Protocol):
@@ -54,7 +73,7 @@ def create_policy_registry(initial_policies: List[Policy] = None) -> InMemoryPol
 
 def validate_policy_constraints(policy: Policy, mime_type: str, size: int) -> Dict[str, Union[bool, str]]:
     if policy.contentTypes and len(policy.contentTypes) > 0:
-        if mime_type not in policy.contentTypes:
+        if not any(matches_content_type(pattern, mime_type) for pattern in policy.contentTypes):
             return {'valid': False, 'error': f"Content type '{mime_type}' not allowed by policy '{policy.name}'"}
     
     if policy.maxSizeBytes is not None and size > policy.maxSizeBytes:
@@ -72,3 +91,42 @@ def compute_storage_path(policy: Policy, ctx: PolicyStoragePathContext) -> str:
     parts.append(ctx.fileId)
     parts.append(f"{ctx.versionId}-{ctx.fileName}")
     return "/".join(parts)
+
+def resolve_storage_target(policy: Any) -> str:
+    target = getattr(policy, "storageTarget", None) if policy is not None else None
+    return target or DEFAULT_STORAGE_TARGET
+
+def resolve_artifact_storage_target(policy: Any) -> str:
+    target = getattr(policy, "artifactStorageTarget", None) if policy is not None else None
+    return target or resolve_storage_target(policy)
+
+def matches_content_type(pattern: str, mime_type: str) -> bool:
+    if pattern == "*/*":
+        return True
+    if pattern.endswith("/*"):
+        return mime_type.startswith(pattern[:-1])
+    return pattern == mime_type
+
+def create_nucleus_policies() -> List[Policy]:
+    return [
+        Policy(
+            name="nucleus-durable-default",
+            contentTypes=list(NUCLEUS_ALLOWED_CONTENT_TYPES),
+            maxSizeBytes=NUCLEUS_MAX_SIZE_BYTES,
+            visibility="private",
+            storageTarget="durable",
+            artifactStorageTarget="durable",
+            lifecycle="durable",
+            renderProfile="nucleus",
+        ),
+        Policy(
+            name="nucleus-temporary-default",
+            contentTypes=list(NUCLEUS_ALLOWED_CONTENT_TYPES),
+            maxSizeBytes=NUCLEUS_MAX_SIZE_BYTES,
+            visibility="private",
+            storageTarget="temporary",
+            artifactStorageTarget="temporary",
+            lifecycle="temporary",
+            renderProfile="nucleus",
+        ),
+    ]

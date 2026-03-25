@@ -11,16 +11,34 @@ export interface OAuthProviderDescriptor {
   tokenAuthMethod?: "client_secret_post" | "client_secret_basic";
 }
 
-export interface AuthorizationRequest {
+export type OAuthIntentSubject =
+  | {
+      kind: "connection";
+      tenantId: string;
+      userId: string;
+      connectionId?: string;
+    }
+  | {
+      kind: "browser-auth";
+      intentId: string;
+      tenantId?: string;
+      regionId?: string;
+      returnTo?: string;
+      metadata?: Record<string, unknown>;
+    };
+
+export interface AuthorizationRequestBase {
   providerId: string;
-  tenantId: string;
-  userId: string;
   redirectUri: string;
   scopes?: string[];
   connectionName?: string;
   prompt?: string;
   loginHint?: string;
 }
+
+export type AuthorizationRequest =
+  | (AuthorizationRequestBase & { subject: OAuthIntentSubject })
+  | (AuthorizationRequestBase & { tenantId: string; userId: string; connectionId?: string });
 
 export interface AuthorizationResult {
   authorizationUrl: string;

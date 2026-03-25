@@ -1,5 +1,8 @@
 """FastAPI adapter implementation."""
 
+from __future__ import annotations
+
+import re
 from typing import Any, Callable, Dict, List
 
 from fastapi import APIRouter, Request as FastAPIRequest
@@ -12,6 +15,9 @@ from superfunctions.http import (
     Route,
     RouteContext,
 )
+
+SUPERFUNCTIONS_ROUTE_ATTR = "__superfunctions_route__"
+SUPERFUNCTIONS_ROUTE_META_ATTR = "__superfunctions_route_meta__"
 
 
 class FastAPIRequestAdapter:
@@ -65,32 +71,47 @@ def to_fastapi_response(response: Response) -> FastAPIResponse:
         FastAPI Response object
     """
     if isinstance(response.body, (dict, list)):
-        return JSONResponse(
+        fastapi_response = JSONResponse(
             content=response.body,
             status_code=response.status,
             headers=response.headers,
         )
     elif isinstance(response.body, str):
-        return FastAPIResponse(
+        fastapi_response = FastAPIResponse(
             content=response.body,
             status_code=response.status,
             headers=response.headers,
             media_type="text/plain",
         )
     elif isinstance(response.body, bytes):
-        return FastAPIResponse(
+        fastapi_response = FastAPIResponse(
             content=response.body,
             status_code=response.status,
             headers=response.headers,
         )
     else:
-        return FastAPIResponse(
+        fastapi_response = FastAPIResponse(
             status_code=response.status,
             headers=response.headers,
         )
 
+    for cookie in response.cookies:
+        fastapi_response.set_cookie(
+            key=cookie.name,
+            value=cookie.value,
+            max_age=cookie.max_age,
+            expires=cookie.expires,
+            path=cookie.path,
+            domain=cookie.domain,
+            secure=cookie.secure,
+            httponly=cookie.http_only,
+            samesite=cookie.same_site,
+        )
 
-def create_handler(handler: Callable, path: str):
+    return fastapi_response
+
+
+def create_handler(handler: Callable, route: Route):
     """
     Create a FastAPI handler from a superfunctions handler.
     
@@ -133,6 +154,8 @@ def create_handler(handler: Callable, path: str):
                 status_code=500,
             )
 
+    setattr(fastapi_handler, SUPERFUNCTIONS_ROUTE_ATTR, route)
+    setattr(fastapi_handler, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
     return fastapi_handler
 
 
@@ -166,22 +189,20 @@ def create_router(routes: List[Route], prefix: str = "", tags: List[str] = None)
         >>> app.include_router(router)
     """
     router = APIRouter(prefix=prefix, tags=tags or [])
-    
-    import re
-    
+
     for route in routes:
         # Convert superfunctions path to FastAPI path
         # superfunctions uses :param, FastAPI uses {param}
         fastapi_path = re.sub(r':([^/]+)', r'{\1}', route.path)
         if not fastapi_path.startswith("/"):
             fastapi_path = f"/{fastapi_path}"
-        
+
         # Create handler
-        handler = create_handler(route.handler, route.path)
-        
+        handler = create_handler(route.handler, route)
+
         # Register route based on method
         method_lower = route.method.value.lower()
-        
+
         if method_lower == "get":
             router.get(fastapi_path)(handler)
         elif method_lower == "post":
@@ -196,7 +217,11 @@ def create_router(routes: List[Route], prefix: str = "", tags: List[str] = None)
             router.options(fastapi_path)(handler)
         elif method_lower == "head":
             router.head(fastapi_path)(handler)
-    
+
+        if router.routes:
+            setattr(router.routes[-1].endpoint, SUPERFUNCTIONS_ROUTE_ATTR, route)
+            setattr(router.routes[-1].endpoint, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
+
     return router
 
 

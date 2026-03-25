@@ -1,8 +1,11 @@
 import type { Adapter } from '@superfunctions/db';
 import { createHash } from 'node:crypto';
+import { type StorageAdapter, type StorageTargetName } from '@superfunctions/storage';
+import { resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 
 export interface DeduplicationServiceConfig {
   db: Adapter;
+  policies?: Pick<PolicyRegistry, 'get'>;
   namespace?: string;
   enabled?: boolean;
 }
@@ -25,8 +28,23 @@ export interface DeduplicationResult {
   checksumSha256Base64: string;
 }
 
+interface FileRecord {
+  fileId: string;
+  policy: string;
+}
+
 export function createDeduplicationService(config: DeduplicationServiceConfig) {
-  const { db, namespace = 'filefn', enabled = true } = config;
+  const { db, policies, namespace = 'filefn', enabled = true } = config;
+
+  async function resolveVersionStorageTarget(version: Pick<FileVersionRecord, 'fileId'>): Promise<string> {
+    const file = await db.findOne<FileRecord>({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: version.fileId }],
+      namespace,
+    });
+    const policy = file ? policies?.get(file.policy) : undefined;
+    return resolveStorageTarget(policy ?? {});
+  }
 
   return {
     isEnabled(): boolean {
@@ -72,7 +90,8 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
      */
     async checkForDuplicate(
       checksumSha256Base64: string,
-      tenantId: string | null
+      tenantId: string | null,
+      storageTarget?: StorageTargetName | null,
     ): Promise<DeduplicationResult> {
       if (!enabled) {
         return {
@@ -93,13 +112,20 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
         whereConditions.push({ field: 'tenantId', operator: 'eq', value: null });
       }
 
-      const existingVersion = await db.findOne<FileVersionRecord>({
+      const existingVersions = await db.findMany<FileVersionRecord>({
         model: 'fileVersions',
         where: whereConditions,
         namespace,
       });
 
-      if (existingVersion) {
+      for (const existingVersion of existingVersions) {
+        if (storageTarget) {
+          const existingTarget = await resolveVersionStorageTarget(existingVersion);
+          if (existingTarget !== storageTarget) {
+            continue;
+          }
+        }
+
         return {
           isDuplicate: true,
           existingVersionId: existingVersion.versionId,
@@ -121,7 +147,8 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
     async computeAndCheckDuplicate(
       storageKey: string,
       tenantId: string | null,
-      storage: { openDownloadStream?: (input: { key: string }) => Promise<ReadableStream<Uint8Array>> }
+      storageTarget: StorageTargetName | null,
+      storage: Pick<StorageAdapter, 'openDownloadStream'>
     ): Promise<DeduplicationResult> {
       if (!enabled) {
         return {
@@ -134,10 +161,10 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
         throw new Error('Storage adapter does not support streaming downloads required for deduplication');
       }
 
-      const stream = await storage.openDownloadStream({ key: storageKey });
+      const stream = await storage.openDownloadStream({ key: storageKey, target: storageTarget ?? undefined });
       const checksumSha256Base64 = await this.computeHashFromStream(stream);
 
-      return this.checkForDuplicate(checksumSha256Base64, tenantId);
+      return this.checkForDuplicate(checksumSha256Base64, tenantId, storageTarget);
     },
 
     /**
@@ -147,13 +174,14 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
     async verifyHash(
       storageKey: string,
       expectedHash: string,
-      storage: { openDownloadStream?: (input: { key: string }) => Promise<ReadableStream<Uint8Array>> }
+      storage: Pick<StorageAdapter, 'openDownloadStream'>,
+      storageTarget?: StorageTargetName | null,
     ): Promise<boolean> {
       if (!storage.openDownloadStream) {
         return false;
       }
 
-      const stream = await storage.openDownloadStream({ key: storageKey });
+      const stream = await storage.openDownloadStream({ key: storageKey, target: storageTarget ?? undefined });
       const actualHash = await this.computeHashFromStream(stream);
 
       return actualHash === expectedHash;

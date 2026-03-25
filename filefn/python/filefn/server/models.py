@@ -46,8 +46,12 @@ class UploadSessionRecord(BaseModel):
     storageUploadId: Optional[str] = None
     ownerId: str
     tenantId: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
     idempotencyKey: Optional[str] = None
     idempotencyPayloadHash: Optional[str] = None
+    completionVersionId: Optional[str] = None
+    uploadSessionToken: Optional[str] = None
+    sessionTokenHash: Optional[str] = None
     expiresAt: str
     createdAt: str
 

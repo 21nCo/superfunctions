@@ -1,9 +1,30 @@
 import type { Adapter, WhereClause } from "@superfunctions/db";
-import type { OAuthStateRecord, OAuthStateStore, TokenRecord, TokenVault } from "../index.js";
+import type {
+  OAuthConsentRecord,
+  OAuthConsentStore,
+  OAuthRevocationFailureRecord,
+  OAuthRevocationFailureStore,
+  OAuthStateRecord,
+  OAuthStateStore,
+  OAuthStoredSubject,
+  TokenRecord,
+  TokenVault
+} from "../index.js";
+import {
+  applySubjectToStateRecord,
+  cloneOAuthStoredSubject,
+  getOAuthSubjectKey,
+  validateOAuthConsentRecord,
+  validateOAuthRevocationFailureRecord,
+  validateOAuthStateRecord,
+  validateOAuthStoredSubject
+} from "../state-store.js";
 
 export interface OAuthDbModelMapping {
   oauthStates: string;
   oauthTokenVault: string;
+  oauthConsents: string;
+  oauthRevocationFailures: string;
 }
 
 export interface OAuthDbAdapterOptions {
@@ -29,14 +50,17 @@ export class OAuthDbAdapterError extends Error {
 
 const DEFAULT_MODELS: OAuthDbModelMapping = {
   oauthStates: "oauth_states",
-  oauthTokenVault: "oauth_token_vault"
+  oauthTokenVault: "oauth_tokens",
+  oauthConsents: "oauth_consents",
+  oauthRevocationFailures: "oauth_revocation_failures"
 };
 
 type StateRow = {
   state_id: string;
-  tenant_id: string;
-  user_id: string;
   provider_id: string;
+  subject_kind: string;
+  subject_key: string;
+  subject_payload: string;
   redirect_uri: string;
   requested_scopes: string;
   code_verifier?: string | null;
@@ -59,6 +83,33 @@ type TokenRow = {
   expires_at?: string | null;
 };
 
+type ConsentRow = {
+  consent_id: string;
+  provider_id: string;
+  subject_kind: string;
+  subject_key: string;
+  subject_payload: string;
+  scope_set: string;
+  granted_at: string;
+  updated_at: string;
+  metadata?: string | null;
+};
+
+type RevocationFailureRow = {
+  failure_id: string;
+  provider_id: string;
+  subject_kind: string;
+  subject_key: string;
+  subject_payload: string;
+  token_id?: string | null;
+  token_type_hint?: string | null;
+  error_code: string;
+  error_message: string;
+  retryable: boolean;
+  occurred_at: string;
+  metadata?: string | null;
+};
+
 export class DbAdapterOAuthStateStore implements OAuthStateStore {
   private readonly adapter: Adapter;
   private readonly model: string;
@@ -69,6 +120,7 @@ export class DbAdapterOAuthStateStore implements OAuthStateStore {
   }
 
   async put(record: OAuthStateRecord): Promise<void> {
+    validateOAuthStateRecord(record);
     await this.adapter.upsert({
       model: this.model,
       where: [{ field: "state_id", operator: "eq", value: record.stateId }],
@@ -175,15 +227,122 @@ export class DbAdapterTokenVault implements TokenVault {
   }
 }
 
+export class DbAdapterOAuthConsentStore implements OAuthConsentStore {
+  private readonly adapter: Adapter;
+  private readonly model: string;
+
+  constructor(adapter: Adapter, model = DEFAULT_MODELS.oauthConsents) {
+    this.adapter = adapter;
+    this.model = model;
+  }
+
+  async put(record: OAuthConsentRecord): Promise<void> {
+    validateOAuthConsentRecord(record);
+    await this.adapter.upsert({
+      model: this.model,
+      where: [{ field: "consent_id", operator: "eq", value: record.consentId }],
+      create: mapConsentRecordToRow(record),
+      update: mapConsentRecordToRow(record),
+      conflictTarget: "consent_id"
+    });
+  }
+
+  async get(consentId: string): Promise<OAuthConsentRecord | null> {
+    const row = await this.adapter.findOne<ConsentRow>({
+      model: this.model,
+      where: [{ field: "consent_id", operator: "eq", value: consentId }]
+    });
+
+    return row ? mapConsentRowToRecord(row) : null;
+  }
+
+  async listBySubject(providerId: string, subject: OAuthStoredSubject): Promise<OAuthConsentRecord[]> {
+    validateOAuthStoredSubject(subject);
+    const rows = await this.adapter.findMany<ConsentRow>({
+      model: this.model,
+      where: [
+        { field: "provider_id", operator: "eq", value: providerId },
+        { field: "subject_key", operator: "eq", value: getOAuthSubjectKey(subject) }
+      ]
+    });
+
+    return rows.map(mapConsentRowToRecord);
+  }
+
+  async delete(consentId: string): Promise<void> {
+    await this.adapter.deleteMany({
+      model: this.model,
+      where: [{ field: "consent_id", operator: "eq", value: consentId }]
+    });
+  }
+}
+
+export class DbAdapterOAuthRevocationFailureStore implements OAuthRevocationFailureStore {
+  private readonly adapter: Adapter;
+  private readonly model: string;
+
+  constructor(adapter: Adapter, model = DEFAULT_MODELS.oauthRevocationFailures) {
+    this.adapter = adapter;
+    this.model = model;
+  }
+
+  async put(record: OAuthRevocationFailureRecord): Promise<void> {
+    validateOAuthRevocationFailureRecord(record);
+    await this.adapter.upsert({
+      model: this.model,
+      where: [{ field: "failure_id", operator: "eq", value: record.failureId }],
+      create: mapRevocationFailureRecordToRow(record),
+      update: mapRevocationFailureRecordToRow(record),
+      conflictTarget: "failure_id"
+    });
+  }
+
+  async get(failureId: string): Promise<OAuthRevocationFailureRecord | null> {
+    const row = await this.adapter.findOne<RevocationFailureRow>({
+      model: this.model,
+      where: [{ field: "failure_id", operator: "eq", value: failureId }]
+    });
+
+    return row ? mapRevocationFailureRowToRecord(row) : null;
+  }
+
+  async listBySubject(providerId: string, subject: OAuthStoredSubject): Promise<OAuthRevocationFailureRecord[]> {
+    validateOAuthStoredSubject(subject);
+    const rows = await this.adapter.findMany<RevocationFailureRow>({
+      model: this.model,
+      where: [
+        { field: "provider_id", operator: "eq", value: providerId },
+        { field: "subject_key", operator: "eq", value: getOAuthSubjectKey(subject) }
+      ]
+    });
+
+    return rows.map(mapRevocationFailureRowToRecord);
+  }
+
+  async delete(failureId: string): Promise<void> {
+    await this.adapter.deleteMany({
+      model: this.model,
+      where: [{ field: "failure_id", operator: "eq", value: failureId }]
+    });
+  }
+}
+
 export function createOAuthDbStorage(options: OAuthDbAdapterOptions): {
   stateStore: OAuthStateStore;
   tokenVault: TokenVault;
+  consentStore: OAuthConsentStore;
+  revocationFailureStore: OAuthRevocationFailureStore;
   models: OAuthDbModelMapping;
 } {
   const models = resolveModelMapping(options.models);
   return {
     stateStore: new DbAdapterOAuthStateStore(options.adapter, models.oauthStates),
     tokenVault: new DbAdapterTokenVault(options.adapter, models.oauthTokenVault),
+    consentStore: new DbAdapterOAuthConsentStore(options.adapter, models.oauthConsents),
+    revocationFailureStore: new DbAdapterOAuthRevocationFailureStore(
+      options.adapter,
+      models.oauthRevocationFailures
+    ),
     models
   };
 }
@@ -191,7 +350,9 @@ export function createOAuthDbStorage(options: OAuthDbAdapterOptions): {
 function resolveModelMapping(mapping: Partial<OAuthDbModelMapping> | undefined): OAuthDbModelMapping {
   const models: OAuthDbModelMapping = {
     oauthStates: mapping?.oauthStates ?? DEFAULT_MODELS.oauthStates,
-    oauthTokenVault: mapping?.oauthTokenVault ?? DEFAULT_MODELS.oauthTokenVault
+    oauthTokenVault: mapping?.oauthTokenVault ?? DEFAULT_MODELS.oauthTokenVault,
+    oauthConsents: mapping?.oauthConsents ?? DEFAULT_MODELS.oauthConsents,
+    oauthRevocationFailures: mapping?.oauthRevocationFailures ?? DEFAULT_MODELS.oauthRevocationFailures
   };
 
   if (!models.oauthStates) {
@@ -199,34 +360,44 @@ function resolveModelMapping(mapping: Partial<OAuthDbModelMapping> | undefined):
   }
 
   if (!models.oauthTokenVault) {
-    throw new OAuthDbAdapterError("SCHEMA_MISSING", "oauth_token_vault model mapping required");
+    throw new OAuthDbAdapterError("SCHEMA_MISSING", "oauth_tokens model mapping required");
+  }
+
+  if (!models.oauthConsents) {
+    throw new OAuthDbAdapterError("SCHEMA_MISSING", "oauth_consents model mapping required");
+  }
+
+  if (!models.oauthRevocationFailures) {
+    throw new OAuthDbAdapterError("SCHEMA_MISSING", "oauth_revocation_failures model mapping required");
   }
 
   return models;
 }
 
 function mapStateRecordToRow(record: OAuthStateRecord): StateRow {
+  const normalized = applySubjectToStateRecord(record);
   return {
-    state_id: record.stateId,
-    tenant_id: record.tenantId,
-    user_id: record.userId,
-    provider_id: record.providerId,
-    redirect_uri: record.redirectUri,
-    requested_scopes: JSON.stringify(record.requestedScopes),
-    code_verifier: record.codeVerifier ?? null,
-    nonce: record.nonce ?? null,
-    created_at: record.createdAt,
-    expires_at: record.expiresAt,
-    consumed_at: record.consumedAt ?? null
+    state_id: normalized.stateId,
+    provider_id: normalized.providerId,
+    subject_kind: normalized.subject!.kind,
+    subject_key: getOAuthSubjectKey(normalized.subject!),
+    subject_payload: JSON.stringify(normalized.subject),
+    redirect_uri: normalized.redirectUri,
+    requested_scopes: JSON.stringify(normalized.requestedScopes),
+    code_verifier: normalized.codeVerifier ?? null,
+    nonce: normalized.nonce ?? null,
+    created_at: normalized.createdAt,
+    expires_at: normalized.expiresAt,
+    consumed_at: normalized.consumedAt ?? null
   };
 }
 
 function mapStateRowToRecord(row: StateRow): OAuthStateRecord {
-  return {
+  const subject = parseSubject(row.subject_payload);
+  return applySubjectToStateRecord({
     stateId: row.state_id,
-    tenantId: row.tenant_id,
-    userId: row.user_id,
     providerId: row.provider_id,
+    subject,
     redirectUri: row.redirect_uri,
     requestedScopes: JSON.parse(row.requested_scopes) as string[],
     codeVerifier: row.code_verifier ?? undefined,
@@ -234,7 +405,7 @@ function mapStateRowToRecord(row: StateRow): OAuthStateRecord {
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     consumedAt: row.consumed_at ?? undefined
-  };
+  });
 }
 
 function mapTokenRecordToRow(record: TokenRecord): TokenRow {
@@ -265,4 +436,68 @@ function mapTokenRowToRecord(row: TokenRow): TokenRecord {
     updatedAt: row.updated_at,
     expiresAt: row.expires_at ?? undefined
   };
+}
+
+function mapConsentRecordToRow(record: OAuthConsentRecord): ConsentRow {
+  return {
+    consent_id: record.consentId,
+    provider_id: record.providerId,
+    subject_kind: record.subject.kind,
+    subject_key: getOAuthSubjectKey(record.subject),
+    subject_payload: JSON.stringify(record.subject),
+    scope_set: JSON.stringify(record.scopes),
+    granted_at: record.grantedAt,
+    updated_at: record.updatedAt,
+    metadata: record.metadata ? JSON.stringify(record.metadata) : null
+  };
+}
+
+function mapConsentRowToRecord(row: ConsentRow): OAuthConsentRecord {
+  return {
+    consentId: row.consent_id,
+    providerId: row.provider_id,
+    subject: parseSubject(row.subject_payload),
+    scopes: JSON.parse(row.scope_set) as string[],
+    grantedAt: row.granted_at,
+    updatedAt: row.updated_at,
+    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+  };
+}
+
+function mapRevocationFailureRecordToRow(record: OAuthRevocationFailureRecord): RevocationFailureRow {
+  return {
+    failure_id: record.failureId,
+    provider_id: record.providerId,
+    subject_kind: record.subject.kind,
+    subject_key: getOAuthSubjectKey(record.subject),
+    subject_payload: JSON.stringify(record.subject),
+    token_id: record.tokenId ?? null,
+    token_type_hint: record.tokenTypeHint ?? null,
+    error_code: record.errorCode,
+    error_message: record.errorMessage,
+    retryable: record.retryable,
+    occurred_at: record.occurredAt,
+    metadata: record.metadata ? JSON.stringify(record.metadata) : null
+  };
+}
+
+function mapRevocationFailureRowToRecord(row: RevocationFailureRow): OAuthRevocationFailureRecord {
+  return {
+    failureId: row.failure_id,
+    providerId: row.provider_id,
+    subject: parseSubject(row.subject_payload),
+    tokenId: row.token_id ?? undefined,
+    tokenTypeHint: row.token_type_hint as "access_token" | "refresh_token" | undefined,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    retryable: row.retryable,
+    occurredAt: row.occurred_at,
+    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+  };
+}
+
+function parseSubject(raw: string): OAuthStoredSubject {
+  const subject = JSON.parse(raw) as OAuthStoredSubject;
+  validateOAuthStoredSubject(subject);
+  return cloneOAuthStoredSubject(subject);
 }

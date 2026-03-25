@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createFileFn, type FileFn, type QuotaProvider } from '../index.js';
-import { createFakeStorageAdapter } from '@superfunctions/storage';
+import { createHash } from 'node:crypto';
+import { createFileFn, createNucleusPolicies, type FileFn, type QuotaProvider } from '../index.js';
+import { createFakeStorageAdapter, createRoutedStorageAdapter, type StorageAdapter, type StorageAdapterCapabilities } from '@superfunctions/storage';
 import type { Adapter, TableSchema, AdapterCapabilities } from '@superfunctions/db';
 
 const FAKE_CAPABILITIES: AdapterCapabilities = {
@@ -164,6 +165,253 @@ describe('@filefn/server upload sessions', () => {
     });
   });
 
+  describe('TV-STORAGE-001 / TV-POLICY-001: routed targets and Nucleus policies', () => {
+    function createTargetAdapter(
+      name: string,
+      calls: string[],
+      objects: Map<string, Uint8Array>,
+    ): StorageAdapter {
+      const capabilities: StorageAdapterCapabilities = {
+        signedUploadUrls: true,
+        signedDownloadUrls: true,
+        multipart: true,
+        proxyStreamingUpload: true,
+        proxyStreamingDownload: true,
+      };
+
+      return {
+        name,
+        capabilities,
+        async statObject({ key }) {
+          return { key, size: objects.get(`${name}:${key}`)?.length ?? 1024 };
+        },
+        async deleteObject({ key }) {
+          calls.push(`${name}:delete:${key}`);
+          objects.delete(`${name}:${key}`);
+        },
+        async createMultipartUpload({ key }) {
+          calls.push(`${name}:multipart:${key}`);
+          return { uploadId: `${name}-upload` };
+        },
+        async signMultipartUploadPartUrl({ key, partNumber }) {
+          calls.push(`${name}:sign-part:${key}:${partNumber}`);
+          return { url: `https://${name}.local/${key}/${partNumber}` };
+        },
+        async completeMultipartUpload({ key }) {
+          calls.push(`${name}:complete:${key}`);
+          if (!objects.has(`${name}:${key}`)) {
+            objects.set(`${name}:${key}`, new TextEncoder().encode('same-bytes'));
+          }
+        },
+        async abortMultipartUpload({ key }) {
+          calls.push(`${name}:abort:${key}`);
+        },
+        async signDownloadUrl({ key }) {
+          calls.push(`${name}:download:${key}`);
+          return { url: `https://${name}.local/download/${key}` };
+        },
+        async openUploadStream({ key }) {
+          calls.push(`${name}:upload-stream:${key}`);
+          const chunks: Uint8Array[] = [];
+          return new WritableStream<Uint8Array>({
+            write(chunk) {
+              chunks.push(chunk);
+            },
+            close() {
+              const size = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+              const combined = new Uint8Array(size);
+              let offset = 0;
+              for (const chunk of chunks) {
+                combined.set(chunk, offset);
+                offset += chunk.byteLength;
+              }
+              objects.set(`${name}:${key}`, combined);
+            },
+          });
+        },
+        async openDownloadStream({ key }) {
+          calls.push(`${name}:download-stream:${key}`);
+          const payload = objects.get(`${name}:${key}`) ?? new TextEncoder().encode('same-bytes');
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(payload);
+              controller.close();
+            },
+          });
+        },
+      };
+    }
+
+    it('routes durable and temporary policies to different physical adapters', async () => {
+      const calls: string[] = [];
+      const objects = new Map<string, Uint8Array>();
+      const storage = createRoutedStorageAdapter({
+        adapters: {
+          durable: createTargetAdapter('durable-bucket', calls, objects),
+          temporary: createTargetAdapter('temporary-bucket', calls, objects),
+        },
+      });
+
+      const routedFileFn = createFileFn({
+        db,
+        storage,
+        policies: [
+          { name: 'durable-policy', contentTypes: ['image/png'], storageTarget: 'durable' },
+          { name: 'temporary-policy', contentTypes: ['image/png'], storageTarget: 'temporary' },
+        ],
+        auth: { required: false },
+      });
+
+      await routedFileFn.createUploadSession(
+        { policy: 'durable-policy', fileName: 'a.png', size: 1024, mimeType: 'image/png' },
+        { principalId: 'user_123', tenantId: 'org_123' },
+      );
+      await routedFileFn.createUploadSession(
+        { policy: 'temporary-policy', fileName: 'b.png', size: 1024, mimeType: 'image/png' },
+        { principalId: 'user_123', tenantId: 'org_123' },
+      );
+
+      expect(calls).toContainEqual(expect.stringMatching(/^durable-bucket:multipart:/));
+      expect(calls).toContainEqual(expect.stringMatching(/^temporary-bucket:multipart:/));
+    });
+
+    it('does not dedupe across different routed storage targets', async () => {
+      const storageObjects = new Map<string, Uint8Array>([
+        ['durable-bucket:existing/shared.png', new TextEncoder().encode('same-bytes')],
+      ]);
+      const calls: string[] = [];
+      const storage = createRoutedStorageAdapter({
+        adapters: {
+          durable: createTargetAdapter('durable-bucket', calls, storageObjects),
+          temporary: createTargetAdapter('temporary-bucket', calls, storageObjects),
+        },
+      });
+
+      const checksum = createHash('sha256').update('same-bytes').digest('base64');
+      await db.create({
+        model: 'files',
+        data: {
+          fileId: 'file_existing',
+          currentVersionId: 'ver_existing',
+          ownerId: 'user_123',
+          tenantId: 'org_123',
+          visibility: 'private',
+          policy: 'durable-policy',
+          mimeType: 'image/png',
+          size: 10,
+          name: 'existing.png',
+          metadata: {},
+          createdAt: '2026-03-22T00:00:00.000Z',
+          updatedAt: '2026-03-22T00:00:00.000Z',
+        },
+      });
+      await db.create({
+        model: 'fileVersions',
+        data: {
+          versionId: 'ver_existing',
+          fileId: 'file_existing',
+          storageKey: 'existing/shared.png',
+          mimeType: 'image/png',
+          size: 10,
+          checksumSha256Base64: checksum,
+          tenantId: 'org_123',
+          createdAt: '2026-03-22T00:00:00.000Z',
+        },
+      });
+
+      const routedFileFn = createFileFn({
+        db,
+        storage,
+        policies: [
+          { name: 'durable-policy', contentTypes: ['image/png'], storageTarget: 'durable' },
+          { name: 'temporary-policy', contentTypes: ['image/png'], storageTarget: 'temporary' },
+        ],
+        dedup: { enabled: true },
+        auth: { required: false },
+      });
+
+      const { uploadSessionId } = await routedFileFn.createUploadSession(
+        { policy: 'temporary-policy', fileName: 'shared.png', size: 10, mimeType: 'image/png' },
+        { principalId: 'user_123', tenantId: 'org_123' },
+      );
+
+      const session = await db.findOne<any>({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+      });
+      storageObjects.set(`temporary-bucket:${session.storageKey}`, new TextEncoder().encode('same-bytes'));
+
+      await routedFileFn.completeUploadPart(
+        { uploadSessionId, partNumber: 1, etag: 'etag_1', size: 10 },
+        { principalId: 'user_123', tenantId: 'org_123' },
+      );
+
+      const completed = await routedFileFn.completeUploadSession(
+        { uploadSessionId },
+        { principalId: 'user_123', tenantId: 'org_123' },
+      );
+
+      const version = await db.findOne<any>({
+        model: 'fileVersions',
+        where: [{ field: 'versionId', operator: 'eq', value: completed.versionId }],
+      });
+      expect(version.storageKey).toBe(session.storageKey);
+      expect(version.storageKey).not.toBe('existing/shared.png');
+    });
+
+    it('ships Nucleus policies with wildcard mime support and a 100 MiB cap', async () => {
+      const nucleusFileFn = createFileFn({
+        db,
+        storage: createFakeStorageAdapter({
+          capabilities: {
+            signedUploadUrls: true,
+            signedDownloadUrls: true,
+            multipart: true,
+            proxyStreamingUpload: false,
+            proxyStreamingDownload: true,
+          },
+        }),
+        policies: createNucleusPolicies(),
+        auth: { required: false },
+      });
+
+      const ok = await nucleusFileFn.createUploadSession(
+        {
+          policy: 'nucleus-durable-default',
+          fileName: 'document.pdf',
+          size: 104857600,
+          mimeType: 'application/pdf',
+        },
+        { principalId: 'user_123' },
+      );
+      expect(ok.uploadSessionId).toBeDefined();
+
+      await expect(
+        nucleusFileFn.createUploadSession(
+          {
+            policy: 'nucleus-durable-default',
+            fileName: 'too-big.pdf',
+            size: 104857601,
+            mimeType: 'application/pdf',
+          },
+          { principalId: 'user_123' },
+        ),
+      ).rejects.toMatchObject({ code: 'FILEFN_POLICY_MAX_SIZE_EXCEEDED' });
+
+      await expect(
+        nucleusFileFn.createUploadSession(
+          {
+            policy: 'nucleus-temporary-default',
+            fileName: 'notes.zip',
+            size: 100,
+            mimeType: 'application/zip',
+          },
+          { principalId: 'user_123' },
+        ),
+      ).rejects.toMatchObject({ code: 'FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED' });
+    });
+  });
+
   describe('TV-UPLOAD-INIT-NEG-001: Disallowed content type', () => {
     it('should reject disallowed content type', async () => {
       await expect(
@@ -239,6 +487,23 @@ describe('@filefn/server upload sessions', () => {
 
       expect(result1.uploadSessionId).toBe(result2.uploadSessionId);
     });
+
+    it('should replay the original anonymous upload session token for identical input', async () => {
+      const input = {
+        policy: 'user-avatar',
+        fileName: 'avatar.png',
+        size: 2097152,
+        mimeType: 'image/png',
+        idempotencyKey: 'idem_anon_001',
+      };
+
+      const first = await fileFn.createUploadSession(input, { requestId: 'req_anon_001' }) as any;
+      const replay = await fileFn.createUploadSession(input, { requestId: 'req_anon_002' }) as any;
+
+      expect(first.uploadSessionId).toBe(replay.uploadSessionId);
+      expect(first.uploadSessionToken).toBeDefined();
+      expect(replay.uploadSessionToken).toBe(first.uploadSessionToken);
+    });
   });
 
   describe('TV-IDEMPOTENCY-NEG-001: Idempotency conflict', () => {
@@ -272,6 +537,39 @@ describe('@filefn/server upload sessions', () => {
           { principalId: 'user_123' }
         )
       ).rejects.toMatchObject({ code: 'FILEFN_INVALID_PART_NUMBER' });
+    });
+  });
+
+  describe('TV-AUTH-001: Anonymous follow-up routes stay bound to the original session token', () => {
+    it('should require the session token for anonymous follow-up routes and reject a wrong token', async () => {
+      const { uploadSessionId, uploadSessionToken } = await fileFn.createUploadSession(
+        { policy: 'user-avatar', fileName: 'avatar.png', size: 2097152, mimeType: 'image/png', idempotencyKey: 'anon_followup_001' },
+        { requestId: 'req_anon_followup_001' }
+      ) as any;
+
+      expect(uploadSessionToken).toBeDefined();
+
+      await expect(
+        fileFn.getUploadSessionStatus(
+          { uploadSessionId },
+          { requestId: 'req_anon_followup_missing' }
+        )
+      ).rejects.toMatchObject({ code: 'FILEFN_SESSION_TOKEN_REQUIRED' });
+
+      await expect(
+        fileFn.getUploadSessionStatus(
+          { uploadSessionId },
+          { requestId: 'req_anon_followup_wrong', uploadSessionToken: 'upls_live_wrong' } as any
+        )
+      ).rejects.toMatchObject({ code: 'FILEFN_SESSION_TOKEN_INVALID' });
+
+      const status = await fileFn.getUploadSessionStatus(
+        { uploadSessionId },
+        { requestId: 'req_anon_followup_ok', uploadSessionToken } as any
+      ) as any;
+
+      expect(status.uploadSessionId).toBe(uploadSessionId);
+      expect(status.recordedParts).toEqual([]);
     });
   });
 

@@ -3,6 +3,11 @@ export {
   MemoryOAuthStateStore as InMemoryOAuthStateStore,
   MemoryTokenVault as InMemoryTokenVault
 } from "@superfunctions/oauth-storage";
+export {
+  createAuthFnSchemaCompositionFixture,
+  createBrowserAuthFixture,
+  redactSecrets,
+} from "./browser-auth-fixtures.js";
 
 export function createMockOAuthProviderDescriptor(
   overrides: Partial<OAuthProviderDescriptor> = {}

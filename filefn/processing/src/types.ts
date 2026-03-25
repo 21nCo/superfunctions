@@ -58,6 +58,13 @@ export interface ThumbnailConfig {
   format?: 'jpeg' | 'png' | 'webp';
 }
 
+export interface PdfPreviewConfig {
+  sizes?: ThumbnailSize[];
+  density?: number;
+  quality?: number;
+  format?: 'jpeg' | 'png' | 'webp';
+}
+
 export interface ThumbnailSize {
   name: string;
   width: number;

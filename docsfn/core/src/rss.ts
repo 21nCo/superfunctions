@@ -4,8 +4,19 @@ import type { BlogPost, DocsManifest } from "./types";
 export interface RSSFeedOptions {
   title: string;
   description: string;
+  /** Public URL for the channel (often the blog index page). */
   link: string;
   language?: string;
+  /**
+   * Absolute URL for this feed’s `atom:link rel="self"`.
+   * Default: `{link}{manifest.blog.feedPath}` when `link` has no path, or join with manifest feed path.
+   */
+  feedHref?: string;
+  /**
+   * Absolute permalink for a post. Use when public blog URLs differ from `post.path` on the manifest
+   * (e.g. docs at `/docs` but the app serves posts under `/blog/[slug]`).
+   */
+  itemHref?: (post: BlogPost) => string;
 }
 
 /**
@@ -40,7 +51,9 @@ export function generateRSSFeed(
   const items = posts
     .map((post) => {
       const publish = assertValidBlogPublishMetadata(post);
-      const postLink = `${normalizedLink}${post.path}`;
+      const postLink = options.itemHref
+        ? options.itemHref(post)
+        : `${normalizedLink}${post.path}`;
       const descriptionValue = post.excerpt ?? post.summary;
       return `
     <item>
@@ -57,7 +70,7 @@ export function generateRSSFeed(
     .join("");
 
   const feedPath = manifest.blog?.feedPath ?? "/rss.xml";
-  const feedLink = `${normalizedLink}${feedPath}`;
+  const feedLink = options.feedHref ?? `${normalizedLink}${feedPath}`;
   const lastBuildDate = resolveBlogLastBuildDate(posts);
 
   return `<?xml version="1.0" encoding="UTF-8"?>

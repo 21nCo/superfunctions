@@ -3,7 +3,8 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from .events import create_event_emitter
-from .policies import Policy, create_policy_registry
+from .policies import Policy, create_nucleus_policies, create_policy_registry
+from .routed_storage import create_routed_storage_adapter
 from .schema import get_schema
 
 
@@ -131,7 +132,7 @@ class FileFn:
         await self.upload_service.abort_session(input["uploadSessionId"], ctx)
 
     async def get_file(self, input: Dict[str, Any], ctx: Any) -> Any:
-        return await self.file_service.get_file(input["fileId"], ctx)
+        return await self.file_service.get_file(input["fileId"], ctx, input.get("versionId"))
 
     async def list_files(self, input: Dict[str, Any], ctx: Any) -> Any:
         return await self.file_service.list_files(ctx, input)
@@ -212,6 +213,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
         ProcessingServiceConfig(
             db=config.db,
             storage=config.storage,
+            policies=policy_registry,
             events=events,
             processors=processing_config.processors,
             flow_fn=processing_config.flow_fn,
@@ -224,6 +226,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
         FileServiceConfig(
             db=config.db,
             storage=config.storage,
+            policies=policy_registry,
             events=events,
             logger=config.logger,
             quota=config.quota,
@@ -237,6 +240,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
     dedup_service = create_deduplication_service(
         DeduplicationServiceConfig(
             db=config.db,
+            policies=policy_registry,
             namespace=namespace,
             enabled=dedup_enabled,
         )
@@ -271,6 +275,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
         SharesServiceConfig(
             db=config.db,
             storage=config.storage,
+            policies=policy_registry,
             namespace=namespace,
             signed_url_ttl_seconds=signed_url_ttl,
         )

@@ -33,25 +33,21 @@ export function generateThemeCSS(config: ThemeConfig): string {
 
   const properties: string[] = [];
 
-  // Colors
-  if (colors.primary) properties.push(`--docsfn-primary: ${colors.primary};`);
-  if (colors.secondary)
-    properties.push(`--docsfn-secondary: ${colors.secondary};`);
-  if (colors.background)
-    properties.push(`--docsfn-background: ${colors.background};`);
-  if (colors.foreground)
-    properties.push(`--docsfn-foreground: ${colors.foreground};`);
-  if (colors.muted) properties.push(`--docsfn-muted: ${colors.muted};`);
-  if (colors.accent) properties.push(`--docsfn-accent: ${colors.accent};`);
-  if (colors.border) properties.push(`--docsfn-border: ${colors.border};`);
+  // Colors — names match --docsfn-color-* convention used by theme CSS
+  if (colors.primary) properties.push(`--docsfn-color-primary: ${colors.primary};`);
+  if (colors.secondary) properties.push(`--docsfn-color-secondary: ${colors.secondary};`);
+  if (colors.background) properties.push(`--docsfn-color-bg: ${colors.background};`);
+  if (colors.foreground) properties.push(`--docsfn-color-fg: ${colors.foreground};`);
+  if (colors.muted) properties.push(`--docsfn-color-muted: ${colors.muted};`);
+  if (colors.accent) properties.push(`--docsfn-color-accent-soft: ${colors.accent};`);
+  if (colors.border) properties.push(`--docsfn-color-border: ${colors.border};`);
 
   // Fonts
   if (fonts.sans) properties.push(`--docsfn-font-sans: ${fonts.sans};`);
   if (fonts.mono) properties.push(`--docsfn-font-mono: ${fonts.mono};`);
 
   // Spacing
-  if (spacing.container)
-    properties.push(`--docsfn-container: ${spacing.container};`);
+  if (spacing.container) properties.push(`--docsfn-container: ${spacing.container};`);
   if (spacing.section) properties.push(`--docsfn-section: ${spacing.section};`);
 
   return `:root {\n  ${properties.join("\n  ")}\n}`;

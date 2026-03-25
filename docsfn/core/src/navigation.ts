@@ -247,7 +247,7 @@ function renderDirectory(input: {
       type: "group",
       text: childLabel,
       items: childItems,
-      collapsed: false,
+      expanded: false,
     });
   }
 

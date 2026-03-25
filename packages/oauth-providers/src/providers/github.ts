@@ -25,12 +25,31 @@ export const githubProviderPolicy: ProviderPolicyDefinition = {
     supportsManagedMailbox: false,
     allowedFeatureModes: ["metadata-only"]
   },
+  auth: {
+    supportsSocialLogin: true,
+    supportsAccountLinking: true,
+    defaultScopes: ["read:user", "user:email"],
+    availableClaims: ["email", "name", "profile"]
+  },
+  runtime: {
+    clientSecretMode: "resolver-allowed",
+    clientSecretResolverHint: "runtime-client-secret"
+  },
   featureScopes: {
+    "auth.social.profile": {
+      allowedScopes: ["read:user", "user:email"]
+    },
     "profile.basic": {
       allowedScopes: ["read:user", "user:email"]
     }
   },
   operationPolicies: {
+    "auth.account.link": {
+      allowed: true
+    },
+    "auth.signin": {
+      allowed: true
+    },
     "mail.watch.create": {
       allowed: false,
       reason: "GitHub OAuth descriptor is social-only in shared registry"

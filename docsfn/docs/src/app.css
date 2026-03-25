@@ -1,0 +1,38 @@
+@import "@21n/fonts/styles.css";
+@import "tailwindcss";
+@import "../../svelte/src/theme.css";
+
+/* Twenty One Native — same stack as @superfunctions/docs-theme / other monorepo docs */
+:root {
+  --docsfn-font-sans: "Twenty One Native", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, sans-serif;
+  /* Tailwind v4 sets html { font-family: var(--default-font-family) } from --font-sans; align it */
+  --font-sans: var(--docsfn-font-sans);
+}
+
+/*
+ * Tailwind @layer base wins over unscoped rules in the same file order for html — but unlayered
+ * rules beat @layer. Force the document font so we are not stuck on ui-sans-serif / system-ui.
+ */
+html,
+body {
+  font-family: var(--docsfn-font-sans);
+}
+
+/* ─── Site-specific layout rules and overrides (component styles live in
+       @docsfn/svelte/theme.css, imported above). ──────────────────────── */
+
+/* ─── Site chrome ────────────────────────────────────────────────────────── */
+.docsfn-topbar-container {
+  max-width: var(--fd-layout-width, 1600px);
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+.docsfn-layout {
+  box-sizing: border-box;
+  max-width: var(--fd-layout-width, 1600px);
+  margin-inline: auto;
+  width: 100%;
+  padding-inline: 1rem;
+}

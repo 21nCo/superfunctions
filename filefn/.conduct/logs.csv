@@ -4,3 +4,6 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-01-26T08:26:13Z,gpt-5.2,Factory CLI,spec,Driod,,.conduct/specs/2026-01-26-audit-fix-k7n2m9p4-spec
 2026-03-20T11:36:51Z,Codex (GPT-5-based),Codex Desktop,audit,audit,,filefn/.conduct/audits/2026-03-20-t8w3b4h3-full-audit.md
 2026-03-20T12:56:10Z,Codex (GPT-5-based),Codex Desktop,spec,spec,,filefn/.conduct/specs/2026-03-20-audit-fix-kevfp02n-spec
+2026-03-22T08:14:20Z,Codex (GPT-5-based),Codex Desktop,audit,audit,,filefn/.conduct/audits/2026-03-22-k1x3xxg7-full-audit.md
+2026-03-22T08:32:03Z,gpt-5-codex,Codex Desktop,audit-update,unknown-agent,,filefn/.conduct/audits/2026-03-22-lfdh4ke1-full-audit.md
+2026-03-22T11:40:39Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,filefn/.conduct/specs/2026-03-22-audit-fix-v6c5hi7c-spec

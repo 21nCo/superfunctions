@@ -135,18 +135,25 @@ function createMultipartStorage() {
   };
 }
 
-function createService() {
-  return createUploadSessionService({
-    db: createMemoryDb(),
+function createHarness() {
+  const db = createMemoryDb();
+  const service = createUploadSessionService({
+    db,
     storage: createMultipartStorage() as any,
     policies: {
       get: vi.fn(() => ({ maxSizeBytes: 100 * 1024 * 1024, contentTypes: ['text/plain'], visibility: 'private' })),
     } as any,
     events: { emit: vi.fn() } as any,
   });
+
+  return { db, service };
 }
 
-describe('PHASE_02 idempotency and completion semantics', () => {
+function createService() {
+  return createHarness().service;
+}
+
+describe('PHASE_00 idempotency and completion semantics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -168,6 +175,25 @@ describe('PHASE_02 idempotency and completion semantics', () => {
     expect(second.uploadSessionId).toBe(first.uploadSessionId);
     expect(second.uploadMode).toBe(first.uploadMode);
     expect(second.totalParts).toBe(first.totalParts);
+  });
+
+  it('TV-AUTH-001: anonymous init replay returns the original upload session token', async () => {
+    const { service } = createHarness();
+    const input = {
+      policy: 'p1',
+      fileName: 'anon.txt',
+      size: 3,
+      mimeType: 'text/plain',
+      idempotencyKey: 'idem_anon_service_001',
+    };
+    const ctx = { requestId: 'req_anon_service_1' };
+
+    const first = await service.createSession(input, ctx);
+    const replay = await service.createSession(input, { requestId: 'req_anon_service_2' });
+
+    expect(first.uploadSessionId).toBe(replay.uploadSessionId);
+    expect(first.uploadSessionToken).toBeDefined();
+    expect(replay.uploadSessionToken).toBe(first.uploadSessionToken);
   });
 
   it('TV-IDEMPOTENCY-NEG-001: idempotency-key mismatch returns FILEFN_IDEMPOTENCY_CONFLICT', async () => {
@@ -230,6 +256,37 @@ describe('PHASE_02 idempotency and completion semantics', () => {
     const second = await service.completeSession(session.uploadSessionId, ctx);
 
     expect(second).toEqual(first);
+  });
+
+  it('TV-META-001: completion persists init metadata onto the file row', async () => {
+    const { db, service } = createHarness();
+    const metadata = {
+      source: 'import',
+      category: 'note',
+      nested: { reviewed: false },
+    };
+    const ctx = { principalId: 'user_1', tenantId: 'org_1', requestId: 'req_meta_1' };
+
+    const session = await service.createSession(
+      {
+        policy: 'p1',
+        fileName: 'meta.txt',
+        size: 3,
+        mimeType: 'text/plain',
+        metadata,
+      },
+      ctx,
+    );
+
+    await service.completePart(session.uploadSessionId, 1, 'etag_meta_1', 3, ctx);
+    const completed = await service.completeSession(session.uploadSessionId, ctx);
+    const file = await db.findOne({
+      model: 'files',
+      where: [{ field: 'fileId', operator: 'eq', value: completed.fileId }],
+      namespace: 'filefn',
+    });
+
+    expect(file?.metadata).toEqual(metadata);
   });
 
   it('TV-IDEMPOTENCY-NEG-001: incomplete upload completion fails with FILEFN_UPLOAD_INCOMPLETE', async () => {

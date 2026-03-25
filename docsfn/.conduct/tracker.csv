@@ -1,2 +1,7 @@
 id, desc, status, completedAt, completionDoc
 2026-03-20-audit-fix-a27uykdy-spec,Make docsfn production-ready to replace the repository current Fumadocs docs sites with docsfn site kits and compatibility-preserving pipelines,1,2026-03-21T14:29:50Z,
+2026-03-22-k8f4m2q7-issue,Example apps do not use docsfn component library — render raw markdown instead of using DocsContent and other shipped components,0,,
+2026-03-22-new-v7k2m9x4-spec,Create docsfn documentation site using SvelteKit + @docsfn/sveltekit with comprehensive docs and API reference and blog,1,2026-03-22T23:52:00Z,
+2026-03-22-r7k4m2n9-issue,docsfn ships broken out-of-the-box experience: no inline markdown rendering and no list support and no default theme CSS,1,2026-03-22T18:45:00Z,2026-03-22-m4k8v2p9-completion
+2026-03-22-q9x3k7m2-issue,docsfn/docs contains library-level code (types + renderer + layout) that belongs in @docsfn/core and @docsfn/svelte due to missing browser-safe sub-entry,1,2026-03-22T20:30:00Z,2026-03-22-p7k4m8r2-completion
+2026-03-22-v8k3m7q2-issue,docsfn layout + table rendering + sidebar collapse semantics + TOC active indicator are broken across core and framework packages,1,2026-03-22T20:45:00Z,2026-03-22-n5q8k3m1-completion

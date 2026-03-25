@@ -32,12 +32,13 @@ export function DocsToc({ surface, headings, activeHash: activeHashProp }: DocsT
           const id = entry.target.getAttribute("id");
           if (id) {
             setActiveHash(`#${id}`);
+            break; // first (topmost) intersecting heading wins
           }
         }
       },
       {
         rootMargin: "-80px 0px -80% 0px",
-        threshold: 1,
+        threshold: 0,
       }
     );
 

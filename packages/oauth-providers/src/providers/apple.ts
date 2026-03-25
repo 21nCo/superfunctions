@@ -25,12 +25,31 @@ export const appleProviderPolicy: ProviderPolicyDefinition = {
     supportsManagedMailbox: false,
     allowedFeatureModes: ["metadata-only"]
   },
+  auth: {
+    supportsSocialLogin: true,
+    supportsAccountLinking: true,
+    defaultScopes: ["name", "email"],
+    availableClaims: ["email", "name"]
+  },
+  runtime: {
+    clientSecretMode: "resolver-required",
+    clientSecretResolverHint: "apple-client-secret-jwt"
+  },
   featureScopes: {
+    "auth.social.profile": {
+      allowedScopes: ["name", "email"]
+    },
     "profile.basic": {
       allowedScopes: ["name", "email"]
     }
   },
   operationPolicies: {
+    "auth.account.link": {
+      allowed: true
+    },
+    "auth.signin": {
+      allowed: true
+    },
     "mail.watch.create": {
       allowed: false,
       reason: "Apple OAuth descriptor is social-only in shared registry"

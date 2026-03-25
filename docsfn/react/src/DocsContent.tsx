@@ -36,11 +36,22 @@ function renderBlock(input: {
   const { block } = input;
   if (block.type === "heading") {
     const headingTag = `h${Math.max(1, Math.min(6, block.level))}`;
-    return React.createElement(headingTag, { id: block.slug }, block.text);
+    return React.createElement(headingTag, {
+      id: block.slug,
+      dangerouslySetInnerHTML: { __html: block.html },
+    });
   }
 
   if (block.type === "paragraph") {
-    return <p>{block.text}</p>;
+    return <p dangerouslySetInnerHTML={{ __html: block.html }} />;
+  }
+
+  if (block.type === "list") {
+    return <div dangerouslySetInnerHTML={{ __html: block.html }} />;
+  }
+
+  if (block.type === "table") {
+    return <div dangerouslySetInnerHTML={{ __html: block.html }} />;
   }
 
   if (block.type === "code") {
@@ -57,9 +68,10 @@ function renderBlock(input: {
 
   if (block.type === "callout") {
     return (
-      <aside data-docsfn-callout={block.kind}>
-        <p>{block.text}</p>
-      </aside>
+      <aside
+        data-docsfn-callout={block.kind}
+        dangerouslySetInnerHTML={{ __html: block.html }}
+      />
     );
   }
 

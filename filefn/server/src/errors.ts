@@ -49,6 +49,7 @@ export const ErrorCodes = {
   SHARE_NOT_FOUND: 'FILEFN_SHARE_NOT_FOUND',
   PERMISSION_NOT_FOUND: 'FILEFN_PERMISSION_NOT_FOUND',
   PROCESSING_ENQUEUE_FAILED: 'FILEFN_PROCESSING_ENQUEUE_FAILED',
+  INVALID_RENDER_INTENT: 'FILEFN_INVALID_RENDER_INTENT',
   SESSION_TOKEN_REQUIRED: 'FILEFN_SESSION_TOKEN_REQUIRED',
   SESSION_TOKEN_INVALID: 'FILEFN_SESSION_TOKEN_INVALID',
 } as const;
@@ -183,6 +184,15 @@ export function processingEnqueueFailed(): FileFnError {
     ErrorCodes.PROCESSING_ENQUEUE_FAILED,
     'Failed to enqueue processing',
     503
+  );
+}
+
+export function invalidRenderIntent(intent?: string): FileFnError {
+  return new FileFnError(
+    ErrorCodes.INVALID_RENDER_INTENT,
+    'Invalid render intent',
+    400,
+    { intent }
   );
 }
 

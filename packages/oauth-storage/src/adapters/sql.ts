@@ -1,22 +1,40 @@
-import type { OAuthStateRecord, OAuthStateStore, TokenRecord, TokenVault } from "../index.js";
+import type {
+  OAuthConsentRecord,
+  OAuthConsentStore,
+  OAuthRevocationFailureRecord,
+  OAuthRevocationFailureStore,
+  OAuthStateRecord,
+  OAuthStateStore,
+  OAuthStorageTableDefinition,
+  OAuthStoredSubject,
+  TokenRecord,
+  TokenVault
+} from "../index.js";
+import {
+  applySubjectToStateRecord,
+  cloneOAuthStoredSubject,
+  getOAuthSubjectKey,
+  validateOAuthConsentRecord,
+  validateOAuthRevocationFailureRecord,
+  validateOAuthStateRecord,
+  validateOAuthStoredSubject
+} from "../state-store.js";
 
 export interface SqlResult {
   rowsAffected?: number;
 }
 
 export interface SqlClient {
-  query<TRow = unknown>(
-    statement: string,
-    params?: readonly unknown[]
-  ): Promise<TRow[]>;
+  query<TRow = unknown>(statement: string, params?: readonly unknown[]): Promise<TRow[]>;
   execute(statement: string, params?: readonly unknown[]): Promise<SqlResult>;
 }
 
 interface OAuthStateRow {
   state_id: string;
-  tenant_id: string;
-  user_id: string;
   provider_id: string;
+  subject_kind: string;
+  subject_key: string;
+  subject_payload: string;
   redirect_uri: string;
   requested_scopes: string;
   code_verifier: string | null;
@@ -39,11 +57,39 @@ interface TokenRow {
   expires_at: string | null;
 }
 
+interface ConsentRow {
+  consent_id: string;
+  provider_id: string;
+  subject_kind: string;
+  subject_key: string;
+  subject_payload: string;
+  scope_set: string;
+  granted_at: string;
+  updated_at: string;
+  metadata: string | null;
+}
+
+interface RevocationFailureRow {
+  failure_id: string;
+  provider_id: string;
+  subject_kind: string;
+  subject_key: string;
+  subject_payload: string;
+  token_id: string | null;
+  token_type_hint: string | null;
+  error_code: string;
+  error_message: string;
+  retryable: boolean;
+  occurred_at: string;
+  metadata: string | null;
+}
+
 const STATE_COLUMNS = `
   state_id,
-  tenant_id,
-  user_id,
   provider_id,
+  subject_kind,
+  subject_key,
+  subject_payload,
   redirect_uri,
   requested_scopes,
   code_verifier,
@@ -66,6 +112,33 @@ const TOKEN_COLUMNS = `
   expires_at
 `;
 
+const CONSENT_COLUMNS = `
+  consent_id,
+  provider_id,
+  subject_kind,
+  subject_key,
+  subject_payload,
+  scope_set,
+  granted_at,
+  updated_at,
+  metadata
+`;
+
+const REVOCATION_FAILURE_COLUMNS = `
+  failure_id,
+  provider_id,
+  subject_kind,
+  subject_key,
+  subject_payload,
+  token_id,
+  token_type_hint,
+  error_code,
+  error_message,
+  retryable,
+  occurred_at,
+  metadata
+`;
+
 export class SqlOAuthStateStore implements OAuthStateStore {
   private readonly client: SqlClient;
   private readonly tableName: string;
@@ -76,13 +149,16 @@ export class SqlOAuthStateStore implements OAuthStateStore {
   }
 
   async put(record: OAuthStateRecord): Promise<void> {
+    validateOAuthStateRecord(record);
+    const normalized = applySubjectToStateRecord(record);
     await this.client.execute(
       `
       INSERT INTO ${this.tableName} (
         state_id,
-        tenant_id,
-        user_id,
         provider_id,
+        subject_kind,
+        subject_key,
+        subject_payload,
         redirect_uri,
         requested_scopes,
         code_verifier,
@@ -90,11 +166,12 @@ export class SqlOAuthStateStore implements OAuthStateStore {
         created_at,
         expires_at,
         consumed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(state_id) DO UPDATE SET
-        tenant_id = excluded.tenant_id,
-        user_id = excluded.user_id,
         provider_id = excluded.provider_id,
+        subject_kind = excluded.subject_kind,
+        subject_key = excluded.subject_key,
+        subject_payload = excluded.subject_payload,
         redirect_uri = excluded.redirect_uri,
         requested_scopes = excluded.requested_scopes,
         code_verifier = excluded.code_verifier,
@@ -104,17 +181,18 @@ export class SqlOAuthStateStore implements OAuthStateStore {
         consumed_at = excluded.consumed_at
       `,
       [
-        record.stateId,
-        record.tenantId,
-        record.userId,
-        record.providerId,
-        record.redirectUri,
-        JSON.stringify(record.requestedScopes),
-        record.codeVerifier ?? null,
-        record.nonce ?? null,
-        record.createdAt,
-        record.expiresAt,
-        record.consumedAt ?? null
+        normalized.stateId,
+        normalized.providerId,
+        normalized.subject!.kind,
+        getOAuthSubjectKey(normalized.subject!),
+        JSON.stringify(normalized.subject),
+        normalized.redirectUri,
+        JSON.stringify(normalized.requestedScopes),
+        normalized.codeVerifier ?? null,
+        normalized.nonce ?? null,
+        normalized.createdAt,
+        normalized.expiresAt,
+        normalized.consumedAt ?? null
       ]
     );
   }
@@ -154,7 +232,7 @@ export class SqlTokenVault implements TokenVault {
   private readonly client: SqlClient;
   private readonly tableName: string;
 
-  constructor(client: SqlClient, tableName = "oauth_token_vault") {
+  constructor(client: SqlClient, tableName = "oauth_tokens") {
     this.client = client;
     this.tableName = tableName;
   }
@@ -230,17 +308,245 @@ export class SqlTokenVault implements TokenVault {
   }
 }
 
+export class SqlOAuthConsentStore implements OAuthConsentStore {
+  private readonly client: SqlClient;
+  private readonly tableName: string;
+
+  constructor(client: SqlClient, tableName = "oauth_consents") {
+    this.client = client;
+    this.tableName = tableName;
+  }
+
+  async put(record: OAuthConsentRecord): Promise<void> {
+    validateOAuthConsentRecord(record);
+    await this.client.execute(
+      `
+      INSERT INTO ${this.tableName} (
+        consent_id,
+        provider_id,
+        subject_kind,
+        subject_key,
+        subject_payload,
+        scope_set,
+        granted_at,
+        updated_at,
+        metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(consent_id) DO UPDATE SET
+        provider_id = excluded.provider_id,
+        subject_kind = excluded.subject_kind,
+        subject_key = excluded.subject_key,
+        subject_payload = excluded.subject_payload,
+        scope_set = excluded.scope_set,
+        granted_at = excluded.granted_at,
+        updated_at = excluded.updated_at,
+        metadata = excluded.metadata
+      `,
+      [
+        record.consentId,
+        record.providerId,
+        record.subject.kind,
+        getOAuthSubjectKey(record.subject),
+        JSON.stringify(record.subject),
+        JSON.stringify(record.scopes),
+        record.grantedAt,
+        record.updatedAt,
+        record.metadata ? JSON.stringify(record.metadata) : null
+      ]
+    );
+  }
+
+  async get(consentId: string): Promise<OAuthConsentRecord | null> {
+    const rows = await this.client.query<ConsentRow>(
+      `SELECT ${CONSENT_COLUMNS} FROM ${this.tableName} WHERE consent_id = ? LIMIT 1`,
+      [consentId]
+    );
+
+    return rows[0] ? mapConsentRow(rows[0]) : null;
+  }
+
+  async listBySubject(providerId: string, subject: OAuthStoredSubject): Promise<OAuthConsentRecord[]> {
+    validateOAuthStoredSubject(subject);
+    const rows = await this.client.query<ConsentRow>(
+      `SELECT ${CONSENT_COLUMNS} FROM ${this.tableName} WHERE provider_id = ? AND subject_key = ?`,
+      [providerId, getOAuthSubjectKey(subject)]
+    );
+
+    return rows.map(mapConsentRow);
+  }
+
+  async delete(consentId: string): Promise<void> {
+    await this.client.execute(`DELETE FROM ${this.tableName} WHERE consent_id = ?`, [consentId]);
+  }
+}
+
+export class SqlOAuthRevocationFailureStore implements OAuthRevocationFailureStore {
+  private readonly client: SqlClient;
+  private readonly tableName: string;
+
+  constructor(client: SqlClient, tableName = "oauth_revocation_failures") {
+    this.client = client;
+    this.tableName = tableName;
+  }
+
+  async put(record: OAuthRevocationFailureRecord): Promise<void> {
+    validateOAuthRevocationFailureRecord(record);
+    await this.client.execute(
+      `
+      INSERT INTO ${this.tableName} (
+        failure_id,
+        provider_id,
+        subject_kind,
+        subject_key,
+        subject_payload,
+        token_id,
+        token_type_hint,
+        error_code,
+        error_message,
+        retryable,
+        occurred_at,
+        metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(failure_id) DO UPDATE SET
+        provider_id = excluded.provider_id,
+        subject_kind = excluded.subject_kind,
+        subject_key = excluded.subject_key,
+        subject_payload = excluded.subject_payload,
+        token_id = excluded.token_id,
+        token_type_hint = excluded.token_type_hint,
+        error_code = excluded.error_code,
+        error_message = excluded.error_message,
+        retryable = excluded.retryable,
+        occurred_at = excluded.occurred_at,
+        metadata = excluded.metadata
+      `,
+      [
+        record.failureId,
+        record.providerId,
+        record.subject.kind,
+        getOAuthSubjectKey(record.subject),
+        JSON.stringify(record.subject),
+        record.tokenId ?? null,
+        record.tokenTypeHint ?? null,
+        record.errorCode,
+        record.errorMessage,
+        record.retryable,
+        record.occurredAt,
+        record.metadata ? JSON.stringify(record.metadata) : null
+      ]
+    );
+  }
+
+  async get(failureId: string): Promise<OAuthRevocationFailureRecord | null> {
+    const rows = await this.client.query<RevocationFailureRow>(
+      `SELECT ${REVOCATION_FAILURE_COLUMNS} FROM ${this.tableName} WHERE failure_id = ? LIMIT 1`,
+      [failureId]
+    );
+
+    return rows[0] ? mapRevocationFailureRow(rows[0]) : null;
+  }
+
+  async listBySubject(providerId: string, subject: OAuthStoredSubject): Promise<OAuthRevocationFailureRecord[]> {
+    validateOAuthStoredSubject(subject);
+    const rows = await this.client.query<RevocationFailureRow>(
+      `SELECT ${REVOCATION_FAILURE_COLUMNS} FROM ${this.tableName} WHERE provider_id = ? AND subject_key = ?`,
+      [providerId, getOAuthSubjectKey(subject)]
+    );
+
+    return rows.map(mapRevocationFailureRow);
+  }
+
+  async delete(failureId: string): Promise<void> {
+    await this.client.execute(`DELETE FROM ${this.tableName} WHERE failure_id = ?`, [failureId]);
+  }
+}
+
+export function getOAuthStorageTableDefinitions(): ReadonlyArray<OAuthStorageTableDefinition> {
+  return [
+    {
+      name: "oauth_states",
+      fields: [
+        { name: "state_id", type: "text", primaryKey: true },
+        { name: "provider_id", type: "text" },
+        { name: "subject_kind", type: "text" },
+        { name: "subject_key", type: "text" },
+        { name: "subject_payload", type: "json" },
+        { name: "redirect_uri", type: "text" },
+        { name: "requested_scopes", type: "json" },
+        { name: "code_verifier", type: "text", nullable: true },
+        { name: "nonce", type: "text", nullable: true },
+        { name: "created_at", type: "text" },
+        { name: "expires_at", type: "text" },
+        { name: "consumed_at", type: "text", nullable: true }
+      ],
+      indexes: [{ name: "idx_oauth_states_expires_at", fields: ["expires_at"] }]
+    },
+    {
+      name: "oauth_tokens",
+      fields: [
+        { name: "token_id", type: "text", primaryKey: true },
+        { name: "tenant_id", type: "text" },
+        { name: "user_id", type: "text" },
+        { name: "provider_id", type: "text" },
+        { name: "connection_id", type: "text", unique: true },
+        { name: "encrypted_payload", type: "text" },
+        { name: "key_ref", type: "text" },
+        { name: "created_at", type: "text" },
+        { name: "updated_at", type: "text" },
+        { name: "expires_at", type: "text", nullable: true }
+      ],
+      indexes: [{ name: "idx_oauth_tokens_connection", fields: ["connection_id"] }]
+    },
+    {
+      name: "oauth_consents",
+      fields: [
+        { name: "consent_id", type: "text", primaryKey: true },
+        { name: "provider_id", type: "text" },
+        { name: "subject_kind", type: "text" },
+        { name: "subject_key", type: "text" },
+        { name: "subject_payload", type: "json" },
+        { name: "scope_set", type: "json" },
+        { name: "granted_at", type: "text" },
+        { name: "updated_at", type: "text" },
+        { name: "metadata", type: "json", nullable: true }
+      ],
+      indexes: [{ name: "idx_oauth_consents_provider_subject", fields: ["provider_id", "subject_key"] }]
+    },
+    {
+      name: "oauth_revocation_failures",
+      fields: [
+        { name: "failure_id", type: "text", primaryKey: true },
+        { name: "provider_id", type: "text" },
+        { name: "subject_kind", type: "text" },
+        { name: "subject_key", type: "text" },
+        { name: "subject_payload", type: "json" },
+        { name: "token_id", type: "text", nullable: true },
+        { name: "token_type_hint", type: "text", nullable: true },
+        { name: "error_code", type: "text" },
+        { name: "error_message", type: "text" },
+        { name: "retryable", type: "boolean" },
+        { name: "occurred_at", type: "text" },
+        { name: "metadata", type: "json", nullable: true }
+      ],
+      indexes: [{ name: "idx_oauth_revocation_failures_provider_subject", fields: ["provider_id", "subject_key"] }]
+    }
+  ];
+}
+
 export function getOAuthStorageSchema(
   stateTable = "oauth_states",
-  tokenTable = "oauth_token_vault"
+  tokenTable = "oauth_tokens",
+  consentTable = "oauth_consents",
+  revocationFailureTable = "oauth_revocation_failures"
 ): ReadonlyArray<string> {
   return [
     `
     CREATE TABLE IF NOT EXISTS ${stateTable} (
       state_id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
       provider_id TEXT NOT NULL,
+      subject_kind TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      subject_payload TEXT NOT NULL,
       redirect_uri TEXT NOT NULL,
       requested_scopes TEXT NOT NULL,
       code_verifier TEXT,
@@ -271,16 +577,53 @@ export function getOAuthStorageSchema(
     `
     CREATE INDEX IF NOT EXISTS idx_${tokenTable}_connection
     ON ${tokenTable}(connection_id)
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS ${consentTable} (
+      consent_id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      subject_kind TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      subject_payload TEXT NOT NULL,
+      scope_set TEXT NOT NULL,
+      granted_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      metadata TEXT
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_${consentTable}_provider_subject
+    ON ${consentTable}(provider_id, subject_key)
+    `,
+    `
+    CREATE TABLE IF NOT EXISTS ${revocationFailureTable} (
+      failure_id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      subject_kind TEXT NOT NULL,
+      subject_key TEXT NOT NULL,
+      subject_payload TEXT NOT NULL,
+      token_id TEXT,
+      token_type_hint TEXT,
+      error_code TEXT NOT NULL,
+      error_message TEXT NOT NULL,
+      retryable INTEGER NOT NULL,
+      occurred_at TEXT NOT NULL,
+      metadata TEXT
+    )
+    `,
+    `
+    CREATE INDEX IF NOT EXISTS idx_${revocationFailureTable}_provider_subject
+    ON ${revocationFailureTable}(provider_id, subject_key)
     `
   ];
 }
 
 function mapStateRow(row: OAuthStateRow): OAuthStateRecord {
-  return {
+  const subject = parseSubject(row.subject_payload);
+  return applySubjectToStateRecord({
     stateId: row.state_id,
-    tenantId: row.tenant_id,
-    userId: row.user_id,
     providerId: row.provider_id,
+    subject,
     redirectUri: row.redirect_uri,
     requestedScopes: JSON.parse(row.requested_scopes) as string[],
     codeVerifier: row.code_verifier ?? undefined,
@@ -288,7 +631,7 @@ function mapStateRow(row: OAuthStateRow): OAuthStateRecord {
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     consumedAt: row.consumed_at ?? undefined
-  };
+  });
 }
 
 function mapTokenRow(row: TokenRow): TokenRecord {
@@ -304,4 +647,37 @@ function mapTokenRow(row: TokenRow): TokenRecord {
     updatedAt: row.updated_at,
     expiresAt: row.expires_at ?? undefined
   };
+}
+
+function mapConsentRow(row: ConsentRow): OAuthConsentRecord {
+  return {
+    consentId: row.consent_id,
+    providerId: row.provider_id,
+    subject: parseSubject(row.subject_payload),
+    scopes: JSON.parse(row.scope_set) as string[],
+    grantedAt: row.granted_at,
+    updatedAt: row.updated_at,
+    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+  };
+}
+
+function mapRevocationFailureRow(row: RevocationFailureRow): OAuthRevocationFailureRecord {
+  return {
+    failureId: row.failure_id,
+    providerId: row.provider_id,
+    subject: parseSubject(row.subject_payload),
+    tokenId: row.token_id ?? undefined,
+    tokenTypeHint: row.token_type_hint as "access_token" | "refresh_token" | undefined,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    retryable: row.retryable,
+    occurredAt: row.occurred_at,
+    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+  };
+}
+
+function parseSubject(raw: string): OAuthStoredSubject {
+  const subject = JSON.parse(raw) as OAuthStoredSubject;
+  validateOAuthStoredSubject(subject);
+  return cloneOAuthStoredSubject(subject);
 }

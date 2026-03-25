@@ -5,11 +5,33 @@ export type OAuthTokenGrantType =
   | "refresh_token"
   | "client_credentials";
 
+export type OAuthTokenAuthMethod = "client_secret_post" | "client_secret_basic";
+
+export interface OAuthResolvedClientSecret {
+  clientSecret: string;
+  tokenAuthMethod?: OAuthTokenAuthMethod;
+}
+
+export interface OAuthSecretResolverContext {
+  provider: OAuthProviderDescriptor;
+  operation: "exchange" | "revoke";
+  clientId: string;
+  grantType?: OAuthTokenGrantType;
+  redirectUri?: string;
+  scopes?: string[];
+  tokenTypeHint?: "access_token" | "refresh_token";
+}
+
+export type OAuthClientSecretResolver = (
+  input: OAuthSecretResolverContext
+) => Promise<OAuthResolvedClientSecret> | OAuthResolvedClientSecret;
+
 export interface OAuthTokenEndpointRequest {
   provider: OAuthProviderDescriptor;
   grantType: OAuthTokenGrantType;
   clientId: string;
-  clientSecret: string;
+  clientSecret?: string;
+  clientSecretResolver?: OAuthClientSecretResolver;
   redirectUri?: string;
   code?: string;
   codeVerifier?: string;
@@ -30,7 +52,8 @@ export interface OAuthTokenEndpointResponse {
 export interface OAuthRevocationRequest {
   provider: OAuthProviderDescriptor;
   clientId: string;
-  clientSecret: string;
+  clientSecret?: string;
+  clientSecretResolver?: OAuthClientSecretResolver;
   token: string;
   tokenTypeHint?: "access_token" | "refresh_token";
 }

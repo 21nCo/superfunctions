@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createFileService } from '../files/service.js';
 import { createEventEmitter } from '../events.js';
+import { createPolicyRegistry } from '../policies.js';
+import { createRoutedStorageAdapter, type StorageAdapter, type StorageAdapterCapabilities } from '@superfunctions/storage';
 import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
 
 const CAPS: AdapterCapabilities = {
@@ -342,7 +344,7 @@ describe('PHASE_05 FILE-004 delete cascade semantics', () => {
     expect(db.rows('uploadParts').filter((row) => row.uploadSessionId === 'upl_0001')).toHaveLength(0);
     expect(db.rows('uploadParts').filter((row) => row.uploadSessionId === 'upl_0002')).toHaveLength(0);
 
-    expect(abortedMultipart).toEqual([{ key: 'tmp/multipart-key', uploadId: 'mp_0001' }]);
+    expect(abortedMultipart).toEqual([{ key: 'tmp/multipart-key', target: 'durable', uploadId: 'mp_0001' }]);
     expect(deletedKeys).toContain('tmp/session-key.part1');
     expect(deletedKeys).toContain('artifact/storage-key');
     expect(deletedKeys).toContain('unique/storage-key');
@@ -447,5 +449,121 @@ describe('PHASE_05 FILE-004 delete cascade semantics', () => {
     expect(deletedKeys).toEqual([]);
     expect(quotaDeltas).toEqual([]);
     expect(db.rows('files').map((row) => row.fileId)).toEqual(['file_0002']);
+  });
+
+  it('TV-STORAGE-001: delete treats the same storage key in different logical targets as different physical objects', async () => {
+    const db = createDb({
+      files: [
+        {
+          fileId: 'file_durable',
+          currentVersionId: 'ver_durable',
+          ownerId: 'user_123',
+          tenantId: 'org_123',
+          visibility: 'private',
+          policy: 'durable-policy',
+          mimeType: 'image/png',
+          size: 100,
+          name: 'one.png',
+          metadata: {},
+          createdAt: '2026-03-20T12:00:00.000Z',
+          updatedAt: '2026-03-20T12:00:00.000Z',
+        },
+        {
+          fileId: 'file_temporary',
+          currentVersionId: 'ver_temporary',
+          ownerId: 'user_123',
+          tenantId: 'org_123',
+          visibility: 'private',
+          policy: 'temporary-policy',
+          mimeType: 'image/png',
+          size: 100,
+          name: 'two.png',
+          metadata: {},
+          createdAt: '2026-03-20T12:00:00.000Z',
+          updatedAt: '2026-03-20T12:00:00.000Z',
+        },
+      ],
+      fileVersions: [
+        {
+          versionId: 'ver_durable',
+          fileId: 'file_durable',
+          storageKey: 'shared/object.png',
+          mimeType: 'image/png',
+          size: 100,
+          checksumSha256Base64: null,
+          createdAt: '2026-03-20T12:00:00.000Z',
+        },
+        {
+          versionId: 'ver_temporary',
+          fileId: 'file_temporary',
+          storageKey: 'shared/object.png',
+          mimeType: 'image/png',
+          size: 100,
+          checksumSha256Base64: null,
+          createdAt: '2026-03-20T12:00:00.000Z',
+        },
+      ],
+    });
+
+    const deleteCalls: string[] = [];
+    function makeAdapter(name: string): StorageAdapter {
+      const capabilities: StorageAdapterCapabilities = {
+        signedUploadUrls: true,
+        signedDownloadUrls: true,
+        multipart: true,
+        proxyStreamingUpload: true,
+        proxyStreamingDownload: true,
+      };
+      return {
+        name,
+        capabilities,
+        async statObject({ key }) {
+          return { key, size: 100 };
+        },
+        async deleteObject({ key }) {
+          deleteCalls.push(`${name}:${key}`);
+        },
+        async createMultipartUpload() {
+          return { uploadId: `${name}-upload` };
+        },
+        async signMultipartUploadPartUrl({ key, partNumber }) {
+          return { url: `https://${name}.local/${key}/${partNumber}` };
+        },
+        async completeMultipartUpload() {},
+        async abortMultipartUpload() {},
+        async signDownloadUrl({ key }) {
+          return { url: `https://${name}.local/${key}` };
+        },
+        async openUploadStream() {
+          return new WritableStream();
+        },
+        async openDownloadStream() {
+          return new ReadableStream();
+        },
+      };
+    }
+
+    const service = createFileService({
+      db: db.adapter,
+      storage: createRoutedStorageAdapter({
+        adapters: {
+          durable: makeAdapter('durable-bucket'),
+          temporary: makeAdapter('temporary-bucket'),
+        },
+      }),
+      policies: createPolicyRegistry([
+        { name: 'durable-policy', storageTarget: 'durable' },
+        { name: 'temporary-policy', storageTarget: 'temporary' },
+      ]),
+      events: createEventEmitter(),
+      namespace: 'filefn',
+    });
+
+    await service.deleteFile('file_durable', { principalId: 'user_123', tenantId: 'org_123' });
+    expect(deleteCalls).toContain('durable-bucket:shared/object.png');
+    expect(deleteCalls).not.toContain('temporary-bucket:shared/object.png');
+
+    await service.deleteFile('file_temporary', { principalId: 'user_123', tenantId: 'org_123' });
+    expect(deleteCalls).toContain('temporary-bucket:shared/object.png');
   });
 });

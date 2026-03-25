@@ -1,15 +1,28 @@
 """Tests for authfn."""
 
+import os
+import sys
 import pytest
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+TESTS_DIR = os.path.dirname(__file__)
+AUTHFN_PYTHON_ROOT = os.path.abspath(os.path.join(TESTS_DIR, ".."))
+PYTHON_CORE_ROOT = os.path.abspath(
+    os.path.join(TESTS_DIR, "..", "..", "..", "packages", "python-core")
+)
+
+for path in (AUTHFN_PYTHON_ROOT, PYTHON_CORE_ROOT):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
 from authfn import create_authfn, AuthFnConfig, ApiKeyCreate
 from authfn.types import (
-    WhereClause,
-    OrderByClause,
-    InvalidCredentialsError,
+    ApiKeyRevokedError,
     ExpiredCredentialsError,
+    InvalidCredentialsError,
+    OrderByClause,
+    WhereClause,
 )
 
 
@@ -17,7 +30,10 @@ class MockDatabaseAdapter:
     """Mock database adapter for testing."""
 
     def __init__(self):
-        self._storage: Dict[str, List[Dict[str, Any]]] = {"apiKeys": []}
+        self._storage: Dict[str, List[Dict[str, Any]]] = {
+            "api_keys": [],
+            "sessions": [],
+        }
 
     async def find_one(
         self,
@@ -29,8 +45,16 @@ class MockDatabaseAdapter:
         for item in self._storage.get(model, []):
             match = True
             for clause in where:
-                if clause.operator == "eq":
-                    if item.get(clause.field) != clause.value:
+                if isinstance(clause, dict):
+                    operator = clause["operator"]
+                    field = clause["field"]
+                    value = clause["value"]
+                else:
+                    operator = clause.operator
+                    field = clause.field
+                    value = clause.value
+                if operator == "eq":
+                    if item.get(field) != value:
                         match = False
                         break
             if match:
@@ -49,13 +73,21 @@ class MockDatabaseAdapter:
         for item in self._storage.get(model, []):
             match = True
             for clause in where:
-                if clause.operator == "eq":
-                    if item.get(clause.field) != clause.value:
+                if isinstance(clause, dict):
+                    operator = clause["operator"]
+                    field = clause["field"]
+                    value = clause["value"]
+                else:
+                    operator = clause.operator
+                    field = clause.field
+                    value = clause.value
+                if operator == "eq":
+                    if item.get(field) != value:
                         match = False
                         break
-                elif clause.operator == "contains":
-                    field_value = item.get(clause.field)
-                    if not isinstance(field_value, list) or clause.value not in field_value:
+                elif operator == "contains":
+                    field_value = item.get(field)
+                    if not isinstance(field_value, list) or value not in field_value:
                         match = False
                         break
             if match:
@@ -84,8 +116,16 @@ class MockDatabaseAdapter:
         for item in self._storage.get(model, []):
             match = True
             for clause in where:
-                if clause.operator == "eq":
-                    if item.get(clause.field) != clause.value:
+                if isinstance(clause, dict):
+                    operator = clause["operator"]
+                    field = clause["field"]
+                    value = clause["value"]
+                else:
+                    operator = clause.operator
+                    field = clause.field
+                    value = clause.value
+                if operator == "eq":
+                    if item.get(field) != value:
                         match = False
                         break
             if match:
@@ -152,7 +192,7 @@ async def test_authenticate_valid_key(auth):
     session = await auth.provider.authenticate(request)
 
     assert session is not None
-    assert session.name == "Test Key"
+    assert session.actor_type == "api-key"
     assert session.resource_ids == ["resource-1"]
     assert session.type == "api-key"
 
@@ -191,7 +231,7 @@ async def test_authenticate_revoked_key(auth):
     # Try to authenticate
     request = MockRequest({"Authorization": f"Bearer {result.key}"})
 
-    with pytest.raises(InvalidCredentialsError):
+    with pytest.raises(ApiKeyRevokedError):
         await auth.provider.authenticate(request)
 
 
@@ -257,6 +297,12 @@ async def test_get_key(auth):
     assert key.resource_ids == ["resource-1"]
     # Key should be sanitized (no secret key)
     assert not hasattr(key, "key")
+
+
+@pytest.mark.asyncio
+async def test_auth_exposes_router_alias(auth):
+    """Test the instance exposes the canonical router alias."""
+    assert auth.router == auth.get_routes()
 
 
 @pytest.mark.asyncio

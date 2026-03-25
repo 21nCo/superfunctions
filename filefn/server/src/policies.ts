@@ -11,6 +11,10 @@ export interface Policy {
   contentTypes?: string[];
   maxSizeBytes?: number;
   visibility?: 'public' | 'private' | 'shared';
+  storageTarget?: string;
+  artifactStorageTarget?: string;
+  lifecycle?: 'durable' | 'temporary';
+  renderProfile?: 'default' | 'nucleus';
   storagePath?: (ctx: PolicyStoragePathContext) => string;
 }
 
@@ -21,6 +25,18 @@ export interface PolicyRegistry {
 }
 
 export type Visibility = 'public' | 'private' | 'shared';
+export type RenderProfile = 'default' | 'nucleus';
+
+export const DEFAULT_STORAGE_TARGET = 'durable';
+export const NUCLEUS_MAX_SIZE_BYTES = 100 * 1024 * 1024;
+export const NUCLEUS_ALLOWED_CONTENT_TYPES = [
+  'image/*',
+  'audio/*',
+  'video/*',
+  'application/pdf',
+  'text/markdown',
+  'text/plain',
+] as const;
 
 export interface PolicyRegistryWithDefine extends PolicyRegistry {
   define(name: string, policy: Omit<Policy, 'name'>): void;
@@ -58,7 +74,7 @@ export function validatePolicyConstraints(
   size: number
 ): { valid: boolean; error?: string } {
   if (policy.contentTypes && policy.contentTypes.length > 0) {
-    if (!policy.contentTypes.includes(mimeType)) {
+    if (!policy.contentTypes.some((pattern) => matchesContentType(pattern, mimeType))) {
       return { valid: false, error: `Content type '${mimeType}' not allowed by policy '${policy.name}'` };
     }
   }
@@ -83,4 +99,52 @@ export function computeStoragePath(
   parts.push(ctx.fileId);
   parts.push(`${ctx.versionId}-${ctx.fileName}`);
   return parts.join('/');
+}
+
+export function resolveStorageTarget(policy: Pick<Policy, 'storageTarget'>): string {
+  return policy.storageTarget || DEFAULT_STORAGE_TARGET;
+}
+
+export function resolveArtifactStorageTarget(
+  policy: Pick<Policy, 'storageTarget' | 'artifactStorageTarget'>
+): string {
+  return policy.artifactStorageTarget || resolveStorageTarget(policy);
+}
+
+export function matchesContentType(pattern: string, mimeType: string): boolean {
+  if (pattern === '*/*') {
+    return true;
+  }
+
+  if (pattern.endsWith('/*')) {
+    const prefix = pattern.slice(0, pattern.length - 1);
+    return mimeType.startsWith(prefix);
+  }
+
+  return pattern === mimeType;
+}
+
+export function createNucleusPolicies(): Policy[] {
+  return [
+    {
+      name: 'nucleus-durable-default',
+      contentTypes: [...NUCLEUS_ALLOWED_CONTENT_TYPES],
+      maxSizeBytes: NUCLEUS_MAX_SIZE_BYTES,
+      visibility: 'private',
+      storageTarget: 'durable',
+      artifactStorageTarget: 'durable',
+      lifecycle: 'durable',
+      renderProfile: 'nucleus',
+    },
+    {
+      name: 'nucleus-temporary-default',
+      contentTypes: [...NUCLEUS_ALLOWED_CONTENT_TYPES],
+      maxSizeBytes: NUCLEUS_MAX_SIZE_BYTES,
+      visibility: 'private',
+      storageTarget: 'temporary',
+      artifactStorageTarget: 'temporary',
+      lifecycle: 'temporary',
+      renderProfile: 'nucleus',
+    },
+  ];
 }

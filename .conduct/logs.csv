@@ -28,3 +28,8 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-14T16:18:00Z,gemini-2.5-pro,CLI,audit,Gemini CLI,,.conduct/audits/2026-03-14-a1b2c3-full-audit.md
 2026-03-14T18:50:49Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-15-fix-ifnaigab-spec
 2026-03-18T07:03:15Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/.conduct/specs/2026-03-18-change-3dhqe3l2-spec
+2026-03-22T08:14:32Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-lfdh4ke1-full-audit.md
+2026-03-22T08:32:03Z,gpt-5-codex,Codex Desktop,audit-update,unknown-agent,,filefn/.conduct/audits/2026-03-22-lfdh4ke1-full-audit.md
+2026-03-22T14:44:32Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-rlq9ylgs-full-audit.md
+2026-03-22T14:57:30Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-rlq9ylgs-full-audit.md
+2026-03-22T16:24:39Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-22-x4k2m9p7-completion.md

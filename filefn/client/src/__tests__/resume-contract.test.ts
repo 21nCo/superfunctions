@@ -79,6 +79,7 @@ describe('PHASE_00 CLIENT-001 resume contract conformance', () => {
       policy: 'user-avatar',
       file: new Blob(['abc'], { type: 'application/octet-stream' }),
       fileName: 'a.bin',
+      fileId: 'file_0001',
     });
 
     const result = await handle.done();

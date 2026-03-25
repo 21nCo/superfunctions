@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthStateRecord } from "@superfunctions/oauth-storage";
+import { cloneOAuthStateRecord, type OAuthStateRecord } from "@superfunctions/oauth-storage";
 import { DefaultOAuthService } from "../src/index.js";
 
 class TestStateStore {
   private readonly records = new Map<string, OAuthStateRecord>();
 
   async put(record: OAuthStateRecord): Promise<void> {
-    this.records.set(record.stateId, { ...record, requestedScopes: [...record.requestedScopes] });
+    this.records.set(record.stateId, cloneOAuthStateRecord(record));
   }
 
   async get(stateId: string): Promise<OAuthStateRecord | null> {
     const record = this.records.get(stateId);
-    return record ? { ...record, requestedScopes: [...record.requestedScopes] } : null;
+    return record ? cloneOAuthStateRecord(record) : null;
   }
 
   async consume(stateId: string, consumedAt: string): Promise<OAuthStateRecord | null> {
@@ -24,9 +24,9 @@ class TestStateStore {
       return null;
     }
 
-    const consumed = { ...record, consumedAt };
+    const consumed = cloneOAuthStateRecord({ ...record, consumedAt });
     this.records.set(stateId, consumed);
-    return { ...consumed, requestedScopes: [...consumed.requestedScopes] };
+    return cloneOAuthStateRecord(consumed);
   }
 
   async deleteExpired(before: string): Promise<number> {
@@ -93,12 +93,13 @@ function createService(overrides?: { now?: () => Date; stateTtlMs?: number }) {
 }
 
 describe("oauth-core service", () => {
-  it("creates authorization URL with state and PKCE parameters", async () => {
+  it("creates authorization URL with state and PKCE parameters for connection subjects", async () => {
     const { service, stateStore } = createService();
     const result = await service.createAuthorizationRequest({
       providerId: "google",
       tenantId: "t1",
       userId: "u1",
+      connectionId: "conn_1",
       redirectUri: "https://app/callback"
     });
 
@@ -115,6 +116,12 @@ describe("oauth-core service", () => {
     expect(authorizationUrl.searchParams.get("nonce")).toMatch(/^nonce_/);
 
     const stored = await stateStore.get(result.stateId);
+    expect(stored?.subject).toMatchObject({
+      kind: "connection",
+      tenantId: "t1",
+      userId: "u1",
+      connectionId: "conn_1"
+    });
     expect(stored?.codeVerifier).toBeTruthy();
   });
 
@@ -148,7 +155,7 @@ describe("oauth-core service", () => {
         redirectUri: "https://evil.example/callback"
       })
     ).rejects.toMatchObject({
-      code: "OAUTH_CALLBACK_MISMATCH",
+      code: "OAUTH_REDIRECT_DISALLOWED",
       message: "redirect URI not allowed"
     });
   });

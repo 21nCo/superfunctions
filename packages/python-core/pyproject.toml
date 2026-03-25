@@ -45,6 +45,7 @@ packages = ["superfunctions"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = ["--import-mode=importlib"]
 
 [tool.mypy]
 python_version = "3.10"

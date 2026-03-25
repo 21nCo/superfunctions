@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { glob } from 'glob';
-import { detectInstalledLibraries } from './libraries.js';
+import { discoverSuperfunctionsPackages } from './discover-packages.js';
 
 export interface DiscoveredConfig {
   libraryName: string;     // 'conduct', 'authfn', etc
@@ -33,8 +33,7 @@ export async function discoverLibraryConfigs(
     absolute: true,
   });
 
-  // Check installed libraries once before the loop (performance optimization)
-  const installedLibs = detectInstalledLibraries(cwd);
+  const installedLibrariesByName = buildInstalledLibraryMap(cwd);
 
   for (const file of files) {
     const basename = path.basename(file);
@@ -43,16 +42,12 @@ export async function discoverLibraryConfigs(
     if (match) {
       const libraryName = match[1]; // 'conduct', 'authfn', etc
 
-      // Check if library is installed
-      const isInstalled = installedLibs.some(
-        lib => lib.name.includes(libraryName)
-      );
-
-      if (isInstalled) {
+      const packageName = installedLibrariesByName.get(libraryName);
+      if (packageName) {
         discovered.push({
           libraryName,
           configPath: file,
-          packageName: `@superfunctions/${libraryName}`,
+          packageName,
         });
       }
     }
@@ -63,13 +58,17 @@ export async function discoverLibraryConfigs(
     for (const manualPath of manualPaths) {
       const resolved = path.resolve(cwd, manualPath);
       if (fs.existsSync(resolved)) {
-        // Extract library name from path or file content
-        const libraryName = await extractLibraryName(resolved);
-        if (libraryName) {
+        const extracted = await extractLibraryReference(resolved);
+        if (extracted) {
+          const packageName =
+            extracted.packageName ?? installedLibrariesByName.get(extracted.libraryName);
+          if (!packageName) {
+            continue;
+          }
           discovered.push({
-            libraryName,
+            libraryName: extracted.libraryName,
             configPath: resolved,
-            packageName: `@superfunctions/${libraryName}`,
+            packageName,
           });
         }
       }
@@ -82,16 +81,57 @@ export async function discoverLibraryConfigs(
 /**
  * Helper to extract library name from config file
  */
-async function extractLibraryName(configPath: string): Promise<string | null> {
-  try {
-    // Try reading first few lines to find library import
-    const content = fs.readFileSync(configPath, 'utf-8');
-    const importMatch = content.match(
-      /import.*from ['"](@superfunctions\/)?(\w+)['"]/
-    );
+function buildInstalledLibraryMap(cwd: string): Map<string, string> {
+  const installed = discoverSuperfunctionsPackages(cwd);
+  const mapped = new Map<string, string>();
 
-    if (importMatch) {
-      return importMatch[2]; // authfn, conduct, etc
+  for (const pkg of installed) {
+    for (const libraryName of pkg.libraryNames) {
+      mapped.set(libraryName, pkg.packageName);
+    }
+  }
+
+  return mapped;
+}
+
+async function extractLibraryReference(
+  configPath: string
+): Promise<{ libraryName: string; packageName?: string } | null> {
+  try {
+    const content = fs.readFileSync(configPath, 'utf-8');
+    const importMatches = [...content.matchAll(/from ['"]([^'"]+)['"]/g)];
+
+    for (const match of importMatches) {
+      const specifier = match[1];
+      if (specifier.startsWith('@superfunctions/')) {
+        return {
+          libraryName: specifier.slice('@superfunctions/'.length),
+          packageName: specifier,
+        };
+      }
+
+      if (specifier === '@authfn/core') {
+        return {
+          libraryName: 'authfn',
+          packageName: specifier,
+        };
+      }
+
+      if (specifier.startsWith('@')) {
+        const [scope, name] = specifier.split('/');
+        if (scope && name) {
+          return {
+            libraryName: name === 'core' ? scope.slice(1) : name,
+            packageName: specifier,
+          };
+        }
+      }
+
+      if (/^[a-z0-9-]+$/i.test(specifier)) {
+        return {
+          libraryName: specifier,
+        };
+      }
     }
 
     return null;

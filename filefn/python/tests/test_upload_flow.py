@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from filefn.server import create_event_emitter
-from filefn.server.policies import Policy, create_policy_registry
+from filefn.server import create_routed_storage_adapter
+from filefn.server.policies import Policy, create_nucleus_policies, create_policy_registry
 from filefn.server.upload_sessions.service import (
     CreateSessionInput,
     UploadSessionService,
@@ -114,8 +115,10 @@ class FakeStorage:
         self.objects: Dict[str, bytes] = {}
         self.multipart: Dict[str, Dict[str, Any]] = {}
         self.aborted_uploads: List[str] = []
+        self.calls: List[str] = []
+        self.name = "fake"
 
-    async def get_object(self, key: str) -> Dict[str, Any]:
+    async def get_object(self, key: str, target: Optional[str] = None) -> Dict[str, Any]:
         data = self.objects[key]
         return {
             "key": key,
@@ -125,9 +128,17 @@ class FakeStorage:
             "metadata": {},
         }
 
-    async def put_object(self, key: str, data: bytes, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    async def put_object(
+        self,
+        key: str,
+        data: bytes,
+        metadata: Optional[Dict[str, str]] = None,
+        target: Optional[str] = None,
+    ) -> Dict[str, Any]:
         payload = bytes(data)
         self.objects[key] = payload
+        if target:
+            self.calls.append(f"{self.name}:put:{target}:{key}")
         return {
             "key": key,
             "size": len(payload),
@@ -136,23 +147,34 @@ class FakeStorage:
             "metadata": metadata or {},
         }
 
-    async def delete_object(self, key: str) -> None:
+    async def delete_object(self, key: str, target: Optional[str] = None) -> None:
         self.objects.pop(key, None)
+        if target:
+            self.calls.append(f"{self.name}:delete:{target}:{key}")
 
-    async def open_download_stream(self, key: str):
+    async def open_download_stream(self, key: str, target: Optional[str] = None):
         payload = self.objects.get(key, b"")
+        if target:
+            self.calls.append(f"{self.name}:download:{target}:{key}")
 
         async def _gen():
             yield payload
 
         return _gen()
 
-    async def sign_download_url(self, key: str, expires_in_seconds: int) -> Dict[str, Any]:
+    async def sign_download_url(self, key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
         return {"url": f"https://download.local/{key}", "headers": {}}
 
-    async def create_multipart_upload(self, key: str, metadata: Optional[Dict[str, str]] = None) -> str:
+    async def create_multipart_upload(
+        self,
+        key: str,
+        metadata: Optional[Dict[str, str]] = None,
+        content_type: Optional[str] = None,
+        target: Optional[str] = None,
+    ) -> str:
         upload_id = f"mp-{len(self.multipart) + 1}"
         self.multipart[upload_id] = {"key": key, "parts": {}}
+        self.calls.append(f"{self.name}:multipart:{target or 'default'}:{key}")
         return upload_id
 
     async def sign_multipart_upload_part_url(
@@ -162,15 +184,31 @@ class FakeStorage:
         part_number: int,
         expires_in_seconds: int,
         constraints: Optional[Dict[str, Any]] = None,
+        target: Optional[str] = None,
     ) -> Dict[str, Any]:
         return {"url": f"https://upload.local/{upload_id}/{part_number}", "headers": {}}
 
-    async def upload_part(self, key: str, upload_id: str, part_number: int, data: bytes) -> str:
+    async def upload_part(
+        self,
+        key: str,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+        target: Optional[str] = None,
+    ) -> str:
         self.multipart.setdefault(upload_id, {"key": key, "parts": {}})["parts"][part_number] = bytes(data)
         return f"etag-{part_number}"
 
-    async def complete_multipart_upload(self, key: str, upload_id: str, parts: list[Dict[str, Any]]) -> Dict[str, Any]:
+    async def complete_multipart_upload(
+        self,
+        key: str,
+        upload_id: str,
+        parts: list[Dict[str, Any]],
+        target: Optional[str] = None,
+    ) -> Dict[str, Any]:
         self.objects[key] = self.objects.get(key, b"")
+        if target:
+            self.calls.append(f"{self.name}:complete:{target}:{key}")
         return {
             "key": key,
             "size": len(self.objects[key]),
@@ -179,7 +217,7 @@ class FakeStorage:
             "metadata": {},
         }
 
-    async def abort_multipart_upload(self, key: str, upload_id: str) -> None:
+    async def abort_multipart_upload(self, key: str, upload_id: str, target: Optional[str] = None) -> None:
         self.aborted_uploads.append(upload_id)
 
 
@@ -191,7 +229,13 @@ class FakeDedup:
     def is_enabled(self) -> bool:
         return self.enabled
 
-    async def compute_and_check_duplicate(self, storage_key: str, tenant_id: Optional[str], storage: FakeStorage):
+    async def compute_and_check_duplicate(
+        self,
+        storage_key: str,
+        tenant_id: Optional[str],
+        storage_target: Optional[str],
+        storage: FakeStorage,
+    ):
         if not self.enabled:
             return SimpleNamespace(
                 isDuplicate=False,
@@ -199,7 +243,7 @@ class FakeDedup:
                 checksumSha256Base64="",
             )
 
-        stream = await storage.open_download_stream(storage_key)
+        stream = await storage.open_download_stream(storage_key, target=storage_target)
         chunks: List[bytes] = []
         async for chunk in stream:
             chunks.append(chunk)
@@ -365,6 +409,54 @@ async def test_upload_session_binding_for_authenticated_and_anonymous_flows() ->
 
 
 @pytest.mark.asyncio
+async def test_anonymous_init_replay_returns_original_upload_session_token() -> None:
+    service = _make_service()
+    init = CreateSessionInput(
+        policy="user-avatar",
+        fileName="anon-replay.png",
+        size=3,
+        mimeType="image/png",
+        idempotencyKey="idem_anon_001",
+    )
+
+    first = await service.create_session(init, _ctx(principal_id=None, tenant_id=None))
+    replay = await service.create_session(init, _ctx(principal_id=None, tenant_id=None))
+
+    assert first["uploadSessionId"] == replay["uploadSessionId"]
+    assert first["uploadSessionToken"] == replay["uploadSessionToken"]
+
+
+@pytest.mark.asyncio
+async def test_completion_persists_upload_metadata() -> None:
+    db = FakeDB()
+    storage = FakeStorage({"proxyStreamingUpload": True})
+    service = _make_service(db=db, storage=storage)
+    metadata = {"source": "nucleus", "isMeta": True}
+
+    session = await service.create_session(
+        CreateSessionInput(
+            policy="user-avatar",
+            fileName="meta.png",
+            size=3,
+            mimeType="image/png",
+            metadata=metadata,
+        ),
+        _ctx(),
+    )
+
+    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
+    completed = await service.complete_session(session["uploadSessionId"], _ctx())
+    file_row = await db.find_one(
+        model="files",
+        where=[{"field": "fileId", "operator": "eq", "value": completed["fileId"]}],
+        namespace="filefn",
+    )
+
+    assert file_row is not None
+    assert file_row["metadata"] == metadata
+
+
+@pytest.mark.asyncio
 async def test_proxy_part_recording_idempotency_conflict_and_complete_idempotency() -> None:
     service = _make_service()
 
@@ -510,3 +602,93 @@ async def test_dedupe_reuses_storage_within_tenant_but_not_cross_tenant() -> Non
     assert first_version is not None and second_version is not None and third_version is not None
     assert second_version["storageKey"] == first_version["storageKey"]
     assert third_version["storageKey"] != first_version["storageKey"]
+
+
+@pytest.mark.asyncio
+async def test_routed_storage_routes_durable_and_temporary_uploads() -> None:
+    db = FakeDB()
+    durable = FakeStorage({"signedUploadUrls": True, "multipart": True, "proxyStreamingDownload": True})
+    durable.name = "durable"
+    temporary = FakeStorage({"signedUploadUrls": True, "multipart": True, "proxyStreamingDownload": True})
+    temporary.name = "temporary"
+    storage = create_routed_storage_adapter(
+        {"durable": durable, "temporary": temporary},
+        default_target="durable",
+    )
+    service = create_upload_session_service(
+        UploadSessionServiceConfig(
+            db=db,
+            storage=storage,
+            policies=create_policy_registry(
+                [
+                    Policy(name="durable-policy", contentTypes=["image/png"], storageTarget="durable"),
+                    Policy(name="temporary-policy", contentTypes=["image/png"], storageTarget="temporary"),
+                ]
+            ),
+            events=create_event_emitter(),
+            namespace="filefn",
+        )
+    )
+
+    await service.create_session(
+        CreateSessionInput(policy="durable-policy", fileName="a.png", size=3, mimeType="image/png"),
+        _ctx("user_123", "org_123"),
+    )
+    await service.create_session(
+        CreateSessionInput(policy="temporary-policy", fileName="b.png", size=3, mimeType="image/png"),
+        _ctx("user_123", "org_123"),
+    )
+
+    assert any(call.startswith("durable:multipart:") for call in durable.calls)
+    assert any(call.startswith("temporary:multipart:") for call in temporary.calls)
+
+
+@pytest.mark.asyncio
+async def test_nucleus_policy_bundle_enforces_size_and_wildcard_types() -> None:
+    registry = create_policy_registry(create_nucleus_policies())
+    durable = registry.get("nucleus-durable-default")
+    temporary = registry.get("nucleus-temporary-default")
+
+    assert durable is not None and temporary is not None
+    assert durable.maxSizeBytes == 104857600
+    assert durable.renderProfile == "nucleus"
+    assert durable.storageTarget == "durable"
+    assert temporary.storageTarget == "temporary"
+
+    service = _make_service(db=FakeDB(), storage=FakeStorage({"signedUploadUrls": True, "multipart": True}))
+    service.policies = registry
+
+    ok = await service.create_session(
+        CreateSessionInput(
+            policy="nucleus-durable-default",
+            fileName="document.pdf",
+            size=104857600,
+            mimeType="application/pdf",
+        ),
+        _ctx("user_123", "org_123"),
+    )
+    assert ok["uploadSessionId"].startswith("upl_")
+
+    with pytest.raises(Exception) as exc_size:
+        await service.create_session(
+            CreateSessionInput(
+                policy="nucleus-durable-default",
+                fileName="too-big.pdf",
+                size=104857601,
+                mimeType="application/pdf",
+            ),
+            _ctx("user_123", "org_123"),
+        )
+    assert getattr(exc_size.value, "code", "") == "FILEFN_POLICY_MAX_SIZE_EXCEEDED"
+
+    with pytest.raises(Exception) as exc_mime:
+        await service.create_session(
+            CreateSessionInput(
+                policy="nucleus-temporary-default",
+                fileName="notes.zip",
+                size=10,
+                mimeType="application/zip",
+            ),
+            _ctx("user_123", "org_123"),
+        )
+    assert getattr(exc_mime.value, "code", "") == "FILEFN_POLICY_CONTENT_TYPE_NOT_ALLOWED"

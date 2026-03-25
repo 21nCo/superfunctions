@@ -2,9 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import sharp from 'sharp';
 import {
   createThumbnailProcessor,
+  createPdfPreviewProcessor,
   createCompressionProcessor,
   supportsProcessor,
   THUMBNAIL_SUPPORTED_MIME_TYPES,
+  PDF_PREVIEW_SUPPORTED_MIME_TYPES,
   COMPRESSION_SUPPORTED_MIME_TYPES,
 } from '../src/index.js';
 
@@ -37,6 +39,14 @@ describe('@filefn/processing', () => {
       expect(processor).toBeDefined();
       expect(processor.name).toBe('compression');
       expect(processor.supportedMimeTypes).toEqual(COMPRESSION_SUPPORTED_MIME_TYPES);
+      expect(typeof processor.process).toBe('function');
+    });
+
+    it('should export Processor-compatible PDF preview processor', () => {
+      const processor = createPdfPreviewProcessor();
+      expect(processor).toBeDefined();
+      expect(processor.name).toBe('pdf-preview');
+      expect(processor.supportedMimeTypes).toEqual(PDF_PREVIEW_SUPPORTED_MIME_TYPES);
       expect(typeof processor.process).toBe('function');
     });
   });
@@ -76,7 +86,7 @@ describe('@filefn/processing', () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Unsupported MIME type');
+      expect(result.error).toBe('FILEFN_PROCESSING_UNSUPPORTED_MIME_TYPE');
       expect(getData).not.toHaveBeenCalled();
     });
 
@@ -397,6 +407,77 @@ describe('@filefn/processing', () => {
       if (lowResult.artifacts.length > 0 && highResult.artifacts.length > 0) {
         expect(highResult.artifacts[0].data.length).toBeLessThanOrEqual(lowResult.artifacts[0].data.length);
       }
+    });
+  });
+
+  describe('PdfPreviewProcessor', () => {
+    it('should reject unsupported MIME types with a stable error code', async () => {
+      const processor = createPdfPreviewProcessor();
+
+      const result = await processor.process(
+        {
+          fileId: 'file_002',
+          versionId: 'ver_002',
+          storageKey: 'test/image.png',
+          mimeType: 'image/png',
+          size: 128,
+          fileName: 'image.png',
+        },
+        vi.fn(),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('FILEFN_PROCESSING_UNSUPPORTED_MIME_TYPE');
+    });
+
+    it('should emit canonical PDF preview kinds even when rasterization falls back to placeholders', async () => {
+      const processor = createPdfPreviewProcessor();
+      const invalidPdf = new TextEncoder().encode('not-a-real-pdf');
+      const getData = vi.fn().mockResolvedValue(invalidPdf);
+
+      const result = await processor.process(
+        {
+          fileId: 'file_pdf_001',
+          versionId: 'ver_pdf_001',
+          storageKey: 'test/report.pdf',
+          mimeType: 'application/pdf',
+          size: invalidPdf.length,
+          fileName: 'report.pdf',
+        },
+        getData,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.artifacts.map((artifact) => artifact.kind)).toEqual([
+        'pdf-preview-page-1-small',
+        'pdf-preview-page-1-medium',
+        'pdf-preview-page-1-large',
+      ]);
+      expect(result.artifacts.every((artifact) => artifact.mimeType === 'image/png')).toBe(true);
+      expect(result.artifacts.every((artifact) => artifact.storageKey.includes('-pdf-preview-page-1-'))).toBe(true);
+      expect(result.artifacts.every((artifact) => artifact.metadata?.pageNumber === 1)).toBe(true);
+      expect(result.artifacts.every((artifact) => artifact.metadata?.renderMode)).toBe(true);
+      expect(result.artifacts.every((artifact) => artifact.data.length > 0)).toBe(true);
+      expect(getData).toHaveBeenCalledOnce();
+    });
+
+    it('should surface a stable error code when input retrieval fails', async () => {
+      const processor = createPdfPreviewProcessor();
+
+      const result = await processor.process(
+        {
+          fileId: 'file_pdf_002',
+          versionId: 'ver_pdf_002',
+          storageKey: 'test/broken.pdf',
+          mimeType: 'application/pdf',
+          size: 0,
+          fileName: 'broken.pdf',
+        },
+        vi.fn().mockRejectedValue(new Error('boom')),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('FILEFN_PROCESSING_PDF_PREVIEW_FAILED');
     });
   });
 });

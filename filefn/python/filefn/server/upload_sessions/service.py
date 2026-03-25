@@ -15,7 +15,8 @@ from ..events import (
     create_upload_started_event,
 )
 from ..models import FileProviderContext, UploadSessionRecord
-from ..policies import compute_storage_path
+from ..policies import compute_storage_path, matches_content_type, resolve_storage_target
+from ..routed_storage import get_storage_capabilities
 
 
 class QuotaProvider(Protocol):
@@ -153,8 +154,8 @@ class UploadSessionService:
     def _proxy_part_key(self, session: UploadSessionRecord, part_number: int) -> str:
         return f"{session.storageKey}.parts/{part_number}"
 
-    def _select_upload_mode(self) -> str:
-        capabilities = getattr(self.storage, "capabilities", None) or {}
+    def _select_upload_mode(self, storage_target: Optional[str] = None) -> str:
+        capabilities = get_storage_capabilities(self.storage, storage_target)
 
         supports_multipart = bool(capabilities.get("signedUploadUrls") and capabilities.get("multipart"))
         supports_proxy = bool(capabilities.get("proxyStreamingUpload"))
@@ -212,13 +213,27 @@ class UploadSessionService:
                     "expiresAt": existing.expiresAt,
                     "warnings": [],
                 }
+                if existing.ownerId == "anonymous":
+                    upload_session_token = existing_data.get("uploadSessionToken")
+                    if not upload_session_token:
+                      upload_session_token = secrets.token_urlsafe(32)
+                      await self.db.update(
+                          model="uploadSessions",
+                          where=[{"field": "uploadSessionId", "operator": "eq", "value": existing.uploadSessionId}],
+                          data={
+                              "uploadSessionToken": upload_session_token,
+                              "sessionTokenHash": self._hash_session_token(upload_session_token),
+                          },
+                          namespace=self.namespace,
+                      )
+                    result["uploadSessionToken"] = upload_session_token
                 return result
 
         policy = self.policies.get(input.policy)
         if not policy:
             raise errors.policy_not_found(input.policy)
 
-        if policy.contentTypes and input.mimeType not in policy.contentTypes:
+        if policy.contentTypes and not any(matches_content_type(pattern, input.mimeType) for pattern in policy.contentTypes):
             raise errors.policy_content_type_not_allowed(input.policy, input.mimeType)
         if policy.maxSizeBytes is not None and input.size > policy.maxSizeBytes:
             raise errors.policy_max_size_exceeded(input.policy, policy.maxSizeBytes, input.size)
@@ -245,7 +260,8 @@ class UploadSessionService:
             if warning:
                 warnings.append(warning)
 
-        upload_mode = self._select_upload_mode()
+        storage_target = resolve_storage_target(policy)
+        upload_mode = self._select_upload_mode(storage_target)
         chunk_size_bytes = self.default_chunk_size_bytes
         total_parts = max(1, (input.size + chunk_size_bytes - 1) // chunk_size_bytes)
 
@@ -274,6 +290,8 @@ class UploadSessionService:
             storage_upload_id = await self.storage.create_multipart_upload(
                 key=storage_key,
                 metadata={"contentType": input.mimeType},
+                content_type=input.mimeType,
+                target=storage_target,
             )
 
         upload_session_token: Optional[str] = None
@@ -300,8 +318,10 @@ class UploadSessionService:
                 "storageUploadId": storage_upload_id,
                 "ownerId": owner_id,
                 "tenantId": ctx.tenantId,
+                "metadata": input.metadata or {},
                 "idempotencyKey": input.idempotencyKey,
                 "idempotencyPayloadHash": self._hash_payload(input, ctx) if input.idempotencyKey else None,
+                "uploadSessionToken": upload_session_token,
                 "sessionTokenHash": session_token_hash,
                 "expiresAt": expires_at,
                 "createdAt": now.isoformat(),
@@ -390,12 +410,15 @@ class UploadSessionService:
                 "expiresAt": session.expiresAt,
             }
 
+        policy = self.policies.get(session.policy)
+        storage_target = resolve_storage_target(policy)
         result = await self.storage.sign_multipart_upload_part_url(
             key=session.storageKey,
             upload_id=session.storageUploadId,
             part_number=part_number,
             expires_in_seconds=self.signed_url_ttl_seconds,
             constraints={"contentLength": content_length},
+            target=storage_target,
         )
 
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=self.signed_url_ttl_seconds)).isoformat()
@@ -484,17 +507,26 @@ class UploadSessionService:
 
         etag = hashlib.md5(data).hexdigest()
         part_key = self._proxy_part_key(session, part_number)
-        await self.storage.put_object(key=part_key, data=data, metadata={"contentType": session.mimeType})
+        policy = self.policies.get(session.policy)
+        storage_target = resolve_storage_target(policy)
+        await self.storage.put_object(
+            key=part_key,
+            data=data,
+            metadata={"contentType": session.mimeType},
+            target=storage_target,
+        )
         await self.complete_part(upload_session_id, part_number, etag, len(data), ctx)
 
         return {"etag": etag, "size": len(data), "recorded": True}
 
     async def _finalize_proxy_upload(self, session: UploadSessionRecord, parts: List[Dict[str, Any]]) -> None:
+        policy = self.policies.get(session.policy)
+        storage_target = resolve_storage_target(policy)
         chunks: List[bytes] = []
         sorted_parts = sorted(parts, key=lambda p: p["partNumber"])
         for part in sorted_parts:
             part_key = self._proxy_part_key(session, part["partNumber"])
-            stream = await self.storage.open_download_stream(key=part_key)
+            stream = await self.storage.open_download_stream(key=part_key, target=storage_target)
             async for chunk in stream:
                 chunks.append(chunk)
 
@@ -502,12 +534,13 @@ class UploadSessionService:
             key=session.storageKey,
             data=b"".join(chunks),
             metadata={"contentType": session.mimeType},
+            target=storage_target,
         )
 
         for part in sorted_parts:
             part_key = self._proxy_part_key(session, part["partNumber"])
             try:
-                await self.storage.delete_object(key=part_key)
+                await self.storage.delete_object(key=part_key, target=storage_target)
             except Exception:
                 pass
 
@@ -537,12 +570,16 @@ class UploadSessionService:
         if len(parts_data) != session.totalParts:
             raise errors.upload_incomplete()
 
+        policy = self.policies.get(session.policy)
+        storage_target = resolve_storage_target(policy)
+
         if session.uploadMode == "multipart-signed-url":
             parts = sorted(parts_data, key=lambda p: p["partNumber"])
             await self.storage.complete_multipart_upload(
                 key=session.storageKey,
                 upload_id=session.storageUploadId,
                 parts=[{"partNumber": p["partNumber"], "etag": p["etag"]} for p in parts],
+                target=storage_target,
             )
         elif session.uploadMode == "proxy":
             await self._finalize_proxy_upload(session, parts_data)
@@ -550,6 +587,7 @@ class UploadSessionService:
         now_str = datetime.now(timezone.utc).isoformat()
         file_id = session.fileId
         version_id = f"ver_{datetime.now(timezone.utc).timestamp()}"
+        metadata = session_data.get("metadata") or {}
 
         final_storage_key = session.storageKey
         checksum_sha256_base64: Optional[str] = None
@@ -557,6 +595,7 @@ class UploadSessionService:
             dedup_res = await self.dedup.compute_and_check_duplicate(
                 session.storageKey,
                 session.tenantId,
+                storage_target,
                 self.storage,
             )
             checksum_sha256_base64 = dedup_res.checksumSha256Base64
@@ -564,7 +603,7 @@ class UploadSessionService:
                 final_storage_key = dedup_res.existingStorageKey
                 if final_storage_key != session.storageKey:
                     try:
-                        await self.storage.delete_object(key=session.storageKey)
+                        await self.storage.delete_object(key=session.storageKey, target=storage_target)
                     except Exception:
                         pass
 
@@ -582,6 +621,7 @@ class UploadSessionService:
                     "currentVersionId": version_id,
                     "size": session.size,
                     "mimeType": session.mimeType,
+                    "metadata": metadata,
                     "updatedAt": now_str,
                 },
                 namespace=self.namespace,
@@ -594,12 +634,12 @@ class UploadSessionService:
                     "currentVersionId": version_id,
                     "ownerId": session.ownerId,
                     "tenantId": session.tenantId,
-                    "visibility": "private",
+                    "visibility": getattr(policy, "visibility", "private"),
                     "policy": session.policy,
                     "mimeType": session.mimeType,
                     "size": session.size,
                     "name": session.fileName,
-                    "metadata": {},
+                    "metadata": metadata,
                     "createdAt": now_str,
                     "updatedAt": now_str,
                 },
@@ -681,11 +721,15 @@ class UploadSessionService:
         if session.status == "completed":
             raise errors.upload_already_completed()
 
+        policy = self.policies.get(session.policy)
+        storage_target = resolve_storage_target(policy)
+
         if session.storageUploadId:
             try:
                 await self.storage.abort_multipart_upload(
                     key=session.storageKey,
                     upload_id=session.storageUploadId,
+                    target=storage_target,
                 )
             except Exception:
                 pass
@@ -698,7 +742,7 @@ class UploadSessionService:
         for part in parts_data:
             part_key = self._proxy_part_key(session, part["partNumber"])
             try:
-                await self.storage.delete_object(key=part_key)
+                await self.storage.delete_object(key=part_key, target=storage_target)
             except Exception:
                 pass
 
@@ -734,12 +778,15 @@ class UploadSessionService:
                 continue
 
             session = UploadSessionRecord(**session_data)
+            policy = self.policies.get(session.policy)
+            storage_target = resolve_storage_target(policy)
 
             if session.storageUploadId:
                 try:
                     await self.storage.abort_multipart_upload(
                         key=session.storageKey,
                         upload_id=session.storageUploadId,
+                        target=storage_target,
                     )
                 except Exception:
                     pass
@@ -752,7 +799,7 @@ class UploadSessionService:
             for part in parts:
                 part_key = self._proxy_part_key(session, part["partNumber"])
                 try:
-                    await self.storage.delete_object(key=part_key)
+                    await self.storage.delete_object(key=part_key, target=storage_target)
                 except Exception:
                     pass
 

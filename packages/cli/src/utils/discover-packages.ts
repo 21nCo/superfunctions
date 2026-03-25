@@ -13,6 +13,7 @@ export interface SuperfunctionsPackageMetadata {
   packageName: string;
   initFunction: string;
   schemaVersion?: number;
+  libraryNames: string[];
 }
 
 export interface PackageRegistry {
@@ -95,10 +96,15 @@ function scanDirectory(
           packageJson.superfunctions &&
           packageJson.superfunctions.initFunction
         ) {
+          const packageName = String(packageJson.name ?? entry.name);
           discovered.push({
-            packageName: packageJson.name,
+            packageName,
             initFunction: packageJson.superfunctions.initFunction,
             schemaVersion: packageJson.superfunctions.schemaVersion,
+            libraryNames: deriveLibraryNames(
+              packageName,
+              packageJson.superfunctions.libraryNames
+            ),
           });
         }
       } catch (e) {
@@ -118,4 +124,36 @@ export function getSuperfunctionsRegistry(
 ): PackageRegistry {
   const packages = discoverSuperfunctionsPackages(cwd);
   return buildRegistry(packages);
+}
+
+function deriveLibraryNames(
+  packageName: string,
+  explicitLibraryNames?: unknown
+): string[] {
+  if (Array.isArray(explicitLibraryNames)) {
+    const normalized = explicitLibraryNames
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim());
+    if (normalized.length > 0) {
+      return [...new Set(normalized)];
+    }
+  }
+
+  if (packageName.startsWith("@superfunctions/")) {
+    return [packageName.slice("@superfunctions/".length)];
+  }
+
+  if (packageName.startsWith("@")) {
+    const [scope, name] = packageName.split("/");
+    if (scope && name) {
+      const scopeName = scope.slice(1);
+      if (name === "core") {
+        return [scopeName];
+      }
+
+      return [...new Set([scopeName, name])];
+    }
+  }
+
+  return [packageName];
 }

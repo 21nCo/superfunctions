@@ -4,6 +4,9 @@ export type OAuthCoreErrorCode =
   | "OAUTH_STATE_INVALID"
   | "OAUTH_STATE_REPLAYED"
   | "OAUTH_CALLBACK_MISMATCH"
+  | "OAUTH_REDIRECT_DISALLOWED"
+  | "OAUTH_PROVIDER_UNSUPPORTED"
+  | "OAUTH_RUNTIME_CONFIG_INVALID"
   | "VALIDATION_ERROR"
   | "OAUTH_TOKEN_REFRESH_FAILED";
 
@@ -38,7 +41,7 @@ export function assertRedirectUriAllowed(redirectUri: string, allowlistedRedirec
   }
 
   if (!allowlistedRedirectUris.includes(redirectUri)) {
-    throw new OAuthCoreError("OAUTH_CALLBACK_MISMATCH", "redirect URI not allowed");
+    throw new OAuthCoreError("OAUTH_REDIRECT_DISALLOWED", "redirect URI not allowed");
   }
 }
 

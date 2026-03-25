@@ -1,2 +1,7 @@
 timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-21T14:40:09Z,Codex (GPT-5),Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/authfn/.conduct/specs/2026-03-21-new-a7m3k9q2-spec
+2026-03-22T04:51:44Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_00,/Users/serro/Documents/dev/n/superfunctions/authfn/.conduct/specs/2026-03-21-new-a7m3k9q2-spec/phase-reports/PHASE_00-2026-03-22-p5k2m8r1-report.md
+2026-03-22T07:45:17Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_01,/Users/serro/Documents/dev/n/superfunctions/authfn/.conduct/specs/2026-03-21-new-a7m3k9q2-spec/phase-reports/PHASE_01-2026-03-22-n7q2m4k1-report.md
+2026-03-22T07:58:13Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_02,/Users/serro/Documents/dev/n/superfunctions/authfn/.conduct/specs/2026-03-21-new-a7m3k9q2-spec/phase-reports/PHASE_02-2026-03-22-r6m2k8p4-report.md
+2026-03-22T08:20:29Z,Codex (GPT-5),Codex Desktop,execute,unknown-agent,PHASE_03,/Users/serro/Documents/dev/n/superfunctions/authfn/.conduct/specs/2026-03-21-new-a7m3k9q2-spec/phase-reports/PHASE_03-2026-03-22-v4n8k2p6-report.md
+2026-03-22T14:45:13Z,Codex (GPT-5),Codex Desktop,audit,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/authfn/.conduct/audits/2026-03-22-k9m2v7p4-full-audit.md

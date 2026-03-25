@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Version } from "@docsfn/core";
+  import type { Version } from "@docsfn/core/browser";
   import {
     DropdownMenu,
     DropdownMenuContent,

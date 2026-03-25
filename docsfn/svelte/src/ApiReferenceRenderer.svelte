@@ -1,13 +1,6 @@
 <script lang="ts">
-  import type { ApiReference } from "@docsfn/core";
-  import {
-    Tabs,
-    TabsList,
-    TabsTrigger,
-    TabsContent,
-    ScrollArea,
-    ScrollAreaViewport,
-  } from "@uifn/svelte";
+  import type { ApiReference } from "@docsfn/core/browser";
+  import { Tabs, TabsList, TabsTrigger, TabsContent } from "@uifn/svelte";
 
   export let api: ApiReference;
 
@@ -277,8 +270,7 @@
 
     <div class="docsfn-api-endpoints">
       <h2>Operations</h2>
-      <ScrollArea class="docsfn-api-endpoints-scroll">
-        <ScrollAreaViewport>
+      <div class="docsfn-api-endpoints-scroll">
           {#each model.operations as operation (operation.routePath)}
             {@const expanded = Boolean(expandedOperations[operation.routePath])}
 
@@ -372,15 +364,13 @@
               {/if}
             </div>
           {/each}
-        </ScrollAreaViewport>
-      </ScrollArea>
+      </div>
     </div>
 
     {#if model.schemas.length > 0}
       <div class="docsfn-api-schemas">
         <h2>Schemas</h2>
-        <ScrollArea class="docsfn-api-schemas-scroll">
-          <ScrollAreaViewport>
+        <div class="docsfn-api-schemas-scroll">
             {#each model.schemas as schema (schema.routePath)}
               <div class="docsfn-api-schema">
                 <h3>{schema.name}</h3>
@@ -390,8 +380,7 @@
                 <pre class="docsfn-api-code">{JSON.stringify(schema.schema, null, 2)}</pre>
               </div>
             {/each}
-          </ScrollAreaViewport>
-        </ScrollArea>
+        </div>
       </div>
     {/if}
   </div>

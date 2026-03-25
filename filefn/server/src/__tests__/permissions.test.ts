@@ -1,13 +1,15 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   composeAuthorizers,
   createDefaultAuthorizer,
   createGrantsService,
   type FilePermissionRecord,
 } from '../index.js';
+import { createUploadSessionService } from '../upload-sessions/service.js';
 import type { FileRecord, Authorizer } from '../files/service.js';
 import type { Adapter, AdapterCapabilities } from '@superfunctions/db';
 import type { FileProviderContext } from '@superfunctions/files';
+import { createFakeStorageAdapter } from '@superfunctions/storage';
 
 const FAKE_CAPABILITIES: AdapterCapabilities = {
   types: { json: true, dates: true, booleans: true, bigint: false, uuid: false, enum: false },
@@ -495,6 +497,83 @@ describe('@filefn/server permissions', () => {
           { principalId: 'owner_user' }
         )
       ).rejects.toMatchObject({ code: 'FILEFN_INVALID_GRANT' });
+    });
+  });
+
+  describe('TV-AUTH-002: Replace completion re-checks authorization', () => {
+    it('should reject replacement completion after write access is revoked', async () => {
+      const storageSizes = new Map<string, number>();
+      const canWriteState = { current: true };
+      const storage = createFakeStorageAdapter({
+        capabilities: {
+          signedUploadUrls: true,
+          signedDownloadUrls: true,
+          multipart: true,
+          proxyStreamingUpload: false,
+          proxyStreamingDownload: true,
+        },
+        async createMultipartUpload() {
+          return { uploadId: 'up_replace_1' };
+        },
+        async completeMultipartUpload() {},
+        async signMultipartUploadPartUrl() {
+          return { url: 'https://signed.example/upload', headers: {} };
+        },
+        async statObject(input) {
+          return { key: input.key, size: storageSizes.get(input.key) ?? 1000 };
+        },
+      });
+
+      await db.create({
+        model: 'files',
+        data: createMockFile({ fileId: 'file_replace', ownerId: 'user_123', currentVersionId: 'ver_old' }),
+        namespace: 'filefn',
+      });
+
+      const service = createUploadSessionService({
+        db,
+        storage,
+        policies: {
+          get: vi.fn(() => ({
+            visibility: 'private',
+            contentTypes: ['image/png'],
+            maxSizeBytes: 10 * 1024 * 1024,
+          })),
+        } as any,
+        events: { emit: vi.fn() } as any,
+        fileWriteChecker: {
+          async canWriteFile() {
+            return canWriteState.current;
+          },
+        },
+        namespace: 'filefn',
+      });
+
+      const ctx: FileProviderContext = { principalId: 'user_123', requestId: 'req_replace_auth_001' };
+      const { uploadSessionId } = await service.createSession(
+        {
+          policy: 'user-avatar',
+          fileName: 'avatar.png',
+          size: 1000,
+          mimeType: 'image/png',
+          fileId: 'file_replace',
+        },
+        ctx,
+      );
+
+      const session = await db.findOne<any>({
+        model: 'uploadSessions',
+        where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
+        namespace: 'filefn',
+      });
+      storageSizes.set(session.storageKey, 1000);
+
+      await service.completePart(uploadSessionId, 1, 'etag_replace_1', 1000, ctx);
+      canWriteState.current = false;
+
+      await expect(service.completeSession(uploadSessionId, ctx)).rejects.toMatchObject({
+        code: 'FILEFN_FORBIDDEN',
+      });
     });
   });
 

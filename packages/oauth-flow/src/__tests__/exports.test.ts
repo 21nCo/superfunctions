@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OAuthProviderDescriptor } from "@superfunctions/oauth-core";
+import type { OAuthFlowCallbackResult } from "../index.js";
 import {
   OAuthFlowError,
   createOAuthFlowService,
@@ -67,6 +68,7 @@ describe("oauth-flow exports", () => {
     const callbackPayload = {
       providerId: "mock",
       subject: {
+        kind: "connection" as const,
         tenantId: "tenant_1",
         userId: "user_1",
         connectionId: "conn_1"
@@ -77,7 +79,7 @@ describe("oauth-flow exports", () => {
       },
       tokenRecordId: "tok_1",
       connectionId: "conn_1"
-    };
+    } satisfies OAuthFlowCallbackResult;
 
     let onConnectedCalled = false;
     await invokeIdentityHook(
@@ -119,7 +121,7 @@ describe("oauth-flow exports", () => {
         callbackPayload
       )
     ).rejects.toMatchObject({
-      code: "HOOK_FAILED",
+      code: "OAUTH_HOOK_FAILED",
       message: "identity hook failed"
     });
   });

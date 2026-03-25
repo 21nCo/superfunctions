@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import type { DocHeading } from "@docsfn/core";
-  import { ScrollArea, ScrollAreaViewport } from "@uifn/svelte";
+  import { onMount } from "svelte";
+  import type { DocHeading } from "@docsfn/core/browser";
   import type { DocsPageSurface } from "./DocsLayout.svelte";
 
   export let surface: DocsPageSurface | undefined = undefined;
@@ -9,7 +8,6 @@
   export let activeHash: string | undefined = undefined;
 
   let currentHash = activeHash || "";
-  let observer: IntersectionObserver | undefined = undefined;
 
   $: resolvedHeadings = headings ?? surface?.headings ?? [];
 
@@ -24,34 +22,34 @@
       return;
     }
 
-    observer = new IntersectionObserver(
+    const observer = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
+        for (const entry of entries) {
           if (entry.isIntersecting) {
             const id = entry.target.getAttribute('id');
             if (id) {
               currentHash = `#${id}`;
+              break; // first (topmost) intersecting heading wins
             }
           }
-        });
+        }
       },
       {
         rootMargin: '-80px 0px -80% 0px',
-        threshold: 1.0,
+        threshold: 0,
       }
     );
 
-    // Observe all heading elements
-    resolvedHeadings.forEach((h) => {
+    resolvedHeadings.forEach((h: DocHeading) => {
       const element = document.getElementById(h.slug);
       if (element) {
         observer.observe(element);
       }
     });
-  });
 
-  onDestroy(() => {
-    observer?.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   });
 
   function handleClick(e: MouseEvent, slug: string) {
@@ -71,8 +69,8 @@
 </script>
 
 {#if resolvedHeadings.length > 0}
-  <ScrollArea class="docsfn-toc">
-    <ScrollAreaViewport class="docsfn-toc-viewport">
+  <div class="docsfn-toc">
+    <div class="docsfn-toc-viewport">
       <nav class="docsfn-toc-nav" aria-label="Table of contents">
         <div class="docsfn-toc-title">On this page</div>
         <ul class="docsfn-toc-list">
@@ -96,6 +94,6 @@
           {/each}
         </ul>
       </nav>
-    </ScrollAreaViewport>
-  </ScrollArea>
+    </div>
+  </div>
 {/if}

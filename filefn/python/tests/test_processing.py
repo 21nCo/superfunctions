@@ -6,7 +6,13 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from filefn.server import create_event_emitter
+from filefn.processing import (
+    PDF_PREVIEW_SUPPORTED_MIME_TYPES,
+    create_pdf_preview_processor,
+    create_thumbnail_processor,
+)
+from filefn.server import create_event_emitter, create_routed_storage_adapter
+from filefn.server.policies import Policy, create_policy_registry
 from filefn.server.processing.service import (
     ProcessingServiceConfig,
     ProcessorInput,
@@ -88,11 +94,18 @@ class FakeStorage:
         self.with_signing = with_signing
         self.objects: Dict[str, bytes] = {}
         self.put_calls: List[Dict[str, Any]] = []
+        self.name = "fake"
 
-    async def put_object(self, key: str, data: bytes, metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    async def put_object(
+        self,
+        key: str,
+        data: bytes,
+        metadata: Optional[Dict[str, str]] = None,
+        target: Optional[str] = None,
+    ) -> Dict[str, Any]:
         payload = bytes(data)
         self.objects[key] = payload
-        self.put_calls.append({"key": key, "metadata": metadata or {}})
+        self.put_calls.append({"key": key, "metadata": metadata or {}, "target": target})
         return {
             "key": key,
             "size": len(payload),
@@ -101,7 +114,7 @@ class FakeStorage:
             "metadata": metadata or {},
         }
 
-    async def open_download_stream(self, key: str):
+    async def open_download_stream(self, key: str, target: Optional[str] = None):
         payload = self.objects.get(key, b"")
 
         async def _gen():
@@ -109,7 +122,7 @@ class FakeStorage:
 
         return _gen()
 
-    async def sign_download_url(self, key: str, expires_in_seconds: int) -> Dict[str, Any]:
+    async def sign_download_url(self, key: str, expires_in_seconds: int, target: Optional[str] = None) -> Dict[str, Any]:
         if not self.with_signing:
             raise RuntimeError("signing unavailable")
         return {"url": f"https://download.local/{key}", "headers": {}}
@@ -125,7 +138,7 @@ class ThumbnailLikeProcessor:
             success=True,
             artifacts=[
                 ProcessorOutputArtifact(
-                    kind="thumbnail",
+                    kind="thumbnail-small",
                     data=raw,
                     mimeType="image/png",
                     storageKey=f"{input.storageKey}.thumb.png",
@@ -185,7 +198,7 @@ async def _seed_file_and_artifact(db: FakeDB) -> None:
             "artifactId": "art_001",
             "fileId": "file_001",
             "versionId": "ver_001",
-            "kind": "thumbnail",
+            "kind": "thumbnail-small",
             "storageKey": "org_123/user_123/file_001/ver_001-a.png.thumb.png",
             "mimeType": "image/png",
             "size": 3,
@@ -193,6 +206,12 @@ async def _seed_file_and_artifact(db: FakeDB) -> None:
             "createdAt": now,
         },
     )
+
+
+def test_processing_public_imports_include_pdf_preview() -> None:
+    assert callable(create_pdf_preview_processor)
+    assert callable(create_thumbnail_processor)
+    assert PDF_PREVIEW_SUPPORTED_MIME_TYPES == ["application/pdf"]
 
 
 @pytest.mark.asyncio
@@ -259,7 +278,7 @@ async def test_processing_queue_enqueue_uses_deterministic_idempotency_key_and_s
     )
 
     assert queued["enqueued"] is True
-    assert ok_queue.jobs[0]["idempotencyKey"] == "filefn:processing:file_001:ver_001"
+    assert ok_queue.jobs[0]["idempotencyKey"] == "processing:file_001:ver_001:thumbnail"
 
     bad_queue = RecordingQueue(fail=True)
     service_bad = create_processing_service(
@@ -309,6 +328,19 @@ async def test_artifact_access_authorization_and_proxy_descriptor_shape() -> Non
     visible = await service.list_artifacts("file_001", _ctx("user_123"))
     assert len(visible) == 1
 
+    await db.create(
+        model="filePermissions",
+        data={
+            "permissionId": "perm_001",
+            "fileId": "file_001",
+            "userId": "user_456",
+            "tenantId": None,
+            "canRead": True,
+        },
+    )
+    visible_via_grant = await service.list_artifacts("file_001", _ctx("user_456"))
+    assert len(visible_via_grant) == 1
+
     with pytest.raises(Exception) as exc_forbidden:
         await service.list_artifacts("file_001", _ctx("user_999"))
     assert getattr(exc_forbidden.value, "code", "") == "FILEFN_FORBIDDEN"
@@ -320,3 +352,175 @@ async def test_artifact_access_authorization_and_proxy_descriptor_shape() -> Non
     with pytest.raises(Exception) as exc_binding:
         await service.get_artifact_download_url("art_001", _ctx("user_123"), file_id="file_999")
     assert getattr(exc_binding.value, "code", "") == "FILEFN_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_processing_events_preserve_request_id() -> None:
+    db = FakeDB()
+    storage = FakeStorage()
+    storage.objects["org_123/user_123/file_001/ver_001-a.png"] = b"abc"
+    events = create_event_emitter()
+    seen: List[Any] = []
+    events.on("processing.started", seen.append)
+    events.on("processing.completed", seen.append)
+
+    service = create_processing_service(
+        ProcessingServiceConfig(
+            db=db,
+            storage=storage,
+            events=events,
+            processors=[ThumbnailLikeProcessor()],
+            namespace="filefn",
+            enabled=True,
+        )
+    )
+
+    await service.run_processing(
+        ProcessorInput(
+            fileId="file_001",
+            versionId="ver_001",
+            storageKey="org_123/user_123/file_001/ver_001-a.png",
+            mimeType="image/png",
+            size=3,
+            fileName="a.png",
+            tenantId="org_123",
+        ),
+        _ctx("user_123"),
+    )
+
+    assert len(seen) == 1
+    assert seen[0].requestId == "req_001"
+
+
+@pytest.mark.asyncio
+async def test_processing_routes_artifacts_to_artifact_storage_target() -> None:
+    db = FakeDB()
+    now = datetime.now(timezone.utc).isoformat()
+    await db.create(
+        model="files",
+        data={
+            "fileId": "file_002",
+            "currentVersionId": "ver_002",
+            "ownerId": "user_123",
+            "tenantId": "org_123",
+            "visibility": "private",
+            "policy": "artifact-offload",
+            "mimeType": "image/png",
+            "size": 3,
+            "name": "b.png",
+            "metadata": {},
+            "createdAt": now,
+            "updatedAt": now,
+        },
+    )
+
+    durable = FakeStorage()
+    durable.name = "durable"
+    durable.objects["uploads/file_002/ver_002-b.png"] = b"abc"
+    temporary = FakeStorage()
+    temporary.name = "temporary"
+    storage = create_routed_storage_adapter(
+        {"durable": durable, "temporary": temporary},
+        default_target="durable",
+    )
+
+    service = create_processing_service(
+        ProcessingServiceConfig(
+            db=db,
+            storage=storage,
+            policies=create_policy_registry(
+                [
+                    Policy(
+                        name="artifact-offload",
+                        contentTypes=["image/png"],
+                        storageTarget="durable",
+                        artifactStorageTarget="temporary",
+                    )
+                ]
+            ),
+            events=create_event_emitter(),
+            processors=[ThumbnailLikeProcessor()],
+            namespace="filefn",
+            enabled=True,
+        )
+    )
+
+    result = await service.run_processing(
+        ProcessorInput(
+            fileId="file_002",
+            versionId="ver_002",
+            storageKey="uploads/file_002/ver_002-b.png",
+            mimeType="image/png",
+            size=3,
+            fileName="b.png",
+            tenantId="org_123",
+        ),
+        _ctx("user_123"),
+    )
+
+    assert result["artifactsCreated"] == 1
+    assert len(durable.put_calls) == 0
+    assert len(temporary.put_calls) == 1
+    assert temporary.put_calls[0]["key"].endswith(".thumb.png")
+
+
+@pytest.mark.asyncio
+async def test_pdf_preview_processor_emits_canonical_artifact_kinds() -> None:
+    processor = create_pdf_preview_processor()
+    fake_pdf = b"%PDF-bad-but-usable-for-placeholder"
+
+    async def get_pdf() -> bytes:
+        return fake_pdf
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_pdf_001",
+            versionId="ver_pdf_001",
+            storageKey="uploads/file_pdf_001/ver_pdf_001-report.pdf",
+            mimeType="application/pdf",
+            size=len(fake_pdf),
+            fileName="report.pdf",
+            tenantId="org_123",
+        ),
+        get_pdf,
+    )
+
+    assert result.success is True
+    assert [artifact.kind for artifact in result.artifacts] == [
+        "pdf-preview-page-1-small",
+        "pdf-preview-page-1-medium",
+        "pdf-preview-page-1-large",
+    ]
+    assert all(artifact.mimeType == "image/png" for artifact in result.artifacts)
+    assert all(artifact.metadata and artifact.metadata.get("pageNumber") == 1 for artifact in result.artifacts)
+    assert all(artifact.metadata and artifact.metadata.get("renderMode") for artifact in result.artifacts)
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_processor_keeps_canonical_reserved_kinds() -> None:
+    processor = create_thumbnail_processor()
+    not_a_real_image = b"\x89PNG\r\nplaceholder"
+
+    async def get_image() -> bytes:
+        return not_a_real_image
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_img_001",
+            versionId="ver_img_001",
+            storageKey="uploads/file_img_001/ver_img_001-image.png",
+            mimeType="image/png",
+            size=len(not_a_real_image),
+            fileName="image.png",
+            tenantId="org_123",
+        ),
+        get_image,
+    )
+
+    assert result.success is True
+    assert [artifact.kind for artifact in result.artifacts] == [
+        "thumbnail-small",
+        "thumbnail-medium",
+        "thumbnail-large",
+    ]
+    assert all(artifact.metadata and artifact.metadata.get("renderMode") for artifact in result.artifacts)

@@ -78,6 +78,24 @@ describe("generateRSSFeed", () => {
     );
   });
 
+  it("uses feedHref and itemHref when the public blog URLs differ from manifest paths", () => {
+    const manifest = createManifest();
+    const rss = generateRSSFeed(manifest, {
+      title: "Docs Blog",
+      description: "Release updates",
+      link: "https://app.example.com/blog",
+      feedHref: "https://app.example.com/blog/rss.xml",
+      itemHref: (post) => `https://app.example.com/blog/${post.slug}`,
+    });
+
+    expect(rss).toContain(
+      "<atom:link href=\"https://app.example.com/blog/rss.xml\" rel=\"self\" type=\"application/rss+xml\"/>"
+    );
+    expect(rss).toContain("<link>https://app.example.com/blog</link>");
+    expect(rss).toContain("<link>https://app.example.com/blog/beta</link>");
+    expect(rss).not.toContain("https://app.example.com/blog/docs/blog/");
+  });
+
   it("fails closed on invalid publish metadata", () => {
     const manifest = createManifest();
     manifest.posts["blog:broken.mdx"] = {

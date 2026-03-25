@@ -1,13 +1,54 @@
+import type { PendingLocalDescriptor } from '../types.js';
+import type { PendingLocalSourceMetadata } from '../preprocessing/types.js';
+
 export interface PendingUpload {
   uploadSessionId: string;
+  fileId?: string;
   policy: string;
   fileName: string;
   size: number;
   mimeType: string;
   fileData: ArrayBuffer;
+  localSource?: PendingLocalSourceMetadata;
   metadata?: Record<string, unknown>;
   createdAt: string;
   retryCount: number;
+}
+
+function deriveFallbackLocalSource(upload: Pick<PendingUpload, 'fileName' | 'mimeType' | 'size'>): PendingLocalSourceMetadata {
+  if (upload.mimeType.startsWith('image/')) {
+    return {
+      mode: 'local-object-url',
+      kind: 'image',
+      fileName: upload.fileName,
+      mimeType: upload.mimeType,
+      size: upload.size,
+      opfsDataFile: 'data.bin',
+      previewBehavior: 'direct-image',
+    };
+  }
+
+  if (upload.mimeType === 'application/pdf') {
+    return {
+      mode: 'local-object-url',
+      kind: 'pdf',
+      fileName: upload.fileName,
+      mimeType: upload.mimeType,
+      size: upload.size,
+      opfsDataFile: 'data.bin',
+      previewBehavior: 'deterministic-placeholder',
+    };
+  }
+
+  return {
+    mode: 'local-object-url',
+    kind: 'binary',
+    fileName: upload.fileName,
+    mimeType: upload.mimeType,
+    size: upload.size,
+    opfsDataFile: 'data.bin',
+    previewBehavior: 'download-only',
+  };
 }
 
 export interface OPFSStoreConfig {
@@ -74,10 +115,12 @@ export class OPFSStore {
     // Store metadata
     const metadata = {
       uploadSessionId: upload.uploadSessionId,
+      fileId: upload.fileId || upload.uploadSessionId,
       policy: upload.policy,
       fileName: upload.fileName,
       size: upload.size,
       mimeType: upload.mimeType,
+      localSource: upload.localSource || deriveFallbackLocalSource(upload),
       metadata: upload.metadata,
       createdAt: upload.createdAt,
       retryCount: upload.retryCount,
@@ -111,6 +154,8 @@ export class OPFSStore {
 
       return {
         ...metadata,
+        fileId: metadata.fileId || uploadSessionId,
+        localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
         fileData,
       };
     } catch (error) {
@@ -134,6 +179,45 @@ export class OPFSStore {
     }
 
     return uploadSessionIds;
+  }
+
+  async getPendingUploadByFileId(fileId: string): Promise<PendingUpload | null> {
+    const uploadSessionIds = await this.listPendingUploads();
+    for (const uploadSessionId of uploadSessionIds) {
+      const pending = await this.getPendingUpload(uploadSessionId);
+      if (pending?.fileId === fileId) {
+        return pending;
+      }
+    }
+    return null;
+  }
+
+  async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
+    const upload = await this.getPendingUploadByFileId(fileId);
+    if (!upload) {
+      return null;
+    }
+
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+      const error = new Error('Local preview unavailable') as Error & { code?: string };
+      error.code = 'FILEFN_OFFLINE_PREVIEW_UNSUPPORTED';
+      throw error;
+    }
+
+    const blob = new Blob([upload.fileData], { type: upload.mimeType });
+    const url = URL.createObjectURL(blob);
+    const resolvedFileId = upload.fileId ?? upload.uploadSessionId;
+    const resolvedLocalSource = upload.localSource ?? deriveFallbackLocalSource(upload);
+
+    return {
+      fileId: resolvedFileId,
+      uploadSessionId: upload.uploadSessionId,
+      state: 'pending-local',
+      source: {
+        ...resolvedLocalSource,
+        url,
+      },
+    };
   }
 
   /**

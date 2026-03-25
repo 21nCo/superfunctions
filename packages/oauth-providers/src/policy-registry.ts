@@ -12,6 +12,20 @@ export interface ProviderCapabilityPolicy {
   allowedFeatureModes: ProviderFeatureMode[];
 }
 
+export interface ProviderAuthPolicy {
+  supportsSocialLogin: boolean;
+  supportsAccountLinking: boolean;
+  defaultScopes: string[];
+  availableClaims: Array<"email" | "name" | "profile">;
+}
+
+export type ProviderClientSecretMode = "static-allowed" | "resolver-allowed" | "resolver-required";
+
+export interface ProviderRuntimePolicy {
+  clientSecretMode: ProviderClientSecretMode;
+  clientSecretResolverHint?: "apple-client-secret-jwt" | "runtime-client-secret";
+}
+
 export interface ProviderFeatureScopePolicy {
   allowedScopes: string[];
   restrictedScopes?: string[];
@@ -28,6 +42,8 @@ export interface ProviderPolicyDefinition {
   policyVersion: string;
   descriptor: OAuthProviderDescriptor;
   capabilities: ProviderCapabilityPolicy;
+  auth?: ProviderAuthPolicy;
+  runtime?: ProviderRuntimePolicy;
   featureScopes: Record<string, ProviderFeatureScopePolicy>;
   operationPolicies: Record<string, ProviderOperationPolicy>;
 }
@@ -245,6 +261,14 @@ function clonePolicy(policy: ProviderPolicyDefinition): ProviderPolicyDefinition
       ...policy.capabilities,
       allowedFeatureModes: [...policy.capabilities.allowedFeatureModes]
     },
+    auth: policy.auth
+      ? {
+          ...policy.auth,
+          defaultScopes: [...policy.auth.defaultScopes],
+          availableClaims: [...policy.auth.availableClaims]
+        }
+      : undefined,
+    runtime: policy.runtime ? { ...policy.runtime } : undefined,
     featureScopes: Object.fromEntries(
       Object.entries(policy.featureScopes).map(([feature, value]) => [
         feature,

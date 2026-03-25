@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryOAuthStateStore, InMemoryTokenVault, createMockOAuthProviderDescriptor } from "../index.js";
+import {
+  InMemoryOAuthStateStore,
+  InMemoryTokenVault,
+  createAuthFnSchemaCompositionFixture,
+  createBrowserAuthFixture,
+  createMockOAuthProviderDescriptor,
+  redactSecrets,
+} from "../index.js";
 import { MemoryOAuthStateStore, MemoryTokenVault } from "@superfunctions/oauth-storage";
 
 describe("oauth-testing exports", () => {
@@ -38,5 +45,48 @@ describe("oauth-testing exports", () => {
 
     expect((await store.get("st_1"))?.providerId).toBe("mock");
     expect((await vault.getByConnection("conn_1"))?.tokenId).toBe("tok_1");
+  });
+
+  it("provides browser-auth fixtures with redacted snapshots", () => {
+    const fixture = createBrowserAuthFixture();
+
+    expect(fixture.startInput.subject).toMatchObject({
+      kind: "browser-auth",
+      intentId: "intent_browser_01",
+    });
+    expect(fixture.callbackInput.providerId).toBe("google");
+    expect(JSON.stringify(fixture.eventSnapshot)).not.toContain("access-secret-token");
+    expect(JSON.stringify(fixture.eventSnapshot)).not.toContain("refresh-secret-token");
+  });
+
+  it("provides authfn schema composition fixtures", () => {
+    const fixture = createAuthFnSchemaCompositionFixture();
+
+    expect(fixture.config.plugins).toEqual(["password", "emailOtp", "socialOAuth"]);
+    expect(fixture.expectedTables).toEqual([
+      "users",
+      "sessions",
+      "password_credentials",
+      "otp_challenges",
+      "oauth_accounts",
+    ]);
+  });
+
+  it("redacts secrets recursively for snapshots", () => {
+    const redacted = redactSecrets({
+      accessToken: "access-secret-token",
+      nested: {
+        clientSecret: "client-secret-value",
+      },
+      safe: "value",
+    });
+
+    expect(redacted).toEqual({
+      accessToken: "[REDACTED]",
+      nested: {
+        clientSecret: "[REDACTED]",
+      },
+      safe: "value",
+    });
   });
 });

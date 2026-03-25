@@ -6,6 +6,7 @@ from .types import (
     ImageTransformConfig,
     ImageTransformOperation,
     OCRConfig,
+    PdfPreviewConfig,
     Processor,
     ProcessorInput,
     ProcessorOutputArtifact,
@@ -29,6 +30,7 @@ OCR_SUPPORTED_MIME_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"
 IMAGE_TRANSFORM_SUPPORTED_MIME_TYPES = THUMBNAIL_SUPPORTED_MIME_TYPES
 VIDEO_SUPPORTED_MIME_TYPES = ["video/*"]
 AUDIO_SUPPORTED_MIME_TYPES = ["audio/*"]
+PDF_PREVIEW_SUPPORTED_MIME_TYPES = ["application/pdf"]
 
 
 class _GenericProcessor:
@@ -69,6 +71,12 @@ def create_thumbnail_processor(config: Optional[ThumbnailConfig] = None) -> Proc
     from .processors.thumbnail import create_thumbnail_processor as _create_thumbnail_processor
 
     return _create_thumbnail_processor(config)
+
+
+def create_pdf_preview_processor(config: Optional[PdfPreviewConfig] = None) -> Processor:
+    from .processors.pdf_preview import create_pdf_preview_processor as _create_pdf_preview_processor
+
+    return _create_pdf_preview_processor(config)
 
 
 def create_compression_processor(config: Optional[CompressionConfig] = None) -> Processor:
@@ -128,6 +136,7 @@ __all__ = [
     "ProcessorOutputArtifact",
     "ProcessorResult",
     "ThumbnailConfig",
+    "PdfPreviewConfig",
     "ThumbnailSize",
     "CompressionConfig",
     "OCRConfig",
@@ -137,6 +146,7 @@ __all__ = [
     "CropOptions",
     "RotateOptions",
     "create_thumbnail_processor",
+    "create_pdf_preview_processor",
     "create_compression_processor",
     "create_ocr_processor",
     "create_image_transform_processor",
@@ -148,4 +158,5 @@ __all__ = [
     "IMAGE_TRANSFORM_SUPPORTED_MIME_TYPES",
     "VIDEO_SUPPORTED_MIME_TYPES",
     "AUDIO_SUPPORTED_MIME_TYPES",
+    "PDF_PREVIEW_SUPPORTED_MIME_TYPES",
 ]

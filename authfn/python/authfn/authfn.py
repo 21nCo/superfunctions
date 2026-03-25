@@ -6,16 +6,17 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from superfunctions.db import Adapter as DatabaseAdapter, OrderBy, WhereClause
+from .config import normalize_config
+from .http import authenticate_request, create_authfn_openapi, create_authfn_routes
+from .plugins.api_keys import ApiKeyPluginConfig, ApiKeyService
+from .schema import get_schema
 from .types import (
-    ApiKey,
     ApiKeyCreate,
     ApiKeyResponse,
     ApiKeySanitized,
-    ApiKeySession,
     AuthFnConfig,
-    ExpiredCredentialsError,
+    AuthFnSession,
     InvalidCredentialsError,
-    NotFoundError,
     Request,
 )
 
@@ -37,76 +38,46 @@ def generate_id(prefix: str) -> str:
 class AuthFnProvider:
     """Auth provider implementation for authfn."""
 
-    def __init__(self, database: DatabaseAdapter, namespace: str = "authfn"):
+    def __init__(self, database: DatabaseAdapter, namespace: str = "authfn", config: Optional[AuthFnConfig] = None):
         self.database = database
         self.namespace = namespace
+        self.config = config
 
-    async def authenticate(self, request: Request) -> Optional[ApiKeySession]:
+    async def authenticate(self, request: Request) -> Optional[AuthFnSession]:
         """Authenticate a request and return session."""
         auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+        if self.config is not None:
+            modern_session = await authenticate_request(self.config, request)
+            if modern_session is not None:
+                return modern_session
+            if auth_header:
+                raise InvalidCredentialsError("Invalid API key")
+            return None
 
         if not auth_header:
             return None
+        raise InvalidCredentialsError("Invalid API key")
 
-        # Extract token from Bearer scheme
-        token = auth_header
-        if token.lower().startswith("bearer "):
-            token = token[7:].strip()
-
-        if not token:
-            return None
-
-        # Look up API key in database
-        api_key_data = await self.database.find_one(
-            model="apiKeys",
-            where=[WhereClause(field="key", operator="eq", value=token)],
-            namespace=self.namespace,
-        )
-
-        if not api_key_data:
-            raise InvalidCredentialsError("Invalid API key")
-
-        # Convert to ApiKey model
-        api_key = ApiKey(**api_key_data)
-
-        # Check if revoked
-        if api_key.revoked_at:
-            raise InvalidCredentialsError("API key has been revoked")
-
-        # Check if expired
-        if api_key.expires_at:
-            if api_key.expires_at < datetime.utcnow():
-                raise ExpiredCredentialsError("API key has expired")
-
-        # Update last used timestamp
-        await self.database.update(
-            model="apiKeys",
-            where=[WhereClause(field="id", operator="eq", value=api_key.id)],
-            data={"lastUsedAt": datetime.utcnow().isoformat()},
-            namespace=self.namespace,
-        )
-
-        return ApiKeySession(
-            id=api_key.id,
-            type="api-key",
-            keyId=api_key.id,
-            name=api_key.name,
-            resourceIds=api_key.resource_ids,
-            scopes=api_key.scopes,
-            expiresAt=api_key.expires_at,
-            metadata=api_key.metadata,
-        )
-
-    async def authorize(self, session: ApiKeySession, resource_id: str) -> bool:
+    async def authorize(self, session: AuthFnSession, resource_id: str) -> bool:
         """Authorize a session to access a resource."""
-        return resource_id in session.resource_ids
+        resource_ids = getattr(session, "resource_ids", None) or []
+        return resource_id in resource_ids
 
     async def revoke(self, session_id: str) -> None:
         """Revoke a session."""
         await self.database.update(
-            model="apiKeys",
+            model="sessions",
             where=[WhereClause(field="id", operator="eq", value=session_id)],
-            data={"revokedAt": datetime.utcnow().isoformat()},
+            data={"revokedAt": datetime.utcnow()},
+            namespace=self.namespace,
+        )
+        await self.database.update(
+            model="api_keys",
+            where=[WhereClause(field="id", operator="eq", value=session_id)],
+            data={
+                "revokedAt": datetime.utcnow(),
+                "updatedAt": datetime.utcnow(),
+            },
             namespace=self.namespace,
         )
 
@@ -116,55 +87,53 @@ class AuthFn:
 
     def __init__(self, config: AuthFnConfig):
         """Initialize AuthFn instance."""
-        self.config = config
-        self.database = config.database
-        self.namespace = config.namespace
-        self._provider = AuthFnProvider(self.database, self.namespace)
+        self.config = normalize_config(config)
+        self.database = self.config.database
+        self.namespace = self.config.namespace
+        self._provider = AuthFnProvider(self.database, self.namespace, self.config)
+        self.routes = create_authfn_routes(self.config)
+        self.router = self.routes
 
     @property
     def provider(self) -> AuthFnProvider:
         """Get the auth provider."""
         return self._provider
 
+    def get_routes(self):
+        """Return authfn HTTP routes."""
+        return self.router
+
+    def get_schema(self):
+        """Return the deterministic authfn schema."""
+        return get_schema(self.config)
+
+    def open_api(self):
+        """Return the authfn OpenAPI document."""
+        return create_authfn_openapi(self.config)
+
     async def create_key(self, data: ApiKeyCreate) -> ApiKeyResponse:
         """Create a new API key."""
-        key_id = generate_id("key")
-        key = generate_api_key("ak")
-
-        key_data = {
-            "id": key_id,
-            "key": key,
-            "name": data.name,
-            "resourceIds": data.resource_ids,
-            "scopes": data.scopes,
-            "metadata": data.metadata,
-            "expiresAt": data.expires_at.isoformat() if data.expires_at else None,
-            "lastUsedAt": None,
-            "revokedAt": None,
-            "createdAt": datetime.utcnow().isoformat(),
-        }
-
-        await self.database.create(
-            model="apiKeys",
-            data=key_data,
-            namespace=self.namespace,
+        created = await ApiKeyService(
+            self.config,
+            ApiKeyPluginConfig(),
+        ).create_key(
+            user_id=None,
+            name=data.name,
+            scopes=data.scopes,
+            metadata=data.metadata,
+            expires_at=data.expires_at,
+            resource_ids=data.resource_ids,
         )
-
-        return ApiKeyResponse(id=key_id, key=key)
+        return ApiKeyResponse(id=created["keyId"], key=created["secret"])
 
     async def revoke_key(self, key_id: str) -> None:
         """Revoke an API key."""
-        await self.database.update(
-            model="apiKeys",
-            where=[WhereClause(field="id", operator="eq", value=key_id)],
-            data={"revokedAt": datetime.utcnow().isoformat()},
-            namespace=self.namespace,
-        )
+        await ApiKeyService(self.config, ApiKeyPluginConfig()).revoke_key(key_id=key_id)
 
     async def get_key(self, key_id: str) -> Optional[ApiKeySanitized]:
         """Get API key by ID (without the secret key)."""
         key_data = await self.database.find_one(
-            model="apiKeys",
+            model="api_keys",
             where=[WhereClause(field="id", operator="eq", value=key_id)],
             namespace=self.namespace,
         )
@@ -172,36 +141,50 @@ class AuthFn:
         if not key_data:
             return None
 
-        # Remove the secret key field
-        key_data_copy = key_data.copy()
-        key_data_copy.pop("key", None)
-
-        return ApiKeySanitized(**key_data_copy)
+        metadata = dict(key_data.get("metadata") or {})
+        resource_ids = list(metadata.pop("resourceIds", []) or [])
+        return ApiKeySanitized(
+            id=key_data["id"],
+            name=key_data.get("name"),
+            resourceIds=resource_ids,
+            scopes=key_data.get("scopes"),
+            metadata=metadata or None,
+            expiresAt=key_data.get("expiresAt"),
+            lastUsedAt=key_data.get("lastUsedAt"),
+            revokedAt=key_data.get("revokedAt"),
+            createdAt=key_data.get("createdAt"),
+        )
 
     async def list_keys(
         self, filters: Optional[Dict[str, Any]] = None
     ) -> List[ApiKeySanitized]:
         """List API keys (without the secret keys)."""
-        where: List[WhereClause] = []
-
-        if filters and filters.get("resourceId"):
-            where.append(
-                WhereClause(field="resourceIds", operator="contains", value=filters["resourceId"])
-            )
-
         keys_data = await self.database.find_many(
-            model="apiKeys",
-            where=where,
+            model="api_keys",
+            where=[],
             order_by=[OrderBy(field="createdAt", direction="desc")],
             namespace=self.namespace,
         )
-
-        # Sanitize results by removing the secret key field
         sanitized_keys = []
+        resource_filter = filters.get("resourceId") if filters else None
         for key_data in keys_data:
-            key_data_copy = key_data.copy()
-            key_data_copy.pop("key", None)
-            sanitized_keys.append(ApiKeySanitized(**key_data_copy))
+            metadata = dict(key_data.get("metadata") or {})
+            resource_ids = list(metadata.pop("resourceIds", []) or [])
+            if resource_filter and resource_filter not in resource_ids:
+                continue
+            sanitized_keys.append(
+                ApiKeySanitized(
+                    id=key_data["id"],
+                    name=key_data.get("name"),
+                    resourceIds=resource_ids,
+                    scopes=key_data.get("scopes"),
+                    metadata=metadata or None,
+                    expiresAt=key_data.get("expiresAt"),
+                    lastUsedAt=key_data.get("lastUsedAt"),
+                    revokedAt=key_data.get("revokedAt"),
+                    createdAt=key_data.get("createdAt"),
+                )
+            )
 
         return sanitized_keys
 

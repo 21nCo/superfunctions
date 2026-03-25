@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AesGcmTokenCipher,
   EncryptedTokenVault,
+  MemoryOAuthConsentStore,
+  MemoryOAuthRevocationFailureStore,
   MemoryOAuthStateStore,
   MemoryTokenVault,
   SqlOAuthStateStore,
@@ -10,9 +12,10 @@ import {
 
 type StateRow = {
   state_id: string;
-  tenant_id: string;
-  user_id: string;
   provider_id: string;
+  subject_kind: string;
+  subject_key: string;
+  subject_payload: string;
   redirect_uri: string;
   requested_scopes: string;
   code_verifier: string | null;
@@ -22,27 +25,10 @@ type StateRow = {
   consumed_at: string | null;
 };
 
-type TokenRow = {
-  token_id: string;
-  tenant_id: string;
-  user_id: string;
-  provider_id: string;
-  connection_id: string;
-  encrypted_payload: string;
-  key_ref: string;
-  created_at: string;
-  updated_at: string;
-  expires_at: string | null;
-};
-
 class InMemorySqlClient implements SqlClient {
   private readonly states = new Map<string, StateRow>();
-  private readonly tokens = new Map<string, TokenRow>();
 
-  async query<TRow = unknown>(
-    statement: string,
-    params: readonly unknown[] = []
-  ): Promise<TRow[]> {
+  async query<TRow = unknown>(statement: string, params: readonly unknown[] = []): Promise<TRow[]> {
     const normalized = normalizeSql(statement);
 
     if (normalized.startsWith("SELECT") && normalized.includes("FROM OAUTH_STATES")) {
@@ -65,18 +51,6 @@ class InMemorySqlClient implements SqlClient {
       return [updated] as TRow[];
     }
 
-    if (normalized.startsWith("SELECT") && normalized.includes("FROM OAUTH_TOKEN_VAULT")) {
-      if (normalized.includes("WHERE TOKEN_ID")) {
-        const tokenId = params[0] as string;
-        const row = this.tokens.get(tokenId);
-        return (row ? [row] : []) as TRow[];
-      }
-
-      const connectionId = params[0] as string;
-      const row = [...this.tokens.values()].find((candidate) => candidate.connection_id === connectionId);
-      return (row ? [row] : []) as TRow[];
-    }
-
     return [] as TRow[];
   }
 
@@ -86,16 +60,17 @@ class InMemorySqlClient implements SqlClient {
     if (normalized.startsWith("INSERT INTO OAUTH_STATES")) {
       const row: StateRow = {
         state_id: params[0] as string,
-        tenant_id: params[1] as string,
-        user_id: params[2] as string,
-        provider_id: params[3] as string,
-        redirect_uri: params[4] as string,
-        requested_scopes: params[5] as string,
-        code_verifier: (params[6] as string | null) ?? null,
-        nonce: (params[7] as string | null) ?? null,
-        created_at: params[8] as string,
-        expires_at: params[9] as string,
-        consumed_at: (params[10] as string | null) ?? null
+        provider_id: params[1] as string,
+        subject_kind: params[2] as string,
+        subject_key: params[3] as string,
+        subject_payload: params[4] as string,
+        redirect_uri: params[5] as string,
+        requested_scopes: params[6] as string,
+        code_verifier: (params[7] as string | null) ?? null,
+        nonce: (params[8] as string | null) ?? null,
+        created_at: params[9] as string,
+        expires_at: params[10] as string,
+        consumed_at: (params[11] as string | null) ?? null
       };
       this.states.set(row.state_id, row);
       return { rowsAffected: 1 };
@@ -115,66 +90,24 @@ class InMemorySqlClient implements SqlClient {
       return { rowsAffected: deleted };
     }
 
-    if (normalized.startsWith("INSERT INTO OAUTH_TOKEN_VAULT")) {
-      const row: TokenRow = {
-        token_id: params[0] as string,
-        tenant_id: params[1] as string,
-        user_id: params[2] as string,
-        provider_id: params[3] as string,
-        connection_id: params[4] as string,
-        encrypted_payload: params[5] as string,
-        key_ref: params[6] as string,
-        created_at: params[7] as string,
-        updated_at: params[8] as string,
-        expires_at: (params[9] as string | null) ?? null
-      };
-      this.tokens.set(row.token_id, row);
-      return { rowsAffected: 1 };
-    }
-
-    if (normalized.startsWith("UPDATE OAUTH_TOKEN_VAULT SET KEY_REF")) {
-      const newKeyRef = params[0] as string;
-      const updatedAt = params[1] as string;
-      const tokenId = params[2] as string;
-      const row = this.tokens.get(tokenId);
-      if (!row) {
-        return { rowsAffected: 0 };
-      }
-
-      this.tokens.set(tokenId, {
-        ...row,
-        key_ref: newKeyRef,
-        updated_at: updatedAt
-      });
-      return { rowsAffected: 1 };
-    }
-
-    if (normalized.startsWith("DELETE FROM OAUTH_TOKEN_VAULT")) {
-      const connectionId = params[0] as string;
-      const token = [...this.tokens.values()].find((candidate) => candidate.connection_id === connectionId);
-      if (!token) {
-        return { rowsAffected: 0 };
-      }
-
-      this.tokens.delete(token.token_id);
-      return { rowsAffected: 1 };
-    }
-
     return { rowsAffected: 0 };
   }
 }
 
 describe("oauth-storage state and vault", () => {
-  it("supports durable state consumption across store instances with SQL adapter", async () => {
+  it("supports durable browser-auth state consumption across store instances with SQL adapter", async () => {
     const sql = new InMemorySqlClient();
     const storeA = new SqlOAuthStateStore(sql);
     const storeB = new SqlOAuthStateStore(sql);
 
     await storeA.put({
-      stateId: "st_123",
-      tenantId: "t1",
-      userId: "u1",
+      stateId: "st_browser_123",
       providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_123",
+        regionId: "eu-west-1"
+      },
       redirectUri: "https://app/callback",
       requestedScopes: ["openid"],
       codeVerifier: "verifier",
@@ -183,13 +116,17 @@ describe("oauth-storage state and vault", () => {
       expiresAt: "2026-01-01T00:10:00.000Z"
     });
 
-    const recovered = await storeB.get("st_123");
-    expect(recovered?.stateId).toBe("st_123");
+    const recovered = await storeB.get("st_browser_123");
+    expect(recovered?.subject).toMatchObject({
+      kind: "browser-auth",
+      intentId: "intent_123",
+      regionId: "eu-west-1"
+    });
 
-    const consumed = await storeB.consume("st_123", "2026-01-01T00:01:00.000Z");
+    const consumed = await storeB.consume("st_browser_123", "2026-01-01T00:01:00.000Z");
     expect(consumed?.consumedAt).toBe("2026-01-01T00:01:00.000Z");
 
-    const replay = await storeA.consume("st_123", "2026-01-01T00:02:00.000Z");
+    const replay = await storeA.consume("st_browser_123", "2026-01-01T00:02:00.000Z");
     expect(replay).toBeNull();
   });
 
@@ -197,9 +134,11 @@ describe("oauth-storage state and vault", () => {
     const store = new MemoryOAuthStateStore();
     await store.put({
       stateId: "st_expired",
-      tenantId: "t1",
-      userId: "u1",
       providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_expired"
+      },
       redirectUri: "https://app/callback",
       requestedScopes: ["openid"],
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -315,32 +254,41 @@ describe("oauth-storage state and vault", () => {
     expect(decrypted?.tokenSet.refreshToken).toBe("rt_rotate");
   });
 
-  it("rejects persistence when keyRef is missing", async () => {
-    const backingStore = new MemoryTokenVault();
-    const cipher = new AesGcmTokenCipher(
-      createKeyResolver({
-        "kms-key-1": Buffer.from("55".repeat(32), "hex")
-      })
-    );
-    const vault = new EncryptedTokenVault(backingStore, cipher);
+  it("indexes shared consents and revocation failures by provider and subject", async () => {
+    const subject = {
+      kind: "browser-auth" as const,
+      intentId: "intent_consented",
+      regionId: "eu-west-1"
+    };
+    const consentStore = new MemoryOAuthConsentStore();
+    const revocationFailureStore = new MemoryOAuthRevocationFailureStore();
 
-    await expect(
-      vault.putTokenSet({
-        tokenId: "tok_invalid",
-        tenantId: "t1",
-        userId: "u1",
-        providerId: "google",
-        connectionId: "conn_invalid",
-        keyRef: "",
-        tokenSet: {
-          accessToken: "at",
-          refreshToken: "rt"
-        }
-      })
-    ).rejects.toMatchObject({
-      code: "VALIDATION_ERROR",
-      message: "keyRef is required"
+    await consentStore.put({
+      consentId: "consent_1",
+      providerId: "google",
+      subject,
+      scopes: ["openid", "email"],
+      grantedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
     });
+    await revocationFailureStore.put({
+      failureId: "revfail_1",
+      providerId: "google",
+      subject,
+      tokenId: "tok_1",
+      errorCode: "provider_revoke_failed",
+      errorMessage: "rate limited",
+      retryable: true,
+      occurredAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    const consents = await consentStore.listBySubject("google", subject);
+    const failures = await revocationFailureStore.listBySubject("google", subject);
+
+    expect(consents).toHaveLength(1);
+    expect(consents[0]?.scopes).toEqual(["openid", "email"]);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.tokenId).toBe("tok_1");
   });
 });
 

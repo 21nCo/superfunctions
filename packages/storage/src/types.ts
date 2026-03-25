@@ -15,6 +15,8 @@ export interface StorageAdapterCapabilities {
   proxyStreamingDownload: boolean;
 }
 
+export type StorageTargetName = string;
+
 export interface SignedUrlConstraints {
   contentType?: string;
   contentLength?: number;
@@ -39,30 +41,35 @@ export interface StorageObjectStat {
 export interface StorageAdapter {
   name: StorageAdapterName;
   capabilities: StorageAdapterCapabilities;
+  capabilitiesForTarget?(target: StorageTargetName): StorageAdapterCapabilities;
 
-  statObject(input: { key: string }): Promise<StorageObjectStat>;
-  deleteObject(input: { key: string }): Promise<void>;
+  statObject(input: { key: string; target?: StorageTargetName }): Promise<StorageObjectStat>;
+  deleteObject(input: { key: string; target?: StorageTargetName }): Promise<void>;
 
   signUploadUrl?(input: {
     key: string;
+    target?: StorageTargetName;
     expiresInSeconds: number;
     constraints?: SignedUrlConstraints;
   }): Promise<{ url: string; headers?: Record<string, string> }>;
 
   signDownloadUrl?(input: {
     key: string;
+    target?: StorageTargetName;
     expiresInSeconds: number;
     constraints?: { responseContentType?: string };
   }): Promise<{ url: string; headers?: Record<string, string> }>;
 
   createMultipartUpload?(input: {
     key: string;
+    target?: StorageTargetName;
     contentType?: string;
     metadata?: Record<string, string>;
   }): Promise<{ uploadId: string }>;
 
   signMultipartUploadPartUrl?(input: {
     key: string;
+    target?: StorageTargetName;
     uploadId: string;
     partNumber: number;
     expiresInSeconds: number;
@@ -71,12 +78,21 @@ export interface StorageAdapter {
 
   completeMultipartUpload?(input: {
     key: string;
+    target?: StorageTargetName;
     uploadId: string;
     parts: Array<{ partNumber: number; etag: string }>;
   }): Promise<void>;
 
-  abortMultipartUpload?(input: { key: string; uploadId: string }): Promise<void>;
+  abortMultipartUpload?(input: { key: string; target?: StorageTargetName; uploadId: string }): Promise<void>;
 
-  openUploadStream?(input: { key: string; contentType?: string }): Promise<WritableStream>;
-  openDownloadStream?(input: { key: string; range?: { start: number; endInclusive: number } }): Promise<ReadableStream>;
+  openUploadStream?(input: {
+    key: string;
+    target?: StorageTargetName;
+    contentType?: string;
+  }): Promise<WritableStream>;
+  openDownloadStream?(input: {
+    key: string;
+    target?: StorageTargetName;
+    range?: { start: number; endInclusive: number };
+  }): Promise<ReadableStream>;
 }

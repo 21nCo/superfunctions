@@ -20,10 +20,10 @@ function createDb(seed: Record<string, any[]> = {}): Adapter {
   function idFor(record: any): string {
     return (
       record.uploadSessionId ||
+      record.artifactId ||
       record.fileId ||
       record.versionId ||
       record.permissionId ||
-      record.artifactId ||
       record.tokenHash ||
       `id_${seq++}`
     );
@@ -72,6 +72,9 @@ function createDb(seed: Record<string, any[]> = {}): Adapter {
     async findMany(params) {
       const table = getTable(params.model);
       const rows = Array.from(table.values()).filter((row) => matches(row, params.where));
+      if (params.orderBy?.some((item: any) => item.field === 'createdAt' && item.direction === 'desc')) {
+        rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      }
       return rows;
     },
     async update(params) {
@@ -133,7 +136,7 @@ function createDb(seed: Record<string, any[]> = {}): Adapter {
   } as Adapter;
 }
 
-describe('PHASE_04 AUTH-002/FILE-003 share and artifact authz + proxy descriptors', () => {
+describe('PHASE_03 PROCESS-002/FILE-002 share and artifact authz + proxy descriptors', () => {
   let fileFn: FileFn;
   let db: Adapter;
 
@@ -194,12 +197,23 @@ describe('PHASE_04 AUTH-002/FILE-003 share and artifact authz + proxy descriptor
           artifactId: 'art_0001',
           fileId: 'file_0002',
           versionId: 'ver_0002',
-          kind: 'thumbnail',
+          kind: 'thumbnail-small',
           storageKey: 'artifacts/file_0002/thumb',
           mimeType: 'image/webp',
           size: 123,
           metadata: {},
           createdAt: '2026-03-20T12:00:00.000Z',
+        },
+        {
+          artifactId: 'art_pdf_0001',
+          fileId: 'file_0002',
+          versionId: 'ver_0002',
+          kind: 'pdf-preview-page-1-small',
+          storageKey: 'artifacts/file_0002/pdf-preview-page-1-small.png',
+          mimeType: 'image/png',
+          size: 456,
+          metadata: { pageNumber: 1 },
+          createdAt: '2026-03-20T12:01:00.000Z',
         },
       ],
     });
@@ -244,6 +258,49 @@ describe('PHASE_04 AUTH-002/FILE-003 share and artifact authz + proxy descriptor
     expect(body.ok).toBe(true);
     expect(body.data.url).toMatch(/^\/proxy\/files\/file_0002\/artifacts\/art_0001\/download$/);
     expect(body.data.url).not.toMatch(/^proxy:\/\//);
+  });
+
+  it('TV-PROCESS-002: artifact listing should include canonical thumbnail and PDF preview kinds', async () => {
+    const res = await fileFn.router.handle(
+      new Request('http://localhost/file_0002/artifacts', {
+        method: 'GET',
+        headers: { 'x-request-id': 'req_artifact_list' },
+      }),
+    );
+    const body = await res!.json();
+
+    expect(res!.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.requestId).toBe('req_artifact_list');
+    expect(body.data.artifacts.map((artifact: any) => artifact.kind)).toEqual([
+      'pdf-preview-page-1-small',
+      'thumbnail-small',
+    ]);
+  });
+
+  it('TV-PROCESS-002: PDF preview artifact descriptors should stay on HTTP proxy routes', async () => {
+    const res = await fileFn.router.handle(
+      new Request('http://localhost/file_0002/artifacts/art_pdf_0001/download', { method: 'GET' }),
+    );
+    const body = await res!.json();
+
+    expect(body.ok).toBe(true);
+    expect(body.data.url).toMatch(/^\/proxy\/files\/file_0002\/artifacts\/art_pdf_0001\/download$/);
+    expect(body.data.url).not.toMatch(/^proxy:\/\//);
+  });
+
+  it('TV-PROCESS-002: PDF preview artifact proxy routes should stream image bytes', async () => {
+    const descriptorRes = await fileFn.router.handle(
+      new Request('http://localhost/file_0002/artifacts/art_pdf_0001/download', { method: 'GET' }),
+    );
+    const descriptorBody = await descriptorRes!.json();
+
+    const proxyRes = await fileFn.router.handle(
+      new Request(`http://localhost${descriptorBody.data.url}`, { method: 'GET' }),
+    );
+
+    expect(proxyRes!.status).toBe(200);
+    expect(proxyRes!.headers.get('content-type')).toBe('image/png');
   });
 
   it('TV-DOWNLOAD-FALLBACK-001: artifact proxy data-plane route should stream authorized bytes', async () => {

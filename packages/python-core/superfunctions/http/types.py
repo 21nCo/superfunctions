@@ -1,5 +1,8 @@
 """Core type definitions for the HTTP abstraction layer."""
 
+from __future__ import annotations
+
+from datetime import datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Protocol, Union
 
@@ -64,11 +67,29 @@ class Request(Protocol):
         ...
 
 
+class SetCookie(BaseModel):
+    """Structured Set-Cookie definition."""
+
+    name: str
+    value: str
+    path: str = "/"
+    domain: Optional[str] = None
+    secure: bool = True
+    http_only: bool = Field(True, alias="httpOnly")
+    same_site: Literal["lax", "strict", "none"] = Field("lax", alias="sameSite")
+    max_age: Optional[int] = Field(None, alias="maxAge")
+    expires: Optional[datetime] = None
+
+    class Config:
+        populate_by_name = True
+
+
 class Response(BaseModel):
     """Generic HTTP response."""
 
     status: int = 200
     headers: Dict[str, str] = Field(default_factory=dict)
+    cookies: List[SetCookie] = Field(default_factory=list)
     body: Union[str, bytes, Dict[str, Any], List[Any], None] = None
 
     class Config:
@@ -106,6 +127,43 @@ Middleware = Callable[[Request, RouteContext, RequestHandler], Awaitable[Respons
 # ============================================================================
 
 
+class AuthRouteMeta(BaseModel):
+    """Shared auth-related route metadata."""
+
+    mode: Literal["none", "cookie-session", "bearer", "hybrid"]
+    csrf: Optional[bool] = None
+    scopes: Optional[List[str]] = None
+
+    class Config:
+        extra = "allow"
+
+
+class OpenApiRouteMeta(BaseModel):
+    """Shared OpenAPI route metadata."""
+
+    include: bool = True
+    operation_id: Optional[str] = Field(None, alias="operationId")
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+    request_body_schema: Optional[Dict[str, Any]] = Field(None, alias="requestBodySchema")
+    response_schemas: Optional[Dict[str, Dict[str, Any]]] = Field(None, alias="responseSchemas")
+
+    class Config:
+        populate_by_name = True
+        extra = "allow"
+
+
+class RouteMeta(BaseModel):
+    """Typed shared route metadata."""
+
+    auth: Optional[AuthRouteMeta] = None
+    openapi: Optional[OpenApiRouteMeta] = None
+
+    class Config:
+        extra = "allow"
+
+
 class Route(BaseModel):
     """Route definition."""
 
@@ -113,7 +171,7 @@ class Route(BaseModel):
     path: str
     handler: Any  # RequestHandler
     middleware: Optional[List[Any]] = None  # List[Middleware]
-    meta: Optional[Dict[str, Any]] = None
+    meta: Optional[RouteMeta] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -278,3 +336,38 @@ class ServiceUnavailableError(HttpError):
         self, message: str = "Service unavailable", details: Optional[Dict[str, Any]] = None
     ):
         super().__init__(message, 503, "SERVICE_UNAVAILABLE", details)
+
+
+def serialize_set_cookie(cookie: SetCookie) -> str:
+    """Serialize a structured cookie definition into a Set-Cookie header value."""
+
+    if cookie.same_site not in {"lax", "strict", "none"}:
+        raise HttpError("Invalid SameSite value", 400, "HTTP_META_INVALID")
+
+    parts = [f"{cookie.name}={cookie.value}", f"Path={cookie.path}"]
+    if cookie.domain:
+        parts.append(f"Domain={cookie.domain}")
+    if cookie.max_age is not None:
+        parts.append(f"Max-Age={int(cookie.max_age)}")
+    if cookie.expires is not None:
+        parts.append(f"Expires={cookie.expires.strftime('%a, %d %b %Y %H:%M:%S GMT')}")
+    if cookie.secure:
+        parts.append("Secure")
+    if cookie.http_only:
+        parts.append("HttpOnly")
+    parts.append(f"SameSite={cookie.same_site.capitalize()}")
+    return "; ".join(parts)
+
+
+def serialize_response_cookies(response: Response) -> List[str]:
+    """Serialize all cookies for a response in deterministic order."""
+
+    return [serialize_set_cookie(cookie) for cookie in response.cookies]
+
+
+def get_route_openapi_meta(route: Route) -> Optional[OpenApiRouteMeta]:
+    """Return typed OpenAPI metadata from a route for downstream generators."""
+
+    if route.meta is None:
+        return None
+    return route.meta.openapi

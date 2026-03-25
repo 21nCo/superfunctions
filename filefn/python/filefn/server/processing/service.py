@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 import random
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol, Set
 
 from pydantic import BaseModel
 
@@ -13,6 +13,8 @@ from ..events import (
     ProcessingStartedEvent,
 )
 from ..models import FileProviderContext, FileRecord, Visibility
+from ..policies import resolve_artifact_storage_target, resolve_storage_target
+from ..routed_storage import get_storage_capabilities
 
 
 class ProcessorInput(BaseModel):
@@ -58,6 +60,7 @@ class FlowFnProvider(Protocol):
 class ProcessingServiceConfig(BaseModel):
     db: Any
     storage: Any
+    policies: Optional[Any] = None
     events: FileFnEventEmitter
     processors: List[Any] = []
     flow_fn: Optional[Any] = None
@@ -90,16 +93,52 @@ def _supports_processor(processor: Processor, mime_type: str) -> bool:
     return mime_type in processor.supportedMimeTypes
 
 
+def _build_processing_idempotency_key(file_id: str, version_id: str, processors: List[Processor]) -> str:
+    processor_key = ",".join(sorted(processor.name for processor in processors))
+    return f"processing:{file_id}:{version_id}:{processor_key}"
+
+
 class ProcessingService:
     def __init__(self, config: ProcessingServiceConfig):
         self.db = config.db
         self.storage = config.storage
+        self.policies = config.policies
         self.events = config.events
         self.processors = config.processors
         self.flow_fn = config.flow_fn
         self.namespace = config.namespace
         self.enabled = config.enabled
         self.queue_name = "filefn.processing"
+
+    def _file_storage_target(self, policy_name: Optional[str]) -> str:
+        policy = self.policies.get(policy_name) if (self.policies and policy_name) else None
+        return resolve_storage_target(policy)
+
+    def _artifact_storage_target(self, policy_name: Optional[str]) -> str:
+        policy = self.policies.get(policy_name) if (self.policies and policy_name) else None
+        return resolve_artifact_storage_target(policy)
+
+    async def _get_readable_grant_file_ids(self, ctx: FileProviderContext) -> Set[str]:
+        if not ctx.principalId:
+            return set()
+
+        grants = await self.db.find_many(
+            model="filePermissions",
+            where=[],
+            namespace=self.namespace,
+        )
+
+        readable: Set[str] = set()
+        for grant in grants:
+            if not grant.get("canRead"):
+                continue
+            if (
+                grant.get("principalId") == ctx.principalId
+                or grant.get("userId") == ctx.principalId
+                or (grant.get("tenantId") and grant.get("tenantId") == ctx.tenantId)
+            ):
+                readable.add(grant["fileId"])
+        return readable
 
     def is_enabled(self) -> bool:
         return self.enabled and len(self.processors) > 0
@@ -122,7 +161,11 @@ class ProcessingService:
             queue = self.flow_fn.get_queue(self.queue_name)
             if queue:
                 try:
-                    idempotency_key = f"filefn:processing:{input['fileId']}:{input['versionId']}"
+                    idempotency_key = _build_processing_idempotency_key(
+                        input["fileId"],
+                        input["versionId"],
+                        self.processors,
+                    )
                     result = await queue.add(
                         {
                             "fileId": input["fileId"],
@@ -162,6 +205,15 @@ class ProcessingService:
         if not applicable_processors:
             return {"artifactsCreated": 0, "errors": []}
 
+        file_data = await self.db.find_one(
+            model="files",
+            where=[{"field": "fileId", "operator": "eq", "value": input.fileId}],
+            namespace=self.namespace,
+        )
+        policy_name = file_data.get("policy") if file_data else None
+        file_storage_target = self._file_storage_target(policy_name)
+        artifact_storage_target = self._artifact_storage_target(policy_name)
+
         data_cache: Optional[bytes] = None
 
         async def get_data() -> bytes:
@@ -169,7 +221,7 @@ class ProcessingService:
             if data_cache is not None:
                 return data_cache
 
-            stream = await self.storage.open_download_stream(key=input.storageKey)
+            stream = await self.storage.open_download_stream(key=input.storageKey, target=file_storage_target)
             chunks: List[bytes] = []
             async for chunk in stream:
                 chunks.append(chunk)
@@ -192,6 +244,7 @@ class ProcessingService:
                         key=artifact.storageKey,
                         data=artifact.data,
                         metadata={"contentType": artifact.mimeType},
+                        target=artifact_storage_target,
                     )
 
                     existing_artifact_data = await self.db.find_one(
@@ -272,6 +325,10 @@ class ProcessingService:
         if file.visibility == Visibility.SHARED and file.tenantId and file.tenantId == ctx.tenantId:
             return file
 
+        grant_file_ids = await self._get_readable_grant_file_ids(ctx)
+        if file.fileId in grant_file_ids:
+            return file
+
         raise errors.forbidden()
 
     async def list_artifacts(self, file_id: str, ctx: FileProviderContext) -> List[Dict[str, Any]]:
@@ -302,11 +359,16 @@ class ProcessingService:
         if file_id and artifact.fileId != file_id:
             raise errors.not_found("Artifact")
 
-        await self._get_readable_file(artifact.fileId, ctx)
+        file = await self._get_readable_file(artifact.fileId, ctx)
+        artifact_storage_target = self._artifact_storage_target(file.policy)
 
-        if hasattr(self.storage, "sign_download_url"):
+        if hasattr(self.storage, "sign_download_url") and get_storage_capabilities(self.storage, artifact_storage_target).get("signedDownloadUrls"):
             try:
-                result = await self.storage.sign_download_url(key=artifact.storageKey, expires_in_seconds=900)
+                result = await self.storage.sign_download_url(
+                    key=artifact.storageKey,
+                    expires_in_seconds=900,
+                    target=artifact_storage_target,
+                )
                 return {"url": result["url"], "headers": result.get("headers")}
             except Exception:
                 pass

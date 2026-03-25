@@ -9,6 +9,62 @@ interface AbstractSchema {
   schemas: TableSchema[];
 }
 
+export class CliSchemaGenerationError extends Error {
+  readonly code: "CLI_SCHEMA_GENERATION_ERROR";
+  readonly details?: Record<string, unknown>;
+
+  constructor(message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = "CliSchemaGenerationError";
+    this.code = "CLI_SCHEMA_GENERATION_ERROR";
+    this.details = details;
+  }
+}
+
+export async function generateLibraryAbstractSchema(
+  libraryPackage: { getSchema?: (config: unknown) => AbstractSchema | Promise<AbstractSchema> },
+  config: unknown
+): Promise<AbstractSchema> {
+  if (typeof libraryPackage.getSchema !== "function") {
+    throw new CliSchemaGenerationError("library does not export getSchema", {
+      reason: "missing-get-schema"
+    });
+  }
+
+  const generated = await Promise.resolve(libraryPackage.getSchema(config));
+  return normalizeAbstractSchema(generated);
+}
+
+export function normalizeAbstractSchema(abstractSchema: AbstractSchema): AbstractSchema {
+  return {
+    version: abstractSchema.version,
+    schemas: abstractSchema.schemas.map((schema) => ({
+      modelName: schema.modelName,
+      fields: Object.fromEntries(
+        Object.entries(schema.fields)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([fieldName, field]) => [fieldName, normalizeFieldSchema(field)])
+      ),
+      indexes: schema.indexes
+        ? [...schema.indexes]
+            .map((index) => ({
+              ...index,
+              fields: [...index.fields]
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name))
+        : undefined,
+      constraints: schema.constraints
+        ? [...schema.constraints]
+            .map((constraint) => ({
+              ...constraint,
+              fields: [...constraint.fields]
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name))
+        : undefined
+    }))
+  };
+}
+
 // ============================================================================
 // Drizzle Schema Generator
 // ============================================================================
@@ -19,6 +75,7 @@ export function generateDrizzleSchemaFile(
   namespace: string,
   dialect: 'postgres' | 'mysql' | 'sqlite' = 'postgres'
 ): string {
+  const normalizedSchema = normalizeAbstractSchema(abstractSchema);
   const imports = new Set<string>();
   const tables: string[] = [];
 
@@ -32,7 +89,7 @@ export function generateDrizzleSchemaFile(
   const { builder: tableBuilder, core: coreModule } = dialectMap[dialect];
   imports.add(`import { ${tableBuilder}, text, integer, boolean, timestamp, json, bigint } from '${coreModule}';`);
 
-  for (const table of abstractSchema.schemas) {
+  for (const table of normalizedSchema.schemas) {
     const tableName = table.modelName;
     const tableNameSnakeCase = toSnakeCase(namespace + '_' + tableName);
 
@@ -129,9 +186,10 @@ export function generatePrismaSchemaFile(
   libraryName: string,
   namespace: string
 ): string {
+  const normalizedSchema = normalizeAbstractSchema(abstractSchema);
   const models: string[] = [];
 
-  for (const table of abstractSchema.schemas) {
+  for (const table of normalizedSchema.schemas) {
     const modelName = capitalize(table.modelName);
     const fields: string[] = [];
 
@@ -221,10 +279,11 @@ export function generateKyselySchemaFile(
   libraryName: string,
   _namespace: string
 ): string {
+  const normalizedSchema = normalizeAbstractSchema(abstractSchema);
   // Kysely uses TypeScript interfaces for schema
   const interfaces: string[] = [];
 
-  for (const table of abstractSchema.schemas) {
+  for (const table of normalizedSchema.schemas) {
     const interfaceName = capitalize(table.modelName) + 'Table';
     const fields: string[] = [];
 
@@ -244,7 +303,7 @@ ${fields.join('\n')}
   }
 
   // Generate Database interface
-  const tableNames = abstractSchema.schemas.map(t => t.modelName);
+  const tableNames = normalizedSchema.schemas.map(t => t.modelName);
   const dbInterface = `
 export interface Database {
 ${tableNames.map(name => `  ${name}: ${capitalize(name)}Table;`).join('\n')}
@@ -280,6 +339,13 @@ function mapTypeToTypeScript(type: string): string {
     default:
       return 'unknown';
   }
+}
+
+function normalizeFieldSchema(field: FieldSchema): FieldSchema {
+  return {
+    ...field,
+    references: field.references ? { ...field.references } : undefined
+  };
 }
 
 // ============================================================================

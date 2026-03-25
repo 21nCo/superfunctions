@@ -11,6 +11,7 @@ Example:
 """
 
 from .types import (
+    AuthRouteMeta,
     BadRequestError,
     ConflictError,
     CorsOptions,
@@ -22,16 +23,22 @@ from .types import (
     Middleware,
     NotFoundError,
     NotImplementedError,
+    OpenApiRouteMeta,
     Request,
     RequestHandler,
     Response,
     Route,
+    RouteMeta,
     RouteContext,
     RouterOptions,
+    SetCookie,
     ServiceUnavailableError,
     TooManyRequestsError,
     UnauthorizedError,
     UnprocessableEntityError,
+    get_route_openapi_meta,
+    serialize_response_cookies,
+    serialize_set_cookie,
 )
 
 __all__ = [
@@ -39,11 +46,18 @@ __all__ = [
     "Request",
     "Response",
     "Route",
+    "RouteMeta",
     "RouteContext",
     "RouterOptions",
     "HttpMethod",
     "RequestHandler",
     "Middleware",
+    "SetCookie",
+    "AuthRouteMeta",
+    "OpenApiRouteMeta",
+    "get_route_openapi_meta",
+    "serialize_set_cookie",
+    "serialize_response_cookies",
     # CORS
     "CorsOptions",
     # Errors

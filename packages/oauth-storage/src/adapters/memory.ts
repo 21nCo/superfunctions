@@ -1,15 +1,34 @@
-import type { OAuthStateRecord, OAuthStateStore, TokenRecord, TokenVault } from "../index.js";
+import type {
+  OAuthConsentRecord,
+  OAuthConsentStore,
+  OAuthRevocationFailureRecord,
+  OAuthRevocationFailureStore,
+  OAuthStateRecord,
+  OAuthStateStore,
+  OAuthStoredSubject,
+  TokenRecord,
+  TokenVault
+} from "../index.js";
+import {
+  cloneOAuthStateRecord,
+  cloneOAuthStoredSubject,
+  getOAuthSubjectKey,
+  validateOAuthConsentRecord,
+  validateOAuthRevocationFailureRecord,
+  validateOAuthStateRecord
+} from "../state-store.js";
 
 export class MemoryOAuthStateStore implements OAuthStateStore {
   private readonly records = new Map<string, OAuthStateRecord>();
 
   async put(record: OAuthStateRecord): Promise<void> {
-    this.records.set(record.stateId, cloneStateRecord(record));
+    validateOAuthStateRecord(record);
+    this.records.set(record.stateId, cloneOAuthStateRecord(record));
   }
 
   async get(stateId: string): Promise<OAuthStateRecord | null> {
     const record = this.records.get(stateId);
-    return record ? cloneStateRecord(record) : null;
+    return record ? cloneOAuthStateRecord(record) : null;
   }
 
   async consume(stateId: string, consumedAt: string): Promise<OAuthStateRecord | null> {
@@ -28,7 +47,7 @@ export class MemoryOAuthStateStore implements OAuthStateStore {
 
     const consumed: OAuthStateRecord = { ...record, consumedAt };
     this.records.set(stateId, consumed);
-    return cloneStateRecord(consumed);
+    return cloneOAuthStateRecord(consumed);
   }
 
   async deleteExpired(before: string): Promise<number> {
@@ -99,10 +118,73 @@ export class MemoryTokenVault implements TokenVault {
   }
 }
 
-function cloneStateRecord(record: OAuthStateRecord): OAuthStateRecord {
-  return { ...record, requestedScopes: [...record.requestedScopes] };
+export class MemoryOAuthConsentStore implements OAuthConsentStore {
+  private readonly consentsById = new Map<string, OAuthConsentRecord>();
+
+  async put(record: OAuthConsentRecord): Promise<void> {
+    validateOAuthConsentRecord(record);
+    this.consentsById.set(record.consentId, cloneConsentRecord(record));
+  }
+
+  async get(consentId: string): Promise<OAuthConsentRecord | null> {
+    const record = this.consentsById.get(consentId);
+    return record ? cloneConsentRecord(record) : null;
+  }
+
+  async listBySubject(providerId: string, subject: OAuthStoredSubject): Promise<OAuthConsentRecord[]> {
+    const subjectKey = getOAuthSubjectKey(subject);
+    return [...this.consentsById.values()]
+      .filter((record) => record.providerId === providerId && getOAuthSubjectKey(record.subject) === subjectKey)
+      .map(cloneConsentRecord);
+  }
+
+  async delete(consentId: string): Promise<void> {
+    this.consentsById.delete(consentId);
+  }
+}
+
+export class MemoryOAuthRevocationFailureStore implements OAuthRevocationFailureStore {
+  private readonly failuresById = new Map<string, OAuthRevocationFailureRecord>();
+
+  async put(record: OAuthRevocationFailureRecord): Promise<void> {
+    validateOAuthRevocationFailureRecord(record);
+    this.failuresById.set(record.failureId, cloneRevocationFailureRecord(record));
+  }
+
+  async get(failureId: string): Promise<OAuthRevocationFailureRecord | null> {
+    const record = this.failuresById.get(failureId);
+    return record ? cloneRevocationFailureRecord(record) : null;
+  }
+
+  async listBySubject(providerId: string, subject: OAuthStoredSubject): Promise<OAuthRevocationFailureRecord[]> {
+    const subjectKey = getOAuthSubjectKey(subject);
+    return [...this.failuresById.values()]
+      .filter((record) => record.providerId === providerId && getOAuthSubjectKey(record.subject) === subjectKey)
+      .map(cloneRevocationFailureRecord);
+  }
+
+  async delete(failureId: string): Promise<void> {
+    this.failuresById.delete(failureId);
+  }
 }
 
 function cloneTokenRecord(record: TokenRecord): TokenRecord {
   return { ...record };
+}
+
+function cloneConsentRecord(record: OAuthConsentRecord): OAuthConsentRecord {
+  return {
+    ...record,
+    scopes: [...record.scopes],
+    subject: cloneOAuthStoredSubject(record.subject),
+    metadata: record.metadata ? { ...record.metadata } : undefined
+  };
+}
+
+function cloneRevocationFailureRecord(record: OAuthRevocationFailureRecord): OAuthRevocationFailureRecord {
+  return {
+    ...record,
+    subject: cloneOAuthStoredSubject(record.subject),
+    metadata: record.metadata ? { ...record.metadata } : undefined
+  };
 }

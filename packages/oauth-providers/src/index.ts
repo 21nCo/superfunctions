@@ -6,6 +6,9 @@ import { microsoftOAuthProviderDescriptor, microsoftProviderPolicy } from "./pro
 import { yahooOAuthProviderDescriptor, yahooProviderPolicy } from "./providers/yahoo.js";
 import { ProviderPolicyRegistry, type OAuthProviderId, type ProviderPolicyDefinition } from "./policy-registry.js";
 
+export const authOAuthProviderIds = ["google", "apple", "github"] as const;
+export type AuthOAuthProviderId = (typeof authOAuthProviderIds)[number];
+
 export const oauthProviderDescriptors: Record<OAuthProviderId, OAuthProviderDescriptor> = {
   google: googleOAuthProviderDescriptor,
   microsoft: microsoftOAuthProviderDescriptor,
@@ -30,12 +33,20 @@ export function listOAuthProviderDescriptors(): OAuthProviderDescriptor[] {
   return Object.values(oauthProviderDescriptors);
 }
 
+export function listAuthOAuthProviderDescriptors(): OAuthProviderDescriptor[] {
+  return authOAuthProviderIds.map((providerId) => oauthProviderDescriptors[providerId]);
+}
+
 export function getProviderPolicy(providerId: OAuthProviderId): ProviderPolicyDefinition {
   return oauthProviderPolicies[providerId];
 }
 
 export function listProviderPolicies(): ProviderPolicyDefinition[] {
   return Object.values(oauthProviderPolicies);
+}
+
+export function listAuthProviderPolicies(): ProviderPolicyDefinition[] {
+  return authOAuthProviderIds.map((providerId) => oauthProviderPolicies[providerId]);
 }
 
 export function createDefaultProviderPolicyRegistry(

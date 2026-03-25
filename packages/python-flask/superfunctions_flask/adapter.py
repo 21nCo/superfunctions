@@ -1,6 +1,9 @@
 """Flask adapter implementation."""
 
+from __future__ import annotations
+
 import asyncio
+import re
 from typing import Any, Callable, Dict, List
 
 from flask import Blueprint, Request as FlaskRequest, Response as FlaskResponse, jsonify, request
@@ -12,6 +15,9 @@ from superfunctions.http import (
     Route,
     RouteContext,
 )
+
+SUPERFUNCTIONS_ROUTE_ATTR = "__superfunctions_route__"
+SUPERFUNCTIONS_ROUTE_META_ATTR = "__superfunctions_route_meta__"
 
 
 class FlaskRequestAdapter:
@@ -83,11 +89,24 @@ def to_flask_response(response: Response) -> FlaskResponse:
     # Add headers
     for key, value in response.headers.items():
         flask_response.headers[key] = value
+
+    for cookie in response.cookies:
+        flask_response.set_cookie(
+            key=cookie.name,
+            value=cookie.value,
+            max_age=cookie.max_age,
+            expires=cookie.expires,
+            path=cookie.path,
+            domain=cookie.domain,
+            secure=cookie.secure,
+            httponly=cookie.http_only,
+            samesite=cookie.same_site,
+        )
     
     return flask_response
 
 
-def create_handler(handler: Callable):
+def create_handler(handler: Callable, route: Route):
     """
     Create a Flask handler from a superfunctions handler.
     
@@ -126,6 +145,8 @@ def create_handler(handler: Callable):
             # Handle unexpected errors
             return jsonify({"error": {"message": str(e), "code": "INTERNAL_ERROR"}}), 500
 
+    setattr(flask_handler, SUPERFUNCTIONS_ROUTE_ATTR, route)
+    setattr(flask_handler, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
     return flask_handler
 
 
@@ -163,40 +184,30 @@ def create_blueprint(
         >>> app.register_blueprint(blueprint)
     """
     blueprint = Blueprint(name, __name__, url_prefix=url_prefix)
-    
+
     for route in routes:
         # Convert superfunctions path to Flask path
         # superfunctions uses :param, Flask uses <param>
-        flask_path = route.path.replace(":", "<").replace("/<", "/<")
-        if "<" in flask_path and ">" not in flask_path:
-            # Add closing bracket if missing
-            parts = flask_path.split("<")
-            flask_parts = []
-            for i, part in enumerate(parts):
-                if i > 0 and ">" not in part:
-                    # Find next slash or end
-                    if "/" in part:
-                        param_name, rest = part.split("/", 1)
-                        flask_parts.append(f"<{param_name}>/{rest}")
-                    else:
-                        flask_parts.append(f"<{part}>")
-                else:
-                    flask_parts.append(part)
-            flask_path = "".join(flask_parts)
-        
+        flask_path = re.sub(r":([^/]+)", r"<\1>", route.path)
+        if not flask_path.startswith("/"):
+            flask_path = f"/{flask_path}"
+
         # Create handler
-        handler = create_handler(route.handler)
-        
+        handler = create_handler(route.handler, route)
+
         # Register route based on method
         methods = [route.method.value]
-        
+        endpoint = (
+            f"{route.method.value.lower()}_"
+            f"{flask_path.strip('/').replace('/', '_').replace('<', '').replace('>', '') or 'root'}"
+        )
         blueprint.add_url_rule(
             flask_path,
-            endpoint=f"{route.method.value.lower()}_{flask_path.replace('/', '_').replace('<', '').replace('>', '')}",
+            endpoint=endpoint,
             view_func=handler,
             methods=methods,
         )
-    
+
     return blueprint
 
 

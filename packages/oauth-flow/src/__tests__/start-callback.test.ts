@@ -90,14 +90,22 @@ describe("oauth-flow start/callback invariants", () => {
     expect(state?.userId).toBe("user_1");
     expect(state?.providerId).toBe("google");
     expect(state?.expiresAt).toBeDefined();
-
-    expect(events).toContainEqual({
-      name: "oauth.flow.started",
-      requestId: "req_start_1",
-      providerId: "google",
-      at: "2026-01-01T00:00:00.000Z",
-      ok: true
+    expect(state?.subject).toMatchObject({
+      kind: "connection",
+      tenantId: "tenant_1",
+      userId: "user_1"
     });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        name: "oauth.flow.started",
+        requestId: "req_start_1",
+        providerId: "google",
+        at: "2026-01-01T00:00:00.000Z",
+        ok: true,
+        subjectKind: "connection"
+      })
+    );
   });
 
   it("start() rejects non-allowlisted redirect before state creation", async () => {
@@ -111,7 +119,7 @@ describe("oauth-flow start/callback invariants", () => {
         redirectUri: "https://evil.example/callback"
       })
     ).rejects.toMatchObject({
-      code: "OAUTH_CALLBACK_MISMATCH",
+      code: "OAUTH_REDIRECT_DISALLOWED",
       status: 400,
       retryable: false
     });
@@ -130,7 +138,7 @@ describe("oauth-flow start/callback invariants", () => {
         redirectUri: "https://app.example/callback"
       })
     ).rejects.toMatchObject({
-      code: "VALIDATION_ERROR",
+      code: "OAUTH_PROVIDER_UNSUPPORTED",
       status: 400,
       retryable: false
     });
@@ -153,6 +161,7 @@ describe("oauth-flow start/callback invariants", () => {
     });
 
     expect(first.providerId).toBe("google");
+    expect(first.subject.kind).toBe("connection");
     expect(first.subject.tenantId).toBe("tenant_1");
     expect(first.subject.userId).toBe("user_1");
     expect(first.tokenSet.accessToken).toBe("access-token");

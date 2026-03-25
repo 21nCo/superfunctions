@@ -1,4 +1,6 @@
 import type {
+  ArtifactDescriptor,
+  RenderDescriptor,
   FileFnClientConfig,
   InitUploadResponse,
   UploadStatusResponse,
@@ -67,11 +69,28 @@ export interface HttpClient {
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>>;
 
+  listArtifacts(
+    fileId: string,
+    signal?: AbortSignal,
+  ): Promise<ArtifactDescriptor[]>;
+
   downloadUrl(
     fileId: string,
     options?: { versionId?: string },
     signal?: AbortSignal,
   ): Promise<{ url: string }>;
+
+  downloadArtifact(
+    fileId: string,
+    artifactId: string,
+    signal?: AbortSignal,
+  ): Promise<{ url: string; headers?: Record<string, string> }>;
+
+  getRenderDescriptor(
+    fileId: string,
+    options: { intent: string; versionId?: string },
+    signal?: AbortSignal,
+  ): Promise<RenderDescriptor>;
 
   deleteFile(fileId: string, signal?: AbortSignal): Promise<void>;
 
@@ -211,11 +230,43 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
       );
     },
 
+    async listArtifacts(fileId, signal) {
+      const response = await request<{ artifacts: ArtifactDescriptor[] }>(
+        "GET",
+        `/${fileId}/artifacts`,
+        undefined,
+        signal,
+      );
+      return response.artifacts;
+    },
+
     async downloadUrl(fileId, options, signal) {
       const path = options?.versionId
         ? `/${fileId}/versions/${options.versionId}/download`
         : `/${fileId}/download`;
       return request<{ url: string }>("GET", path, undefined, signal);
+    },
+
+    async downloadArtifact(fileId, artifactId, signal) {
+      return request<{ url: string; headers?: Record<string, string> }>(
+        "GET",
+        `/${fileId}/artifacts/${artifactId}/download`,
+        undefined,
+        signal,
+      );
+    },
+
+    async getRenderDescriptor(fileId, options, signal) {
+      const search = new URLSearchParams({ intent: options.intent });
+      if (options.versionId) {
+        search.set("versionId", options.versionId);
+      }
+      return request<RenderDescriptor>(
+        "GET",
+        `/${fileId}/render?${search.toString()}`,
+        undefined,
+        signal,
+      );
     },
 
     async deleteFile(fileId, signal) {

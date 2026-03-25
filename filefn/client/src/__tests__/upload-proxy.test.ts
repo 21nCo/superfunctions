@@ -63,12 +63,14 @@ describe('PHASE_02 client proxy upload', () => {
         policy: 'p1',
         file: file as any,
         fileName: 'test.txt',
+        fileId: 'f1',
       },
       () =>
         manager.startUpload({
           policy: 'p1',
           file: file as any,
           fileName: 'test.txt',
+          fileId: 'f1',
         }),
     );
 

@@ -1,7 +1,8 @@
 {
-  "name": "@authfn/core",
+  "name": "@authfn/legacy-ts-sdk",
   "version": "0.0.1",
   "description": "Authentication self deployed",
+  "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,9 +16,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
-    "test": "vitest",
-    "test:watch": "vitest --watch",
+    "legacy:build": "tsc",
+    "legacy:test": "vitest",
+    "legacy:test:watch": "vitest --watch",
     "lint": "echo 'lint not configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"

@@ -25,7 +25,20 @@ export const googleProviderPolicy: ProviderPolicyDefinition = {
     supportsManagedMailbox: true,
     allowedFeatureModes: ["metadata-only", "snippet", "full-body"]
   },
+  auth: {
+    supportsSocialLogin: true,
+    supportsAccountLinking: true,
+    defaultScopes: ["openid", "email", "profile"],
+    availableClaims: ["email", "name", "profile"]
+  },
+  runtime: {
+    clientSecretMode: "resolver-allowed",
+    clientSecretResolverHint: "runtime-client-secret"
+  },
   featureScopes: {
+    "auth.social.profile": {
+      allowedScopes: ["openid", "email", "profile"]
+    },
     "mail.read.metadata": {
       allowedScopes: ["https://www.googleapis.com/auth/gmail.readonly"]
     },
@@ -41,6 +54,12 @@ export const googleProviderPolicy: ProviderPolicyDefinition = {
     }
   },
   operationPolicies: {
+    "auth.account.link": {
+      allowed: true
+    },
+    "auth.signin": {
+      allowed: true
+    },
     "mail.watch.create": {
       allowed: true
     },

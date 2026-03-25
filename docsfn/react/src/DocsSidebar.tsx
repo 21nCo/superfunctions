@@ -13,14 +13,12 @@ export interface DocsSidebarProps {
   surface?: DocsPageSurface;
   sidebar?: Sidebar;
   activePath?: string;
-  defaultCollapsedGroups?: string[];
 }
 
 export function DocsSidebar({
   surface,
   sidebar,
   activePath,
-  defaultCollapsedGroups = [],
 }: DocsSidebarProps) {
   const resolvedSidebar = sidebar ?? surface?.sidebar;
   const resolvedActivePath = activePath ?? surface?.route;
@@ -38,7 +36,6 @@ export function DocsSidebar({
               key={`${item.type}:${index}`}
               item={item}
               activePath={resolvedActivePath}
-              defaultCollapsed={defaultCollapsedGroups.includes(item.text || "")}
             />
           ))}
         </nav>
@@ -50,14 +47,12 @@ export function DocsSidebar({
 interface SidebarGroupProps {
   item: SidebarItem;
   activePath?: string;
-  defaultCollapsed?: boolean;
   depth?: number;
 }
 
 function SidebarGroup({
   item,
   activePath,
-  defaultCollapsed = false,
   depth = 0,
 }: SidebarGroupProps) {
   if (item.type === "separator") {
@@ -66,8 +61,7 @@ function SidebarGroup({
 
   if (item.type === "group") {
     const hasActiveChild = hasActiveLink(item, activePath);
-    const defaultOpen =
-      defaultCollapsed !== true && (item.collapsed === false || hasActiveChild);
+    const defaultOpen = item.expanded === true || hasActiveChild;
 
     return (
       <Collapsible className="docsfn-sidebar-group" data-depth={depth} defaultOpen={defaultOpen}>

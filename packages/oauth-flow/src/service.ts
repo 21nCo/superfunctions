@@ -2,13 +2,11 @@ import { randomUUID } from "node:crypto";
 import {
   DefaultOAuthService,
   OAuthCoreError,
-  assertRedirectUriAllowed,
   type AuthorizationResult,
   type OAuthProviderDescriptor,
   type OAuthTokenSet
 } from "@superfunctions/oauth-core";
-import { OAuthHttpError, type OAuthTokenEndpointResponse } from "@superfunctions/oauth-http";
-import { DefaultOAuthTokenHttpClient, type OAuthTokenHttpClient } from "@superfunctions/oauth-http";
+import { DefaultOAuthTokenHttpClient, OAuthHttpError, type OAuthTokenEndpointResponse, type OAuthTokenHttpClient } from "@superfunctions/oauth-http";
 import type {
   EncryptedTokenVault,
   OAuthStateRecord,
@@ -17,26 +15,128 @@ import type {
   TokenVault
 } from "@superfunctions/oauth-storage";
 
-export type OAuthFlowSubject = {
+type OAuthIntentSubject =
+  | {
+      kind: "connection";
+      tenantId: string;
+      userId: string;
+      connectionId?: string;
+    }
+  | {
+      kind: "browser-auth";
+      intentId: string;
+      tenantId?: string;
+      regionId?: string;
+      returnTo?: string;
+      metadata?: Record<string, unknown>;
+    };
+
+type OAuthStoredStateRecord = OAuthStateRecord & {
+  subject?: OAuthIntentSubject;
+  connectionId?: string;
+  intentId?: string;
+  regionId?: string;
+  returnTo?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type OAuthTokenGrantType = "authorization_code" | "refresh_token" | "client_credentials";
+type OAuthTokenAuthMethod = "client_secret_post" | "client_secret_basic";
+
+type OAuthResolvedClientSecret = {
+  clientSecret: string;
+  tokenAuthMethod?: OAuthTokenAuthMethod;
+};
+
+type OAuthSecretResolverContext = {
+  provider: OAuthProviderDescriptor;
+  operation: "exchange" | "revoke";
+  clientId: string;
+  grantType?: OAuthTokenGrantType;
+  redirectUri?: string;
+  scopes?: string[];
+  tokenTypeHint?: "access_token" | "refresh_token";
+};
+
+type OAuthClientSecretResolver = (
+  input: OAuthSecretResolverContext
+) => Promise<OAuthResolvedClientSecret> | OAuthResolvedClientSecret;
+
+type OAuthExchangeTokenInput = {
+  provider: OAuthProviderDescriptor;
+  grantType: OAuthTokenGrantType;
+  clientId: string;
+  clientSecret?: string;
+  clientSecretResolver?: OAuthClientSecretResolver;
+  redirectUri?: string;
+  code?: string;
+  codeVerifier?: string;
+  refreshToken?: string;
+  scopes?: string[];
+};
+
+type OAuthRevokeTokenInput = {
+  provider: OAuthProviderDescriptor;
+  clientId: string;
+  clientSecret?: string;
+  clientSecretResolver?: OAuthClientSecretResolver;
+  token: string;
+  tokenTypeHint?: "access_token" | "refresh_token";
+};
+
+type CreateAuthorizationRequestInput = {
+  providerId: string;
+  redirectUri: string;
+  scopes?: string[];
+  prompt?: string;
+  loginHint?: string;
+  subject: OAuthIntentSubject;
+};
+
+export interface OAuthFlowSubject {
+  kind: "connection" | "browser-auth";
+  tenantId?: string;
+  userId?: string;
+  connectionId?: string;
+  intentId?: string;
+  regionId?: string;
+  returnTo?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OAuthFlowResolvedIdentity {
   tenantId: string;
   userId: string;
   connectionId?: string;
-};
+  metadata?: Record<string, unknown>;
+  persistTokens?: boolean;
+}
 
-export type OAuthFlowStartInput = OAuthFlowSubject & {
+export type OAuthFlowStartInput = {
   providerId: string;
   redirectUri: string;
   scopes?: string[];
   prompt?: string;
   loginHint?: string;
   metadata?: Record<string, unknown>;
-};
+  requestId?: string;
+} & (
+  | {
+      subject: OAuthIntentSubject;
+    }
+  | {
+      tenantId: string;
+      userId: string;
+      connectionId?: string;
+    }
+);
 
 export type OAuthFlowCallbackInput = {
   providerId?: string;
   code: string;
   state: string;
   redirectUri: string;
+  requestId?: string;
 };
 
 export type OAuthFlowRefreshInput = {
@@ -44,6 +144,7 @@ export type OAuthFlowRefreshInput = {
   providerId: string;
   redirectUri: string;
   scopes?: string[];
+  requestId?: string;
 };
 
 export type OAuthFlowDisconnectInput = {
@@ -51,6 +152,7 @@ export type OAuthFlowDisconnectInput = {
   providerId: string;
   revokeRemote?: boolean;
   tokenTypeHint?: "access_token" | "refresh_token";
+  requestId?: string;
 };
 
 export type OAuthFlowStartResult = AuthorizationResult & {
@@ -61,8 +163,9 @@ export type OAuthFlowCallbackResult = {
   providerId: string;
   subject: OAuthFlowSubject;
   tokenSet: OAuthTokenSet;
-  tokenRecordId: string;
-  connectionId: string;
+  tokenRecordId?: string;
+  connectionId?: string;
+  resolvedIdentity?: OAuthFlowResolvedIdentity;
 };
 
 export type OAuthFlowDisconnectResult = {
@@ -72,7 +175,17 @@ export type OAuthFlowDisconnectResult = {
   connectionDeleted: boolean;
 };
 
+export interface OAuthFlowResolveBrowserAuthIdentityInput {
+  providerId: string;
+  subject: OAuthFlowSubject;
+  state: OAuthStateRecord;
+  tokenSet: OAuthTokenSet;
+}
+
 export type OAuthFlowIdentityHooks = {
+  resolveBrowserAuthIdentity?: (
+    input: OAuthFlowResolveBrowserAuthIdentityInput
+  ) => Promise<OAuthFlowResolvedIdentity | null> | OAuthFlowResolvedIdentity | null;
   onConnected?: (result: OAuthFlowCallbackResult) => Promise<void>;
   onDisconnected?: (input: OAuthFlowDisconnectInput) => Promise<void>;
 };
@@ -86,8 +199,9 @@ export interface OAuthFlowService {
 
 export type OAuthProviderRuntimeConfig = {
   clientId: string;
-  clientSecret: string;
+  clientSecret?: string;
   allowlistedRedirectUris?: string[];
+  clientSecretResolver?: OAuthClientSecretResolver;
 };
 
 export type OAuthFlowEventName =
@@ -106,7 +220,10 @@ export type OAuthFlowEvent = {
   providerId: string;
   at: string;
   ok: boolean;
+  subjectKind?: OAuthFlowSubject["kind"];
+  connectionId?: string;
   errorCode?: OAuthFlowErrorCode;
+  details?: Record<string, unknown>;
 };
 
 export type OAuthFlowServiceConfig = {
@@ -122,14 +239,20 @@ export type OAuthFlowServiceConfig = {
 };
 
 export type OAuthFlowErrorCode =
-  | "HOOK_FAILED"
+  | "OAUTH_HOOK_FAILED"
   | "NOT_IMPLEMENTED"
   | "OAUTH_STATE_INVALID"
   | "OAUTH_STATE_REPLAYED"
   | "OAUTH_CALLBACK_MISMATCH"
+  | "OAUTH_REDIRECT_DISALLOWED"
+  | "OAUTH_PROVIDER_UNSUPPORTED"
+  | "OAUTH_RUNTIME_CONFIG_INVALID"
+  | "OAUTH_SECRET_RESOLUTION_FAILED"
   | "OAUTH_TOKEN_REFRESH_FAILED"
+  | "OAUTH_TOKEN_EXCHANGE_FAILED"
   | "VALIDATION_ERROR"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "PROVIDER_RATE_LIMITED";
 
 export class OAuthFlowError extends Error {
   readonly code: OAuthFlowErrorCode;
@@ -151,32 +274,35 @@ export class OAuthFlowError extends Error {
   }
 }
 
-type OAuthFlowHookName = keyof OAuthFlowIdentityHooks;
-type OAuthFlowHookPayloadMap = {
+type HookPayloadMap = {
+  resolveBrowserAuthIdentity: OAuthFlowResolveBrowserAuthIdentityInput;
   onConnected: OAuthFlowCallbackResult;
   onDisconnected: OAuthFlowDisconnectInput;
 };
 
-export async function invokeIdentityHook<T extends OAuthFlowHookName>(
+type HookName = keyof HookPayloadMap;
+
+export async function invokeIdentityHook<T extends HookName>(
   hooks: OAuthFlowIdentityHooks | undefined,
   hookName: T,
-  payload: OAuthFlowHookPayloadMap[T]
-): Promise<void> {
-  const hook = hooks?.[hookName];
+  payload: HookPayloadMap[T]
+): Promise<T extends "resolveBrowserAuthIdentity" ? OAuthFlowResolvedIdentity | null : void> {
+  const hook = hooks?.[hookName] as ((value: HookPayloadMap[T]) => Promise<unknown> | unknown) | undefined;
   if (!hook) {
-    return;
+    return undefined as T extends "resolveBrowserAuthIdentity" ? OAuthFlowResolvedIdentity | null : void;
   }
 
   try {
-    await hook(payload as never);
+    const result = await hook(payload);
+    return result as T extends "resolveBrowserAuthIdentity" ? OAuthFlowResolvedIdentity | null : void;
   } catch (error) {
-    throw new OAuthFlowError("HOOK_FAILED", "identity hook failed", {
+    throw new OAuthFlowError("OAUTH_HOOK_FAILED", "identity hook failed", {
       status: 500,
       retryable: false,
-      details: {
+      details: sanitizeDetails({
         hookName,
         cause: error instanceof Error ? error.message : String(error)
-      }
+      })
     });
   }
 }
@@ -192,17 +318,21 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     this.config = config;
     this.now = config.now ?? (() => new Date());
     this.tokenHttpClient = config.tokenHttpClient ?? new DefaultOAuthTokenHttpClient();
+    const exchangeToken = this.tokenHttpClient.exchangeToken.bind(this.tokenHttpClient) as (
+      input: OAuthExchangeTokenInput
+    ) => Promise<OAuthTokenEndpointResponse>;
     this.coreService = new DefaultOAuthService({
       providers: config.providers,
       providerRuntimeConfig: mapRuntimeConfig(config.providerRuntimeConfig),
       stateStore: config.stateStore,
       exchangeCodeForToken: async (input) => {
         const runtime = this.getRuntimeConfig(input.provider.id);
-        const response = await this.tokenHttpClient.exchangeToken({
+        const response = await exchangeToken({
           provider: input.provider,
           grantType: "authorization_code",
           clientId: runtime.clientId,
           clientSecret: runtime.clientSecret,
+          clientSecretResolver: runtime.clientSecretResolver,
           redirectUri: input.redirectUri,
           code: input.code,
           codeVerifier: input.codeVerifier,
@@ -212,7 +342,9 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         return {
           accessToken: response.accessToken,
           refreshToken: response.refreshToken,
-          expiresAt: response.expiresIn ? new Date(this.now().getTime() + response.expiresIn * 1000).toISOString() : undefined,
+          expiresAt: response.expiresIn
+            ? new Date(this.now().getTime() + response.expiresIn * 1000).toISOString()
+            : undefined,
           scope: response.scope,
           tokenType: response.tokenType,
           idToken: response.idToken
@@ -223,25 +355,25 @@ class DefaultOAuthFlowService implements OAuthFlowService {
   }
 
   async start(input: OAuthFlowStartInput): Promise<OAuthFlowStartResult> {
-    const requestId = this.resolveRequestId(input.metadata);
+    const requestId = this.resolveRequestId(input.requestId, input.metadata);
+    const subject = normalizeStartSubject(input);
 
     try {
       const provider = this.getProvider(input.providerId);
-      const runtime = this.getRuntimeConfig(input.providerId);
-      assertRedirectUriAllowed(input.redirectUri, runtime.allowlistedRedirectUris ?? []);
-
-      const result = await this.coreService.createAuthorizationRequest({
+      const createAuthorizationRequest = this.coreService.createAuthorizationRequest.bind(this.coreService) as unknown as (
+        request: CreateAuthorizationRequestInput
+      ) => Promise<AuthorizationResult>;
+      const result = await createAuthorizationRequest({
         providerId: input.providerId,
-        tenantId: input.tenantId,
-        userId: input.userId,
         redirectUri: input.redirectUri,
         scopes: input.scopes,
         prompt: input.prompt,
-        loginHint: input.loginHint
+        loginHint: input.loginHint,
+        subject: toIntentSubject(subject)
       });
 
-      if (input.connectionId) {
-        this.pendingConnectionByState.set(result.stateId, input.connectionId);
+      if (subject.kind === "connection" && subject.connectionId) {
+        this.pendingConnectionByState.set(result.stateId, subject.connectionId);
       }
 
       this.emitEvent({
@@ -249,7 +381,9 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         requestId,
         providerId: provider.id,
         at: this.now().toISOString(),
-        ok: true
+        ok: true,
+        subjectKind: subject.kind,
+        connectionId: subject.connectionId
       });
 
       return {
@@ -264,16 +398,20 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         providerId: input.providerId,
         at: this.now().toISOString(),
         ok: false,
-        errorCode: mapped.code
+        subjectKind: subject.kind,
+        connectionId: subject.connectionId,
+        errorCode: mapped.code,
+        details: mapped.details
       });
       throw mapped;
     }
   }
 
   async handleCallback(input: OAuthFlowCallbackInput): Promise<OAuthFlowCallbackResult> {
-    const requestId = randomUUID();
+    const requestId = input.requestId ?? randomUUID();
     const statePreview = await this.config.stateStore.get(input.state);
     const providerId = input.providerId ?? statePreview?.providerId;
+    const subjectPreview = statePreview ? toFlowSubject(statePreview) : undefined;
 
     if (!providerId) {
       const error = new OAuthFlowError("OAUTH_STATE_INVALID", "OAuth state is invalid or expired", {
@@ -286,6 +424,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         providerId: input.providerId ?? "unknown",
         at: this.now().toISOString(),
         ok: false,
+        subjectKind: subjectPreview?.kind,
+        connectionId: subjectPreview?.connectionId,
         errorCode: error.code
       });
       throw error;
@@ -300,26 +440,50 @@ class DefaultOAuthFlowService implements OAuthFlowService {
       });
 
       const consumedState = await this.requireState(input.state);
-      const connectionId = this.pendingConnectionByState.get(input.state) ?? `conn_${input.state}`;
-      this.pendingConnectionByState.delete(input.state);
+      const subject = toFlowSubject(consumedState);
 
-      const tokenRecordId = await this.persistTokenSet({
-        state: consumedState,
-        providerId,
-        connectionId,
-        tokenSet
-      });
+      let connectionId: string | undefined;
+      let tokenRecordId: string | undefined;
+      let resolvedIdentity: OAuthFlowResolvedIdentity | undefined;
+
+      if (subject.kind === "connection") {
+        connectionId = this.pendingConnectionByState.get(input.state) ?? subject.connectionId ?? `conn_${input.state}`;
+        this.pendingConnectionByState.delete(input.state);
+        tokenRecordId = await this.persistTokenSet({
+          state: consumedState,
+          providerId,
+          connectionId,
+          tokenSet
+        });
+      } else {
+        const hookResult = await invokeIdentityHook(this.config.identityHooks, "resolveBrowserAuthIdentity", {
+          providerId,
+          subject,
+          state: consumedState,
+          tokenSet
+        });
+
+        if (hookResult) {
+          resolvedIdentity = cloneResolvedIdentity(hookResult);
+          if (hookResult.persistTokens !== false) {
+            connectionId = hookResult.connectionId ?? `conn_${input.state}`;
+            tokenRecordId = await this.persistTokenSet({
+              state: applyResolvedIdentity(consumedState, hookResult),
+              providerId,
+              connectionId,
+              tokenSet
+            });
+          }
+        }
+      }
 
       const result: OAuthFlowCallbackResult = {
         providerId,
-        subject: {
-          tenantId: consumedState.tenantId,
-          userId: consumedState.userId,
-          connectionId
-        },
+        subject,
         tokenSet,
         tokenRecordId,
-        connectionId
+        connectionId,
+        resolvedIdentity
       };
 
       await invokeIdentityHook(this.config.identityHooks, "onConnected", result);
@@ -329,7 +493,9 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         requestId,
         providerId,
         at: this.now().toISOString(),
-        ok: true
+        ok: true,
+        subjectKind: subject.kind,
+        connectionId
       });
 
       return result;
@@ -341,16 +507,22 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         providerId,
         at: this.now().toISOString(),
         ok: false,
-        errorCode: mapped.code
+        subjectKind: subjectPreview?.kind,
+        connectionId: subjectPreview?.connectionId,
+        errorCode: mapped.code,
+        details: mapped.details
       });
       throw mapped;
     }
   }
 
   async refresh(input: OAuthFlowRefreshInput): Promise<OAuthTokenSet> {
-    const requestId = randomUUID();
+    const requestId = input.requestId ?? randomUUID();
 
     try {
+      const exchangeToken = this.tokenHttpClient.exchangeToken.bind(this.tokenHttpClient) as (
+        request: OAuthExchangeTokenInput
+      ) => Promise<OAuthTokenEndpointResponse>;
       const provider = this.getProvider(input.providerId);
       const runtime = this.getRuntimeConfig(input.providerId);
       const existing = await this.getTokenSetByConnection(input.connectionId);
@@ -368,11 +540,12 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         });
       }
 
-      const response = await this.tokenHttpClient.exchangeToken({
+      const response = await exchangeToken({
         provider,
         grantType: "refresh_token",
         clientId: runtime.clientId,
         clientSecret: runtime.clientSecret,
+        clientSecretResolver: runtime.clientSecretResolver,
         refreshToken: existing.tokenSet.refreshToken,
         redirectUri: input.redirectUri,
         scopes: input.scopes
@@ -386,7 +559,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         requestId,
         providerId: input.providerId,
         at: this.now().toISOString(),
-        ok: true
+        ok: true,
+        connectionId: input.connectionId
       });
 
       return merged;
@@ -398,19 +572,24 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         providerId: input.providerId,
         at: this.now().toISOString(),
         ok: false,
-        errorCode: mapped.code
+        connectionId: input.connectionId,
+        errorCode: mapped.code,
+        details: mapped.details
       });
       throw mapped;
     }
   }
 
   async disconnect(input: OAuthFlowDisconnectInput): Promise<OAuthFlowDisconnectResult> {
-    const requestId = randomUUID();
+    const requestId = input.requestId ?? randomUUID();
     let remoteRevokeAttempted = false;
     let localTokenDeleted = false;
     let connectionDeleted = false;
 
     try {
+      const revokeToken = this.tokenHttpClient.revokeToken.bind(this.tokenHttpClient) as (
+        request: OAuthRevokeTokenInput
+      ) => Promise<void>;
       const provider = this.getProvider(input.providerId);
       const runtime = this.getRuntimeConfig(input.providerId);
       const tokenRecord = await this.getTokenSetByConnection(input.connectionId);
@@ -421,10 +600,11 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         remoteRevokeAttempted = true;
         const tokenToRevoke = tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken;
         try {
-          await this.tokenHttpClient.revokeToken({
+          await revokeToken({
             provider,
             clientId: runtime.clientId,
             clientSecret: runtime.clientSecret,
+            clientSecretResolver: runtime.clientSecretResolver,
             token: tokenToRevoke,
             tokenTypeHint: input.tokenTypeHint
           });
@@ -455,7 +635,9 @@ class DefaultOAuthFlowService implements OAuthFlowService {
           providerId: input.providerId,
           at: this.now().toISOString(),
           ok: false,
-          errorCode: errorWithFlags.code
+          connectionId: input.connectionId,
+          errorCode: errorWithFlags.code,
+          details: errorWithFlags.details
         });
         throw errorWithFlags;
       }
@@ -472,7 +654,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         requestId,
         providerId: input.providerId,
         at: this.now().toISOString(),
-        ok: true
+        ok: true,
+        connectionId: input.connectionId
       });
 
       return result;
@@ -488,7 +671,9 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         providerId: input.providerId,
         at: this.now().toISOString(),
         ok: false,
-        errorCode: mapped.code
+        connectionId: input.connectionId,
+        errorCode: mapped.code,
+        details: mapped.details
       });
       throw mapped;
     }
@@ -498,7 +683,9 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     return {
       accessToken: response.accessToken,
       refreshToken: response.refreshToken ?? existing.refreshToken,
-      expiresAt: response.expiresIn ? new Date(this.now().getTime() + response.expiresIn * 1000).toISOString() : existing.expiresAt,
+      expiresAt: response.expiresIn
+        ? new Date(this.now().getTime() + response.expiresIn * 1000).toISOString()
+        : existing.expiresAt,
       scope: response.scope ?? existing.scope,
       tokenType: response.tokenType ?? existing.tokenType,
       idToken: response.idToken ?? existing.idToken
@@ -511,6 +698,15 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     connectionId: string;
     tokenSet: OAuthTokenSet;
   }): Promise<string> {
+    const tenantId = input.state.tenantId;
+    const userId = input.state.userId;
+    if (!tenantId || !userId) {
+      throw new OAuthFlowError("OAUTH_RUNTIME_CONFIG_INVALID", "Token persistence requires resolved tenantId and userId", {
+        status: 500,
+        retryable: false
+      });
+    }
+
     const timestamp = this.now().toISOString();
     const tokenId = `tok_${randomUUID()}`;
     const keyRef = this.config.keyRef ?? "oauth-default";
@@ -518,8 +714,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     if (isEncryptedTokenVault(this.config.tokenVault)) {
       await this.config.tokenVault.putTokenSet({
         tokenId,
-        tenantId: input.state.tenantId,
-        userId: input.state.userId,
+        tenantId,
+        userId,
         providerId: input.providerId,
         connectionId: input.connectionId,
         tokenSet: {
@@ -540,8 +736,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
 
     const record: TokenRecord = {
       tokenId,
-      tenantId: input.state.tenantId,
-      userId: input.state.userId,
+      tenantId,
+      userId,
       providerId: input.providerId,
       connectionId: input.connectionId,
       encryptedPayload: JSON.stringify(input.tokenSet),
@@ -570,7 +766,7 @@ class DefaultOAuthFlowService implements OAuthFlowService {
   private getProvider(providerId: string): OAuthProviderDescriptor {
     const provider = this.config.providers[providerId];
     if (!provider) {
-      throw new OAuthFlowError("VALIDATION_ERROR", `Unknown OAuth provider: ${providerId}`, {
+      throw new OAuthFlowError("OAUTH_PROVIDER_UNSUPPORTED", `Unknown OAuth provider: ${providerId}`, {
         status: 400,
         retryable: false
       });
@@ -582,8 +778,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
   private getRuntimeConfig(providerId: string): OAuthProviderRuntimeConfig {
     const runtime = this.config.providerRuntimeConfig[providerId];
     if (!runtime) {
-      throw new OAuthFlowError("VALIDATION_ERROR", `Missing runtime OAuth config for provider: ${providerId}`, {
-        status: 400,
+      throw new OAuthFlowError("OAUTH_RUNTIME_CONFIG_INVALID", `Missing runtime OAuth config for provider: ${providerId}`, {
+        status: 500,
         retryable: false
       });
     }
@@ -591,13 +787,19 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     return runtime;
   }
 
-  private resolveRequestId(metadata: Record<string, unknown> | undefined): string {
-    const requestId = metadata?.requestId;
-    return typeof requestId === "string" && requestId.length > 0 ? requestId : randomUUID();
+  private resolveRequestId(requestId: string | undefined, metadata: Record<string, unknown> | undefined): string {
+    if (requestId) {
+      return requestId;
+    }
+    const metadataRequestId = metadata?.requestId;
+    return typeof metadataRequestId === "string" && metadataRequestId.length > 0 ? metadataRequestId : randomUUID();
   }
 
   private emitEvent(event: OAuthFlowEvent): void {
-    this.config.emitEvent?.(event);
+    this.config.emitEvent?.({
+      ...event,
+      details: sanitizeDetails(event.details)
+    });
   }
 
   private async getTokenSetByConnection(connectionId: string): Promise<{ record: TokenRecord; tokenSet: OAuthTokenSet } | null> {
@@ -662,6 +864,102 @@ class DefaultOAuthFlowService implements OAuthFlowService {
   }
 }
 
+function normalizeStartSubject(input: OAuthFlowStartInput): OAuthFlowSubject {
+  if ("subject" in input) {
+    return toFlowSubject(input.subject);
+  }
+
+  return {
+    kind: "connection",
+    tenantId: input.tenantId,
+    userId: input.userId,
+    connectionId: input.connectionId
+  };
+}
+
+function toIntentSubject(subject: OAuthFlowSubject): OAuthIntentSubject {
+  if (subject.kind === "connection") {
+    return {
+      kind: "connection",
+      tenantId: subject.tenantId ?? "",
+      userId: subject.userId ?? "",
+      connectionId: subject.connectionId
+    };
+  }
+
+  return {
+    kind: "browser-auth",
+    intentId: subject.intentId ?? "",
+    tenantId: subject.tenantId,
+    regionId: subject.regionId,
+    returnTo: subject.returnTo,
+    metadata: subject.metadata ? { ...subject.metadata } : undefined
+  };
+}
+
+function toFlowSubject(subject: OAuthIntentSubject | OAuthStoredStateRecord): OAuthFlowSubject {
+  if ("providerId" in subject) {
+    const stored = subject.subject;
+    if (stored?.kind === "browser-auth" || subject.intentId) {
+      return {
+        kind: "browser-auth",
+        intentId: stored?.kind === "browser-auth" ? stored.intentId : subject.intentId,
+        tenantId: stored?.kind === "browser-auth" ? stored.tenantId : subject.tenantId,
+        regionId: stored?.kind === "browser-auth" ? stored.regionId : subject.regionId,
+        returnTo: stored?.kind === "browser-auth" ? stored.returnTo : subject.returnTo,
+        metadata: stored?.kind === "browser-auth" ? stored.metadata : subject.metadata
+      };
+    }
+
+    return {
+      kind: "connection",
+      tenantId: stored?.kind === "connection" ? stored.tenantId : subject.tenantId,
+      userId: stored?.kind === "connection" ? stored.userId : subject.userId,
+      connectionId: stored?.kind === "connection" ? stored.connectionId : subject.connectionId
+    };
+  }
+
+  if (subject.kind === "connection") {
+    return {
+      kind: "connection",
+      tenantId: subject.tenantId,
+      userId: subject.userId,
+      connectionId: subject.connectionId
+    };
+  }
+
+  return {
+    kind: "browser-auth",
+    intentId: subject.intentId,
+    tenantId: subject.tenantId,
+    regionId: subject.regionId,
+    returnTo: subject.returnTo,
+    metadata: subject.metadata ? { ...subject.metadata } : undefined
+  };
+}
+
+function applyResolvedIdentity(state: OAuthStateRecord, identity: OAuthFlowResolvedIdentity): OAuthStateRecord {
+  return {
+    ...state,
+    tenantId: identity.tenantId,
+    userId: identity.userId,
+    connectionId: identity.connectionId,
+    subject: {
+      kind: "connection",
+      tenantId: identity.tenantId,
+      userId: identity.userId,
+      connectionId: identity.connectionId
+    }
+  } as OAuthStateRecord;
+}
+
+function cloneResolvedIdentity(identity: OAuthFlowResolvedIdentity): OAuthFlowResolvedIdentity {
+  return {
+    ...identity,
+    metadata: identity.metadata ? { ...identity.metadata } : undefined
+  };
+}
+
 function mapRuntimeConfig(
   runtimeConfig: Record<string, OAuthProviderRuntimeConfig>
 ): Record<string, { clientId: string; allowlistedRedirectUris?: string[] }> {
@@ -683,7 +981,7 @@ function mapToOAuthFlowError(error: unknown): OAuthFlowError {
   }
 
   if (error instanceof OAuthCoreError) {
-    return new OAuthFlowError(error.code, error.message, {
+    return new OAuthFlowError(error.code as OAuthFlowErrorCode, error.message, {
       status: error.status,
       retryable: error.retryable,
       details: sanitizeDetails(error.details)
@@ -715,9 +1013,35 @@ function sanitizeDetails(details: Record<string, unknown> | undefined): Record<s
     if (lower.includes("token") || lower.includes("secret") || lower.includes("authorization")) {
       continue;
     }
-    copy[key] = value;
+    const sanitizedValue = sanitizeValue(value);
+    if (sanitizedValue !== undefined) {
+      copy[key] = sanitizedValue;
+    }
   }
-  return copy;
+  return Object.keys(copy).length > 0 ? copy : undefined;
+}
+
+function sanitizeValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    const lower = value.toLowerCase();
+    if (lower.includes("token") || lower.includes("secret") || lower.includes("authorization") || lower.includes("bearer")) {
+      return undefined;
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const sanitizedItems = value
+      .map((entry) => sanitizeValue(entry))
+      .filter((entry) => entry !== undefined);
+    return sanitizedItems.length > 0 ? sanitizedItems : undefined;
+  }
+
+  if (value && typeof value === "object") {
+    return sanitizeDetails(value as Record<string, unknown>);
+  }
+
+  return value;
 }
 
 function isEncryptedTokenVault(vault: TokenVault | EncryptedTokenVault): vault is EncryptedTokenVault {

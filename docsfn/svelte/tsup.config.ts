@@ -13,13 +13,15 @@ export default defineConfig({
   dts: false,
   clean: true,
   sourcemap: true,
-  external: ["svelte", "@docsfn/core", "@uifn/svelte", "searchfn", "marked"],
+  external: [/^@docsfn\/core(\/.*)?$/, "svelte", "@uifn/svelte", "searchfn", "marked"],
   esbuildPlugins: [esbuildSvelte()],
   onSuccess: async () => {
-    await writeFile(
-      path.join(dirname, "dist/index.d.ts"),
-      SVELTE_PUBLIC_TYPES,
-      "utf8"
+    const { copyFile } = await import("node:fs/promises");
+    await writeFile(path.join(dirname, "dist/index.d.ts"), SVELTE_PUBLIC_TYPES, "utf8");
+    await copyFile(path.join(dirname, "src/theme.css"), path.join(dirname, "dist/theme.css"));
+    await copyFile(
+      path.join(dirname, "src/theme-base.css"),
+      path.join(dirname, "dist/theme-base.css")
     );
   },
 });

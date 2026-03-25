@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import {
+  DbAdapterOAuthConsentStore,
+  DbAdapterOAuthRevocationFailureStore,
   DbAdapterOAuthStateStore,
   DbAdapterTokenVault,
   OAuthDbAdapterError,
@@ -8,19 +10,24 @@ import {
 } from "../src/index.js";
 
 describe("oauth-storage db adapter bridge", () => {
-  it("supports oauth state and token lifecycle via @superfunctions/db adapter", async () => {
+  it("supports oauth state, token, consent, and revocation-failure lifecycle via @superfunctions/db adapter", async () => {
     const adapter = memoryAdapter();
     await adapter.initialize();
 
-    const { stateStore, tokenVault, models } = createOAuthDbStorage({ adapter });
+    const { stateStore, tokenVault, consentStore, revocationFailureStore, models } = createOAuthDbStorage({ adapter });
     expect(models.oauthStates).toBe("oauth_states");
-    expect(models.oauthTokenVault).toBe("oauth_token_vault");
+    expect(models.oauthTokenVault).toBe("oauth_tokens");
+    expect(models.oauthConsents).toBe("oauth_consents");
+    expect(models.oauthRevocationFailures).toBe("oauth_revocation_failures");
 
     await stateStore.put({
       stateId: "st_db_1",
-      tenantId: "t1",
-      userId: "u1",
       providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_db_1",
+        regionId: "eu-west-1"
+      },
       redirectUri: "https://app.example/callback",
       requestedScopes: ["openid"],
       codeVerifier: "verifier",
@@ -30,7 +37,10 @@ describe("oauth-storage db adapter bridge", () => {
     });
 
     const state = await stateStore.get("st_db_1");
-    expect(state?.providerId).toBe("google");
+    expect(state?.subject).toMatchObject({
+      kind: "browser-auth",
+      intentId: "intent_db_1"
+    });
 
     const consumed = await stateStore.consume("st_db_1", "2026-01-01T00:01:00.000Z");
     expect(consumed?.consumedAt).toBe("2026-01-01T00:01:00.000Z");
@@ -59,6 +69,44 @@ describe("oauth-storage db adapter bridge", () => {
     const rotated = await tokenVault.get("tok_db_1");
     expect(rotated?.keyRef).toBe("kms_2");
 
+    await consentStore.put({
+      consentId: "consent_db_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_db_1"
+      },
+      scopes: ["openid"],
+      grantedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    const consents = await consentStore.listBySubject("google", {
+      kind: "browser-auth",
+      intentId: "intent_db_1"
+    });
+    expect(consents).toHaveLength(1);
+
+    await revocationFailureStore.put({
+      failureId: "revfail_db_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_db_1"
+      },
+      tokenId: "tok_db_1",
+      errorCode: "provider_revoke_failed",
+      errorMessage: "rate limited",
+      retryable: true,
+      occurredAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    const failures = await revocationFailureStore.listBySubject("google", {
+      kind: "browser-auth",
+      intentId: "intent_db_1"
+    });
+    expect(failures).toHaveLength(1);
+
     await tokenVault.deleteByConnection("conn_db_1");
     expect(await tokenVault.getByConnection("conn_db_1")).toBeNull();
   });
@@ -68,13 +116,20 @@ describe("oauth-storage db adapter bridge", () => {
     await adapter.initialize();
 
     const stateStore = new DbAdapterOAuthStateStore(adapter, "oauth_states_custom");
-    const tokenVault = new DbAdapterTokenVault(adapter, "oauth_token_vault_custom");
+    const tokenVault = new DbAdapterTokenVault(adapter, "oauth_tokens_custom");
+    const consentStore = new DbAdapterOAuthConsentStore(adapter, "oauth_consents_custom");
+    const revocationFailureStore = new DbAdapterOAuthRevocationFailureStore(
+      adapter,
+      "oauth_revocation_failures_custom"
+    );
 
     await stateStore.put({
       stateId: "st_custom_1",
-      tenantId: "t1",
-      userId: "u1",
       providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_custom_1"
+      },
       redirectUri: "https://app.example/callback",
       requestedScopes: ["openid"],
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -93,8 +148,35 @@ describe("oauth-storage db adapter bridge", () => {
       updatedAt: "2026-01-01T00:00:00.000Z"
     });
 
+    await consentStore.put({
+      consentId: "consent_custom_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_custom_1"
+      },
+      scopes: ["openid"],
+      grantedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    await revocationFailureStore.put({
+      failureId: "revfail_custom_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_custom_1"
+      },
+      errorCode: "rate_limited",
+      errorMessage: "retry later",
+      retryable: true,
+      occurredAt: "2026-01-01T00:00:00.000Z"
+    });
+
     expect((await stateStore.get("st_custom_1"))?.stateId).toBe("st_custom_1");
     expect((await tokenVault.getByConnection("conn_custom_1"))?.tokenId).toBe("tok_custom_1");
+    expect((await consentStore.get("consent_custom_1"))?.consentId).toBe("consent_custom_1");
+    expect((await revocationFailureStore.get("revfail_custom_1"))?.failureId).toBe("revfail_custom_1");
   });
 
   it("fails deterministically when required schema mapping is missing", async () => {
@@ -102,9 +184,14 @@ describe("oauth-storage db adapter bridge", () => {
     await adapter.initialize();
 
     expect(() => createOAuthDbStorage({ adapter, models: { oauthStates: "" } })).toThrowError(OAuthDbAdapterError);
-
-    expect(() => createOAuthDbStorage({ adapter, models: { oauthStates: "" } })).toThrowError(
-      "oauth_states model mapping required"
+    expect(() => createOAuthDbStorage({ adapter, models: { oauthTokenVault: "" } })).toThrowError(
+      "oauth_tokens model mapping required"
+    );
+    expect(() => createOAuthDbStorage({ adapter, models: { oauthConsents: "" } })).toThrowError(
+      "oauth_consents model mapping required"
+    );
+    expect(() => createOAuthDbStorage({ adapter, models: { oauthRevocationFailures: "" } })).toThrowError(
+      "oauth_revocation_failures model mapping required"
     );
   });
 });

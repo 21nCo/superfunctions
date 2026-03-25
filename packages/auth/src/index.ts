@@ -4,6 +4,8 @@
 
 // Core types
 export type {
+  AuthActorType,
+  AuthSubject,
   AuthSession,
   AuthProvider,
   AuthProviderConfig,
@@ -14,10 +16,15 @@ export type {
 // Errors
 export {
   AuthError,
+  AuthValidationError,
   AuthenticationError,
   AuthorizationError,
   InvalidCredentialsError,
   ExpiredCredentialsError,
+  isAuthSubject,
+  assertValidAuthSubject,
+  isAuthSession,
+  assertValidAuthSession,
 } from './types.js';
 
 // Middleware utilities

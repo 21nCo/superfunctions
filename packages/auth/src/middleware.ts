@@ -124,7 +124,8 @@ export function createResourceAuthMiddleware<TSession extends AuthSession>(
       }
     } else {
       // Default: check if resource ID is in session's resourceIds
-      if (!session.resourceIds.includes(resourceId)) {
+      const resourceIds = Array.isArray(session.resourceIds) ? session.resourceIds : [];
+      if (!resourceIds.includes(resourceId)) {
         throw new AuthorizationError('Access denied to resource');
       }
     }

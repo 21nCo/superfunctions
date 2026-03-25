@@ -1,9 +1,10 @@
 import type { Adapter } from '@superfunctions/db';
-import type { StorageAdapter } from '@superfunctions/storage';
+import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
 import type { Logger } from '../observability/logger.js';
 import type { QuotaProvider } from '../upload-sessions/service.js';
+import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import * as errors from '../errors.js';
 import { createFileDeletedEvent } from '../events.js';
 
@@ -36,13 +37,17 @@ interface FileArtifactRecord {
   artifactId: string;
   fileId: string;
   versionId: string;
+  kind: string;
   storageKey: string;
+  mimeType: string;
   size?: number | null;
+  createdAt?: string;
 }
 
 interface UploadSessionRecord {
   uploadSessionId: string;
   status: 'pending' | 'in_progress' | 'completed' | 'aborted' | 'expired';
+  policy: string;
   uploadMode: string;
   storageKey: string;
   storageUploadId: string | null;
@@ -69,6 +74,7 @@ export interface Authorizer {
 export interface FileServiceConfig {
   db: Adapter;
   storage: StorageAdapter;
+  policies?: Pick<PolicyRegistry, 'get'>;
   events: FileFnEventEmitter;
   logger?: Logger;
   quota?: QuotaProvider;
@@ -88,6 +94,38 @@ export type FileReadResult = FileRecord & {
   checksumSha256Base64?: string | null;
   storageKey?: string;
 };
+
+type RenderIntent = 'thumbnail' | 'preview' | 'full' | 'download';
+type RenderState = 'ready' | 'processing' | 'pending-local' | 'unsupported';
+type RenderPlaceholderKind = 'generic-file' | 'pdf-processing' | 'unsupported-preview';
+
+interface RenderDescriptor {
+  fileId: string;
+  versionId: string;
+  intent: RenderIntent;
+  state: RenderState;
+  mimeType: string;
+  name: string;
+  size: number;
+  source:
+    | {
+        mode: 'artifact';
+        artifactId: string;
+        artifactKind: string;
+        url: string;
+        headers?: Record<string, string>;
+      }
+    | {
+        mode: 'original';
+        url: string;
+        headers?: Record<string, string>;
+      }
+    | {
+        mode: 'placeholder';
+        placeholderKind: RenderPlaceholderKind;
+      };
+  warnings?: string[];
+}
 
 function createDefaultAuthorizer(): Authorizer {
   return {
@@ -145,10 +183,36 @@ function proxyPartKey(storageKey: string, partNumber: number): string {
   return `${storageKey}.part${partNumber}`;
 }
 
+function isImageMimeType(mimeType: string): boolean {
+  return mimeType.startsWith('image/');
+}
+
+function isPdfMimeType(mimeType: string): boolean {
+  return mimeType === 'application/pdf';
+}
+
+function isMediaPreviewMimeType(mimeType: string): boolean {
+  return mimeType.startsWith('audio/') || mimeType.startsWith('video/');
+}
+
+function selectArtifactByKind(
+  artifacts: FileArtifactRecord[],
+  preferredKinds: string[],
+): FileArtifactRecord | null {
+  for (const kind of preferredKinds) {
+    const found = artifacts.find((artifact) => artifact.kind === kind);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
 export function createFileService(config: FileServiceConfig) {
   const {
     db,
     storage,
+    policies,
     events,
     logger,
     quota,
@@ -220,6 +284,50 @@ export function createFileService(config: FileServiceConfig) {
     }
 
     return version;
+  }
+
+  async function getArtifactDownloadUrl(
+    file: Pick<FileRecord, 'policy' | 'fileId'>,
+    artifact: FileArtifactRecord,
+  ): Promise<{ url: string; headers?: Record<string, string> }> {
+    const artifactStorageTarget = resolveArtifactStorageTarget(policies?.get(file.policy) ?? {});
+    if (getStorageCapabilities(storage, artifactStorageTarget).signedDownloadUrls && storage.signDownloadUrl) {
+      const result = await storage.signDownloadUrl({
+        key: artifact.storageKey,
+        target: artifactStorageTarget,
+        expiresInSeconds: signedUrlTtlSeconds,
+      });
+      return { url: result.url, headers: result.headers };
+    }
+
+    return { url: `/proxy/files/${file.fileId}/artifacts/${artifact.artifactId}/download` };
+  }
+
+  function createPlaceholderDescriptor(input: {
+    fileId: string;
+    versionId: string;
+    intent: RenderIntent;
+    state: 'processing' | 'unsupported';
+    mimeType: string;
+    name: string;
+    size: number;
+    placeholderKind: RenderPlaceholderKind;
+    warnings?: string[];
+  }): RenderDescriptor {
+    return {
+      fileId: input.fileId,
+      versionId: input.versionId,
+      intent: input.intent,
+      state: input.state,
+      mimeType: input.mimeType,
+      name: input.name,
+      size: input.size,
+      source: {
+        mode: 'placeholder',
+        placeholderKind: input.placeholderKind,
+      },
+      warnings: input.warnings,
+    };
   }
 
   return {
@@ -319,10 +427,12 @@ export function createFileService(config: FileServiceConfig) {
       const file = await this.getFile(fileId, ctx);
       const targetVersionId = versionId || file.currentVersionId;
       const version = await getVersionChecked(fileId, targetVersionId);
+      const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
-      if (storage.capabilities.signedDownloadUrls && storage.signDownloadUrl) {
+      if (getStorageCapabilities(storage, storageTarget).signedDownloadUrls && storage.signDownloadUrl) {
         const result = await storage.signDownloadUrl({
           key: version.storageKey,
+          target: storageTarget,
           expiresInSeconds: signedUrlTtlSeconds,
         });
         return { url: result.url, headers: result.headers };
@@ -343,17 +453,158 @@ export function createFileService(config: FileServiceConfig) {
       const file = await this.getFile(fileId, ctx);
       const targetVersionId = versionId || file.currentVersionId;
       const version = await getVersionChecked(fileId, targetVersionId);
+      const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
       if (!storage.openDownloadStream) {
         throw new Error('Storage adapter does not support streaming');
       }
 
-      const stream = await storage.openDownloadStream({ key: version.storageKey });
+      const stream = await storage.openDownloadStream({ key: version.storageKey, target: storageTarget });
       return {
         stream: stream as unknown as ReadableStream,
         contentType: version.mimeType,
         size: version.size,
       };
+    },
+
+    async getRenderDescriptor(
+      fileId: string,
+      options: { intent: RenderIntent; versionId?: string },
+      ctx: FileProviderContext,
+    ): Promise<RenderDescriptor> {
+      const file = await this.getFile(fileId, ctx);
+      const versionId = options.versionId || file.currentVersionId;
+      const version = await getVersionChecked(fileId, versionId);
+      const artifacts = await db.findMany<FileArtifactRecord>({
+        model: 'fileArtifacts',
+        where: [
+          { field: 'fileId', operator: 'eq', value: fileId },
+          { field: 'versionId', operator: 'eq', value: versionId },
+        ],
+        namespace,
+      });
+
+      const originalDescriptor = async (): Promise<RenderDescriptor> => {
+        const original = await this.getDownloadUrl(fileId, versionId, ctx);
+        return {
+          fileId,
+          versionId,
+          intent: options.intent,
+          state: 'ready',
+          mimeType: version.mimeType,
+          name: file.name,
+          size: version.size,
+          source: {
+            mode: 'original',
+            url: original.url,
+            headers: original.headers,
+          },
+        };
+      };
+
+      const artifactDescriptor = async (artifact: FileArtifactRecord): Promise<RenderDescriptor> => {
+        const resolved = await getArtifactDownloadUrl(file, artifact);
+        return {
+          fileId,
+          versionId,
+          intent: options.intent,
+          state: 'ready',
+          mimeType: artifact.mimeType,
+          name: file.name,
+          size: artifact.size ?? version.size,
+          source: {
+            mode: 'artifact',
+            artifactId: artifact.artifactId,
+            artifactKind: artifact.kind,
+            url: resolved.url,
+            headers: resolved.headers,
+          },
+        };
+      };
+
+      if (options.intent === 'full' || options.intent === 'download') {
+        return originalDescriptor();
+      }
+
+      if (options.intent === 'thumbnail') {
+        if (isImageMimeType(version.mimeType)) {
+          const artifact = selectArtifactByKind(artifacts, ['thumbnail-small', 'thumbnail-medium']);
+          if (artifact) {
+            return artifactDescriptor(artifact);
+          }
+          return originalDescriptor();
+        }
+
+        if (isPdfMimeType(version.mimeType)) {
+          const artifact = selectArtifactByKind(artifacts, ['pdf-preview-page-1-small', 'pdf-preview-page-1-medium']);
+          if (artifact) {
+            return artifactDescriptor(artifact);
+          }
+          return createPlaceholderDescriptor({
+            fileId,
+            versionId,
+            intent: options.intent,
+            state: 'processing',
+            mimeType: version.mimeType,
+            name: file.name,
+            size: version.size,
+            placeholderKind: 'pdf-processing',
+            warnings: ['PDF preview artifact is not available yet.'],
+          });
+        }
+
+        return createPlaceholderDescriptor({
+          fileId,
+          versionId,
+          intent: options.intent,
+          state: 'unsupported',
+          mimeType: version.mimeType,
+          name: file.name,
+          size: version.size,
+          placeholderKind: 'generic-file',
+        });
+      }
+
+      if (isImageMimeType(version.mimeType)) {
+        const artifact = selectArtifactByKind(artifacts, ['thumbnail-large']);
+        if (artifact) {
+          return artifactDescriptor(artifact);
+        }
+        return originalDescriptor();
+      }
+
+      if (isPdfMimeType(version.mimeType)) {
+        const artifact = selectArtifactByKind(artifacts, ['pdf-preview-page-1-large', 'pdf-preview-page-1-medium']);
+        if (artifact) {
+          return artifactDescriptor(artifact);
+        }
+        return createPlaceholderDescriptor({
+          fileId,
+          versionId,
+          intent: options.intent,
+          state: 'processing',
+          mimeType: version.mimeType,
+          name: file.name,
+          size: version.size,
+          placeholderKind: 'pdf-processing',
+          warnings: ['PDF preview artifact is not available yet.'],
+        });
+      }
+
+      if (isMediaPreviewMimeType(version.mimeType)) {
+        return originalDescriptor();
+      }
+
+      return createPlaceholderDescriptor({
+        fileId,
+        versionId,
+        intent: options.intent,
+        state: 'unsupported',
+        mimeType: version.mimeType,
+        name: file.name,
+        size: version.size,
+        placeholderKind: 'unsupported-preview',
+      });
     },
 
     async deleteFile(fileId: string, ctx: FileProviderContext): Promise<void> {
@@ -367,7 +618,7 @@ export function createFileService(config: FileServiceConfig) {
         throw errors.notFound('File');
       }
 
-      const canDelete = await authorizer.canDelete(file, ctx);
+        const canDelete = await authorizer.canDelete(file, ctx);
       if (!canDelete) {
         throw errors.forbidden();
       }
@@ -394,10 +645,13 @@ export function createFileService(config: FileServiceConfig) {
       });
 
       for (const session of pendingSessions) {
+        const sessionPolicy = policies?.get(session.policy) ?? {};
+        const sessionStorageTarget = resolveStorageTarget(sessionPolicy);
         if (session.storageUploadId && storage.abortMultipartUpload) {
           try {
             await storage.abortMultipartUpload({
               key: session.storageKey,
+              target: sessionStorageTarget,
               uploadId: session.storageUploadId,
             });
           } catch {
@@ -415,7 +669,7 @@ export function createFileService(config: FileServiceConfig) {
         if (session.uploadMode === 'proxy') {
           for (const part of parts) {
             try {
-              await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber) });
+              await storage.deleteObject({ key: proxyPartKey(session.storageKey, part.partNumber), target: sessionStorageTarget });
             } catch {
               // Best-effort cleanup for proxy temp parts.
             }
@@ -430,17 +684,21 @@ export function createFileService(config: FileServiceConfig) {
       }
 
       const versionBytesByStorageKey = new Map<string, number>();
+      const targetKeyFor = (target: string, key: string) => `${target}\u0000${key}`;
+      const fileStorageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
+      const artifactStorageTarget = resolveArtifactStorageTarget(policies?.get(file.policy) ?? {});
       for (const version of versions) {
-        const existing = versionBytesByStorageKey.get(version.storageKey) ?? 0;
-        versionBytesByStorageKey.set(version.storageKey, Math.max(existing, version.size));
+        const ref = targetKeyFor(fileStorageTarget, version.storageKey);
+        const existing = versionBytesByStorageKey.get(ref) ?? 0;
+        versionBytesByStorageKey.set(ref, Math.max(existing, version.size));
       }
 
       const candidateStorageKeys = new Set<string>();
       for (const version of versions) {
-        candidateStorageKeys.add(version.storageKey);
+        candidateStorageKeys.add(targetKeyFor(fileStorageTarget, version.storageKey));
       }
       for (const artifact of artifacts) {
-        candidateStorageKeys.add(artifact.storageKey);
+        candidateStorageKeys.add(targetKeyFor(artifactStorageTarget, artifact.storageKey));
       }
 
       const storageKeysReferencedElsewhere = new Set<string>();
@@ -452,9 +710,19 @@ export function createFileService(config: FileServiceConfig) {
           namespace,
         });
 
+        const allFiles = await db.findMany<Pick<FileRecord, 'fileId' | 'policy'>>({
+          model: 'files',
+          where: [],
+          select: ['fileId', 'policy'],
+          namespace,
+        });
+        const policyByFileId = new Map(allFiles.map((entry) => [entry.fileId, entry.policy]));
+
         for (const version of allVersions) {
-          if (version.fileId !== fileId && candidateStorageKeys.has(version.storageKey)) {
-            storageKeysReferencedElsewhere.add(version.storageKey);
+          const versionTarget = resolveStorageTarget(policies?.get(policyByFileId.get(version.fileId) ?? '') ?? {});
+          const ref = targetKeyFor(versionTarget, version.storageKey);
+          if (version.fileId !== fileId && candidateStorageKeys.has(ref)) {
+            storageKeysReferencedElsewhere.add(ref);
           }
         }
 
@@ -466,8 +734,10 @@ export function createFileService(config: FileServiceConfig) {
         });
 
         for (const artifact of allArtifacts) {
-          if (artifact.fileId !== fileId && candidateStorageKeys.has(artifact.storageKey)) {
-            storageKeysReferencedElsewhere.add(artifact.storageKey);
+          const artifactTarget = resolveArtifactStorageTarget(policies?.get(policyByFileId.get(artifact.fileId) ?? '') ?? {});
+          const ref = targetKeyFor(artifactTarget, artifact.storageKey);
+          if (artifact.fileId !== fileId && candidateStorageKeys.has(ref)) {
+            storageKeysReferencedElsewhere.add(ref);
           }
         }
       }
@@ -512,13 +782,16 @@ export function createFileService(config: FileServiceConfig) {
       });
 
       let totalBytesFreed = 0;
-      for (const storageKey of candidateStorageKeys) {
-        if (storageKeysReferencedElsewhere.has(storageKey)) {
+      for (const ref of candidateStorageKeys) {
+        if (storageKeysReferencedElsewhere.has(ref)) {
           continue;
         }
         try {
-          await storage.deleteObject({ key: storageKey });
-          totalBytesFreed += versionBytesByStorageKey.get(storageKey) ?? 0;
+          const split = ref.indexOf('\u0000');
+          const target = ref.slice(0, split);
+          const key = ref.slice(split + 1);
+          await storage.deleteObject({ key, target });
+          totalBytesFreed += versionBytesByStorageKey.get(ref) ?? 0;
         } catch {
           // Continue on storage errors (object may already be deleted)
         }

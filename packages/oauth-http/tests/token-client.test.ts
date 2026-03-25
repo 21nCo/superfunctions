@@ -97,6 +97,86 @@ describe("oauth-http token client", () => {
     expect(params.get("client_secret")).toBeNull();
   });
 
+  it("resolves client secrets at runtime for Apple-compatible providers", async () => {
+    let capturedInit: RequestInitLike | null = null;
+    const fetcher: OAuthFetchLike = async (_url, init) => {
+      capturedInit = init;
+      return createResponse({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ access_token: "at_apple", token_type: "bearer" })
+      });
+    };
+
+    const clientSecretResolver = vi.fn(async () => ({
+      clientSecret: "generated-apple-client-secret"
+    }));
+
+    const client = new DefaultOAuthTokenHttpClient({ fetcher });
+    const response = await client.exchangeToken({
+      provider: {
+        ...googleProvider,
+        id: "apple",
+        tokenAuthMethod: "client_secret_post"
+      },
+      grantType: "authorization_code",
+      clientId: "apple-client-id",
+      clientSecretResolver,
+      code: "apple-code",
+      redirectUri: "https://app/callback"
+    });
+
+    expect(response.accessToken).toBe("at_apple");
+    expect(clientSecretResolver).toHaveBeenCalledTimes(1);
+    const params = new URLSearchParams(capturedInit?.body);
+    expect(params.get("client_secret")).toBe("generated-apple-client-secret");
+  });
+
+  it("fails with OAUTH_SECRET_RESOLUTION_FAILED when runtime secret resolution throws", async () => {
+    const fetcher: OAuthFetchLike = async () => {
+      throw new Error("should not call fetch");
+    };
+
+    const client = new DefaultOAuthTokenHttpClient({ fetcher });
+    await expect(
+      client.exchangeToken({
+        provider: googleProvider,
+        grantType: "authorization_code",
+        clientId: "client-id",
+        clientSecretResolver: async () => {
+          throw new Error("kms unavailable");
+        },
+        code: "code-secret-error",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_SECRET_RESOLUTION_FAILED",
+      details: {
+        providerId: "google",
+        operation: "exchange"
+      }
+    });
+  });
+
+  it("fails with OAUTH_RUNTIME_CONFIG_INVALID when no client secret path is configured", async () => {
+    const fetcher: OAuthFetchLike = async () => {
+      throw new Error("should not call fetch");
+    };
+
+    const client = new DefaultOAuthTokenHttpClient({ fetcher });
+    await expect(
+      client.exchangeToken({
+        provider: googleProvider,
+        grantType: "authorization_code",
+        clientId: "client-id",
+        code: "code-no-secret",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_RUNTIME_CONFIG_INVALID"
+    });
+  });
+
   it("rejects unsupported token auth method with deterministic validation error", async () => {
     const fetcher: OAuthFetchLike = async () => {
       throw new Error("should not call fetch");

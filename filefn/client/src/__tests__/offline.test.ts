@@ -5,6 +5,7 @@ import { OPFSStore } from '../offline/opfs-store.js';
 // Mock mocks
 const stagedUploads = new Map();
 const mockUploadFile = vi.fn().mockResolvedValue({ fileId: 'f1', versionId: 'v1' });
+let lastInitFileId: string | undefined;
 
 // Mock HttpClient
 vi.mock('../client.js', async (importOriginal) => {
@@ -19,12 +20,15 @@ vi.mock('../client.js', async (importOriginal) => {
             // But we mocked UploadManager in sync? No, we mocked UploadClient in SyncConfig.
             // In index.ts, we create OfflineSync with a client that uses UploadManager.
             // So we need to mock HttpClient methods that UploadManager calls.
-            initUpload: vi.fn().mockResolvedValue({ 
-                uploadSessionId: 'upl_real', totalParts: 1, chunkSizeBytes: 100 
+            initUpload: vi.fn().mockImplementation(async (params: { fileId?: string }) => {
+                lastInitFileId = params.fileId;
+                return {
+                    uploadSessionId: 'upl_real', totalParts: 1, chunkSizeBytes: 100
+                };
             }),
             signPart: vi.fn().mockResolvedValue({ url: 'http://upload' }),
             uploadPartToSignedUrl: vi.fn().mockResolvedValue({ recorded: true }),
-            completeUpload: vi.fn().mockResolvedValue({ fileId: 'f1', versionId: 'v1' }),
+            completeUpload: vi.fn().mockImplementation(async () => ({ fileId: lastInitFileId || 'f1', versionId: 'v1' })),
         })
     };
 });
@@ -38,6 +42,22 @@ vi.mock('../offline/opfs-store.js', () => {
       async init() {}
       async stagePendingUpload(u: any) { stagedUploads.set(u.uploadSessionId, u); }
       async getPendingUpload(id: string) { return stagedUploads.get(id); }
+      async getPendingUploadByFileId(fileId: string) {
+        return Array.from(stagedUploads.values()).find((upload: any) => upload.fileId === fileId) || null;
+      }
+      async getPendingLocalDescriptor(fileId: string) {
+        const upload = Array.from(stagedUploads.values()).find((entry: any) => entry.fileId === fileId);
+        if (!upload) return null;
+        return {
+          fileId: upload.fileId,
+          uploadSessionId: upload.uploadSessionId,
+          state: 'pending-local',
+          source: {
+            ...upload.localSource,
+            url: `blob:${fileId}`,
+          },
+        };
+      }
       async listPendingUploads() { return Array.from(stagedUploads.keys()); }
       async deletePendingUpload(id: string) { stagedUploads.delete(id); }
       async incrementRetryCount() {}
@@ -51,6 +71,7 @@ describe('Offline Client', () => {
   beforeEach(() => {
     stagedUploads.clear();
     mockUploadFile.mockClear();
+    lastInitFileId = undefined;
     
     // Mock navigator
     if (typeof navigator === 'undefined') {
@@ -96,6 +117,7 @@ describe('Offline Client', () => {
     // Verify staged
     expect(stagedUploads.size).toBe(1);
     expect(stagedUploads.values().next().value.fileName).toBe('test.txt');
+    expect(stagedUploads.values().next().value.fileId).toBe(handle.fileId);
 
     // Go online and trigger sync
     Object.defineProperty(navigator, 'onLine', { value: true });
@@ -104,8 +126,73 @@ describe('Offline Client', () => {
     // Wait for done to resolve
     const result = await donePromise;
 
-    expect(result.fileId).toBe('f1');
+    expect(result.fileId).toBe(handle.fileId);
     expect(stagedUploads.size).toBe(0);
+  });
+
+  it('TV-CLIENT-002: should expose a pending-local descriptor for staged offline files', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    const file = new File(['image-bytes'], 'photo.jpg', { type: 'image/jpeg' });
+    const handle = client.uploadFile({ policy: 'p', file });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const descriptor = await client.getPendingLocalDescriptor(handle.fileId);
+
+    expect(descriptor).toEqual({
+      fileId: handle.fileId,
+      uploadSessionId: handle.uploadSessionId,
+      state: 'pending-local',
+      source: expect.objectContaining({
+        mode: 'local-object-url',
+        kind: 'image',
+        mimeType: 'image/jpeg',
+        fileName: 'photo.jpg',
+        previewBehavior: 'direct-image',
+        url: `blob:${handle.fileId}`,
+      }),
+    });
+  });
+
+  it('TV-VIEW-002: should prefer a pending-local PDF source when requested', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    const file = new File(['%PDF-1.4'], 'draft.pdf', { type: 'application/pdf' });
+    const handle = client.uploadFile({ policy: 'p', file });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const descriptor = await client.resolveRenderable({
+      fileId: handle.fileId,
+      intent: 'preview',
+      preferLocal: true,
+    });
+
+    expect(descriptor).toEqual({
+      fileId: handle.fileId,
+      versionId: handle.uploadSessionId,
+      intent: 'preview',
+      state: 'pending-local',
+      mimeType: 'application/pdf',
+      name: 'draft.pdf',
+      size: file.size,
+      source: {
+        mode: 'placeholder',
+        placeholderKind: 'pdf-processing',
+      },
+      warnings: ['Pending local PDF preview artifact is not available yet.'],
+    });
   });
 
   it('TV-CLIENT-OFFLINE-NEG-001: should throw if offline enabled but OPFS unavailable', () => {

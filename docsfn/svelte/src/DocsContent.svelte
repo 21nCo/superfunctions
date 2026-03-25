@@ -5,7 +5,7 @@
     compileSvelteContent,
     type CompiledContentArtifact,
     type DocsCompatPreset,
-  } from "@docsfn/core";
+  } from "@docsfn/core/browser";
 
   export let compiled: CompiledContentArtifact | undefined = undefined;
   export let content = "";
@@ -48,16 +48,20 @@
 <div class="docsfn-content">
   {#each compiledContent.blocks as block, index}
     {#if block.type === "heading"}
-      <svelte:element this={`h${block.level}`} id={block.slug}>{block.text}</svelte:element>
+      <svelte:element this={`h${block.level}`} id={block.slug}>{@html block.html}</svelte:element>
     {:else if block.type === "paragraph"}
-      <p>{block.text}</p>
+      <p>{@html block.html}</p>
+    {:else if block.type === "list"}
+      {@html block.html}
+    {:else if block.type === "table"}
+      {@html block.html}
     {:else if block.type === "code"}
       <pre data-docsfn-code="true"><code data-lang={block.lang}>{block.code}</code></pre>
     {:else if block.type === "mermaid"}
       <pre data-docsfn-mermaid="true"><code>{block.code}</code></pre>
     {:else if block.type === "callout"}
       <aside data-docsfn-callout={block.kind}>
-        <p>{block.text}</p>
+        {@html block.html}
       </aside>
     {:else if block.type === "tabs"}
       {@const fallbackTab = block.items[0] ?? block.tabs[0]?.value ?? ""}

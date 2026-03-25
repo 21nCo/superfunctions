@@ -1,5 +1,5 @@
 export const SVELTE_PUBLIC_TYPES = `import type { ComponentType } from "svelte";
-import type { DocHeading, DocsTopNavItem, Sidebar, Version } from "@docsfn/core";
+import type { DocHeading, DocsTopNavItem, Sidebar, Version } from "@docsfn/core/browser";
 
 export interface DocsPageLink {
   title: string;

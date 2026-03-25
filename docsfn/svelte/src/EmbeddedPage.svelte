@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CompiledContentArtifact, DocHeading, DocsCompatPreset } from "@docsfn/core";
+  import type { CompiledContentArtifact, DocHeading, DocsCompatPreset } from "@docsfn/core/browser";
   import type { ComponentType } from "svelte";
   import DocsContent from "./DocsContent.svelte";
 

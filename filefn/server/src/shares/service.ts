@@ -1,7 +1,8 @@
 import type { Adapter } from '@superfunctions/db';
-import type { StorageAdapter } from '@superfunctions/storage';
+import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/storage';
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileRecord, FileVersionRecord } from '../files/service.js';
+import { resolveStorageTarget, type PolicyRegistry } from '../policies.js';
 import { createHash, randomBytes } from 'crypto';
 import * as errors from '../errors.js';
 
@@ -20,6 +21,7 @@ export interface FileShareRecord {
 export interface SharesServiceConfig {
   db: Adapter;
   storage: StorageAdapter;
+  policies?: Pick<PolicyRegistry, 'get'>;
   namespace?: string;
   signedUrlTtlSeconds?: number;
 }
@@ -41,7 +43,7 @@ function generateToken(): string {
 }
 
 export function createSharesService(config: SharesServiceConfig) {
-  const { db, storage, namespace = 'filefn', signedUrlTtlSeconds = 900 } = config;
+  const { db, storage, policies, namespace = 'filefn', signedUrlTtlSeconds = 900 } = config;
 
   async function getFile(fileId: string): Promise<FileRecord | null> {
     return db.findOne<FileRecord>({
@@ -160,10 +162,12 @@ export function createSharesService(config: SharesServiceConfig) {
       ctx: FileProviderContext & { isAuthenticated?: boolean }
     ): Promise<{ url: string; headers?: Record<string, string>; fileName: string; mimeType: string }> {
       const { tokenHash, share, file, version } = await resolveDownload(token, ctx);
+      const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
-      if (storage.capabilities.signedDownloadUrls && storage.signDownloadUrl) {
+      if (getStorageCapabilities(storage, storageTarget).signedDownloadUrls && storage.signDownloadUrl) {
         const result = await storage.signDownloadUrl({
           key: version.storageKey,
+          target: storageTarget,
           expiresInSeconds: signedUrlTtlSeconds,
         });
         await incrementDownloads(tokenHash, share.downloads);
@@ -182,12 +186,13 @@ export function createSharesService(config: SharesServiceConfig) {
       ctx: FileProviderContext & { isAuthenticated?: boolean },
     ): Promise<{ stream: ReadableStream; contentType: string; size: number; fileName: string; mimeType: string }> {
       const { tokenHash, share, file, version } = await resolveDownload(token, ctx);
+      const storageTarget = resolveStorageTarget(policies?.get(file.policy) ?? {});
 
       if (!storage.openDownloadStream) {
         throw new Error('Storage adapter does not support streaming');
       }
 
-      const stream = await storage.openDownloadStream({ key: version.storageKey });
+      const stream = await storage.openDownloadStream({ key: version.storageKey, target: storageTarget });
       await incrementDownloads(tokenHash, share.downloads);
 
       return {

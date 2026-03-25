@@ -49,6 +49,104 @@ describe('@filefn/client envelope unwrapping', () => {
       expect(file.data).toBeUndefined();
     });
 
+    it('should unwrap listArtifacts and downloadArtifact envelopes', async () => {
+      const client = createFileFnClient({
+        baseUrl: 'https://api.test/files',
+      });
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            data: {
+              artifacts: [
+                {
+                  artifactId: 'art_pdf_001',
+                  fileId: 'file_0001',
+                  versionId: 'ver_0001',
+                  kind: 'pdf-preview-page-1-large',
+                  mimeType: 'image/png',
+                  size: 123,
+                  createdAt: '2026-03-22T00:00:00Z',
+                },
+              ],
+            },
+            requestId: 'req_artifacts',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            data: {
+              url: '/proxy/files/file_0001/artifacts/art_pdf_001/download',
+            },
+            requestId: 'req_artifact_download',
+          }),
+        });
+
+      const artifacts = await client.listArtifacts('file_0001');
+      const artifactUrl = await client.downloadArtifact('file_0001', 'art_pdf_001');
+
+      expect(artifacts).toEqual([
+        expect.objectContaining({
+          artifactId: 'art_pdf_001',
+          kind: 'pdf-preview-page-1-large',
+        }),
+      ]);
+      expect(artifactUrl).toBe('/proxy/files/file_0001/artifacts/art_pdf_001/download');
+    });
+
+    it('should unwrap render descriptor envelopes for resolveRenderable', async () => {
+      const client = createFileFnClient({
+        baseUrl: 'https://api.test/files',
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          data: {
+            fileId: 'file_pdf_1',
+            versionId: 'ver_pdf_1',
+            intent: 'preview',
+            state: 'ready',
+            mimeType: 'image/png',
+            name: 'note.pdf',
+            size: 456,
+            source: {
+              mode: 'artifact',
+              artifactId: 'art_pdf_1',
+              artifactKind: 'pdf-preview-page-1-large',
+              url: '/proxy/files/file_pdf_1/artifacts/art_pdf_1/download',
+            },
+          },
+          requestId: 'req_render',
+        }),
+      });
+
+      const descriptor = await client.resolveRenderable({
+        fileId: 'file_pdf_1',
+        intent: 'preview',
+      });
+
+      expect(descriptor).toMatchObject({
+        fileId: 'file_pdf_1',
+        versionId: 'ver_pdf_1',
+        intent: 'preview',
+        state: 'ready',
+        source: {
+          mode: 'artifact',
+          artifactKind: 'pdf-preview-page-1-large',
+          url: '/proxy/files/file_pdf_1/artifacts/art_pdf_1/download',
+        },
+      });
+    });
+
     it('should unwrap upload init response and set uploadSessionId after done()', async () => {
       const client = createFileFnClient({
         baseUrl: 'https://api.test/files',
@@ -121,6 +219,7 @@ describe('@filefn/client envelope unwrapping', () => {
       const handle = client.uploadFile({
         policy: 'user-avatar',
         file,
+        fileId: 'file_0001',
       });
 
       // The uploadSessionId should be set after the upload completes
@@ -202,6 +301,7 @@ describe('@filefn/client envelope unwrapping', () => {
       const handle = client.uploadFile({
         policy: 'user-avatar',
         file,
+        fileId: 'file_0001',
       });
 
       const result = await handle.done();
@@ -325,6 +425,7 @@ describe('@filefn/client envelope unwrapping', () => {
       const handle = client.uploadFile({
         policy: 'user-avatar',
         file,
+        fileId: 'file_0001',
       });
 
       // Actually complete the upload to ensure init is called
@@ -347,17 +448,18 @@ describe('@filefn/client envelope unwrapping', () => {
 
 describe('@filefn/client public API surface', () => {
   describe('Client exposes required methods', () => {
-    it('should expose uploadFile, getFile, downloadUrl, deleteFile', () => {
+    it('should expose uploadFile, getFile, listArtifacts, downloadUrl, downloadArtifact, resolveRenderable, deleteFile', () => {
       const client = createFileFnClient({
         baseUrl: 'https://api.test/files',
       }) as any;
 
       // These are required by the spec
       expect(typeof client.uploadFile).toBe('function');
-      
-      // These will fail until the client implements all required methods
       expect(typeof client.getFile).toBe('function');
+      expect(typeof client.listArtifacts).toBe('function');
       expect(typeof client.downloadUrl).toBe('function');
+      expect(typeof client.downloadArtifact).toBe('function');
+      expect(typeof client.resolveRenderable).toBe('function');
       expect(typeof client.deleteFile).toBe('function');
     });
   });
@@ -384,9 +486,10 @@ describe('@filefn/client public API surface', () => {
       });
 
       const file = new File([new Uint8Array([1])], 'test.png', { type: 'image/png' });
-      const handle = client.uploadFile({ policy: 'test', file });
+      const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_handle_001' });
 
       expect(handle.uploadSessionId).toBeDefined();
+      expect(handle.fileId).toBe('file_handle_001');
       expect(typeof handle.abort).toBe('function');
       expect(typeof handle.onProgress).toBe('function');
       expect(typeof handle.done).toBe('function');
