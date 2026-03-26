@@ -10,6 +10,8 @@
     "botfn/*",
     "hostfn/*",
     "authfn/*",
+    "authfn/examples/*",
+    "authfn/examples/*/*",
     "browsefn/*",
     "cachefn/*",
     "datafn/*",

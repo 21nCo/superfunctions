@@ -59,6 +59,11 @@ export {
   getSchema
 } from './schema.js';
 export {
+  isBundledPluginDescriptor,
+  resolveSchemaPluginInput,
+  resolveSchemaPluginInputs
+} from './schema-plugin-descriptors.js';
+export {
   composePluginHooks,
   composePluginRoutes,
   createPluginRunner,

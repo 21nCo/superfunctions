@@ -152,6 +152,28 @@ describe('DrizzleAdapter - SQLite', () => {
       expect(found).toBeNull();
     });
 
+    it('treats eq/null and ne/null as IS NULL and IS NOT NULL', async () => {
+      await adapter.createMany({
+        model: 'posts',
+        data: [
+          { id: 'null-post', title: 'Null body', content: null, authorId: 'a1' },
+          { id: 'text-post', title: 'Text body', content: 'hello', authorId: 'a1' }
+        ],
+      });
+
+      const nullContent = await adapter.findMany({
+        model: 'posts',
+        where: [{ field: 'content', operator: 'eq', value: null }],
+      });
+      const nonNullContent = await adapter.findMany({
+        model: 'posts',
+        where: [{ field: 'content', operator: 'ne', value: null }],
+      });
+
+      expect(nullContent.map((row) => row.id)).toEqual(['null-post']);
+      expect(nonNullContent.map((row) => row.id)).toEqual(['text-post']);
+    });
+
     it('should findMany with filters', async () => {
       await adapter.createMany({
         model: 'users',
