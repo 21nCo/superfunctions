@@ -2,10 +2,18 @@ import * as React from 'react';
 import {
   createOutsideClickListener,
   type OutsideClickEvent,
+  type OutsideClickEventName,
 } from '@uifn/core/utils/outside-click';
 
 const useIsomorphicLayoutEffect =
   typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
+
+function getOutsideClickEvents(ownerDocument: Document): OutsideClickEventName[] {
+  const view = ownerDocument.defaultView;
+  return view && typeof view.PointerEvent === 'function'
+    ? ['pointerdown']
+    : ['mousedown', 'touchstart'];
+}
 
 export function useOutsideClick(
   ref: React.RefObject<HTMLElement>,
@@ -21,13 +29,15 @@ export function useOutsideClick(
   useIsomorphicLayoutEffect(() => {
     if (!enabled || !ref.current) return;
 
+    const ownerDocument = ref.current.ownerDocument;
+
     const outsideClick = createOutsideClickListener(
       ref.current,
       (event) => handlerRef.current(event),
       {
         enabled: true,
-        ownerDocument: ref.current.ownerDocument,
-        events: ['mousedown', 'touchstart', 'pointerdown'],
+        ownerDocument,
+        events: getOutsideClickEvents(ownerDocument),
       }
     );
 

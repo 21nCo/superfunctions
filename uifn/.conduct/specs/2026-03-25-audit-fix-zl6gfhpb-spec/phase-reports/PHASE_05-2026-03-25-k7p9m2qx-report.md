@@ -6,9 +6,9 @@
 - Agent name: `unknown-agent`
 - Model: `unknown`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/.codex/worktrees/e328/superfunctions`
-- OS + shell: `Darwin ArBook.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041 arm64`, shell `/bin/zsh`
-- Repo metadata: git repo detected at `/Users/serro/.codex/worktrees/e328/superfunctions`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
+- Workspace/project path: `repo root`
+- OS + shell: `Darwin arm64`, shell `/bin/zsh`
+- Repo metadata: git repo detected at `repo root`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
 
 ## Phase
 
@@ -190,11 +190,11 @@
 ## Verification Summary
 
 - Phase verification steps executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/react && npm run test -- --run src/dialog.test.tsx src/alert-dialog.test.tsx src/popover.test.tsx src/dropdown-menu.test.tsx src/context-menu.test.tsx src/select.test.tsx src/combobox.test.tsx src/scroll-area.test.tsx src/slider.test.tsx src/tabs.test.tsx src/ga-helper-coverage.test.tsx`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/react && npm run build`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/react && npm run lint`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/react && npm run typecheck`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/react && npm pack --dry-run`: `PASS`
+  - `cd uifn/react && npm run test -- --run src/dialog.test.tsx src/alert-dialog.test.tsx src/popover.test.tsx src/dropdown-menu.test.tsx src/context-menu.test.tsx src/select.test.tsx src/combobox.test.tsx src/scroll-area.test.tsx src/slider.test.tsx src/tabs.test.tsx src/ga-helper-coverage.test.tsx`: `PASS`
+  - `cd uifn/react && npm run build`: `PASS`
+  - `cd uifn/react && npm run lint`: `PASS`
+  - `cd uifn/react && npm run typecheck`: `PASS`
+  - `cd uifn/react && npm pack --dry-run`: `PASS`
 - Test execution results:
   - Official Phase 05 focused suite: 11 files passed, 30 tests passed.
 - Verification notes:
@@ -203,8 +203,8 @@
 
 ## Notes
 
-- The absolute paths listed in `PHASE_05.md` point at `/Users/serro/Documents/dev/n/superfunctions`; equivalent commands were run in the current worktree at `/Users/serro/.codex/worktrees/e328/superfunctions`.
-- This worktree had no local install, so a temporary `node_modules` symlink to `/Users/serro/Documents/dev/n/superfunctions/node_modules` was used for verification and then removed after the phase completed.
+- The verification commands above can be run from the checked-out repo root without relying on machine-specific filesystem paths.
+- Phase 05 verification was rerun from the checked-out repository's lockfile-managed workspace install without any external `node_modules` symlinks.
 - No React export-surface changes were required for this phase; the fixes stayed within existing documented public families.
 
 ## Ready For Next Phase?

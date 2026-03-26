@@ -10,7 +10,7 @@ This matrix points every `P0`/`P1` requirement in the `2026-03-25-audit-fix-zl6g
 
 | Requirement | Priority | Primary evidence | Current status |
 | --- | --- | --- | --- |
-| `REL-001` | `P0` | `PHASE_00-2026-03-25-04qlb2ak-report.md`, `PHASE_08-2026-03-25-x6d9r2mv-report.md`, `uifn/README.md`, `uifn/SPEC.md` | `PASS` |
+| `REL-001` | `P0` | `PHASE_00-2026-03-25-04qlb2ak-report.md`, `PHASE_08-2026-03-25-x6d9r2mv-report.md`, `uifn/README.md`, `uifn/.conduct/SPEC.md` | `PASS` |
 | `REL-002` | `P0` | `PHASE_00-2026-03-25-04qlb2ak-report.md`, `scripts/verify-uifn-release.mjs --dry-run` | `PASS` |
 | `REL-003` | `P0` | `scripts/verify-uifn-release.mjs`, `uifn/.conduct/release-evidence/consumer-smoke.json`, `PHASE_09-consumer-smoke.md` | `PASS` after consumer smoke generation |
 | `CORE-001` | `P0` | `PHASE_02-2026-03-25-5j1qvzwb-report.md`, `uifn/core/src/state/machine.ts`, core primitive tests | `PASS` |
@@ -31,7 +31,7 @@ This matrix points every `P0`/`P1` requirement in the `2026-03-25-audit-fix-zl6g
 | `REACT-002` | `P0` | `PHASE_04-2026-03-25-083014-report.md`, `PHASE_05-2026-03-25-k7p9m2qx-report.md`, SSR + duplicate-ID coverage | `PASS` |
 | `SVELTE-001` | `P0` | `PHASE_06-2026-03-25-b7k4n2qd-report.md`, `PHASE_07-2026-03-25-q4m8n1zr-report.md`, `uifn/svelte/src/controlled-reactivity.test.ts` | `PASS` |
 | `SVELTE-002` | `P0` | `PHASE_06-2026-03-25-b7k4n2qd-report.md`, build/lint/typecheck without warning suppression | `PASS` |
-| `DOCS-001` | `P0` | `PHASE_08-2026-03-25-x6d9r2mv-report.md`, `uifn/README.md`, `uifn/SPEC.md`, package READMEs | `PASS` |
+| `DOCS-001` | `P0` | `PHASE_08-2026-03-25-x6d9r2mv-report.md`, `uifn/README.md`, `uifn/.conduct/SPEC.md`, package READMEs | `PASS` |
 | `FILES-001` | `P1` | `PHASE_08-2026-03-25-x6d9r2mv-report.md`, `uifn/files/README.md`, pack validation | `PASS` |
 | `QA-001` | `P0` | React `src/accordion.a11y.test.tsx`, React `src/ga-family-integration.test.tsx`, Svelte `src/accessibility.a11y.test.ts`, Svelte `src/ga-coverage.test.ts`, prior family phase reports | `PASS` |
 | `QA-002` | `P0` | `PHASE_09-manual-accessibility.md`, `uifn/.conduct/release-evidence/manual-a11y.json` | `BLOCKED` |

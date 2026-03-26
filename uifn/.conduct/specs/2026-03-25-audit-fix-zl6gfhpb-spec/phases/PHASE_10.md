@@ -40,8 +40,8 @@ Out of scope:
 
 # Verification steps
 
-- `cd /Users/serro/Documents/dev/n/superfunctions && npm ci`
-- `cd /Users/serro/Documents/dev/n/superfunctions && npm run verify:uifn-release`
+- `npm ci`
+- `npm run verify:uifn-release`
 - Manual step: review `uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/` and confirm the RC report references the final coverage, manual accessibility, and consumer-smoke artifacts.
 - Manual step: compare the final published export surfaces against the root/package docs one last time.
 

@@ -74,10 +74,10 @@
 
 - Status: `PASS`
 - Acceptance criteria evidence:
-  - Final root/package review confirms that [uifn/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/README.md), [uifn/SPEC.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/SPEC.md), [uifn/react/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/react/README.md), [uifn/svelte/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte/README.md), [uifn/vue/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/vue/README.md), and [uifn/files/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/files/README.md) still limit public claims to shipped exports and explicitly disclaim unsupported extras.
+  - Final root/package review confirms that [uifn/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/README.md), [uifn/.conduct/SPEC.md](uifn/.conduct/SPEC.md), [uifn/react/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/react/README.md), [uifn/svelte/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte/README.md), [uifn/vue/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/vue/README.md), and [uifn/files/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/files/README.md) still limit public claims to shipped exports and explicitly disclaim unsupported extras.
   - Final export review confirms the current shipped roots in [uifn/react/src/index.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/react/src/index.ts) and [uifn/svelte/src/index.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte/src/index.ts) still match the root/package docs.
 - Test status:
-  - `rg -n "TooltipProvider|TooltipArrow|ComboboxEmpty|ContextMenuCheckboxItem|ContextMenuRadioGroup|ContextMenuRadioItem|ContextMenuSub|multiple selection" uifn/README.md uifn/SPEC.md uifn/react/README.md uifn/svelte/README.md uifn/vue/README.md uifn/files/README.md`: `PASS`
+  - `rg -n "TooltipProvider|TooltipArrow|ComboboxEmpty|ContextMenuCheckboxItem|ContextMenuRadioGroup|ContextMenuRadioItem|ContextMenuSub|multiple selection" uifn/README.md uifn/.conduct/SPEC.md uifn/react/README.md uifn/svelte/README.md uifn/vue/README.md uifn/files/README.md`: `PASS`
   - Manual export review against `uifn/react/src/index.ts` and `uifn/svelte/src/index.ts`: `PASS`
 
 ### `COMPAT-001`
@@ -106,7 +106,7 @@
   - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm ci`: `FAIL`
   - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release`: `FAIL`
   - Manual review of [uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence): `PASS` for artifact presence; `BLOCKED` for real manual-a11y sign-off
-  - Manual final docs/export comparison against [uifn/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/README.md), [uifn/SPEC.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/SPEC.md), [uifn/react/src/index.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/react/src/index.ts), and [uifn/svelte/src/index.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte/src/index.ts): `PASS`
+  - Manual final docs/export comparison against [uifn/README.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/README.md), [uifn/.conduct/SPEC.md](uifn/.conduct/SPEC.md), [uifn/react/src/index.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/react/src/index.ts), and [uifn/svelte/src/index.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte/src/index.ts): `PASS`
 - Test execution results:
   - `npm ci` failed because `package-lock.json` is not in sync with unrelated root workspace changes
   - `npm run verify:uifn-release` failed only on `manual-a11y`

@@ -105,6 +105,8 @@ describe('ScrollArea', () => {
     expect(
       parseFloat(screen.getByTestId('horizontal-thumb').getAttribute('data-thumb-position') ?? '0')
     ).toBeGreaterThan(0);
+    expect(screen.getByTestId('vertical-thumb')).toHaveStyle({ top: '20%' });
+    expect(screen.getByTestId('horizontal-thumb')).toHaveStyle({ left: '10%' });
   });
 
   it('updates viewport scroll position when dragging the thumb', async () => {

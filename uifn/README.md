@@ -92,7 +92,7 @@ Passing `npm run verify:uifn-release -- --dry-run` is only a contract preview. P
 
 `@uifn/vue` and `@uifn/files` remain in the gate for manifest, export-map, and pack-hygiene checks, but they are not release-blocking for the GA adapter evidence requirements.
 
-See `uifn/SPEC.md` for the public release-contract baseline.
+See `uifn/.conduct/SPEC.md` for the public release-contract baseline.
 
 ## License
 

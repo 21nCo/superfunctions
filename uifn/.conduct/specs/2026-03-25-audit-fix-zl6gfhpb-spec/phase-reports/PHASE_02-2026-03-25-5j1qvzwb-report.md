@@ -6,9 +6,9 @@
 - Agent name: `unknown-agent`
 - Model: `unknown`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/.codex/worktrees/e328/superfunctions`
-- OS + shell: `Darwin ArBook.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041 arm64`, shell `/bin/zsh`
-- Repo metadata: git repo detected at `/Users/serro/.codex/worktrees/e328/superfunctions`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
+- Workspace/project path: `repo root`
+- OS + shell: `Darwin arm64`, shell `/bin/zsh`
+- Repo metadata: git repo detected at `repo root`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
 
 ## Phase
 
@@ -125,14 +125,14 @@
 ## Verification Summary
 
 - Phase verification steps executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run test -- --run src/primitives/accordion.test.ts src/primitives/collapsible.test.ts src/primitives/tabs.test.ts src/primitives/checkbox.test.ts src/primitives/switch.test.ts src/primitives/radio-group.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run lint`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run typecheck`: `PASS`
+  - `cd uifn/core && npm run test -- --run src/primitives/accordion.test.ts src/primitives/collapsible.test.ts src/primitives/tabs.test.ts src/primitives/checkbox.test.ts src/primitives/switch.test.ts src/primitives/radio-group.test.ts`: `PASS`
+  - `cd uifn/core && npm run lint`: `PASS`
+  - `cd uifn/core && npm run typecheck`: `PASS`
 - Additional verification executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run test -- --run src/utils/roving-focus.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run test -- --run src/primitives/toggle.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run test -- --run src/primitives/toolbar.test.ts src/primitives/menu-bar.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && rg -n "TODO|FIXME" uifn/core/src/primitives/accordion.ts uifn/core/src/primitives/accordion.test.ts uifn/core/src/primitives/collapsible.ts uifn/core/src/primitives/collapsible.test.ts uifn/core/src/primitives/tabs.ts uifn/core/src/primitives/tabs.test.ts uifn/core/src/primitives/checkbox.ts uifn/core/src/primitives/checkbox.test.ts uifn/core/src/primitives/switch.ts uifn/core/src/primitives/switch.test.ts uifn/core/src/primitives/radio-group.ts uifn/core/src/primitives/radio-group.test.ts uifn/core/src/utils/roving-focus.ts uifn/core/src/utils/roving-focus.test.ts uifn/core/src/state/machine.ts`: `PASS` (no matches)
+  - `cd uifn/core && npm run test -- --run src/utils/roving-focus.test.ts`: `PASS`
+  - `cd uifn/core && npm run test -- --run src/primitives/toggle.test.ts`: `PASS`
+  - `cd uifn/core && npm run test -- --run src/primitives/toolbar.test.ts src/primitives/menu-bar.test.ts`: `PASS`
+  - `cd repo root && rg -n "TODO|FIXME" uifn/core/src/primitives/accordion.ts uifn/core/src/primitives/accordion.test.ts uifn/core/src/primitives/collapsible.ts uifn/core/src/primitives/collapsible.test.ts uifn/core/src/primitives/tabs.ts uifn/core/src/primitives/tabs.test.ts uifn/core/src/primitives/checkbox.ts uifn/core/src/primitives/checkbox.test.ts uifn/core/src/primitives/switch.ts uifn/core/src/primitives/switch.test.ts uifn/core/src/primitives/radio-group.ts uifn/core/src/primitives/radio-group.test.ts uifn/core/src/utils/roving-focus.ts uifn/core/src/utils/roving-focus.test.ts uifn/core/src/state/machine.ts`: `PASS` (no matches)
 - Test execution results:
   - Official phase test command: 6 files passed, 19 tests passed.
   - Additional focused tests: 4 files passed, 10 tests passed.
@@ -140,8 +140,8 @@
 
 ## Notes
 
-- The absolute paths listed in `PHASE_02.md` point at `/Users/serro/Documents/dev/n/superfunctions`; equivalent commands were run in the current worktree at `/Users/serro/.codex/worktrees/e328/superfunctions`.
-- This worktree had no local install, so a temporary `node_modules` symlink to `/Users/serro/Documents/dev/n/superfunctions/node_modules` was used for verification and removed afterward.
+- The verification commands above can be run from the checked-out repo root without relying on machine-specific filesystem paths.
+- This worktree had no local install, so a temporary `node_modules` symlink to `repo root/node_modules` was used for verification and removed afterward.
 - The phase file’s official test command did not include `roving-focus.test.ts` even though `uifn/core/src/utils/roving-focus.test.ts` is a deliverable; that test was run additionally and passed.
 - `DISC-001` and `FORM-001` reference `MenuBar`, `Toolbar`, and `Toggle` beyond the direct Phase 02 deliverables. Their existing core tests were run as additional evidence, and no Phase 02 source edit was required in those files.
 - The new controllable-state helper is intentionally generic so later React and Svelte phases can bind to the same invariants without reimplementing them.

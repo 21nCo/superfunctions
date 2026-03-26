@@ -6,9 +6,9 @@
 - Agent name: `unknown-agent`
 - Model: `unknown`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/.codex/worktrees/e328/superfunctions`
-- OS + shell: `Darwin ArBook.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041 arm64`, shell `/bin/zsh`
-- Repo metadata: git repo detected at `/Users/serro/.codex/worktrees/e328/superfunctions`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
+- Workspace/project path: `repo root`
+- OS + shell: `Darwin arm64`, shell `/bin/zsh`
+- Repo metadata: git repo detected at `repo root`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
 
 ## Phase
 
@@ -33,7 +33,7 @@
 - Status: `PASS`
 - Acceptance criteria evidence:
   - Root/package docs and manifests now align on the canonical package/status matrix: `@uifn/core`, `@uifn/react`, `@uifn/svelte` as GA; `@uifn/vue` and `@uifn/files` as Experimental.
-  - `uifn/SPEC.md` was rewritten to remove legacy overclaims and to keep unshipped surfaces explicitly outside the public contract.
+  - `uifn/.conduct/SPEC.md` was rewritten to remove legacy overclaims and to keep unshipped surfaces explicitly outside the public contract.
   - README install/import examples now use only shipped `@uifn/*` package identities.
 - Test status:
   - Manual docs/manifests sweep completed via `rg -n "npm install @uifn|Compatibility Matrix|compatibility matrix|release gate|release-blocking|Experimental|GA" ...`: pass.
@@ -66,7 +66,7 @@
 
 - Status: `PASS`
 - Acceptance criteria evidence:
-  - Root `uifn/SPEC.md` no longer claims unexported family parts; it now defines only the public release contract and explicitly marks unsupported/unshipped surfaces as outside the contract.
+  - Root `uifn/.conduct/SPEC.md` no longer claims unexported family parts; it now defines only the public release contract and explicitly marks unsupported/unshipped surfaces as outside the contract.
   - Package READMEs now match the shipped package identities, status labels, and helper boundaries.
   - The manual accessibility policy now aligns with the real release-evidence contract by pointing to `uifn/.conduct/release-evidence/manual-a11y.json` and making that gate requirement explicit.
 - Test status:
@@ -98,7 +98,7 @@
 - Files changed/added:
   - `scripts/verify-uifn-release.mjs`
   - `uifn/README.md`
-  - `uifn/SPEC.md`
+  - `uifn/.conduct/SPEC.md`
   - `uifn/core/README.md`
   - `uifn/core/package.json`
   - `uifn/react/README.md`
@@ -115,15 +115,15 @@
 ## Verification Summary
 
 - Phase verification steps executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release -- --dry-run`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm pack --dry-run --json`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/react && npm pack --dry-run --json`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm pack --dry-run --json`: `PASS`
+  - `cd repo root && npm run verify:uifn-release -- --dry-run`: `PASS`
+  - `cd uifn/core && npm pack --dry-run --json`: `PASS`
+  - `cd uifn/react && npm pack --dry-run --json`: `PASS`
+  - `cd uifn/svelte && npm pack --dry-run --json`: `PASS`
   - Manual README/package-manifest comparison for install/import/package-status truth: `PASS`
 - Additional verification executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/files && npm pack --dry-run --json`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/vue && npm pack --dry-run --json`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release`: `FAIL` as expected on missing smoke/a11y evidence and forbidden Svelte warning suppression; also surfaced a shared-install Svelte/Vite mismatch while reusing the original workspace `node_modules`
+  - `cd uifn/files && npm pack --dry-run --json`: `PASS`
+  - `cd uifn/vue && npm pack --dry-run --json`: `PASS`
+  - `cd repo root && npm run verify:uifn-release`: `FAIL` as expected on missing smoke/a11y evidence and forbidden Svelte warning suppression; also surfaced a shared-install Svelte/Vite mismatch while reusing the original workspace `node_modules`
 - Test execution results:
   - `verify:uifn-release -- --dry-run`: passed and emitted the expected JSON contract manifest.
   - `npm pack --dry-run --json`:
@@ -136,11 +136,11 @@
 
 ## Notes
 
-- The absolute paths listed in `PHASE_00.md` point at `/Users/serro/Documents/dev/n/superfunctions`; equivalent commands were run in the current worktree at `/Users/serro/.codex/worktrees/e328/superfunctions`.
+- The verification commands above can be run from the checked-out repo root without relying on machine-specific filesystem paths.
 - To execute packaging in this worktree without installing a second dependency tree, a temporary `node_modules` symlink to the original workspace install was created and removed after verification.
 - The full gate parser was hardened during this phase so `npm pack --json` output remains parseable even when `prepack` build logs precede the JSON payload.
 - Package READMEs now reference the root compatibility matrix instead of restating version ranges in multiple places.
-- `uifn/SPEC.md` is now a narrow release-contract document rather than a drifting family-by-family implementation spec.
+- `uifn/.conduct/SPEC.md` is now a narrow release-contract document rather than a drifting family-by-family implementation spec.
 - `prepack` was added to the touched package manifests so `npm pack --dry-run` validates the real publish boundary instead of inspecting an unbuilt package.
 - `@uifn/files` now declares an explicit `import` condition in its export map, matching the documented helper-surface usage.
 - No new `TODO` or `FIXME` markers were introduced in the touched deliverables.

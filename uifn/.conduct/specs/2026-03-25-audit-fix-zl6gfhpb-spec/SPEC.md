@@ -14,7 +14,7 @@
 - Input paths read:
   - `/Users/serro/.codex/skills/spec/SKILL.md`
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/README.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/SPEC.md`
+  - `uifn/.conduct/SPEC.md`
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/core/README.md`
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/react/README.md`
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/svelte/README.md`
@@ -130,7 +130,7 @@ Goals:
 - Standardize canonical `UIFnError` handling across core and adapters.
 - Complete missing modal, keyboard, and controlled-state semantics identified by the `2026-03-25` audit.
 - Add consumer smoke verification, real manual accessibility evidence, and release evidence that covers what the existing gate misses.
-- Bring root/package docs and the legacy `uifn/SPEC.md` back into alignment with the shipped public API.
+- Bring root/package docs and the legacy `uifn/.conduct/SPEC.md` back into alignment with the shipped public API.
 
 Non-goals:
 
@@ -350,7 +350,7 @@ Failure behavior:
 - `uifn` MUST present one canonical public package family centered on `@uifn/core`, `@uifn/react`, and `@uifn/svelte`.
 - Vue and files MUST remain public-but-Experimental unless a later bundle explicitly promotes them.
 - Unsupported adapters such as Solid and web-components MUST NOT be claimed in GA docs or support matrices.
-- The legacy root `uifn/SPEC.md` MUST be updated or constrained until it no longer overclaims unshipped public parts.
+- The legacy root `uifn/.conduct/SPEC.md` MUST be updated or constrained until it no longer overclaims unshipped public parts.
 
 ## Core ownership semantics
 

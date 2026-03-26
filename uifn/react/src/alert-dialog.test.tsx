@@ -39,7 +39,7 @@ describe('AlertDialog', () => {
       expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     });
 
-    fireEvent.mouseDown(screen.getByTestId('overlay'));
+    fireEvent.pointerDown(screen.getByTestId('overlay'));
     expect(screen.getByRole('alertdialog')).toBeVisible();
 
     fireEvent.keyDown(document, { key: 'Escape' });

@@ -31,7 +31,11 @@ function composeIdBase(options: UseIdOptions): string {
 export const useId = (id?: string, options: UseIdOptions = {}): string => {
   const reactId = typeof React.useId === 'function' ? React.useId() : undefined;
   const baseId = React.useMemo(() => composeIdBase(options), [options.prefix, options.slot]);
-  const fallbackRef = React.useRef<string>(id ?? generateId(baseId));
+  const fallbackRef = React.useRef<string | undefined>(undefined);
+
+  if (!id && !reactId && !fallbackRef.current) {
+    fallbackRef.current = generateId(baseId);
+  }
 
   if (id) {
     return id;
@@ -41,5 +45,5 @@ export const useId = (id?: string, options: UseIdOptions = {}): string => {
     return `${baseId}-${normalizeReactIdSegment(reactId)}`;
   }
 
-  return fallbackRef.current;
+  return fallbackRef.current!;
 };

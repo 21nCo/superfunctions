@@ -8,7 +8,7 @@ Input:
 {
   "files": [
     "uifn/README.md",
-    "uifn/SPEC.md",
+    "uifn/.conduct/SPEC.md",
     "uifn/react/README.md",
     "uifn/svelte/README.md",
     "uifn/vue/README.md",
@@ -876,7 +876,7 @@ Input:
 ```json
 {
   "files": [
-    "uifn/SPEC.md",
+    "uifn/.conduct/SPEC.md",
     "uifn/README.md",
     "uifn/react/README.md",
     "uifn/svelte/README.md",

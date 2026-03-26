@@ -304,10 +304,10 @@
 
 - ID: `DOCS-001`
 - Priority: `P0`
-- Statement: `uifn` root docs, package READMEs, support matrix, examples, and root `uifn/SPEC.md` MUST agree on package names, GA status, exported symbols, and verification obligations.
+- Statement: `uifn` root docs, package READMEs, support matrix, examples, and root `uifn/.conduct/SPEC.md` MUST agree on package names, GA status, exported symbols, and verification obligations.
 - Rationale: The current root spec still overclaims public API that is not shipped.
 - Acceptance criteria:
-  - Root `uifn/SPEC.md` no longer claims unexported families or parts.
+  - Root `uifn/.conduct/SPEC.md` no longer claims unexported families or parts.
   - Package READMEs match actual package exports and status.
   - Manual accessibility requirements in docs align with the real release-evidence policy.
 - Test vectors: `TV-DOCS-001`

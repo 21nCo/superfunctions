@@ -38,7 +38,7 @@ describe('Dialog', () => {
       expect(screen.getByRole('button', { name: 'Primary action' })).toHaveFocus();
     });
 
-    fireEvent.mouseDown(screen.getByTestId('overlay'));
+    fireEvent.pointerDown(screen.getByTestId('overlay'));
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

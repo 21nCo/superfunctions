@@ -32,4 +32,4 @@
 - Install: `pass`
 - Typecheck: `pass`
 - Bundle/runtime: `pass`
-- Root evidence JSON: [consumer-smoke.json](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/release-evidence/consumer-smoke.json)
+- Root evidence JSON: [consumer-smoke.json](../../../release-evidence/consumer-smoke.json)

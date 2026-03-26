@@ -85,3 +85,5 @@ venv
 .next/
 .source/
 .svelte-kit/
+**/*.js.map
+.docsfn/

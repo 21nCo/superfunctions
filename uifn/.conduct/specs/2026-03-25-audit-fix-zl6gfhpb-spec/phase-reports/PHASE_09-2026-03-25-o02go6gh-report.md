@@ -6,9 +6,9 @@
 - Agent name: `unknown-agent`
 - Model: `unknown`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/.codex/worktrees/e328/superfunctions`
-- OS + shell: `Darwin ArBook.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041 arm64`, shell `/bin/zsh`
-- Repo metadata: git repo detected at `/Users/serro/.codex/worktrees/e328/superfunctions`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
+- Workspace/project path: `repo root`
+- OS + shell: `Darwin arm64`, shell `/bin/zsh`
+- Repo metadata: git repo detected at `repo root`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
 
 ## Phase
 
@@ -30,36 +30,36 @@
 
 - Status: `PASS`
 - Acceptance criteria evidence:
-  - [scripts/verify-uifn-release.mjs](/Users/serro/.codex/worktrees/e328/superfunctions/scripts/verify-uifn-release.mjs) now generates fresh tarball-based consumer smoke evidence, validates the PHASE_09 coverage matrix artifact, and rejects invalid/stale manual accessibility evidence with canonical failure codes.
-  - Fresh consumer-smoke evidence was generated at [consumer-smoke.json](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/release-evidence/consumer-smoke.json) and summarized in [PHASE_09-consumer-smoke.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-consumer-smoke.md).
+  - [scripts/verify-uifn-release.mjs](scripts/verify-uifn-release.mjs) now generates fresh tarball-based consumer smoke evidence, validates the PHASE_09 coverage matrix artifact, and rejects invalid/stale manual accessibility evidence with canonical failure codes.
+  - Fresh consumer-smoke evidence was generated at [consumer-smoke.json](uifn/.conduct/release-evidence/consumer-smoke.json) and summarized in [PHASE_09-consumer-smoke.md](uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-consumer-smoke.md).
   - The full gate now fails only on the intentional manual-evidence blocker with `UIFN_ERR_MANUAL_EVIDENCE_INVALID`.
 - Test status:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release -- --dry-run`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release`: `FAIL` only for `manual-a11y`; package checks, warning policy, coverage matrix, and consumer smoke all `PASS`
+  - `cd repo root && npm run verify:uifn-release -- --dry-run`: `PASS`
+  - `cd repo root && npm run verify:uifn-release`: `FAIL` only for `manual-a11y`; package checks, warning policy, coverage matrix, and consumer smoke all `PASS`
 
 ### `QA-001`
 
 - Status: `PASS`
 - Acceptance criteria evidence:
-  - React coverage now includes release-family axe smoke for `Dialog`, `AlertDialog`, `Select`, `Combobox`, `Toast`, and a collection family in [accordion.a11y.test.tsx](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/react/src/accordion.a11y.test.tsx).
-  - React queue coverage now proves 25 concurrently open toast surfaces in [ga-family-integration.test.tsx](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/react/src/ga-family-integration.test.tsx).
-  - Svelte coverage now includes the same release-family axe smoke in [accessibility.a11y.test.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte/src/accessibility.a11y.test.ts), plus 25-toast queue coverage in [ga-coverage.test.ts](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte/src/ga-coverage.test.ts).
-  - The P0/P1 evidence map was written to [PHASE_09-coverage-matrix.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-coverage-matrix.md).
+  - React coverage now includes release-family axe smoke for `Dialog`, `AlertDialog`, `Select`, `Combobox`, `Toast`, and a collection family in [accordion.a11y.test.tsx](uifn/react/src/accordion.a11y.test.tsx).
+  - React queue coverage now proves 25 concurrently open toast surfaces in [ga-family-integration.test.tsx](uifn/react/src/ga-family-integration.test.tsx).
+  - Svelte coverage now includes the same release-family axe smoke in [accessibility.a11y.test.ts](uifn/svelte/src/accessibility.a11y.test.ts), plus 25-toast queue coverage in [ga-coverage.test.ts](uifn/svelte/src/ga-coverage.test.ts).
+  - The P0/P1 evidence map was written to [PHASE_09-coverage-matrix.md](uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-coverage-matrix.md).
 - Test status:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/react && npm run test -- --run src/accordion.a11y.test.tsx src/ga-family-integration.test.tsx`: `PASS` (15 tests)
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm run test -- --run src/accessibility.a11y.test.ts src/ga-coverage.test.ts`: `PASS` (18 tests)
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm run test -- --run`: `PASS` (50 tests)
+  - `cd uifn/react && npm run test -- --run src/accordion.a11y.test.tsx src/ga-family-integration.test.tsx`: `PASS` (15 tests)
+  - `cd uifn/svelte && npm run test -- --run src/accessibility.a11y.test.ts src/ga-coverage.test.ts`: `PASS` (18 tests)
+  - `cd uifn/svelte && npm run test -- --run`: `PASS` (50 tests)
 
 ### `QA-002`
 
 - Status: `FAIL`
 - Acceptance criteria evidence:
-  - A truthful blocker artifact was written to [PHASE_09-manual-accessibility.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md).
-  - The root evidence record [manual-a11y.json](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/release-evidence/manual-a11y.json) explicitly records `status: "blocked"` and `methodology: "blocked-no-human-verifier"` so the gate rejects it instead of treating jsdom coverage as manual sign-off.
+  - A truthful blocker artifact was written to [PHASE_09-manual-accessibility.md](uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md).
+  - The root evidence record [manual-a11y.json](uifn/.conduct/release-evidence/manual-a11y.json) explicitly records `status: "blocked"` and `methodology: "blocked-no-human-verifier"` so the gate rejects it instead of treating jsdom coverage as manual sign-off.
   - Local environment discovery confirmed `macOS 26.3.1`, `Google Chrome 146.0.7680.155`, `Safari 26.3.1`, and `VoiceOver Utility 10`, but no actual VoiceOver or NVDA interaction was performed by a human verifier in this phase.
 - Test status:
-  - Manual review of [PHASE_09-manual-accessibility.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md): `BLOCKED`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release`: `FAIL` with `UIFN_ERR_MANUAL_EVIDENCE_INVALID`, as intended until a real manual sign-off replaces the blocker record
+  - Manual review of [PHASE_09-manual-accessibility.md](uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md): `BLOCKED`
+  - `cd repo root && npm run verify:uifn-release`: `FAIL` with `UIFN_ERR_MANUAL_EVIDENCE_INVALID`, as intended until a real manual sign-off replaces the blocker record
 
 ### `COMPAT-001`
 
@@ -69,7 +69,7 @@
   - The smoke run resolved documented core subpath imports, rendered a React root import through `react-dom/server`, and built a minimal Svelte consumer app from packed artifacts.
   - The release gate now reports compatibility failures separately from manual-evidence failures, and the current full run shows compatibility/package checks as passing.
 - Test status:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release`: `consumerSmoke = pass`, all package checks `pass`
+  - `cd repo root && npm run verify:uifn-release`: `consumerSmoke = pass`, all package checks `pass`
 
 ## Deliverables Summary
 
@@ -101,10 +101,10 @@
 ## Verification Summary
 
 - Phase verification steps executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release -- --dry-run`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && npm run verify:uifn-release`: `FAIL` only for `manual-a11y`
-  - Manual review of [PHASE_09-manual-accessibility.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md): `BLOCKED` because no real browser + AT run occurred
-  - Manual review of [PHASE_09-consumer-smoke.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-consumer-smoke.md): `PASS`; installs tarballs, not workspace aliases
+  - `cd repo root && npm run verify:uifn-release -- --dry-run`: `PASS`
+  - `cd repo root && npm run verify:uifn-release`: `FAIL` only for `manual-a11y`
+  - Manual review of [PHASE_09-manual-accessibility.md](uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md): `BLOCKED` because no real browser + AT run occurred
+  - Manual review of [PHASE_09-consumer-smoke.md](uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-consumer-smoke.md): `PASS`; installs tarballs, not workspace aliases
 - Test execution results:
   - `uifn/react`: focused PHASE_09 test command passed with 15 tests
   - `uifn/svelte`: focused PHASE_09 test command passed with 18 tests
@@ -126,4 +126,4 @@
 
 ## Blockers
 
-- A human verifier must run the required React/Svelte manual accessibility matrix with real assistive technology and replace [manual-a11y.json](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/release-evidence/manual-a11y.json) and [PHASE_09-manual-accessibility.md](/Users/serro/.codex/worktrees/e328/superfunctions/uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md) with a passing real-world record.
+- A human verifier must run the required React/Svelte manual accessibility matrix with real assistive technology and replace [manual-a11y.json](uifn/.conduct/release-evidence/manual-a11y.json) and [PHASE_09-manual-accessibility.md](uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md) with a passing real-world record.

@@ -18,7 +18,7 @@ Out of scope:
 # Deliverables
 
 - `uifn/README.md`
-- `uifn/SPEC.md`
+- `uifn/.conduct/SPEC.md`
 - `uifn/core/README.md`
 - `uifn/react/README.md`
 - `uifn/svelte/README.md`
@@ -53,7 +53,7 @@ Out of scope:
 - `cd /Users/serro/Documents/dev/n/superfunctions && npm run verify:uifn-release -- --dry-run`
 - `cd /Users/serro/Documents/dev/n/superfunctions/uifn/react && npm run test -- --run src/ga-helper-coverage.test.tsx`
 - `cd /Users/serro/Documents/dev/n/superfunctions/uifn/svelte && npm run test -- --run src/ga-coverage.test.ts`
-- Manual docs review: compare `uifn/SPEC.md`, root README, and adapter `src/index.*` exports line by line.
+- Manual docs review: compare `uifn/.conduct/SPEC.md`, root README, and adapter `src/index.*` exports line by line.
 
 Expected outcomes:
 

@@ -970,7 +970,7 @@ Input:
 ```json
 {
   "files": [
-    "uifn/SPEC.md",
+    "uifn/.conduct/SPEC.md",
     "uifn/core/README.md",
     "uifn/react/README.md",
     "uifn/svelte/README.md",

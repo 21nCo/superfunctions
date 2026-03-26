@@ -6,9 +6,9 @@
 - Agent name: `unknown-agent`
 - Model: `unknown`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/.codex/worktrees/e328/superfunctions`
-- OS + shell: `Darwin ArBook.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041 arm64`, shell `/bin/zsh`
-- Repo metadata: git repo detected at `/Users/serro/.codex/worktrees/e328/superfunctions`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
+- Workspace/project path: `repo root`
+- OS + shell: `Darwin arm64`, shell `/bin/zsh`
+- Repo metadata: git repo detected at `repo root`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
 
 ## Phase
 
@@ -179,13 +179,13 @@
 ## Verification Summary
 
 - Phase verification steps executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run test -- --run src/primitives/dialog.test.ts src/primitives/alert-dialog.test.ts src/primitives/popover.test.ts src/primitives/dropdown-menu.test.ts src/primitives/context-menu.test.ts src/primitives/menu-bar.test.ts src/primitives/select.test.ts src/primitives/combobox.test.ts src/primitives/slider.test.ts src/primitives/progress.test.ts src/primitives/scroll-area.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run test -- --run src/utils/position.test.ts src/utils/roving-focus.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run lint`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run typecheck`: `PASS`
+  - `cd uifn/core && npm run test -- --run src/primitives/dialog.test.ts src/primitives/alert-dialog.test.ts src/primitives/popover.test.ts src/primitives/dropdown-menu.test.ts src/primitives/context-menu.test.ts src/primitives/menu-bar.test.ts src/primitives/select.test.ts src/primitives/combobox.test.ts src/primitives/slider.test.ts src/primitives/progress.test.ts src/primitives/scroll-area.test.ts`: `PASS`
+  - `cd uifn/core && npm run test -- --run src/utils/position.test.ts src/utils/roving-focus.test.ts`: `PASS`
+  - `cd uifn/core && npm run lint`: `PASS`
+  - `cd uifn/core && npm run typecheck`: `PASS`
 - Additional verification executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/core && npm run test -- --run src/primitives/hover-card.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions && rg -n "TODO|FIXME" ...`: `PASS` (no matches in touched Phase 03 deliverables)
+  - `cd uifn/core && npm run test -- --run src/primitives/hover-card.test.ts`: `PASS`
+  - `cd repo root && rg -n "TODO|FIXME" ...`: `PASS` (no matches in touched Phase 03 deliverables)
 - Test execution results:
   - Official primitive suite: 11 files passed, 33 tests passed.
   - Official utility suite: 2 files passed, 10 tests passed.
@@ -194,8 +194,8 @@
 
 ## Notes
 
-- The absolute paths listed in `PHASE_03.md` point at `/Users/serro/Documents/dev/n/superfunctions`; equivalent commands were run in the current worktree at `/Users/serro/.codex/worktrees/e328/superfunctions`.
-- This worktree had no local install, so a temporary `node_modules` symlink to `/Users/serro/Documents/dev/n/superfunctions/node_modules` was used for verification and removed afterward.
+- The verification commands above can be run from the checked-out repo root without relying on machine-specific filesystem paths.
+- This worktree had no local install, so a temporary `node_modules` symlink to `repo root/node_modules` was used for verification and removed afterward.
 - `hover-card.test.ts` is a listed deliverable but is not included in the official Phase 03 verification command, so it was executed additionally and passed.
 - The phase deliverables list `focus-trap.ts`, `outside-click.ts`, and `position.ts`; only `position.test.ts` required direct changes in this phase because the runtime utility behavior already satisfied the updated popup/menu contracts.
 - The new `idBase` contract is intentionally optional so later adapter phases can either consume core-generated IDs or bind a framework-generated deterministic base into the same duplicate-safe derivation rules.

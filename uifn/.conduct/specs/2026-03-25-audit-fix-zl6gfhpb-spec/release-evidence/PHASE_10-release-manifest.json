@@ -3,7 +3,7 @@
   "status": "blocked",
   "specFolder": "2026-03-25-audit-fix-zl6gfhpb-spec",
   "gitCommit": "b69090aaa83f0515924aa9b11df3b1fcd4de3a1a",
-  "workspaceRoot": "/Users/serro/.codex/worktrees/e328/superfunctions",
+  "workspaceRoot": ".",
   "verifiedPackages": {
     "@uifn/core": {
       "version": "0.0.1",

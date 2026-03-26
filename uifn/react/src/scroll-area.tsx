@@ -290,12 +290,12 @@ export const ScrollAreaThumb = React.forwardRef<HTMLDivElement, ScrollAreaThumbP
             ? {
                 width: '100%',
                 height: `${sizePercent}%`,
-                transform: `translateY(${offsetPercent}%)`,
+                top: `${offsetPercent}%`,
               }
             : {
                 height: '100%',
                 width: `${sizePercent}%`,
-                transform: `translateX(${offsetPercent}%)`,
+                left: `${offsetPercent}%`,
               }),
           ...style,
         }}

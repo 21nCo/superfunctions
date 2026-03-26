@@ -4,20 +4,20 @@
 - Agent name: `audit`
 - Model: `unknown`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/Documents/dev/n/superfunctions/uifn`
-- OS + shell: `Darwin ArBook.local 25.3.0 arm64`, shell `/bin/zsh`
-- Repo metadata: git repo detected at `/Users/serro/Documents/dev/n/superfunctions`; branch `next`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
+- Workspace/project path: `repo root`
+- OS + shell: `Darwin arm64`, shell `/bin/zsh`
+- Repo metadata: git repo detected at `repo root`; branch `next`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
 - Intent/notes paths audited:
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/README.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/SPEC.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/core/README.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/react/README.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/svelte/README.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/vue/README.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/files/README.md`
+  - `uifn/README.md`
+  - `uifn/.conduct/SPEC.md`
+  - `uifn/core/README.md`
+  - `uifn/react/README.md`
+  - `uifn/svelte/README.md`
+  - `uifn/vue/README.md`
+  - `uifn/files/README.md`
   - User request in thread: perform a production-readiness audit for `uifn`, with React and Svelte explicitly required to be fully production-ready
 - Spec bundle paths audited:
-  - Bundle root: `/Users/serro/Documents/dev/n/superfunctions/uifn/.conduct/specs/2026-03-20-audit-fix-dhrtycgi-spec`
+  - Bundle root: `uifn/.conduct/specs/2026-03-20-audit-fix-dhrtycgi-spec`
   - Included files:
     - `INTENT_AUDIT.md`
     - `PLAN.md`
@@ -29,9 +29,9 @@
     - `release-evidence/PHASE_07-automated-a11y-smoke-2026-03-20.md`
     - `release-evidence/PHASE_07-coverage-by-family-2026-03-20.md`
 - Codebase scope audited:
-  - Root: `/Users/serro/Documents/dev/n/superfunctions/uifn`
+  - Root: `repo root/uifn`
   - Implementation focus: `uifn/core`, `uifn/react`, `uifn/svelte`
-  - Documentation/support-matrix focus: `uifn/README.md`, `uifn/SPEC.md`, `uifn/vue`, `uifn/files`
+  - Documentation/support-matrix focus: `uifn/README.md`, `uifn/.conduct/SPEC.md`, `uifn/vue`, `uifn/files`
   - Excluded from pass/fail except historical context: prior audit artifacts under `uifn/.conduct/audits`
 - Commands executed during audit: see `Appendix: commands run + environment details`
 
@@ -49,7 +49,7 @@ The implementation audit covered the shared `@uifn/core` layer because React and
 ## Intent / notes / docs
 
 - `uifn/README.md`
-- `uifn/SPEC.md`
+- `uifn/.conduct/SPEC.md`
 - `uifn/core/README.md`
 - `uifn/react/README.md`
 - `uifn/svelte/README.md`
@@ -79,7 +79,7 @@ The implementation audit covered the shared `@uifn/core` layer because React and
 - Svelte modal semantics remain below the GA contract. `DialogContent.svelte` and `AlertDialogContent.svelte` implement focus trapping and Escape handling, but there is no body-scroll lock logic anywhere in the Svelte dialog sources, so `DLG-001` is not met even though the package tests pass.
 - The release evidence for manual accessibility is not actual manual accessibility verification. The only “manual” evidence record declares `JSDOM via Vitest + Testing Library` and “manual announcement-contract review” rather than a real browser + assistive-tech run (`uifn/.conduct/specs/2026-03-20-audit-fix-dhrtycgi-spec/release-evidence/PHASE_07-accessibility-evidence-2026-03-20.md:7-10`).
 - Runtime contract hardening is incomplete in both adapters. React contains 32 plain `throw new Error(...)` context failures, and Svelte contains 65 unchecked `getContext<any>(...)` call sites, so canonical `UIFnError` handling is not consistently enforced at the adapter boundary.
-- The legacy root spec is still broader than the shipped API. `uifn/SPEC.md` continues to advertise parts and behaviors not exported by the React/Svelte adapters, so the docs/spec surface is not yet fully truthful even though package READMEs were improved.
+- The legacy root spec is still broader than the shipped API. `uifn/.conduct/SPEC.md` continues to advertise parts and behaviors not exported by the React/Svelte adapters, so the docs/spec surface is not yet fully truthful even though package READMEs were improved.
 
 # Intent Inventory
 
@@ -111,7 +111,7 @@ The implementation audit covered the shared `@uifn/core` layer because React and
 | 1 | Production-ready release, not a partial hardening pass | Bundle `Overview`, `Semantics`, `Invariants`, `Definition of Done` | `REL-001` through `COMPAT-001` | Covered |
 | 2 | React is release-blocking GA scope | Bundle `Overview`, `Adapter semantics`, `Compatibility / versioning strategy` | `REACT-001`, `REACT-002`, `QA-001`, `QA-002`, `COMPAT-001` | Covered |
 | 3 | Svelte is release-blocking GA scope | Bundle `Overview`, `Adapter semantics`, `Compatibility / versioning strategy` | `SVELTE-001`, `SVELTE-002`, `QA-001`, `QA-002`, `COMPAT-001` | Covered |
-| 4 | Shared-core, unstyled, accessible primitives family | Root `uifn/SPEC.md` core principles; bundle `Goals / Non-goals`, `Semantics` | `CORE-001`, `CORE-004`, family requirements | Covered |
+| 4 | Shared-core, unstyled, accessible primitives family | Root `uifn/.conduct/SPEC.md` core principles; bundle `Goals / Non-goals`, `Semantics` | `CORE-001`, `CORE-004`, family requirements | Covered |
 | 5 | Canonical GA and experimental package identities | Root `README.md`, root `SPEC.md` Phase 0 baseline, bundle `Release surface semantics` | `REL-001`, `DOCS-001`, `FILES-001` | Covered |
 | 6 | Unsupported adapters must not be claimed | Root `README.md`, root `SPEC.md` support claims, bundle `Release surface semantics` | `REL-001`, `DOCS-001` | Covered |
 | 7 | Display helpers are in-scope public contract | Root `README.md` display-helper contract, bundle `Adapter family catalog` | `SIMPLE-001`, `DOCS-001` | Covered |
@@ -154,7 +154,7 @@ No intent item was missing from the bundle. The remaining problems are implement
 | `POP-001` | PARTIAL | React/Svelte popup tests; shared positioning utilities reused in React hooks and Svelte internal actions | Positioning/dismissal basics are present, but browser-level cleanup and reduced-motion-safe behavior were not verified beyond jsdom-style tests. |
 | `MENU-001` | PARTIAL | Core dropdown/context/menu-bar tests pass; adapter tests are basic; root spec vs bundle differ on submenu public surface | Menu-family basics exist, but the audit did not find evidence for the documented 3-level submenu cap, and the legacy spec still overclaims submenu/check/radio public parts. |
 | `SEL-001` | PARTIAL | `uifn/react/src/select.tsx`; `uifn/svelte/src/Select.svelte`; passing select tests | Controlled open/value and hidden input behavior are present, but both adapters hardcode `select-content`, so multi-instance ARIA correctness is not production-grade yet. |
-| `CMB-001` | PARTIAL | `uifn/react/src/combobox.tsx`; `uifn/svelte/src/Combobox.svelte`; passing combobox tests; root `uifn/SPEC.md:257-293` | Basic filtering/highlighting/select behavior is covered, but duplicate ID risk remains and the root spec still advertises multiple-selection and `ComboboxEmpty` surface that the adapters do not export. |
+| `CMB-001` | PARTIAL | `uifn/react/src/combobox.tsx`; `uifn/svelte/src/Combobox.svelte`; passing combobox tests; root `uifn/.conduct/SPEC.md:257-293` | Basic filtering/highlighting/select behavior is covered, but duplicate ID risk remains and the root spec still advertises multiple-selection and `ComboboxEmpty` surface that the adapters do not export. |
 | `RANGE-001` | PARTIAL | Core slider/progress tests pass; adapter tests cover only basic cases | Core semantics exist, but adapter verification does not prove the full multi-thumb/value-contract GA bar. |
 | `SCROLL-001` | PARTIAL | Core `scroll-area` tests; adapter tests basic | Basic behavior exists, but the audit did not find exhaustive drag/geometry/corner synchronization evidence at the published contract depth. |
 | `SIMPLE-001` | PARTIAL | Display-helper docs/tests present; `VirtualizedList` tests in React/Svelte use 200 items | Helper public contracts are now explicit, but the published limit/cap expectations are not actually verified at scale. |
@@ -162,7 +162,7 @@ No intent item was missing from the bundle. The remaining problems are implement
 | `REACT-002` | PARTIAL | React build/lint/test/pack all passed; SSR hydration smoke passed | React is close to the target bar, but the duplicate fixed-ID issue and lack of fresh-consumer smoke testing keep it below a clean GA verdict. |
 | `SVELTE-001` | FAIL | `uifn/svelte/src/Dialog.svelte:29-37,52`; `uifn/svelte/src/AlertDialog.svelte:37`; `uifn/svelte/src/Tabs.svelte:35-43`; `uifn/svelte/tsup.config.ts:13-18` | Svelte GA surfaces still have nondeterministic IDs, incomplete keyboard semantics, and a build that suppresses the exact warning class the requirement says must not exist. |
 | `SVELTE-002` | PARTIAL | Svelte build/lint/test/pack passed; tarball is clean; `src/index.d.mts` is published | Tooling is much healthier than the prior audit found, but the build masks compiler warnings and does not emit declarations as part of the build itself. |
-| `DOCS-001` | FAIL | `uifn/SPEC.md:257-324`; `uifn/SPEC.md:786-796`; `uifn/SPEC.md:953-957`; adapter indexes do not export those surfaces | Package READMEs are mostly aligned, but the legacy root spec still overclaims component parts and testing obligations relative to the shipped public API and evidence. |
+| `DOCS-001` | FAIL | `uifn/.conduct/SPEC.md:257-324`; `uifn/.conduct/SPEC.md:786-796`; `uifn/.conduct/SPEC.md:953-957`; adapter indexes do not export those surfaces | Package READMEs are mostly aligned, but the legacy root spec still overclaims component parts and testing obligations relative to the shipped public API and evidence. |
 | `FILES-001` | PASS | `uifn/files/README.md`; passing pack output for `@uifn/files` | The files package is explicitly documented as Experimental and its tarball is clean. |
 | `QA-001` | PARTIAL | Coverage matrix exists and tests pass, but Svelte dialog/tabs and duplicate-ID scenarios are uncovered | The project has broad automated coverage, but not enough coverage on the exact behaviors still failing the spec. |
 | `QA-002` | FAIL | `release-evidence/PHASE_07-accessibility-evidence-2026-03-20.md:7-10,17-31` | The “manual” evidence is a jsdom/test-review artifact, not a real keyboard-only + screen-reader verification record in supported environments. |
@@ -171,10 +171,10 @@ No intent item was missing from the bundle. The remaining problems are implement
 # Spec conflicts / spec gaps
 
 - `SPEC CONFLICT`: the legacy root spec still documents a broader component catalog than the audit-fix bundle and the shipped adapters. Examples:
-  - `uifn/SPEC.md:257-293` documents `ComboboxViewport`, `ComboboxEmpty`, and multiple selection, while the bundle narrows Combobox to the shipped GA surface and single-selection contract.
-  - `uifn/SPEC.md:298-324` documents `ContextMenuCheckboxItem`, `ContextMenuRadioGroup`, `ContextMenuRadioItem`, `ContextMenuSub`, `ContextMenuSubTrigger`, and `ContextMenuSubContent`, while the bundle only guarantees `ContextMenu`, `ContextMenuTrigger`, `ContextMenuContent`, `ContextMenuItem`, plus documented submenu variants if shipped.
-  - `uifn/SPEC.md:790-796` documents `TooltipProvider` and `TooltipArrow`, which are not exported by `uifn/react/src/index.ts` or `uifn/svelte/src/index.ts`.
-- `SPEC CONFLICT`: the legacy root spec’s general polymorphism example (`uifn/SPEC.md:862-869`) is broader than the bundle’s “where claimed” React-only contract. The shipped Svelte adapter does not expose a matching `asChild` contract.
+  - `uifn/.conduct/SPEC.md:257-293` documents `ComboboxViewport`, `ComboboxEmpty`, and multiple selection, while the bundle narrows Combobox to the shipped GA surface and single-selection contract.
+  - `uifn/.conduct/SPEC.md:298-324` documents `ContextMenuCheckboxItem`, `ContextMenuRadioGroup`, `ContextMenuRadioItem`, `ContextMenuSub`, `ContextMenuSubTrigger`, and `ContextMenuSubContent`, while the bundle only guarantees `ContextMenu`, `ContextMenuTrigger`, `ContextMenuContent`, `ContextMenuItem`, plus documented submenu variants if shipped.
+  - `uifn/.conduct/SPEC.md:790-796` documents `TooltipProvider` and `TooltipArrow`, which are not exported by `uifn/react/src/index.ts` or `uifn/svelte/src/index.ts`.
+- `SPEC CONFLICT`: the legacy root spec’s general polymorphism example (`uifn/.conduct/SPEC.md:862-869`) is broader than the bundle’s “where claimed” React-only contract. The shipped Svelte adapter does not expose a matching `asChild` contract.
 - `SPEC GAP`: neither spec document currently gives a precise release-time rule for duplicate-instance ARIA/content IDs on popup/select/combobox surfaces, even though deterministic unique relationships are implicitly required by `CORE-002`.
 - `SPEC GAP`: the bundle’s manual accessibility requirement is clear, but the release evidence artifact did not define the minimum acceptable real-world assistive-tech matrix beyond generic “manual” language, which made the invalid JSDOM-based sign-off easier to produce.
 
@@ -236,7 +236,7 @@ No intent item was missing from the bundle. The remaining problems are implement
    Replace local state/keyboard logic with the core Tabs machine or equivalent shared semantics so Arrow/Home/End/manual-vs-automatic activation match the bundle contract.
 5. Normalize adapter runtime failures through canonical `UIFnError`.
    Introduce shared assertion helpers for React and Svelte contexts so missing-provider misuse, invalid values, and semantic contract failures throw typed errors instead of plain `Error` or `TypeError`.
-6. Reconcile `uifn/SPEC.md` with the shipped API or ship the missing parts.
+6. Reconcile `uifn/.conduct/SPEC.md` with the shipped API or ship the missing parts.
    Remove or clearly mark unsupported surfaces such as `ComboboxEmpty`, combobox multiple selection, ContextMenu check/radio/submenu parts, and `TooltipProvider`/`TooltipArrow` until they truly exist in the public adapters.
 7. Produce real QA-002 evidence.
    Run keyboard-only and screen-reader verification in actual supported environments, capture the browser/OS/AT matrix used, and replace the current JSDOM-based sign-off artifact.
@@ -251,7 +251,7 @@ No intent item was missing from the bundle. The remaining problems are implement
 - `rg --files uifn`
 - `find uifn -maxdepth 3 \( -name 'README.md' -o -name 'SPEC.md' -o -name 'REQUIREMENTS.md' -o -name 'PLAN.md' -o -name 'INTENT_AUDIT.md' -o -path '*/.conduct/*' \) | sort`
 - `git branch --show-current && git rev-parse HEAD && git status --short`
-- `wc -l uifn/SPEC.md ...`
+- `wc -l uifn/.conduct/SPEC.md ...`
 - multiple `sed -n ...` reads over the audited docs, spec files, package manifests, and implementation sources cited in this report
 - multiple `rg -n ...` searches for export surfaces, warnings, ID generation, runtime errors, coverage evidence, and security-sensitive patterns
 - `npm run verify:uifn-release -- --dry-run`
@@ -270,4 +270,4 @@ No intent item was missing from the bundle. The remaining problems are implement
 
 - Current UTC timestamp during report generation: `2026-03-25T06:08:18Z`
 - Shell: `/bin/zsh`
-- Host OS: `Darwin ArBook.local 25.3.0 Darwin Kernel Version 25.3.0 ... arm64`
+- Host OS: `Darwin arm64`

@@ -6,9 +6,9 @@
 - Agent name: `unknown-agent`
 - Model: `unknown`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/.codex/worktrees/e328/superfunctions`
-- OS + shell: `Darwin ArBook.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:51:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6041 arm64`, shell `/bin/zsh`
-- Repo metadata: git repo detected at `/Users/serro/.codex/worktrees/e328/superfunctions`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
+- Workspace/project path: `repo root`
+- OS + shell: `Darwin arm64`, shell `/bin/zsh`
+- Repo metadata: git repo detected at `repo root`; branch `HEAD (detached)`; commit `b69090aaa83f0515924aa9b11df3b1fcd4de3a1a`; dirty worktree `yes`
 
 ## Phase
 
@@ -164,17 +164,17 @@
 ## Verification Summary
 
 - Phase verification steps executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm run build`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm run lint`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm run test -- --run src/controlled-reactivity.test.ts`: `PASS`
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm run typecheck`: `PASS`
+  - `cd uifn/svelte && npm run build`: `PASS`
+  - `cd uifn/svelte && npm run lint`: `PASS`
+  - `cd uifn/svelte && npm run test -- --run src/controlled-reactivity.test.ts`: `PASS`
+  - `cd uifn/svelte && npm run typecheck`: `PASS`
 - Additional audit commands executed:
-  - `cd /Users/serro/.codex/worktrees/e328/superfunctions/uifn/svelte && npm run test -- --run src/dialog.test.ts src/alert-dialog.test.ts src/tabs.test.ts src/select.test.ts src/combobox.test.ts`: `PASS`
+  - `cd uifn/svelte && npm run test -- --run src/dialog.test.ts src/alert-dialog.test.ts src/tabs.test.ts src/select.test.ts src/combobox.test.ts`: `PASS`
 - Test execution results:
   - `src/controlled-reactivity.test.ts`: 8 tests passed.
   - `src/dialog.test.ts`, `src/alert-dialog.test.ts`, `src/tabs.test.ts`, `src/select.test.ts`, `src/combobox.test.ts`: 5 tests passed.
 - Verification notes:
-  - The absolute verification paths in `PHASE_06.md` point at `/Users/serro/Documents/dev/n/superfunctions`; equivalent commands were run in the current worktree at `/Users/serro/.codex/worktrees/e328/superfunctions`.
+  - The absolute verification paths in `PHASE_06.md` point at `repo root`; equivalent commands were run in the current worktree at `repo root`.
   - `vitest.config.mts` was updated to keep Vite metadata inside `.vite-vitest/` under the writable workspace because the borrowed package-local install path is outside this worktree.
 
 ## Notes

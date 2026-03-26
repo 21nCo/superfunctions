@@ -25,7 +25,7 @@
 23. Duplicate fixed IDs in popup/select/combobox surfaces MUST be explicitly prohibited.
 24. Warning suppression in the GA Svelte build path MUST be explicitly prohibited.
 25. Manual accessibility evidence MUST come from real browser and assistive-technology runs, not jsdom or ARIA review alone.
-26. The legacy root `uifn/SPEC.md` MUST stop overclaiming unshipped public API.
+26. The legacy root `uifn/.conduct/SPEC.md` MUST stop overclaiming unshipped public API.
 27. Consumer smoke installs and import-resolution checks MUST be part of the release bar.
 
 # Intent Coverage
@@ -69,4 +69,4 @@ Corrective edits made while preparing this bundle:
 - Elevated the `2026-03-25` audit findings to explicit MUST-level release requirements.
 - Added explicit requirements and vectors for duplicate-instance ID collisions, warning suppression, and real manual accessibility evidence.
 - Added consumer smoke verification as a release-bar requirement because the current gate does not prove public installability by itself.
-- Added root-spec truth requirements so the legacy `uifn/SPEC.md` no longer remains outside the release contract.
+- Added root-spec truth requirements so the legacy `uifn/.conduct/SPEC.md` no longer remains outside the release contract.
