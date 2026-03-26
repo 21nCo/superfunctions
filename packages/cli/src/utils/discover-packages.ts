@@ -44,7 +44,7 @@ export function discoverSuperfunctionsPackages(
   return discovered;
 }
 
-function findNearestNodeModulesPath(startDir: string): string | null {
+export function findNearestNodeModulesPath(startDir: string): string | null {
   let currentDir = path.resolve(startDir);
 
   while (true) {

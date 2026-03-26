@@ -179,6 +179,32 @@ describe('Express Adapter', () => {
 
       expect(res.body).toEqual({ user: { id: '1', name: 'Alice' } });
     });
+
+    it('should forward set-cookie headers even without getSetCookie support', async () => {
+      const router = {
+        handle: async () =>
+          ({
+            status: 200,
+            statusText: 'OK',
+            headers: {
+              forEach(callback: (value: string, key: string) => void) {
+                callback('session=abc; Path=/; HttpOnly', 'set-cookie');
+                callback('text/plain; charset=utf-8', 'content-type');
+              }
+            },
+            body: {},
+            text: async () => 'ok'
+          }) as Response
+      };
+
+      const app = express();
+      app.use('/api', toExpress(router as any));
+
+      const res = await supertest(app).get('/api').expect(200);
+
+      expect(res.headers['set-cookie']).toEqual(['session=abc; Path=/; HttpOnly']);
+      expect(res.text).toBe('ok');
+    });
   });
 
 });

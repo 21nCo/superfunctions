@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { discoverSuperfunctionsPackages } from "../utils/discover-packages.js";
+import {
+  discoverSuperfunctionsPackages,
+  findNearestNodeModulesPath
+} from "../utils/discover-packages.js";
 
 const TEST_DIR = path.join(__dirname, "discover-test-env");
 
@@ -82,5 +85,14 @@ describe("discoverSuperfunctionsPackages", () => {
     const result = discoverSuperfunctionsPackages(nestedDir);
     expect(result).toHaveLength(1);
     expect(result[0].packageName).toBe("parent-lib");
+  });
+
+  it("should expose the nearest parent node_modules path for nested workspaces", () => {
+    const nestedDir = path.join(TEST_DIR, "apps/example/server");
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    expect(findNearestNodeModulesPath(nestedDir)).toBe(
+      path.join(TEST_DIR, "node_modules")
+    );
   });
 });

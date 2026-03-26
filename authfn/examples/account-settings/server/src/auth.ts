@@ -12,7 +12,6 @@ import type { Adapter } from '@superfunctions/db';
 
 export const ACCOUNT_SETTINGS_NAMESPACE = 'authfn_account_settings';
 export const ACCOUNT_SETTINGS_COOKIE_PREFIX = 'authfn-account-settings';
-export const ACCOUNT_SETTINGS_NOW = new Date('2026-03-25T00:00:00.000Z');
 
 export function createAccountSettingsSchemaPlugins(): AuthFnPlugin[] {
   return [
@@ -28,12 +27,9 @@ export function createAccountSettingsSchemaPlugins(): AuthFnPlugin[] {
 export function createAccountSettingsPlugins(): AuthFnPlugin[] {
   return [
     authFnPasswordPlugin(),
-    authFnApiKeyPlugin({
-      now: () => ACCOUNT_SETTINGS_NOW
-    }),
+    authFnApiKeyPlugin(),
     authFnTwoFactorPlugin({
       issuer: 'authfn-account-settings',
-      now: () => ACCOUNT_SETTINGS_NOW,
       recoveryCodeCount: 3
     })
   ];

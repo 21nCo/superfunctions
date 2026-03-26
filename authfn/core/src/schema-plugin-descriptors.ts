@@ -64,13 +64,14 @@ export function isBundledPluginDescriptor(value: unknown): value is AuthFnBundle
     return false;
   }
 
+  const candidate = value as Record<string, unknown>;
+
   return (
-    '__functionCall' in value
-    && typeof value.__functionCall === 'string'
+    typeof candidate.__functionCall === 'string'
     && (
-      !('__args' in value)
-      || value.__args === undefined
-      || Array.isArray(value.__args)
+      !('__args' in candidate)
+      || candidate.__args === undefined
+      || Array.isArray(candidate.__args)
     )
   );
 }

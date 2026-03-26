@@ -10,6 +10,7 @@ import { parseLibraryInitializations } from "../utils/parse-library-init.js";
 import {
   getSuperfunctionsRegistry,
   discoverSuperfunctionsPackages,
+  findNearestNodeModulesPath,
 } from "../utils/discover-packages.js";
 import { autoDiscoverLibraryFiles } from "../utils/auto-discover.js";
 import {
@@ -131,13 +132,18 @@ export async function generateSchemas(
         resolvedPath = require.resolve(init.packageName);
       } catch {
         // If require.resolve fails (e.g., ESM with exports), construct the path manually
-        const nodeModulesPath = path.join(process.cwd(), 'node_modules', init.packageName);
-        const pkgJson = JSON.parse(fs.readFileSync(path.join(nodeModulesPath, 'package.json'), 'utf-8'));
+        const nearestNodeModulesPath = findNearestNodeModulesPath(process.cwd());
+        if (!nearestNodeModulesPath) {
+          throw new Error(`Unable to locate node_modules for ${init.packageName}`);
+        }
+
+        const packageRoot = path.join(nearestNodeModulesPath, init.packageName);
+        const pkgJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf-8'));
         const mainExport = resolveLibraryPackageEntryPoint(pkgJson);
         if (!mainExport) {
           throw new Error(`Unable to resolve entry point for ${init.packageName}`);
         }
-        resolvedPath = path.join(nodeModulesPath, mainExport);
+        resolvedPath = path.join(packageRoot, mainExport);
       }
       const libraryPackage = await import(resolvedPath);
 

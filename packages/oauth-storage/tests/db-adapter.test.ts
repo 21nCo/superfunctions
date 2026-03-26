@@ -235,6 +235,45 @@ describe("oauth-storage db adapter bridge", () => {
     expect((await revocationFailureStore.get("revfail_json_1"))?.metadata).toEqual({ reason: "parsed" });
   });
 
+  it("rejects invalid parsed JSON values from adapters deterministically", async () => {
+    const adapter = createMalformedParsedJsonAdapter();
+    await adapter.initialize?.();
+
+    const { stateStore, consentStore } = createOAuthDbStorage({ adapter });
+
+    await stateStore.put({
+      stateId: "st_bad_json_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_bad_json_1"
+      },
+      redirectUri: "https://app.example/callback",
+      requestedScopes: ["openid"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-01T00:05:00.000Z"
+    });
+
+    await consentStore.put({
+      consentId: "consent_bad_json_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_bad_json_1"
+      },
+      scopes: ["openid"],
+      grantedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    await expect(stateStore.get("st_bad_json_1")).rejects.toThrowError(
+      "requested_scopes must be an array of strings"
+    );
+    await expect(consentStore.get("consent_bad_json_1")).rejects.toThrowError(
+      "metadata must be an object"
+    );
+  });
+
   it("fails deterministically when required schema mapping is missing", async () => {
     const adapter = memoryAdapter();
     await adapter.initialize();
@@ -264,6 +303,30 @@ function createParsedJsonAdapter(): Adapter {
       (await adapter.findMany(params)).map((value) => parseStoredJsonFields(value as Record<string, unknown>)),
     update: async (params) => parseStoredJsonFields(await adapter.update(params) as Record<string, unknown>),
     upsert: async (params) => parseStoredJsonFields(await adapter.upsert(params) as Record<string, unknown>)
+  };
+}
+
+function createMalformedParsedJsonAdapter(): Adapter {
+  const adapter = memoryAdapter();
+  return {
+    ...adapter,
+    findOne: async (params) => {
+      const value = await adapter.findOne(params);
+      if (!value) {
+        return value;
+      }
+
+      const record = parseStoredJsonFields(value as Record<string, unknown>);
+      if (record.state_id === "st_bad_json_1") {
+        record.requested_scopes = ["openid", 7];
+      }
+
+      if (record.consent_id === "consent_bad_json_1") {
+        record.metadata = ["not-an-object"];
+      }
+
+      return record;
+    }
   };
 }
 

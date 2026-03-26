@@ -399,7 +399,7 @@ function mapStateRowToRecord(row: StateRow): OAuthStateRecord {
     providerId: row.provider_id,
     subject,
     redirectUri: row.redirect_uri,
-    requestedScopes: parseJsonValue<string[]>(row.requested_scopes),
+    requestedScopes: parseStringArrayValue(row.requested_scopes, "requested_scopes"),
     codeVerifier: row.code_verifier ?? undefined,
     nonce: row.nonce ?? undefined,
     createdAt: row.created_at,
@@ -457,10 +457,10 @@ function mapConsentRowToRecord(row: ConsentRow): OAuthConsentRecord {
     consentId: row.consent_id,
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
-    scopes: parseJsonValue<string[]>(row.scope_set),
+    scopes: parseStringArrayValue(row.scope_set, "scope_set"),
     grantedAt: row.granted_at,
     updatedAt: row.updated_at,
-    metadata: row.metadata ? parseJsonValue<Record<string, unknown>>(row.metadata) : undefined
+    metadata: row.metadata ? parseRecordValue(row.metadata, "metadata") : undefined
   };
 }
 
@@ -492,7 +492,7 @@ function mapRevocationFailureRowToRecord(row: RevocationFailureRow): OAuthRevoca
     errorMessage: row.error_message,
     retryable: row.retryable,
     occurredAt: row.occurred_at,
-    metadata: row.metadata ? parseJsonValue<Record<string, unknown>>(row.metadata) : undefined
+    metadata: row.metadata ? parseRecordValue(row.metadata, "metadata") : undefined
   };
 }
 
@@ -508,4 +508,26 @@ function parseJsonValue<T>(raw: unknown): T {
   }
 
   return raw as T;
+}
+
+function parseStringArrayValue(raw: unknown, fieldName: string): string[] {
+  const value = parseJsonValue<unknown>(raw);
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new OAuthDbAdapterError("INTERNAL_ERROR", `${fieldName} must be an array of strings`);
+  }
+
+  return [...value];
+}
+
+function parseRecordValue(raw: unknown, fieldName: string): Record<string, unknown> {
+  const value = parseJsonValue<unknown>(raw);
+  if (!isPlainRecord(value)) {
+    throw new OAuthDbAdapterError("INTERNAL_ERROR", `${fieldName} must be an object`);
+  }
+
+  return { ...value };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

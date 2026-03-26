@@ -4,8 +4,8 @@
 - Agent: `unknown-agent`
 - Model: `Codex (GPT-5)`
 - Launcher: `Codex Desktop`
-- Workspace: `/Users/serro/.codex/worktrees/b39f/superfunctions`
-- OS / Shell: `Darwin 25.3.0 arm64 / zsh`
+- Workspace: `[repo root]`
+- OS / Shell: `redacted`
 - Git: branch `(detached HEAD)`, commit `ca86e25e6faf11da93e390c18dad8ae5f22b6f69`, dirty `true`
 
 ## Phase
@@ -18,33 +18,33 @@
 - Requirements delivered: `EXAUTH-001`, `EXAUTH-003`, `EXAUTH-008`, `EXAUTH-010`, `EXAUTH-011`, `EXAUTH-012`, `EXAUTH-013`
 
 - `EXAUTH-001` — `PASS`
-  - Evidence: the `account-settings` example root now contains `README.md`, `package.json`, `playwright.config.ts`, `server/`, `client/`, and `e2e/` under `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings`.
+  - Evidence: the `account-settings` example root now contains `README.md`, `package.json`, `playwright.config.ts`, `server/`, `client/`, and `e2e/` under `authfn/examples/account-settings`.
   - Test status: exercised by `npm --prefix authfn/examples/account-settings run test:e2e` passing against the new root package.
 
 - `EXAUTH-003` — `PASS`
-  - Evidence: added `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/superfunctions.config.ts`, `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/drizzle.config.ts`, `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/auth.schema.ts`, and generated `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/db/generated/authfn-schema.ts`.
-  - Evidence: `db:generate` script runs `superfunctions generate-schema`, and server code imports generated auth tables from `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/db/generated/authfn-schema.ts`.
+  - Evidence: added `authfn/examples/account-settings/server/superfunctions.config.ts`, `authfn/examples/account-settings/server/drizzle.config.ts`, `authfn/examples/account-settings/server/src/auth.schema.ts`, and generated `authfn/examples/account-settings/server/src/db/generated/authfn-schema.ts`.
+  - Evidence: `db:generate` script runs `superfunctions generate-schema`, and server code imports generated auth tables from `authfn/examples/account-settings/server/src/db/generated/authfn-schema.ts`.
   - Test status: `npm --prefix authfn/examples/account-settings/server run db:generate` passed and generated 7 tables including `api_keys` and `two_factor_*`; `npm --prefix authfn/examples/account-settings/server run db:push` passed after creating the local default database once.
 
 - `EXAUTH-008` — `PASS`
-  - Evidence: `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/client/src/App.svelte` implements API-key create/list/revoke plus 2FA enroll/confirm/challenge/disable.
-  - Evidence: `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/e2e/account-settings.spec.ts` verifies invalid 2FA code failure and revoked API-key failure on the protected demo endpoint.
+  - Evidence: `authfn/examples/account-settings/client/src/App.svelte` implements API-key create/list/revoke plus 2FA enroll/confirm/challenge/disable.
+  - Evidence: `authfn/examples/account-settings/e2e/account-settings.spec.ts` verifies invalid 2FA code failure and revoked API-key failure on the protected demo endpoint.
   - Test status: `npm --prefix authfn/examples/account-settings run test:e2e` passed (`1 passed`).
 
 - `EXAUTH-010` — `PASS`
-  - Evidence: `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/index.ts`, `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/types.ts`, and `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/http-client.ts` now expose typed methods for API keys, 2FA challenge/disable, social disconnect, runtime lookup, and region lookup.
-  - Evidence: `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/__tests__/client-account-settings.test.ts` covers successful API-key/2FA/runtime/region calls and canonical failure envelopes for 2FA disable and social disconnect.
+  - Evidence: `authfn/client/src/index.ts`, `authfn/client/src/types.ts`, and `authfn/client/src/http-client.ts` now expose typed methods for API keys, 2FA challenge/disable, social disconnect, runtime lookup, and region lookup.
+  - Evidence: `authfn/client/src/__tests__/client-account-settings.test.ts` covers successful API-key/2FA/runtime/region calls and canonical failure envelopes for 2FA disable and social disconnect.
   - Evidence: the account-settings example consumes the new typed API-key and 2FA methods directly from `@authfn/client`.
   - Test status: `npm test --workspace @authfn/client -- account-settings` passed (`3 passed`).
 
 - `EXAUTH-011` — `PASS`
-  - Evidence: added stable account-settings selectors in `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/shared/src/client/testids.ts`.
+  - Evidence: added stable account-settings selectors in `authfn/examples/shared/src/client/testids.ts`.
   - Evidence: the example uses shared deterministic demo routes (`/demo/reset`, `/demo/events`) and adds a deterministic protected API-key demo route at `/demo/api-key/protected`.
   - Test status: Playwright uses `data-testid` selectors exclusively for the new flows and passed end to end.
 
 - `EXAUTH-012` — `PASS`
-  - Evidence: updated `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/README.md` with `dev:server`, `dev:client`, `db:generate`, `db:push`, and `test:e2e`.
-  - Evidence: updated `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/README.md` to mark `account-settings` implemented.
+  - Evidence: updated `authfn/examples/account-settings/README.md` with `dev:server`, `dev:client`, `db:generate`, `db:push`, and `test:e2e`.
+  - Evidence: updated `authfn/examples/README.md` to mark `account-settings` implemented.
   - Test status: documented commands match package scripts in the account-settings root and nested server/client packages.
 
 - `EXAUTH-013` — `PASS`
@@ -55,32 +55,32 @@
 ## Deliverables Summary
 
 - Files changed / added:
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/index.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/types.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/http-client.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/client/src/__tests__/client-account-settings.test.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/README.md`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/shared/src/client/testids.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/README.md`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/package.json`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/playwright.config.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/e2e/account-settings.spec.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/package.json`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/tsconfig.json`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/superfunctions.config.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/superfunctions.config.mjs`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/drizzle.config.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/auth.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/auth.schema.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/db/client.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/db/generated/authfn-schema.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/server/src/index.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/client/package.json`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/client/tsconfig.json`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/client/vite.config.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/client/index.html`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/client/src/main.ts`
-  - `/Users/serro/.codex/worktrees/b39f/superfunctions/authfn/examples/account-settings/client/src/App.svelte`
+  - `authfn/client/src/index.ts`
+  - `authfn/client/src/types.ts`
+  - `authfn/client/src/http-client.ts`
+  - `authfn/client/src/__tests__/client-account-settings.test.ts`
+  - `authfn/examples/README.md`
+  - `authfn/examples/shared/src/client/testids.ts`
+  - `authfn/examples/account-settings/README.md`
+  - `authfn/examples/account-settings/package.json`
+  - `authfn/examples/account-settings/playwright.config.ts`
+  - `authfn/examples/account-settings/e2e/account-settings.spec.ts`
+  - `authfn/examples/account-settings/server/package.json`
+  - `authfn/examples/account-settings/server/tsconfig.json`
+  - `authfn/examples/account-settings/server/superfunctions.config.ts`
+  - `authfn/examples/account-settings/server/superfunctions.config.mjs`
+  - `authfn/examples/account-settings/server/drizzle.config.ts`
+  - `authfn/examples/account-settings/server/src/auth.ts`
+  - `authfn/examples/account-settings/server/src/auth.schema.ts`
+  - `authfn/examples/account-settings/server/src/db/client.ts`
+  - `authfn/examples/account-settings/server/src/db/generated/authfn-schema.ts`
+  - `authfn/examples/account-settings/server/src/index.ts`
+  - `authfn/examples/account-settings/client/package.json`
+  - `authfn/examples/account-settings/client/tsconfig.json`
+  - `authfn/examples/account-settings/client/vite.config.ts`
+  - `authfn/examples/account-settings/client/index.html`
+  - `authfn/examples/account-settings/client/src/main.ts`
+  - `authfn/examples/account-settings/client/src/App.svelte`
 - Files deleted / removed: none
 
 ## Verification Summary
