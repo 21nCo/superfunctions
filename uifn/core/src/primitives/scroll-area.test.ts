@@ -33,4 +33,21 @@ describe('scroll-area primitive', () => {
     expect(scrollArea.state.horizontal.visible).toBe(true);
     expect(scrollArea.state.cornerVisible).toBe(true);
   });
+
+  it('keeps programmatic scroll paths consistent with thumb sync', () => {
+    const scrollArea = createScrollArea({});
+    scrollArea.actions.setViewportMetrics({
+      scrollHeight: 2000,
+      clientHeight: 200,
+      scrollWidth: 1200,
+      clientWidth: 300,
+    });
+
+    scrollArea.actions.scrollTo({ top: 900, left: 450 });
+    expect(scrollArea.state.vertical.thumbPositionPercent).toBe(50);
+    expect(scrollArea.state.horizontal.thumbPositionPercent).toBe(50);
+
+    scrollArea.actions.dragHorizontalThumb(50);
+    expect(scrollArea.state.viewport.scrollLeft).toBe(450);
+  });
 });

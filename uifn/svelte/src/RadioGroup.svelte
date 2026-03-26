@@ -26,14 +26,20 @@
     class: className,
     ...rest
   }: Props = $props();
+  const initialValue = (() => valueProp)();
+  const initialDefaultValue = (() => defaultValue)();
+  const initialDisabled = (() => disabled)();
+  const initialRequired = (() => required)();
+  const initialOrientation = (() => orientation)();
+  const notifyValueChange = (value: string) => onValueChange?.(value);
 
   const machine = createRadioGroup({
-    value: valueProp,
-    defaultValue,
-    disabled,
-    required,
-    orientation,
-    onValueChange
+    value: initialValue,
+    defaultValue: initialDefaultValue,
+    disabled: initialDisabled,
+    required: initialRequired,
+    orientation: initialOrientation,
+    onValueChange: notifyValueChange
   });
 
   let state = $state(machine.state);
@@ -42,6 +48,12 @@
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (valueProp !== undefined && valueProp !== state.value) {
+      machine.actions.syncValue(valueProp);
+    }
   });
 
   setContext('radio-group', {

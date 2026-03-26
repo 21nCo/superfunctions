@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
   import { portal as portalAction } from './internal/portal';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     container?: HTMLElement | string;
@@ -8,7 +8,11 @@
   }
 
   let { container = 'body', children }: Props = $props();
-  const context = getContext<any>('dialog');
+  const context = getRequiredContext<any>(
+    'dialog',
+    'DialogPortal',
+    'Dialog components must be used within Dialog'
+  );
 </script>
 
 {#if context.open}

@@ -1,47 +1,70 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-  PopoverClose
-} from './popover';
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from './popover';
 
 describe('Popover', () => {
-  it('renders and toggles content', () => {
+  it('assigns unique content ids across multiple open instances', () => {
+    render(
+      <>
+        <Popover defaultOpen>
+          <PopoverTrigger>Toggle alpha</PopoverTrigger>
+          <PopoverContent>Alpha content</PopoverContent>
+        </Popover>
+        <Popover defaultOpen>
+          <PopoverTrigger>Toggle beta</PopoverTrigger>
+          <PopoverContent>Beta content</PopoverContent>
+        </Popover>
+      </>
+    );
+
+    const alphaTrigger = screen.getByRole('button', { name: 'Toggle alpha' });
+    const betaTrigger = screen.getByRole('button', { name: 'Toggle beta' });
+    const dialogs = screen.getAllByRole('dialog');
+
+    expect(alphaTrigger).toHaveAttribute('aria-controls', dialogs[0]?.id);
+    expect(betaTrigger).toHaveAttribute('aria-controls', dialogs[1]?.id);
+    expect(dialogs[0]?.id).not.toBe(dialogs[1]?.id);
+  });
+
+  it('closes on outside click', async () => {
+    render(
+      <div>
+        <button type="button">Outside target</button>
+        <Popover defaultOpen>
+          <PopoverTrigger>Toggle</PopoverTrigger>
+          <PopoverContent>Popover content</PopoverContent>
+        </Popover>
+      </div>
+    );
+
+    expect(screen.getByText('Popover content')).toBeVisible();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Outside target' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Popover content')).not.toBeInTheDocument();
+    });
+  });
+
+  it('closes via PopoverClose', async () => {
     render(
       <Popover>
-        <PopoverTrigger>Toggle Popover</PopoverTrigger>
+        <PopoverTrigger>Toggle popover</PopoverTrigger>
         <PopoverContent>
-          <p>Popover Content</p>
+          <span>Closeable content</span>
           <PopoverClose>Close</PopoverClose>
         </PopoverContent>
       </Popover>
     );
 
-    expect(screen.queryByText('Popover Content')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle popover' }));
+    expect(screen.getByText('Closeable content')).toBeVisible();
 
-    fireEvent.click(screen.getByText('Toggle Popover'));
-    expect(screen.getByText('Popover Content')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
-    fireEvent.click(screen.getByText('Close'));
-    expect(screen.queryByText('Popover Content')).not.toBeInTheDocument();
-  });
-
-  it('closes on outside click', () => {
-    render(
-      <Popover defaultOpen>
-        <PopoverTrigger>Toggle</PopoverTrigger>
-        <PopoverContent>
-          <p>Content</p>
-        </PopoverContent>
-      </Popover>
-    );
-
-    expect(screen.getByText('Content')).toBeVisible();
-    
-    fireEvent.mouseDown(document.body);
-    expect(screen.queryByText('Content')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('Closeable content')).not.toBeInTheDocument();
+    });
   });
 });

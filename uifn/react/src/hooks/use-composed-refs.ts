@@ -11,12 +11,13 @@ function setRef<T>(ref: PossibleRef<T>, value: T | null) {
 }
 
 export function useComposedRefs<T>(...refs: PossibleRef<T>[]) {
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  return React.useCallback(
-    (node: T | null) => {
-      refs.forEach((ref) => setRef(ref, node));
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    refs
-  );
+  const refsRef = React.useRef(refs);
+
+  React.useEffect(() => {
+    refsRef.current = refs;
+  });
+
+  return React.useCallback((node: T | null) => {
+    refsRef.current.forEach((ref) => setRef(ref, node));
+  }, []);
 }

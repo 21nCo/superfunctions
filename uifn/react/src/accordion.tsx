@@ -3,6 +3,7 @@ import { AccordionType } from '@uifn/core/primitives/accordion';
 import { useControllableState } from './hooks/use-controllable-state';
 import { useRovingFocus } from './hooks/use-roving-focus';
 import { useId } from './hooks/use-id';
+import { assertReactContext } from './utils/assert-context';
 
 // Types
 export interface AccordionSingleProps {
@@ -42,11 +43,11 @@ interface AccordionContextValue {
 const AccordionContext = createContext<AccordionContextValue | undefined>(undefined);
 
 const useAccordionContext = () => {
-  const context = useContext(AccordionContext);
-  if (!context) {
-    throw new Error('Accordion components must be used within an Accordion');
-  }
-  return context;
+  return assertReactContext(
+    useContext(AccordionContext),
+    'Accordion',
+    'Accordion components must be used within an Accordion'
+  );
 };
 
 export const Accordion = React.forwardRef<HTMLDivElement, AccordionProps>(
@@ -201,10 +202,12 @@ export interface AccordionTriggerProps extends React.ButtonHTMLAttributes<HTMLBu
 export const AccordionTrigger = React.forwardRef<HTMLButtonElement, AccordionTriggerProps>(
   (props, ref) => {
     const { children, onClick, ...domProps } = props;
-    const itemContext = useContext(AccordionItemContext);
+    const itemContext = assertReactContext(
+      useContext(AccordionItemContext),
+      'AccordionTrigger',
+      'AccordionTrigger must be used within AccordionItem'
+    );
     const accordionContext = useAccordionContext();
-
-    if (!itemContext) throw new Error('AccordionTrigger must be used within AccordionItem');
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       if (itemContext.disabled) return;
@@ -250,10 +253,12 @@ export interface AccordionContentProps extends React.HTMLAttributes<HTMLDivEleme
 export const AccordionContent = React.forwardRef<HTMLDivElement, AccordionContentProps>(
   (props, ref) => {
     const { children, ...domProps } = props;
-    const itemContext = useContext(AccordionItemContext);
+    const itemContext = assertReactContext(
+      useContext(AccordionItemContext),
+      'AccordionContent',
+      'AccordionContent must be used within AccordionItem'
+    );
     const accordionContext = useAccordionContext();
-
-    if (!itemContext) throw new Error('AccordionContent must be used within AccordionItem');
 
     return (
       <div

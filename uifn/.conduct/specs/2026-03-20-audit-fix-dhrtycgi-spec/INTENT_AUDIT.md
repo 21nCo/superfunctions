@@ -54,4 +54,4 @@ Corrective edits made while preparing this bundle:
 
 - Elevated React and Svelte to explicit GA scope because the user called out both adapters.
 - Converted audit findings about package identity, Svelte toolchain, docs drift, and missing core semantics into explicit MUST-level requirements.
-- Added explicit requirements and vectors for public surfaces not fully covered by the legacy `uifn/SPEC.md`, including `MenuBar`, `Avatar`, `Badge`, `VirtualizedList`, and `@uifn/files`.
+- Added explicit requirements and vectors for public surfaces not fully covered by the legacy `uifn/.conduct/SPEC.md`, including `MenuBar`, `Avatar`, `Badge`, `VirtualizedList`, and `@uifn/files`.

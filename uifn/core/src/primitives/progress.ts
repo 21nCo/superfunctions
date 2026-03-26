@@ -13,6 +13,8 @@ export interface ProgressState {
   min: number;
   max: number;
   mode: 'determinate' | 'indeterminate';
+  ariaValueMin: number;
+  ariaValueMax: number;
   ariaValueNow: number | null;
   lastChangeMeta?: ChangeMeta<number | null>;
 }
@@ -52,6 +54,8 @@ export function createProgress(props: ProgressProps): ProgressMachine {
     min,
     max,
     mode: getMode(initialValue),
+    ariaValueMin: min,
+    ariaValueMax: max,
     ariaValueNow: initialValue,
   });
 
@@ -69,6 +73,8 @@ export function createProgress(props: ProgressProps): ProgressMachine {
       {
         value: normalized,
         mode: getMode(normalized),
+        ariaValueMin: state.min,
+        ariaValueMax: state.max,
         ariaValueNow: normalized,
         lastChangeMeta: meta,
       },

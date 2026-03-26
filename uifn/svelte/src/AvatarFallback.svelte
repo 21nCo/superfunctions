@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface AvatarContext {
+    status: 'idle' | 'loading' | 'loaded' | 'error';
+  }
 
   interface Props {
     delayMs?: number;
@@ -9,10 +14,16 @@
 
   let { delayMs, children, class: className, ...rest }: Props = $props();
 
-  const context = getContext<any>('avatar');
-  let canRender = $state(delayMs === undefined);
+  const context = getRequiredContext<AvatarContext>(
+    'avatar',
+    'AvatarFallback',
+    'AvatarFallback must be used within an Avatar'
+  );
+  const initialCanRender = (() => delayMs === undefined)();
+  let canRender = $state(initialCanRender);
 
   onMount(() => {
+    // The fallback delay is part of the public helper contract.
     if (delayMs !== undefined) {
       const timer = setTimeout(() => {
         canRender = true;

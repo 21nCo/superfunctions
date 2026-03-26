@@ -9,14 +9,7 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   external: ["svelte", "@uifn/core"],
-  esbuildPlugins: [
-    esbuildSvelte({
-      compilerOptions: {
-        warningFilter: (warning) => warning.code !== "state_referenced_locally",
-      },
-      filterWarnings: (warning) => warning.code !== "state_referenced_locally",
-    }),
-  ],
+  esbuildPlugins: [esbuildSvelte()],
   treeshake: true,
   minify: false,
 });

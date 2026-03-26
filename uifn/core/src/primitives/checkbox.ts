@@ -1,5 +1,6 @@
 import { createUIFnError, type UIFnError } from '../errors';
 import { K } from '../aria/keys';
+import { createControllableStateController } from '../state/machine';
 import { type ChangeMeta, createStore } from './shared';
 
 export type CheckedState = boolean | 'indeterminate';
@@ -16,6 +17,7 @@ export interface CheckboxProps {
 
 export interface CheckboxState {
   checked: CheckedState;
+  controlled: boolean;
   disabled: boolean;
   required: boolean;
   name?: string;
@@ -64,30 +66,39 @@ export function createCheckbox(props: CheckboxProps): CheckboxMachine {
   const required = props.required ?? false;
   const value = props.value ?? 'on';
   const name = props.name;
+  const controlledState = createControllableStateController<CheckedState>({
+    value: props.checked,
+    defaultValue: props.defaultChecked ?? false,
+    onChange: props.onCheckedChange,
+  });
 
   const store = createStore<CheckboxState, CheckedState>({
-    checked: initialChecked,
+    checked: controlledState.getValue(),
+    controlled: controlledState.isControlled(),
     disabled,
     required,
     name,
     value,
-    ariaChecked: getAriaChecked(initialChecked),
-    formValue: getFormValue(name, value, initialChecked),
+    ariaChecked: getAriaChecked(controlledState.getValue()),
+    formValue: getFormValue(name, value, controlledState.getValue()),
     lastError: null,
   });
 
   const emitChecked = (nextChecked: CheckedState, meta: ChangeMeta<CheckedState>) => {
+    const result =
+      meta.source === 'controlled-sync'
+        ? controlledState.syncValue(nextChecked)
+        : controlledState.requestValue(nextChecked);
     store.patchState(
       {
-        checked: nextChecked,
-        ariaChecked: getAriaChecked(nextChecked),
-        formValue: getFormValue(name, value, nextChecked),
+        checked: result.value,
+        ariaChecked: getAriaChecked(result.value),
+        formValue: getFormValue(name, value, result.value),
         lastChangeMeta: meta,
         lastError: null,
       },
       meta
     );
-    props.onCheckedChange?.(nextChecked);
   };
 
   const ensureEnabled = (): boolean => {
@@ -114,6 +125,9 @@ export function createCheckbox(props: CheckboxProps): CheckboxMachine {
         return;
       }
       const state = store.getState();
+      if (state.checked === checked) {
+        return;
+      }
       emitChecked(checked, {
         source: 'programmatic',
         reason: 'set-checked',
@@ -157,6 +171,10 @@ export function createCheckbox(props: CheckboxProps): CheckboxMachine {
     },
     syncChecked(checked) {
       const state = store.getState();
+      if (state.checked === checked) {
+        return;
+      }
+
       emitChecked(checked, {
         source: 'controlled-sync',
         reason: 'sync-checked',

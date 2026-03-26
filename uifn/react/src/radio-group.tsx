@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useRef } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
 import { useRovingFocus } from './hooks/use-roving-focus';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * RadioGroup Root
@@ -102,9 +103,11 @@ const RadioGroupItemContext = createContext<RadioGroupItemContextValue | undefin
 export const RadioGroupItem = React.forwardRef<HTMLButtonElement, RadioGroupItemProps>(
   (props, ref) => {
     const { value, disabled, children, onClick, onFocus, ...domProps } = props;
-    const context = useContext(RadioGroupContext);
-
-    if (!context) throw new Error('RadioGroupItem must be used within RadioGroup');
+    const context = assertReactContext(
+      useContext(RadioGroupContext),
+      'RadioGroupItem',
+      'RadioGroupItem must be used within RadioGroup'
+    );
 
     const isChecked = context.value === value;
     const isDisabled = context.disabled || !!disabled;
@@ -181,9 +184,11 @@ export interface RadioGroupIndicatorProps extends React.HTMLAttributes<HTMLSpanE
 export const RadioGroupIndicator = React.forwardRef<HTMLSpanElement, RadioGroupIndicatorProps>(
     (props, ref) => {
         const { forceMount, ...domProps } = props;
-        const context = useContext(RadioGroupItemContext);
-        
-        if (!context) throw new Error('RadioGroupIndicator must be used within RadioGroupItem');
+        const context = assertReactContext(
+          useContext(RadioGroupItemContext),
+          'RadioGroupIndicator',
+          'RadioGroupIndicator must be used within RadioGroupItem'
+        );
 
         if (!forceMount && !context.checked) return null;
 

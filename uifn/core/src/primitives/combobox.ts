@@ -1,4 +1,6 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
+import { composePublicId, generateId, registerPublicId } from '../utils/id';
 import { getNextRovingFocusIndex } from '../utils/roving-focus';
 import { type ChangeMeta, createStore } from './shared';
 
@@ -25,6 +27,7 @@ export interface ComboboxProps {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
+  idBase?: string;
   disabled?: boolean;
   items?: Array<string | ComboboxItem>;
   filter?: (
@@ -34,11 +37,23 @@ export interface ComboboxProps {
   virtualization?: ComboboxVirtualizationOptions;
 }
 
+export interface ComboboxIds {
+  baseId: string;
+  inputId: string;
+  contentId: string;
+  labelId: string;
+  optionIds: Record<string, string>;
+}
+
 export interface ComboboxState {
   value: string;
   inputValue: string;
   open: boolean;
+  valueControlled: boolean;
+  inputValueControlled: boolean;
+  openControlled: boolean;
   disabled: boolean;
+  ids: ComboboxIds;
   items: ComboboxItem[];
   filteredItems: string[];
   highlightedItem: string | null;
@@ -100,6 +115,47 @@ function normalizeItems(items: Array<string | ComboboxItem> | undefined): Combob
     dedupe.set(normalized.value, normalized);
   });
   return Array.from(dedupe.values());
+}
+
+function normalizeIdSegment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function createComboboxIds(
+  props: ComboboxProps,
+  items: ComboboxItem[],
+  existingBaseId?: string
+): ComboboxIds {
+  const buildId = (prefix: string, slot: string) => {
+    const id = composePublicId({ prefix, slot });
+    return existingBaseId ? id : registerPublicId(id);
+  };
+  const baseId = existingBaseId
+    ? existingBaseId
+    : props.idBase
+      ? registerPublicId(props.idBase, {
+          package: '@uifn/core',
+          component: 'Combobox',
+        })
+      : generateId('combobox');
+
+  return {
+    baseId,
+    inputId: buildId(baseId, 'input'),
+    contentId: buildId(baseId, 'content'),
+    labelId: buildId(baseId, 'label'),
+    optionIds: Object.fromEntries(
+      items.map((item) => [
+        item.value,
+        buildId(`${baseId}-option`, normalizeIdSegment(item.value)),
+      ])
+    ),
+  };
 }
 
 function getEnabledItems(items: ComboboxItem[]): ComboboxItem[] {
@@ -181,17 +237,37 @@ function assertKnownValue(value: string, items: ComboboxItem[]): void {
 export function createCombobox(props: ComboboxProps): ComboboxMachine {
   const items = normalizeItems(props.items);
   const initialValue = props.value ?? props.defaultValue ?? '';
+  const valueController = createControllableStateController<string>({
+    value: props.value,
+    defaultValue: props.defaultValue ?? '',
+    onChange: props.onValueChange,
+  });
+  const inputValueController = createControllableStateController<string>({
+    value: props.inputValue,
+    defaultValue: props.defaultInputValue ?? '',
+    onChange: props.onInputValueChange,
+  });
+  const openController = createControllableStateController<boolean>({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
   assertKnownValue(initialValue, items);
 
   const initialInputValue = props.inputValue ?? props.defaultInputValue ?? '';
   const filtered = applyFilter(items, initialInputValue, props.filter);
   const highlighted = filtered.find((value) => !items.find((item) => item.value === value)?.disabled) ?? null;
+  const ids = createComboboxIds(props, items);
 
   const store = createStore<ComboboxState, string>({
-    value: initialValue,
-    inputValue: initialInputValue,
-    open: props.open ?? props.defaultOpen ?? false,
+    value: valueController.getValue(),
+    inputValue: inputValueController.getValue(),
+    open: openController.getValue(),
+    valueControlled: valueController.isControlled(),
+    inputValueControlled: inputValueController.isControlled(),
+    openControlled: openController.isControlled(),
     disabled: props.disabled ?? false,
+    ids,
     items,
     filteredItems: filtered,
     highlightedItem: highlighted,
@@ -211,13 +287,21 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
       ? state.highlightedItem
       : filteredItems.find((value) => !state.items.find((item) => item.value === value)?.disabled) ??
         null;
+    const inputResult =
+      source === 'controlled-sync'
+        ? inputValueController.syncValue(inputValue)
+        : inputValueController.requestValue(inputValue);
+    const openResult =
+      source === 'controlled-sync'
+        ? openController.syncValue(true)
+        : openController.requestValue(true);
 
     store.patchState({
-      inputValue,
+      inputValue: inputResult.value,
       filteredItems,
       highlightedItem,
       emptyStateShown: filteredItems.length === 0,
-      open: true,
+      open: openResult.value,
       virtualization: resolveVirtualWindow(
         filteredItems,
         props.virtualization,
@@ -231,8 +315,6 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
       },
       lastError: null,
     });
-    props.onInputValueChange?.(inputValue);
-    props.onOpenChange?.(true);
   };
 
   const emitValue = (
@@ -244,6 +326,18 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
     const state = store.getState();
     assertKnownValue(nextValue, state.items);
     const item = state.items.find((entry) => entry.value === nextValue);
+    const valueResult =
+      source === 'controlled-sync'
+        ? valueController.syncValue(nextValue)
+        : valueController.requestValue(nextValue);
+    const inputResult =
+      source === 'controlled-sync'
+        ? inputValueController.syncValue(item?.label ?? nextValue)
+        : inputValueController.requestValue(item?.label ?? nextValue);
+    const openResult =
+      source === 'controlled-sync'
+        ? openController.syncValue(false)
+        : openController.requestValue(false);
 
     const meta: ChangeMeta<string> = {
       source,
@@ -255,18 +349,15 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
 
     store.patchState(
       {
-        value: nextValue,
-        inputValue: item?.label ?? nextValue,
-        open: false,
+        value: valueResult.value,
+        inputValue: inputResult.value,
+        open: openResult.value,
         highlightedItem: nextValue,
         lastChangeMeta: meta,
         lastError: null,
       },
       meta
     );
-    props.onValueChange?.(nextValue);
-    props.onInputValueChange?.(item?.label ?? nextValue);
-    props.onOpenChange?.(false);
   };
 
   const actions: ComboboxActions = {
@@ -282,6 +373,10 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
             recoverable: true,
           }),
         });
+        return;
+      }
+
+      if (state.value === nextValue) {
         return;
       }
 
@@ -302,6 +397,10 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
         return;
       }
 
+      if (state.inputValue === nextInputValue) {
+        return;
+      }
+
       recomputeFilterState(nextInputValue, 'programmatic', 'set-input-value');
     },
     setOpen(nextOpen) {
@@ -319,10 +418,14 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
         return;
       }
 
+      if (state.open === nextOpen) {
+        return;
+      }
+
+      const openResult = openController.requestValue(nextOpen);
       store.patchState({
-        open: nextOpen,
+        open: openResult.value,
       });
-      props.onOpenChange?.(nextOpen);
     },
     syncValue(nextValue) {
       emitValue(nextValue, 'controlled-sync', 'sync-value');
@@ -331,10 +434,10 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
       recomputeFilterState(nextValue, 'controlled-sync', 'sync-input-value');
     },
     syncOpen(nextOpen) {
+      const openResult = openController.syncValue(nextOpen);
       store.patchState({
-        open: nextOpen,
+        open: openResult.value,
       });
-      props.onOpenChange?.(nextOpen);
     },
     setItems(nextItems) {
       const state = store.getState();
@@ -342,6 +445,14 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
       assertKnownValue(state.value, normalizedItems);
       const filteredItems = applyFilter(normalizedItems, state.inputValue, props.filter);
       store.patchState({
+        ids: createComboboxIds(
+          {
+            ...props,
+            idBase: state.ids.baseId,
+          },
+          normalizedItems,
+          state.ids.baseId
+        ),
         items: normalizedItems,
         filteredItems,
         highlightedItem: filteredItems.includes(state.highlightedItem ?? '')
@@ -385,10 +496,10 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
       });
 
       if (key === 'Escape') {
+        const openResult = openController.requestValue(false);
         store.patchState({
-          open: false,
+          open: openResult.value,
         });
-        props.onOpenChange?.(false);
         return state.highlightedItem;
       }
 
@@ -398,10 +509,10 @@ export function createCombobox(props: ComboboxProps): ComboboxMachine {
         }
 
         if (!state.open) {
+          const openResult = openController.requestValue(true);
           store.patchState({
-            open: true,
+            open: openResult.value,
           });
-          props.onOpenChange?.(true);
         }
 
         const currentValue = currentItem ?? state.highlightedItem ?? enabledFiltered[0];

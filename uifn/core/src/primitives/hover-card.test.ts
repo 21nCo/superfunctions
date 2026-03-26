@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { resetIdCounters } from '../utils/id';
 import { createHoverCard } from './hover-card';
 
 describe('hover-card primitive', () => {
+  beforeEach(() => {
+    resetIdCounters();
+  });
+
   it('applies open/close delays deterministically', () => {
     const hoverCard = createHoverCard({
       openDelay: 200,
@@ -23,5 +28,6 @@ describe('hover-card primitive', () => {
     hoverCard.actions.advanceTime(100);
     expect(hoverCard.state.open).toBe(false);
     expect(hoverCard.state.cleanup.complete).toBe(true);
+    expect(hoverCard.state.ids.contentId).toBe('uifn-hover-card-1-content');
   });
 });

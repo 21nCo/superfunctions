@@ -1,6 +1,7 @@
 import React, { createContext, useContext } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
-import { generateId } from '@uifn/core/utils/id';
+import { useId } from './hooks/use-id';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Collapsible
@@ -23,11 +24,11 @@ interface CollapsibleContextValue {
 const CollapsibleContext = createContext<CollapsibleContextValue | undefined>(undefined);
 
 const useCollapsibleContext = () => {
-  const context = useContext(CollapsibleContext);
-  if (!context) {
-    throw new Error('Collapsible components must be used within a Collapsible');
-  }
-  return context;
+  return assertReactContext(
+    useContext(CollapsibleContext),
+    'Collapsible',
+    'Collapsible components must be used within a Collapsible'
+  );
 };
 
 export const Collapsible = React.forwardRef<HTMLDivElement, CollapsibleProps>(
@@ -50,7 +51,7 @@ export const Collapsible = React.forwardRef<HTMLDivElement, CollapsibleProps>(
     // Use React 18 useId if available, fallback to simple generation for older (though project seems modern)
     // Note: In a real app we'd want a unified useId hook that handles both.
     // For this file I'll assume React 18+ per typical modern setups or use a local fallback if needed.
-    const _contentId = React.useId ? React.useId() : React.useMemo(() => generateId('collapsible-content'), []);
+    const _contentId = useId(undefined, { prefix: 'collapsible', slot: 'content' });
     const contentId = props.id || _contentId;
 
     return (

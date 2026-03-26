@@ -1,8 +1,17 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+  import { focusCollectionItemByDirection } from './internal/collection';
+  import { isOutsideEventTarget } from './internal/dismissible';
   import { portal as portalAction } from './internal/portal';
   import { position as positionAction } from './internal/position';
   import type { Side, Align } from './internal/position';
+
+  interface PopoverContext {
+    open: boolean;
+    contentId: string;
+    triggerElement: HTMLElement | undefined;
+    setOpen: (value: boolean) => void;
+  }
 
   interface Props {
     side?: Side;
@@ -23,18 +32,63 @@
     ...rest 
   }: Props = $props();
 
-  const context = getContext<any>('popover');
+  const context = getRequiredContext<PopoverContext>(
+    'popover',
+    'PopoverContent',
+    'Popover components must be used within a Popover'
+  );
+  let contentEl: HTMLDivElement;
 
-  // Simple outside click handling
-  function handleOutsideClick(e: MouseEvent) {
-    if (context.open && !context.modal) {
-        // Implementation would need a ref to the content.
+  $effect(() => {
+    if (!context.open) {
+      return;
+    }
+
+    queueMicrotask(() => {
+      contentEl?.focus();
+    });
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!isOutsideEventTarget(target, [contentEl, context.triggerElement])) {
+        return;
+      }
+
+      context.setOpen(false);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        context.setOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  });
+
+  function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      focusCollectionItemByDirection(
+        contentEl,
+        '[tabindex]:not([tabindex="-1"]), button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+        document.activeElement as HTMLElement | null,
+        event.shiftKey ? 'prev' : 'next'
+      );
     }
   }
 </script>
 
 {#if context.open}
   <div 
+    bind:this={contentEl}
     use:portalAction={'body'}
     use:positionAction={{
         trigger: context.triggerElement,
@@ -43,7 +97,12 @@
         sideOffset,
         alignOffset
     }}
+    id={context.contentId}
+    role="dialog"
+    aria-modal="false"
     data-state="open"
+    tabindex="-1"
+    onkeydown={handleKeyDown}
     class={className}
     style="z-index: 50; background-color: white; border: 1px solid #ccc; border-radius: 4px; padding: 10px;"
     {...rest}

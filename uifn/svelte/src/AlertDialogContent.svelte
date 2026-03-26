@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
   import { focusTrap } from './internal/focus-trap';
+  import { lockBodyScroll } from './internal/body-scroll-lock';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -18,7 +19,12 @@
     ...rest 
   }: Props = $props();
 
-  const ctx = getContext<any>('alert-dialog');
+  const ctx = getRequiredContext<any>(
+    'alert-dialog',
+    'AlertDialogContent',
+    'AlertDialog components must be used within AlertDialog'
+  );
+  let contentEl: HTMLDivElement;
   
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -28,9 +34,26 @@
       }
     }
   }
+
+  $effect(() => {
+    if (!ctx.open) {
+      return;
+    }
+
+    return lockBodyScroll();
+  });
+
+  $effect(() => {
+    if (ctx.open) {
+      queueMicrotask(() => {
+        contentEl?.focus();
+      });
+    }
+  });
 </script>
 
 <div
+  bind:this={contentEl}
   role="alertdialog"
   id={`${ctx.baseId}-content`}
   aria-labelledby={`${ctx.baseId}-title`}

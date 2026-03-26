@@ -1,5 +1,18 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface SelectContext {
+    open: boolean;
+    disabled: boolean;
+    required: boolean;
+    contentId: string;
+    highlightedItem: string | null;
+    registerTrigger: (el: HTMLElement) => void;
+    setOpen: (value: boolean) => void;
+    focusOption: (value: string | null | undefined) => void;
+    handleKeyDown: (key: string, currentItem?: string | null) => string | null;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -7,7 +20,11 @@
   }
 
   let { children, ...rest }: Props = $props();
-  const ctx = getContext<any>('select');
+  const ctx = getRequiredContext<SelectContext>(
+    'select',
+    'SelectTrigger',
+    'Select components must be used within a Select'
+  );
   let el: HTMLElement;
 
   onMount(() => {
@@ -21,13 +38,32 @@
       ctx.setOpen(!ctx.open);
     }
   }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (ctx.disabled) {
+      return;
+    }
+
+    const navigationKeys = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', ' '];
+    if (!navigationKeys.includes(e.key)) {
+      return;
+    }
+
+    e.preventDefault();
+    const nextItem = ctx.handleKeyDown(e.key, ctx.highlightedItem);
+    if (nextItem) {
+      queueMicrotask(() => {
+        ctx.focusOption(nextItem);
+      });
+    }
+  }
 </script>
 
 <button
   bind:this={el}
   type="button"
   role="combobox"
-  aria-controls="select-content"
+  aria-controls={ctx.open ? ctx.contentId : undefined}
   aria-expanded={ctx.open}
   aria-required={ctx.required}
   aria-disabled={ctx.disabled}
@@ -35,6 +71,7 @@
   data-disabled={ctx.disabled ? '' : undefined}
   {...rest}
   onclick={handleClick}
+  onkeydown={handleKeyDown}
 >
   {@render children?.()}
 </button>

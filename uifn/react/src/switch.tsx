@@ -1,5 +1,6 @@
 import React, { createContext, useContext } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Switch Root
@@ -92,8 +93,11 @@ export interface SwitchThumbProps extends React.HTMLAttributes<HTMLSpanElement> 
 
 export const SwitchThumb = React.forwardRef<HTMLSpanElement, SwitchThumbProps>(
   (props, ref) => {
-    const context = useContext(SwitchContext);
-    if (!context) throw new Error('SwitchThumb must be used within Switch');
+    const context = assertReactContext(
+      useContext(SwitchContext),
+      'SwitchThumb',
+      'SwitchThumb must be used within Switch'
+    );
 
     return (
       <span

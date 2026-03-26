@@ -1,4 +1,5 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
 import { type ChangeMeta, createStore } from './shared';
 
 export interface CollapsibleProps {
@@ -10,6 +11,7 @@ export interface CollapsibleProps {
 
 export interface CollapsibleState {
   open: boolean;
+  controlled: boolean;
   disabled: boolean;
   lastChangeMeta?: ChangeMeta<boolean>;
   lastError: UIFnError | null;
@@ -31,27 +33,40 @@ export interface CollapsibleMachine {
 export function createCollapsible(props: CollapsibleProps = {}): CollapsibleMachine {
   const initialOpen = props.open ?? props.defaultOpen ?? false;
   const disabled = props.disabled ?? false;
+  const controlledState = createControllableStateController({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
   const store = createStore<CollapsibleState, boolean>({
-    open: initialOpen,
+    open: controlledState.getValue(),
+    controlled: controlledState.isControlled(),
     disabled,
     lastError: null,
   });
 
   const emitOpen = (nextOpen: boolean, meta: ChangeMeta<boolean>) => {
+    const result =
+      meta.source === 'controlled-sync'
+        ? controlledState.syncValue(nextOpen)
+        : controlledState.requestValue(nextOpen);
     store.patchState(
       {
-        open: nextOpen,
+        open: result.value,
         lastChangeMeta: meta,
         lastError: null,
       },
       meta
     );
-    props.onOpenChange?.(nextOpen);
   };
 
   const actions: CollapsibleActions = {
     setOpen(open) {
       const state = store.getState();
+      if (state.open === open) {
+        return;
+      }
+
       if (state.disabled) {
         store.patchState({
           lastError: createUIFnError({
@@ -98,6 +113,10 @@ export function createCollapsible(props: CollapsibleProps = {}): CollapsibleMach
     },
     syncOpen(open) {
       const state = store.getState();
+      if (state.open === open) {
+        return;
+      }
+
       emitOpen(open, {
         source: 'controlled-sync',
         reason: 'sync-open',

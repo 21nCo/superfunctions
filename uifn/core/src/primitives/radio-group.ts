@@ -1,5 +1,6 @@
 import { createUIFnError, type UIFnError } from '../errors';
-import { getNextRovingFocusIndex } from '../utils/roving-focus';
+import { createControllableStateController } from '../state/machine';
+import { getNextEnabledRovingFocusIndex } from '../utils/roving-focus';
 import { type ChangeMeta, createStore, uniqueStrings } from './shared';
 
 export interface RadioGroupProps {
@@ -15,6 +16,7 @@ export interface RadioGroupProps {
 
 export interface RadioGroupState {
   value: string;
+  controlled: boolean;
   disabled: boolean;
   required: boolean;
   orientation: 'horizontal' | 'vertical';
@@ -77,11 +79,17 @@ export function createRadioGroup(props: RadioGroupProps): RadioGroupMachine {
   const initialValue = props.value ?? props.defaultValue ?? '';
   const orientation = props.orientation ?? 'vertical';
   const items = uniqueStrings(props.items ?? []);
+  const controlledState = createControllableStateController({
+    value: props.value,
+    defaultValue: props.defaultValue ?? '',
+    onChange: props.onValueChange,
+  });
 
   validateRadioValue(initialValue, items);
 
   const store = createStore<RadioGroupState, string>({
-    value: initialValue,
+    value: controlledState.getValue(),
+    controlled: controlledState.isControlled(),
     disabled: props.disabled ?? false,
     required: props.required ?? false,
     orientation,
@@ -89,23 +97,27 @@ export function createRadioGroup(props: RadioGroupProps): RadioGroupMachine {
     items,
     disabledItems: [],
     focusedItem: initialValue || items[0] || null,
-    formValue: getFormValue(props.name, initialValue),
+    formValue: getFormValue(props.name, controlledState.getValue()),
     lastError: null,
   });
 
   const emitValue = (nextValue: string, meta: ChangeMeta<string>) => {
-    validateRadioValue(nextValue, store.getState().items);
+    const state = store.getState();
+    validateRadioValue(nextValue, state.items);
+    const result =
+      meta.source === 'controlled-sync'
+        ? controlledState.syncValue(nextValue)
+        : controlledState.requestValue(nextValue);
     store.patchState(
       {
-        value: nextValue,
-        focusedItem: nextValue || store.getState().focusedItem,
-        formValue: getFormValue(store.getState().name, nextValue),
+        value: result.value,
+        focusedItem: nextValue || state.focusedItem,
+        formValue: getFormValue(state.name, result.value),
         lastChangeMeta: meta,
         lastError: null,
       },
       meta
     );
-    props.onValueChange?.(nextValue);
   };
 
   const ensureEnabled = (value?: string): boolean => {
@@ -133,6 +145,9 @@ export function createRadioGroup(props: RadioGroupProps): RadioGroupMachine {
       }
 
       const state = store.getState();
+      if (state.value === value) {
+        return;
+      }
       emitValue(value, {
         source: 'programmatic',
         reason: 'set-value',
@@ -164,6 +179,9 @@ export function createRadioGroup(props: RadioGroupProps): RadioGroupMachine {
       const nextItems = state.items.filter((entry) => entry !== value);
       const nextDisabledItems = state.disabledItems.filter((entry) => entry !== value);
       const nextValue = state.value === value ? '' : state.value;
+      if (nextValue !== state.value) {
+        controlledState.syncValue(nextValue);
+      }
       store.patchState({
         items: nextItems,
         disabledItems: nextDisabledItems,
@@ -183,6 +201,9 @@ export function createRadioGroup(props: RadioGroupProps): RadioGroupMachine {
         ? uniqueStrings([...state.disabledItems, value])
         : state.disabledItems.filter((entry) => entry !== value);
       const nextValue = disabled && state.value === value ? '' : state.value;
+      if (nextValue !== state.value) {
+        controlledState.syncValue(nextValue);
+      }
       store.patchState({
         disabledItems: nextDisabledItems,
         value: nextValue,
@@ -199,14 +220,14 @@ export function createRadioGroup(props: RadioGroupProps): RadioGroupMachine {
       }
 
       const currentIndex = Math.max(0, enabledItems.indexOf(currentItem));
-      const nextIndex = getNextRovingFocusIndex({
+      const nextIndex = getNextEnabledRovingFocusIndex({
         key,
         itemCount: enabledItems.length,
         currentIndex,
         orientation: state.orientation,
       });
 
-      if (nextIndex < 0) {
+      if (nextIndex < 0 || nextIndex === currentIndex) {
         return null;
       }
 
@@ -226,6 +247,10 @@ export function createRadioGroup(props: RadioGroupProps): RadioGroupMachine {
     },
     syncValue(value) {
       const state = store.getState();
+      if (state.value === value) {
+        return;
+      }
+
       emitValue(value, {
         source: 'controlled-sync',
         reason: 'sync-value',

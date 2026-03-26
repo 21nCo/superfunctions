@@ -6,6 +6,7 @@ import { Portal } from './portal';
 import { useFocusTrap } from './hooks/use-focus-trap';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { useBodyScrollLock } from './hooks/use-body-scroll-lock';
+import { assertReactContext } from './utils/assert-context';
 
 const useIsomorphicLayoutEffect =
   typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
@@ -17,6 +18,8 @@ const useIsomorphicLayoutEffect =
 interface AlertDialogContextValue {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  contentId: string;
+  triggerRef: React.RefObject<HTMLElement>;
   titleId?: string;
   descriptionId?: string;
   setTitleId: (id: string) => void;
@@ -26,11 +29,11 @@ interface AlertDialogContextValue {
 const AlertDialogContext = createContext<AlertDialogContextValue | undefined>(undefined);
 
 const useAlertDialogContext = () => {
-  const context = useContext(AlertDialogContext);
-  if (!context) {
-    throw new Error('AlertDialog components must be used within an AlertDialog');
-  }
-  return context;
+  return assertReactContext(
+    useContext(AlertDialogContext),
+    'AlertDialog',
+    'AlertDialog components must be used within an AlertDialog'
+  );
 };
 
 export interface AlertDialogProps {
@@ -53,15 +56,30 @@ export const AlertDialog: React.FC<AlertDialogProps> = (props) => {
     defaultProp: defaultOpen,
     onChange: onOpenChange,
   });
+  const contentId = useId(undefined, { prefix: 'alert-dialog', slot: 'content' });
+  const triggerRef = useRef<HTMLElement>(null);
 
   const [titleId, setTitleId] = React.useState<string>();
   const [descriptionId, setDescriptionId] = React.useState<string>();
+  const previousOpenRef = React.useRef(!!open);
+
+  React.useEffect(() => {
+    if (previousOpenRef.current && !open) {
+      queueMicrotask(() => {
+        triggerRef.current?.focus();
+      });
+    }
+
+    previousOpenRef.current = !!open;
+  }, [open]);
 
   return (
     <AlertDialogContext.Provider
       value={{
         open: !!open,
         onOpenChange: setOpen,
+        contentId,
+        triggerRef,
         titleId,
         descriptionId,
         setTitleId,
@@ -83,6 +101,7 @@ export const AlertDialogTrigger = React.forwardRef<HTMLButtonElement, AlertDialo
   (props, ref) => {
     const { children, onClick, ...domProps } = props;
     const context = useAlertDialogContext();
+    const composedRef = useComposedRefs(ref, context.triggerRef);
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       onClick?.(e);
@@ -93,11 +112,11 @@ export const AlertDialogTrigger = React.forwardRef<HTMLButtonElement, AlertDialo
 
     return (
       <button
-        ref={ref}
+        ref={composedRef}
         type="button"
         aria-haspopup="dialog"
         aria-expanded={context.open}
-        aria-controls={context.open ? 'alert-dialog-content' : undefined}
+        aria-controls={context.open ? context.contentId : undefined}
         data-state={context.open ? 'open' : 'closed'}
         onClick={handleClick}
         {...domProps}
@@ -212,7 +231,7 @@ export const AlertDialogContent = React.forwardRef<HTMLDivElement, AlertDialogCo
       <div
         ref={composedRef}
         role="alertdialog"
-        id="alert-dialog-content"
+        id={context.contentId}
         aria-describedby={context.descriptionId}
         aria-labelledby={context.titleId}
         aria-modal="true"
