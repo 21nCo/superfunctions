@@ -1,11 +1,11 @@
-# @21n/drawfn-svelte
+# @drawfn/svelte
 
-Svelte adapter for @21n/drawfn drawing canvas library.
+Svelte adapter for the `drawfn` drawing canvas library.
 
 ## Installation
 
 ```bash
-npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
+npm install @drawfn/svelte drawfn perfect-freehand
 ```
 
 ## Quick Start
@@ -14,7 +14,7 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 
 ```svelte
 <script>
-  import DrawfnCanvas from '@21n/drawfn-svelte/DrawfnCanvas.svelte';
+  import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
   
   let drawfnCanvas;
 
@@ -39,7 +39,7 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 
 ```svelte
 <script>
-  import { drawfn } from '@21n/drawfn-svelte';
+  import { drawfn } from '@drawfn/svelte';
   
   let instance;
   let canvas;
@@ -66,7 +66,7 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 
 ```svelte
 <script>
-  import { drawfn, createDrawfnStore } from '@21n/drawfn-svelte';
+  import { drawfn, createDrawfnStore } from '@drawfn/svelte';
   
   const store = createDrawfnStore();
   let canvas;
@@ -105,13 +105,13 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 
 ```svelte
 <script>
-  import DrawfnCanvas from '@21n/drawfn-svelte/DrawfnCanvas.svelte';
+  import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
   
   let scene = null;
 
-  function handleSceneChange(newScene) {
+  function handleSceneChange(newScene, meta) {
     scene = newScene;
-    console.log('Scene updated:', scene);
+    console.log('Scene updated:', meta?.reason, scene);
   }
 </script>
 
@@ -127,7 +127,7 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 
 ```svelte
 <script>
-  import DrawfnCanvas from '@21n/drawfn-svelte/DrawfnCanvas.svelte';
+  import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
   
   let drawfnCanvas;
 
@@ -167,7 +167,7 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 
 ```svelte
 <script>
-  import DrawfnCanvas from '@21n/drawfn-svelte/DrawfnCanvas.svelte';
+  import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
   
   let drawfnCanvas;
   let currentTool = 'select';
@@ -252,7 +252,7 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 - `overlayRoot?: HTMLElement` - Root element for text editing overlay
 - `getImageBitmap?: (src: string) => Promise<ImageBitmap>` - Custom image loader
 - `onReady?: (drawfn: Drawfn) => void` - Callback when drawfn is initialized
-- `onSceneChange?: (scene: Scene) => void` - Callback when scene changes
+- `onSceneChange?: (scene: Scene, meta?: SceneChangedEvent) => void` - Callback when scene changes
 - `class?: string` - CSS class for canvas element
 
 **Methods (via bind:this):**
@@ -263,6 +263,13 @@ npm install @21n/drawfn-svelte @21n/drawfn perfect-freehand
 - `clear()` - Clear the canvas
 - `exportPNG(opts?): Promise<Blob | undefined>` - Export as PNG
 - `exportSVG(opts?): Promise<string | undefined>` - Export as SVG
+
+### Export Options
+
+- `exportPNG({ padding, scale, transparent, selectedOnly, fitContent })`
+  - Defaults: `padding: 20`, `scale: 2`, `transparent: false`, `selectedOnly: false`, `fitContent: false`
+- `exportSVG({ padding, scale, selectedOnly, fitContent })`
+  - Defaults: `padding: 20`, `scale: 1`, `selectedOnly: false`, `fitContent: false`
 
 ### Canvas Component
 
@@ -287,7 +294,7 @@ Svelte action for using drawfn on a canvas element.
 - `overlayRoot?: HTMLElement` - Root for text overlay
 - `getImageBitmap?: (src: string) => Promise<ImageBitmap>` - Image loader
 - `onReady?: (drawfn: Drawfn) => void` - Ready callback
-- `onSceneChange?: (scene: Scene) => void` - Scene change callback
+- `onSceneChange?: (scene: Scene, meta?: SceneChangedEvent) => void` - Scene change callback
 
 ### createDrawfnStore()
 
@@ -315,7 +322,7 @@ Creates a Svelte store for reactive drawfn state.
 
 ## Tools
 
-All tools from `@21n/drawfn` are available:
+All tools from `drawfn` are available:
 - `select` - Select, move, resize, rotate elements
 - `pan` - Pan the canvas
 - `pen` - Freehand drawing
@@ -332,7 +339,7 @@ Subscribe to drawfn events:
 
 ```svelte
 <script>
-  import { drawfn } from '@21n/drawfn-svelte';
+  import { drawfn } from '@drawfn/svelte';
   
   let instance;
 
@@ -365,8 +372,8 @@ Full TypeScript support with type definitions included.
 
 ```svelte
 <script lang="ts">
-  import DrawfnCanvas from '@21n/drawfn-svelte/DrawfnCanvas.svelte';
-  import type { Drawfn, Scene } from '@21n/drawfn-svelte';
+  import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
+  import type { Drawfn, Scene, SceneChangedEvent } from '@drawfn/svelte';
   
   let drawfnCanvas: DrawfnCanvas;
   let scene: Scene | undefined;
@@ -375,4 +382,4 @@ Full TypeScript support with type definitions included.
 
 ## License
 
-Apache-2.0
+MIT

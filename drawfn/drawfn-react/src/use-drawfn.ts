@@ -1,15 +1,58 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { Drawfn, type DrawfnOptions, type Scene, type ToolName, type DrawfnEvent, type DrawfnEventMap } from '@21n/drawfn';
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import {
+  Drawfn,
+  type DrawfnEvent,
+  type DrawfnEventMap,
+  type DrawfnOptions,
+  type Scene,
+  type SceneChangedEvent,
+  type ToolName,
+} from "drawfn";
 
 export type UseDrawfnOptions = Omit<DrawfnOptions, 'canvas'> & {
   scene?: Scene;
-  onSceneChange?: (scene: Scene) => void;
+  onSceneChange?: (scene: Scene, meta?: SceneChangedEvent) => void;
 };
 
-export function useDrawfn(options?: UseDrawfnOptions) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+export type UseDrawfnResult = {
+  canvasRef: RefObject<HTMLCanvasElement>;
+  drawfn: Drawfn | null;
+  isReady: boolean;
+  setTool(tool: ToolName, opts?: unknown): void;
+  getScene(): Scene | undefined;
+  undo(): void;
+  redo(): void;
+  clear(): void;
+  exportPNG(options?: Parameters<Drawfn["exportPNG"]>[0]): Promise<Blob | undefined>;
+  exportSVG(options?: Parameters<Drawfn["exportSVG"]>[0]): Promise<string | undefined>;
+  on<E extends DrawfnEvent>(
+    event: E,
+    handler: (...args: DrawfnEventMap[E]) => void
+  ): (() => void) | undefined;
+};
+
+function scenesAreEqual(left?: Scene, right?: Scene): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function serializeScene(scene?: Scene): string | null {
+  return scene ? JSON.stringify(scene) : null;
+}
+
+export function useDrawfn(options?: UseDrawfnOptions): UseDrawfnResult {
+  const canvasRef = useRef<HTMLCanvasElement>(null!);
   const drawfnRef = useRef<Drawfn | null>(null);
+  const lastLoadedSceneRef = useRef<string | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const onSceneChangeRef = useRef(options?.onSceneChange);
+
+  useEffect(() => {
+    onSceneChangeRef.current = options?.onSceneChange;
+  }, [options?.onSceneChange]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -19,51 +62,45 @@ export function useDrawfn(options?: UseDrawfnOptions) {
       overlayRoot: options?.overlayRoot,
       getImageBitmap: options?.getImageBitmap,
     });
+    drawfnRef.current = drawfn;
 
-    if (options?.scene) {
+    const unsubscribeSceneChanged = drawfn.on("sceneChanged", (meta: SceneChangedEvent) => {
+      onSceneChangeRef.current?.(meta.scene, meta);
+    });
+
+    const sceneKey = serializeScene(options?.scene);
+    if (options?.scene && !scenesAreEqual(drawfn.getScene(), options.scene)) {
+      lastLoadedSceneRef.current = sceneKey;
       drawfn.load(options.scene);
     }
 
-    if (options?.onSceneChange) {
-      const unsubscribe = drawfn.on('elementAdded', () => {
-        options.onSceneChange?.(drawfn.getScene());
-      });
-
-      const unsubscribe2 = drawfn.on('elementUpdated', () => {
-        options.onSceneChange?.(drawfn.getScene());
-      });
-
-      const unsubscribe3 = drawfn.on('elementRemoved', () => {
-        options.onSceneChange?.(drawfn.getScene());
-      });
-
-      drawfnRef.current = drawfn;
-      setIsReady(true);
-
-      return () => {
-        unsubscribe();
-        unsubscribe2();
-        unsubscribe3();
-        drawfn.destroy();
-        drawfnRef.current = null;
-        setIsReady(false);
-      };
-    }
-
-    drawfnRef.current = drawfn;
     setIsReady(true);
 
     return () => {
+      unsubscribeSceneChanged?.();
       drawfn.destroy();
       drawfnRef.current = null;
+      lastLoadedSceneRef.current = null;
       setIsReady(false);
     };
   }, [options?.overlayRoot, options?.getImageBitmap]);
 
   useEffect(() => {
-    if (drawfnRef.current && options?.scene) {
-      drawfnRef.current.load(options.scene);
+    if (!drawfnRef.current || !options?.scene) {
+      return;
     }
+
+    const sceneKey = serializeScene(options.scene);
+    if (
+      sceneKey === lastLoadedSceneRef.current ||
+      scenesAreEqual(drawfnRef.current.getScene(), options.scene)
+    ) {
+      lastLoadedSceneRef.current = sceneKey;
+      return;
+    }
+
+    lastLoadedSceneRef.current = sceneKey;
+    drawfnRef.current.load(options.scene);
   }, [options?.scene]);
 
   const setTool = useCallback((tool: ToolName, opts?: any) => {

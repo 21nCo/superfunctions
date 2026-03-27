@@ -202,7 +202,7 @@ registerNodePreviewFetcher(async (nodeId) => ({ title, icon, excerpt }))
 
 ## 11. Framework Bindings
 
-### React (package: `@21n/drawfn-react`)
+### React (package: `@drawfn/react`)
 - `Canvas` component mounts a `<canvas>` and constructs `Drawfn`.
 - Controlled or uncontrolled scene.
 - Example:
@@ -220,7 +220,7 @@ function Whiteboard() {
 }
 ```
 
-### Svelte (package: `@21n/drawfn-svelte`)
+### Svelte (package: `@drawfn/svelte`)
 - `<Canvas bind:api {scene} on:event=... />` thin wrapper.
 
 Bindings expose the same core API; no dependency on framework inside core.
@@ -242,9 +242,9 @@ Bindings expose the same core API; no dependency on framework inside core.
 
 ## 15. Packaging
 - Monorepo packages:
-  - `@21n/drawfn` (core, ESM + CJS)
-  - `@21n/drawfn-react` (optional)
-  - `@21n/drawfn-svelte` (optional)
+  - `drawfn` (core, ESM + CJS)
+  - `@drawfn/react` (optional)
+  - `@drawfn/svelte` (optional)
 - Dependencies: `perfect-freehand` only (runtime). Dev: TypeScript, Vite build.
 
 ## 16. Security & Sandbox

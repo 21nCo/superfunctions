@@ -6,7 +6,7 @@ Successfully implemented a complete cross-framework drawing canvas library follo
 
 ## Completed Features
 
-### Core Library (`@21n/drawfn`)
+### Core Library (`drawfn`)
 
 #### 1. **Type System** (`src/types.ts`)
 - Complete type definitions for all element types
@@ -98,7 +98,7 @@ Successfully implemented a complete cross-framework drawing canvas library follo
 - Bounding box calculations
 - Geometry helpers
 
-### React Adapter (`@21n/drawfn-react`)
+### React Adapter (`@drawfn/react`)
 
 #### 1. **useDrawfn Hook** (`src/use-drawfn.ts`)
 - React hook for drawfn instance management
@@ -117,7 +117,7 @@ Successfully implemented a complete cross-framework drawing canvas library follo
 - Auto-manages drawfn lifecycle
 - Props for scene, events, options
 
-### Svelte Adapter (`@21n/drawfn-svelte`)
+### Svelte Adapter (`@drawfn/svelte`)
 
 #### 1. **drawfn Action** (`src/drawfn-action.ts`)
 - Svelte action for using drawfn on canvas elements
@@ -298,10 +298,10 @@ npm run build -- --filter="@21n/*"  # Build all 21n packages
 
 ## Version
 
-- `@21n/drawfn`: 0.1.0
-- `@21n/drawfn-react`: 0.1.0
-- `@21n/drawfn-svelte`: 0.1.0
+- `drawfn`: 0.1.0
+- `@drawfn/react`: 0.1.0
+- `@drawfn/svelte`: 0.1.0
 
 ## License
 
-Apache-2.0
+MIT

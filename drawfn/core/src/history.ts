@@ -57,6 +57,10 @@ export class History {
     return this.future.length > 0;
   }
 
+  depth(): number {
+    return this.past.length;
+  }
+
   clear(): void {
     this.past = [];
     this.future = [];

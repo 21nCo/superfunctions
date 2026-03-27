@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "baseUrl": ".",
+    "paths": {
+      "drawfn": ["../core/src/index.ts"]
+    }
+  },
+  "include": ["src", "../core/src"],
+  "exclude": ["dist", "node_modules"]
+}

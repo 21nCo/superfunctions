@@ -17,7 +17,7 @@ export class PenTool extends BaseTool {
       canvas
     );
 
-    context.recordHistory();
+    context.getDrawfn().beginGesture("add");
 
     this.currentPoints = [[point.x, point.y, e.pressure || 0.5]];
 
