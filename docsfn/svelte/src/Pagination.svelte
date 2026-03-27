@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { handlePaginationShortcut } from "./navigation";
   import type { DocsPageSurface } from "./DocsLayout.svelte";
 
   export interface PaginationPage {
@@ -23,12 +24,11 @@
     const handleKeyDown = (e: KeyboardEvent) => {
       const p = prevPage ?? surface?.pagination?.prev;
       const n = nextPage ?? surface?.pagination?.next;
-      if (e.altKey && e.key === "ArrowLeft" && p) {
-        window.location.href = p.path;
-      }
-      if (e.altKey && e.key === "ArrowRight" && n) {
-        window.location.href = n.path;
-      }
+      handlePaginationShortcut({
+        event: e,
+        prevPage: p,
+        nextPage: n,
+      });
     };
 
     window.addEventListener("keydown", handleKeyDown);

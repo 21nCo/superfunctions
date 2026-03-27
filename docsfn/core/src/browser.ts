@@ -32,6 +32,21 @@ export type {
   DocsVersionConfig,
   DocsTopNavItem,
   DocsSidebarDefinition,
+  DocsSearchScope,
+  DocsSearchRouteScopeOverride,
+  DocsSearchConfig,
+  CompiledHeadingBlock,
+  CompiledParagraphBlock,
+  CompiledListBlock,
+  CompiledTableBlock,
+  CompiledCodeBlock,
+  CompiledMermaidBlock,
+  CompiledCalloutBlock,
+  CompiledTabsTab,
+  CompiledTabsBlock,
+  CompiledComponentBlock,
+  CompiledContentBlock,
+  CompiledContentArtifact,
   DocsConfig,
   DocsErrorCode,
   DocsDiagnostic,
@@ -77,8 +92,6 @@ export {
 } from "./markdown";
 
 export type {
-  CompiledContentBlock,
-  CompiledContentArtifact,
   CompileMarkdownInput,
 } from "./markdown";
 

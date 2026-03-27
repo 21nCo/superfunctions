@@ -6,26 +6,36 @@ import { defineConfig } from "vite";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const svelteSrc = path.resolve(dirname, "../svelte/src");
-
 const coreSrc = path.resolve(dirname, "../core/src");
+const uifnSvelteSrc = path.resolve(dirname, "../../uifn/svelte/src/index.ts");
+const uifnCoreSrc = path.resolve(dirname, "../../uifn/core/src");
+const searchfnRoot = path.resolve(dirname, "../../searchfn");
 
 export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
   resolve: {
-    alias: {
-      "@docsfn/core/search-runtime": path.join(coreSrc, "search-runtime.ts"),
-      "@docsfn/core/search": path.join(coreSrc, "search.ts"),
-      "@docsfn/core/analytics": path.join(coreSrc, "analytics.ts"),
-      "@docsfn/core/browser": path.join(coreSrc, "browser.ts"),
-      "@site/docs-content": path.join(svelteSrc, "DocsContent.svelte"),
-      "@site/docs-layout": path.join(svelteSrc, "DocsLayout.svelte"),
-      "@site/topbar": path.join(svelteSrc, "TopBar.svelte"),
-      "@site/breadcrumbs": path.join(svelteSrc, "Breadcrumbs.svelte"),
-      "@site/pagination": path.join(svelteSrc, "Pagination.svelte"),
-      "@site/docs-sidebar": path.join(svelteSrc, "DocsSidebar.svelte"),
-      "@site/docs-toc": path.join(svelteSrc, "DocsToc.svelte"),
-      "@site/api-reference-renderer": path.join(svelteSrc, "ApiReferenceRenderer.svelte"),
-      "@site/docs-search": path.join(svelteSrc, "DocsSearch.svelte"),
-    },
+    alias: [
+      { find: "@docsfn/core/search-runtime", replacement: path.join(coreSrc, "search-runtime.ts") },
+      { find: "@docsfn/core/search", replacement: path.join(coreSrc, "search.ts") },
+      { find: "@docsfn/core/analytics", replacement: path.join(coreSrc, "analytics.ts") },
+      { find: "@docsfn/core/browser", replacement: path.join(coreSrc, "browser.ts") },
+      { find: "@uifn/svelte", replacement: uifnSvelteSrc },
+      { find: /^@uifn\/core$/, replacement: path.join(uifnCoreSrc, "index.ts") },
+      { find: /^@uifn\/core\/(.*)$/, replacement: `${uifnCoreSrc}/$1` },
+      { find: "@searchfn/client", replacement: path.join(searchfnRoot, "client/src/index.ts") },
+      { find: "@searchfn/core", replacement: path.join(searchfnRoot, "core/src/index.ts") },
+      { find: "@searchfn/adapter-contracts", replacement: path.join(searchfnRoot, "adapter-contracts/src/index.ts") },
+      { find: "@searchfn/adapter-memory", replacement: path.join(searchfnRoot, "adapter-memory/src/index.ts") },
+      { find: "@searchfn/adapter-indexeddb", replacement: path.join(searchfnRoot, "adapter-indexeddb/src/index.ts") },
+      { find: "@site/docs-content", replacement: path.join(svelteSrc, "DocsContent.svelte") },
+      { find: "@site/docs-layout", replacement: path.join(svelteSrc, "DocsLayout.svelte") },
+      { find: "@site/topbar", replacement: path.join(svelteSrc, "TopBar.svelte") },
+      { find: "@site/breadcrumbs", replacement: path.join(svelteSrc, "Breadcrumbs.svelte") },
+      { find: "@site/pagination", replacement: path.join(svelteSrc, "Pagination.svelte") },
+      { find: "@site/docs-sidebar", replacement: path.join(svelteSrc, "DocsSidebar.svelte") },
+      { find: "@site/docs-toc", replacement: path.join(svelteSrc, "DocsToc.svelte") },
+      { find: "@site/api-reference-renderer", replacement: path.join(svelteSrc, "ApiReferenceRenderer.svelte") },
+      { find: "@site/docs-search", replacement: path.join(svelteSrc, "DocsSearch.svelte") },
+    ],
   },
 });

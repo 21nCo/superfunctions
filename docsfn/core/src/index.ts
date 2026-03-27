@@ -21,3 +21,10 @@ export * from "./rss";
 export * from "./blog";
 export * from "./security";
 export * from "./analytics";
+export type {
+  DocsSearchScope,
+  DocsSearchRouteScopeOverride,
+  DocsSearchConfig,
+  CompiledContentBlock,
+  CompiledContentArtifact,
+} from "./types";

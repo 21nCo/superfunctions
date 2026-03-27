@@ -1,9 +1,16 @@
-import { InMemorySearchFn, type InMemorySearchFnSnapshot } from "searchfn";
+import { InMemorySearchFn, type InMemorySearchFnSnapshot } from "@searchfn/client";
 import { createDiagnostic, createDocsError } from "./diagnostics";
 import { redactSensitiveText, resolveDocsAuthMode } from "./security";
-import type { DocsConfig, DocsDiagnostic, DocsManifest } from "./types";
+import type {
+  DocsConfig,
+  DocsDiagnostic,
+  DocsManifest,
+  DocsSearchRouteScopeOverride,
+  DocsSearchScope,
+} from "./types";
 
-export type DocsSearchScope = "docs" | "api" | "blog";
+export type { DocsSearchScope, DocsSearchRouteScopeOverride } from "./types";
+
 export type DocsSearchBodyIndexing = "full" | "summary" | "disabled";
 export type DocsSearchDocumentKind = "page" | "api" | "post";
 
@@ -16,6 +23,7 @@ export interface DocsSearchDocument {
   summary: string;
   headings: string[];
   tags: string[];
+  body: string;
 }
 
 export interface DocsSearchArtifact {
@@ -36,6 +44,12 @@ export interface BuildSearchIndexOptions {
 }
 
 const DEFAULT_SCOPES: DocsSearchScope[] = ["docs", "api", "blog"];
+
+interface NormalizedRouteScopeOverride {
+  pattern: string;
+  scope: DocsSearchScope;
+  regex: RegExp;
+}
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -81,6 +95,141 @@ function normalizeScopes(searchConfig: DocsConfig["search"]): DocsSearchScope[] 
   );
 }
 
+function normalizeRoutePattern(pattern: string): string {
+  const trimmed = String(pattern).trim();
+  if (!trimmed.startsWith("/")) {
+    throw createDocsError({
+      code: "DOCS_SEARCH_SCOPE_INVALID",
+      message: `search.routeScopeOverrides pattern must start with '/': ${pattern}`,
+      diagnostics: [
+        createDiagnostic({
+          code: "DOCS_SEARCH_SCOPE_INVALID",
+          message: `search.routeScopeOverrides pattern must start with '/': ${pattern}`,
+        }),
+      ],
+    });
+  }
+
+  return trimmed.length > 1 ? trimmed.replace(/\/+$/, "") : trimmed;
+}
+
+function normalizeRouteForMatch(route: string): string {
+  const trimmed = route.trim();
+  if (trimmed.length === 0) {
+    return "/";
+  }
+  const prefixed = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return prefixed.length > 1 ? prefixed.replace(/\/+$/, "") : prefixed;
+}
+
+function globToRegExp(pattern: string): RegExp {
+  let expression = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    const next = pattern[index + 1];
+    if (character === "*" && next === "*") {
+      expression += ".*";
+      index += 1;
+      continue;
+    }
+    if (character === "*") {
+      expression += "[^/]*";
+      continue;
+    }
+    if (/[\\^$+?.()|[\]{}]/.test(character)) {
+      expression += `\\${character}`;
+      continue;
+    }
+    expression += character;
+  }
+  expression += "$";
+  return new RegExp(expression);
+}
+
+function normalizeRouteScopeOverrides(
+  overrides: DocsSearchRouteScopeOverride[] | undefined
+): NormalizedRouteScopeOverride[] {
+  if (!Array.isArray(overrides) || overrides.length === 0) {
+    return [];
+  }
+
+  return [...overrides]
+    .map((override) => {
+      const pattern = normalizeRoutePattern(override.pattern);
+      if (override.scope !== "docs" && override.scope !== "api" && override.scope !== "blog") {
+        throw createDocsError({
+          code: "DOCS_SEARCH_SCOPE_INVALID",
+          message: `search.routeScopeOverrides scope must be one of docs, api, blog: ${String(override.scope)}`,
+          diagnostics: [
+            createDiagnostic({
+              code: "DOCS_SEARCH_SCOPE_INVALID",
+              message: `search.routeScopeOverrides scope must be one of docs, api, blog: ${String(override.scope)}`,
+              details: {
+                pattern,
+                scope: override.scope,
+              },
+            }),
+          ],
+        });
+      }
+      const scope = override.scope as DocsSearchScope;
+      return {
+        pattern,
+        scope,
+        regex: globToRegExp(pattern),
+      };
+    })
+    .sort((left, right) => left.pattern.localeCompare(right.pattern, "en", { sensitivity: "variant", numeric: true }));
+}
+
+function defaultScopeForDocumentKind(kind: DocsSearchDocumentKind): DocsSearchScope {
+  if (kind === "api") {
+    return "api";
+  }
+  if (kind === "post") {
+    return "blog";
+  }
+  return "docs";
+}
+
+export function resolveSearchScopeForRoute(input: {
+  route: string;
+  kind: DocsSearchDocumentKind;
+  routeScopeOverrides?: DocsSearchRouteScopeOverride[];
+}): DocsSearchScope {
+  const normalizedRoute = normalizeRouteForMatch(input.route);
+  const defaultScope = defaultScopeForDocumentKind(input.kind);
+  const overrides = normalizeRouteScopeOverrides(input.routeScopeOverrides);
+  const matches = overrides.filter((override) => override.regex.test(normalizedRoute));
+
+  if (matches.length === 0) {
+    return defaultScope;
+  }
+
+  const distinctScopes = new Set(matches.map((match) => match.scope));
+  if (distinctScopes.size > 1) {
+    throw createDocsError({
+      code: "DOCS_SEARCH_SCOPE_INVALID",
+      message: `search.routeScopeOverrides are ambiguous for route ${normalizedRoute}`,
+      diagnostics: [
+        createDiagnostic({
+          code: "DOCS_SEARCH_SCOPE_INVALID",
+          message: `search.routeScopeOverrides are ambiguous for route ${normalizedRoute}`,
+          details: {
+            route: normalizedRoute,
+            matches: matches.map((match) => ({
+              pattern: match.pattern,
+              scope: match.scope,
+            })),
+          },
+        }),
+      ],
+    });
+  }
+
+  return matches[0]?.scope ?? defaultScope;
+}
+
 function resolveBodyIndexing(searchConfig: DocsConfig["search"]): DocsSearchBodyIndexing {
   return searchConfig?.bodyIndexing ?? "summary";
 }
@@ -122,6 +271,8 @@ function collectSearchDocuments(input: {
   manifest: DocsManifest;
   scopes: DocsSearchScope[];
   auth: DocsConfig["auth"] | undefined;
+  bodyIndexing: DocsSearchBodyIndexing;
+  routeScopeOverrides?: DocsSearchRouteScopeOverride[];
 }): DocsSearchDocument[] {
   const documents: DocsSearchDocument[] = [];
   const authMode = resolveDocsAuthMode({ auth: input.auth });
@@ -144,74 +295,111 @@ function collectSearchDocuments(input: {
     return frontmatterPrivate || routePrivate;
   }
 
-  if (input.scopes.includes("docs")) {
-    for (const page of Object.values(input.manifest.pages)) {
-      if (isProtected(page.frontmatter, page.path)) {
-        continue;
-      }
-      documents.push({
-        id: page.id,
-        scope: "docs",
-        kind: "page",
-        path: page.path,
-        title: redactSensitiveText(page.title),
+  for (const page of Object.values(input.manifest.pages)) {
+    if (isProtected(page.frontmatter, page.path)) {
+      continue;
+    }
+    const scope = resolveSearchScopeForRoute({
+      route: page.path,
+      kind: "page",
+      routeScopeOverrides: input.routeScopeOverrides,
+    });
+    if (!input.scopes.includes(scope)) {
+      continue;
+    }
+    documents.push({
+      id: page.id,
+      scope,
+      kind: "page",
+      path: page.path,
+      title: redactSensitiveText(page.title),
+      summary: redactSensitiveText(
+        normalizeWhitespace(page.description ?? summarizeBody(page.body))
+      ),
+      headings: page.headings.map((heading) => redactSensitiveText(heading.text)),
+      tags: [],
+      body: resolveBodyField({
+        bodyIndexing: input.bodyIndexing,
+        body: page.body,
         summary: redactSensitiveText(
           normalizeWhitespace(page.description ?? summarizeBody(page.body))
         ),
-        headings: page.headings.map((heading) => redactSensitiveText(heading.text)),
-        tags: [],
-      });
-    }
+      }),
+    });
   }
 
-  if (input.scopes.includes("api")) {
-    for (const api of Object.values(input.manifest.apis)) {
-      if (isProtected(api.frontmatter, api.path)) {
-        continue;
-      }
-      const summary =
-        (typeof api.frontmatter.description === "string" &&
-          normalizeWhitespace(api.frontmatter.description)) ||
-        (api.spec &&
+  for (const api of Object.values(input.manifest.apis)) {
+    if (isProtected(api.frontmatter, api.path)) {
+      continue;
+    }
+    const scope = resolveSearchScopeForRoute({
+      route: api.path,
+      kind: "api",
+      routeScopeOverrides: input.routeScopeOverrides,
+    });
+    if (!input.scopes.includes(scope)) {
+      continue;
+    }
+    const summary =
+      (typeof api.frontmatter.description === "string" &&
+        normalizeWhitespace(api.frontmatter.description)) ||
+      (api.spec &&
         typeof api.spec === "object" &&
         "info" in api.spec &&
         api.spec.info &&
         typeof (api.spec.info as { description?: unknown }).description === "string"
-          ? normalizeWhitespace(
-              (api.spec.info as { description: string }).description
-            )
-          : "");
-      documents.push({
-        id: api.id,
-        scope: "api",
-        kind: "api",
-        path: api.path,
-        title: redactSensitiveText(api.title),
+        ? normalizeWhitespace(
+            (api.spec.info as { description: string }).description
+          )
+        : "");
+    documents.push({
+      id: api.id,
+      scope,
+      kind: "api",
+      path: api.path,
+      title: redactSensitiveText(api.title),
+      summary: redactSensitiveText(summary),
+      headings: [],
+      tags: [],
+      body: resolveBodyField({
+        bodyIndexing: input.bodyIndexing,
+        body: JSON.stringify(api.spec ?? {}),
         summary: redactSensitiveText(summary),
-        headings: [],
-        tags: [],
-      });
-    }
+      }),
+    });
   }
 
-  if (input.scopes.includes("blog")) {
-    for (const post of Object.values(input.manifest.posts)) {
-      if (isProtected(post.frontmatter, post.path)) {
-        continue;
-      }
-      documents.push({
-        id: post.id,
-        scope: "blog",
-        kind: "post",
-        path: post.path,
-        title: redactSensitiveText(post.title),
+  for (const post of Object.values(input.manifest.posts)) {
+    if (isProtected(post.frontmatter, post.path)) {
+      continue;
+    }
+    const scope = resolveSearchScopeForRoute({
+      route: post.path,
+      kind: "post",
+      routeScopeOverrides: input.routeScopeOverrides,
+    });
+    if (!input.scopes.includes(scope)) {
+      continue;
+    }
+    documents.push({
+      id: post.id,
+      scope,
+      kind: "post",
+      path: post.path,
+      title: redactSensitiveText(post.title),
+      summary: redactSensitiveText(
+        normalizeWhitespace(post.excerpt ?? post.summary ?? summarizeBody(post.body))
+      ),
+      headings: [],
+      tags: post.tags.map((tag) => redactSensitiveText(tag)),
+      body: resolveBodyField({
+        bodyIndexing: input.bodyIndexing,
+        body: post.body,
         summary: redactSensitiveText(
           normalizeWhitespace(post.excerpt ?? post.summary ?? summarizeBody(post.body))
         ),
-        headings: [],
-        tags: post.tags.map((tag) => redactSensitiveText(tag)),
-      });
-    }
+      }),
+    });
   }
 
   return documents.sort((left, right) => {
@@ -266,6 +454,7 @@ export async function buildSearchIndex(
   const enabled = searchConfig?.enabled ?? true;
   const scopes = normalizeScopes(searchConfig);
   const bodyIndexing = resolveBodyIndexing(searchConfig);
+  normalizeRouteScopeOverrides(searchConfig?.routeScopeOverrides);
   const diagnostics: DocsDiagnostic[] = [];
 
   if (!enabled) {
@@ -291,6 +480,8 @@ export async function buildSearchIndex(
     manifest,
     scopes,
     auth: options.auth,
+    bodyIndexing,
+    routeScopeOverrides: searchConfig?.routeScopeOverrides,
   });
   assertUniqueSearchDocumentIds(documents);
 
@@ -303,16 +494,7 @@ export async function buildSearchIndex(
         summary: document.summary,
         headings: document.headings.join(" "),
         tags: document.tags.join(" "),
-        body: resolveBodyField({
-          bodyIndexing,
-          body:
-            document.kind === "page"
-              ? manifest.pages[document.id]?.body ?? ""
-              : document.kind === "post"
-                ? manifest.posts[document.id]?.body ?? ""
-                : JSON.stringify(manifest.apis[document.id]?.spec ?? {}),
-          summary: document.summary,
-        }),
+        body: document.body,
       },
       store: {
         id: document.id,

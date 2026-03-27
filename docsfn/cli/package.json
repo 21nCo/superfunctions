@@ -19,7 +19,7 @@
     "@types/node": "^20.0.0"
   },
   "scripts": {
-    "build": "tsup && node ./bin/docsfn.js",
+    "build": "tsup",
     "dev": "tsup --watch"
   },
   "author": "21n",

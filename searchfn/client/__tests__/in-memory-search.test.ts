@@ -1,0 +1,62 @@
+import { describe, expect, it } from "vitest";
+import { InMemorySearchFn } from "../src/in-memory-search";
+
+describe("InMemorySearchFn", () => {
+  it("adds, searches, snapshots, and restores documents", () => {
+    const search = new InMemorySearchFn({
+      fields: ["title", "body"],
+      pipeline: {
+        enableEdgeNGrams: true,
+        edgeNGramMinLength: 2,
+      },
+    });
+
+    search.add({
+      id: "doc-1",
+      fields: {
+        title: "Search Docs",
+        body: "Route scope overrides",
+      },
+      store: {
+        path: "/docs/search",
+      },
+    });
+
+    const results = search.searchDetailed("search", { includeStored: true });
+    expect(results[0]?.docId).toBe("doc-1");
+    expect(results[0]?.document).toEqual({ path: "/docs/search" });
+
+    const snapshot = search.exportSnapshot();
+    const restored = new InMemorySearchFn({
+      fields: ["title", "body"],
+      pipeline: {
+        enableEdgeNGrams: true,
+        edgeNGramMinLength: 2,
+      },
+    });
+    restored.importSnapshot(snapshot);
+
+    expect(restored.search("route")).toEqual(["doc-1"]);
+  });
+
+  it("removes and clears documents deterministically", () => {
+    const search = new InMemorySearchFn({
+      fields: ["title"],
+    });
+
+    search.add({
+      id: "doc-1",
+      fields: { title: "Alpha" },
+    });
+    search.add({
+      id: "doc-2",
+      fields: { title: "Alphabet" },
+    });
+
+    search.remove("doc-1");
+    expect(search.search("alphabet")).toEqual(["doc-2"]);
+
+    search.clear();
+    expect(search.search("alphabet")).toEqual([]);
+  });
+});

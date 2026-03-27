@@ -76,6 +76,8 @@ export async function GET() {
 }
 ```
 
+Reserve the API collection for OpenAPI specs such as `content/api`. If you also want markdown package docs at `/docs/api/...`, place those files under `content/docs/api`, render them through the normal docs catch-all, and use `navigation.sidebars.api.include` plus `search.routeScopeOverrides` to classify them as API content.
+
 ## Optional Security/Analytics Hooks
 
 `@docsfn/sveltekit` re-exports canonical security/analytics helpers from core:

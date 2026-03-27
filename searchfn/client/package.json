@@ -52,6 +52,7 @@
   },
   "sideEffects": false,
   "dependencies": {
+    "@searchfn/core": "file:../core",
     "@searchfn/adapter-contracts": "file:../adapter-contracts",
     "@searchfn/adapter-memory": "file:../adapter-memory",
     "@searchfn/adapter-indexeddb": "file:../adapter-indexeddb"

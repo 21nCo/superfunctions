@@ -2,62 +2,18 @@ import { marked } from "marked";
 import { transformFumadocsV15 } from "./compat/fumadocs";
 import { createDiagnostic, createDocsError, type DocsError } from "./diagnostics";
 import { assertSafeSource } from "./sanitize";
-import type { DocHeading, DocsCompatPreset, DocsDiagnostic } from "./types";
+import type {
+  CompiledContentArtifact,
+  CompiledContentBlock,
+  CompiledListBlock,
+  CompiledTableBlock,
+  CompiledTabsBlock,
+  DocHeading,
+  DocsCompatPreset,
+  DocsDiagnostic,
+} from "./types";
 
 type CompileFramework = "core" | "react" | "svelte";
-
-export type CompiledContentBlock =
-  | {
-      type: "heading";
-      level: number;
-      text: string;
-      html: string;
-      slug: string;
-    }
-  | {
-      type: "paragraph";
-      text: string;
-      html: string;
-    }
-  | {
-      type: "list";
-      ordered: boolean;
-      items: Array<{ text: string }>;
-      html: string;
-    }
-  | {
-      type: "code";
-      lang?: string;
-      code: string;
-    }
-  | {
-      type: "mermaid";
-      code: string;
-    }
-  | {
-      type: "tabs";
-      items: string[];
-      tabs: Array<{
-        value: string;
-        content: string;
-      }>;
-    }
-  | {
-      type: "callout";
-      kind: "note" | "tip" | "warning" | "info" | "caution";
-      text: string;
-      html: string;
-    }
-  | {
-      type: "table";
-      html: string;
-    }
-  | {
-      type: "component";
-      name: string;
-      body?: string;
-      selfClosing: boolean;
-    };
 
 export interface CompileMarkdownInput {
   source: string;
@@ -65,17 +21,6 @@ export interface CompileMarkdownInput {
   framework?: CompileFramework;
   compatPreset?: DocsCompatPreset;
   allowRawHtml?: boolean;
-}
-
-export interface CompiledContentArtifact {
-  framework: CompileFramework;
-  source: string;
-  transformedSource: string;
-  blocks: CompiledContentBlock[];
-  headings: DocHeading[];
-  toc: DocHeading[];
-  componentsUsed: string[];
-  diagnostics: DocsDiagnostic[];
 }
 
 const HEADING_REGEX = /^(#{1,6})\s+(.*)$/;
@@ -93,6 +38,70 @@ const TABLE_ROW_REGEX = /^\|.+\|/;
 
 const UNSAFE_HREF_RE = /(\bhref\s*=\s*["'])\s*javascript:[^"']*/gi;
 const EVENT_ATTR_RE = /\s+on[a-z][a-z0-9]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)/gi;
+
+interface ParseBlocksOptions {
+  source: string;
+  sourcePath?: string;
+  resolvedComponents?: Set<string>;
+  idPrefix?: string;
+}
+
+function normalizeSourceSnippet(value: string): string {
+  return value.trim();
+}
+
+function normalizeRouteLikeId(value: string | undefined, fallback: string): string {
+  const candidate = (value ?? fallback).replaceAll("\\", "/");
+  return candidate.replace(/[^a-zA-Z0-9/_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+function createMermaidId(input: {
+  idPrefix?: string;
+  sourcePath?: string;
+  count: number;
+}): string {
+  const pathPart = normalizeRouteLikeId(input.idPrefix ?? input.sourcePath, "inline");
+  return `mermaid-${pathPart}-${String(input.count).padStart(2, "0")}`;
+}
+
+function parseComponentProps(rawAttributes: string): Record<string, string | number | boolean> {
+  const props: Record<string, string | number | boolean> = {};
+  const pattern =
+    /([A-Za-z_][A-Za-z0-9_:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|\{([^}]*)\}))?/g;
+
+  for (const match of rawAttributes.matchAll(pattern)) {
+    const key = match[1];
+    if (!key) {
+      continue;
+    }
+
+    const stringValue = match[2] ?? match[3];
+    const expressionValue = match[4]?.trim();
+    if (stringValue !== undefined) {
+      props[key] = stringValue;
+      continue;
+    }
+    if (expressionValue === undefined) {
+      props[key] = true;
+      continue;
+    }
+    if (expressionValue === "true") {
+      props[key] = true;
+      continue;
+    }
+    if (expressionValue === "false") {
+      props[key] = false;
+      continue;
+    }
+    if (/^-?\d+(?:\.\d+)?$/.test(expressionValue)) {
+      props[key] = Number(expressionValue);
+      continue;
+    }
+    props[key] = expressionValue.replace(/^['"]|['"]$/g, "");
+  }
+
+  return props;
+}
 
 function sanitizeMarkdownHtml(html: string): string {
   return html
@@ -213,7 +222,7 @@ function isBlockStart(line: string): boolean {
 function parseTableBlock(input: {
   lines: string[];
   startIndex: number;
-}): { block: Extract<CompiledContentBlock, { type: "table" }>; nextIndex: number } {
+}): { block: CompiledTableBlock; nextIndex: number } {
   const rawLines: string[] = [];
   let index = input.startIndex;
 
@@ -233,7 +242,7 @@ function parseTableBlock(input: {
 function parseListBlock(input: {
   lines: string[];
   startIndex: number;
-}): { block: Extract<CompiledContentBlock, { type: "list" }>; nextIndex: number } {
+}): { block: CompiledListBlock; nextIndex: number } {
   const firstTrimmed = input.lines[input.startIndex].trim();
   const ordered = LIST_ORDERED_REGEX.test(firstTrimmed);
   const rawLines: string[] = [];
@@ -316,7 +325,8 @@ function parseTabsBlock(input: {
   lines: string[];
   startIndex: number;
   sourcePath?: string;
-}): { block: Extract<CompiledContentBlock, { type: "tabs" }>; nextIndex: number } {
+  resolvedComponents?: Set<string>;
+}): { block: CompiledTabsBlock; nextIndex: number } {
   const startLine = input.lines[input.startIndex].trim();
   const startMatch = startLine.match(TABS_START_REGEX);
   if (!startMatch) {
@@ -326,7 +336,7 @@ function parseTabsBlock(input: {
     });
   }
 
-  const tabs: Array<{ value: string; content: string }> = [];
+  const tabs: CompiledTabsBlock["tabs"] = [];
   const declaredItems = parseTabsItems(startMatch[2] ?? "");
   let index = input.startIndex + 1;
   let foundClosing = false;
@@ -359,9 +369,18 @@ function parseTabsBlock(input: {
       /<\s*(DocsTab|Tab)\b[^>]*>([\s\S]*?)<\s*\/\s*(DocsTab|Tab)\s*>/
     );
     if (inlineContentMatch) {
+      const source = normalizeSourceSnippet(inlineContentMatch[2] ?? "");
       tabs.push({
         value,
-        content: inlineContentMatch[2].trim(),
+        label: declaredItems.includes(value) ? value : undefined,
+        source,
+        content: source,
+        nodes: parseBlocks({
+          source,
+          sourcePath: input.sourcePath,
+          resolvedComponents: input.resolvedComponents,
+          idPrefix: `${normalizeRouteLikeId(input.sourcePath, "inline")}-tab-${tabs.length}`,
+        }),
       });
       index += 1;
       continue;
@@ -388,9 +407,18 @@ function parseTabsBlock(input: {
       });
     }
 
+    const source = normalizeSourceSnippet(contentLines.join("\n"));
     tabs.push({
       value,
-      content: contentLines.join("\n").trim(),
+      label: declaredItems.includes(value) ? value : undefined,
+      source,
+      content: source,
+      nodes: parseBlocks({
+        source,
+        sourcePath: input.sourcePath,
+        resolvedComponents: input.resolvedComponents,
+        idPrefix: `${normalizeRouteLikeId(input.sourcePath, "inline")}-tab-${tabs.length}`,
+      }),
     });
   }
 
@@ -419,13 +447,11 @@ function parseTabsBlock(input: {
   };
 }
 
-function parseBlocks(input: {
-  source: string;
-  sourcePath?: string;
-}): CompiledContentBlock[] {
+function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
   const lines = input.source.split(/\r?\n/);
   const blocks: CompiledContentBlock[] = [];
   const createHeadingSlug = createSlugger();
+  let mermaidCount = 0;
   let index = 0;
 
   while (index < lines.length) {
@@ -460,7 +486,16 @@ function parseBlocks(input: {
       }
       const code = codeLines.join("\n");
       if (lang?.toLowerCase() === "mermaid") {
-        blocks.push({ type: "mermaid", code });
+        mermaidCount += 1;
+        blocks.push({
+          type: "mermaid",
+          id: createMermaidId({
+            idPrefix: input.idPrefix,
+            sourcePath: input.sourcePath,
+            count: mermaidCount,
+          }),
+          code,
+        });
       } else {
         blocks.push({ type: "code", lang, code });
       }
@@ -494,6 +529,7 @@ function parseBlocks(input: {
         lines,
         startIndex: index,
         sourcePath: input.sourcePath,
+        resolvedComponents: input.resolvedComponents,
       });
       blocks.push(parsedTabs.block);
       index = parsedTabs.nextIndex;
@@ -527,10 +563,36 @@ function parseBlocks(input: {
 
     const selfClosingComponentMatch = trimmed.match(COMPONENT_SELF_CLOSING_REGEX);
     if (selfClosingComponentMatch) {
+      const componentName = selfClosingComponentMatch[1];
+      if (
+        input.resolvedComponents &&
+        !input.resolvedComponents.has(componentName)
+      ) {
+        throw createDocsError({
+          code: "DOCS_COMPONENT_UNRESOLVED",
+          message: `component ${componentName} is not resolved in compatibility mode`,
+          diagnostics: [
+            createDiagnostic({
+              code: "DOCS_COMPONENT_UNRESOLVED",
+              message: `component ${componentName} is not resolved in compatibility mode`,
+              location: { absolutePath: input.sourcePath },
+              details: {
+                component: componentName,
+              },
+            }),
+          ],
+        });
+      }
       blocks.push({
         type: "component",
-        name: selfClosingComponentMatch[1],
+        name: componentName,
+        props: parseComponentProps(
+          trimmed.replace(/^<\s*[A-Z][A-Za-z0-9]*/, "").replace(/\/>\s*$/, "")
+        ),
+        source: "",
+        body: undefined,
         selfClosing: true,
+        children: [],
       });
       index += 1;
       continue;
@@ -539,6 +601,25 @@ function parseBlocks(input: {
     const componentStartMatch = trimmed.match(COMPONENT_START_REGEX);
     if (componentStartMatch) {
       const componentName = componentStartMatch[1];
+      if (
+        input.resolvedComponents &&
+        !input.resolvedComponents.has(componentName)
+      ) {
+        throw createDocsError({
+          code: "DOCS_COMPONENT_UNRESOLVED",
+          message: `component ${componentName} is not resolved in compatibility mode`,
+          diagnostics: [
+            createDiagnostic({
+              code: "DOCS_COMPONENT_UNRESOLVED",
+              message: `component ${componentName} is not resolved in compatibility mode`,
+              location: { absolutePath: input.sourcePath },
+              details: {
+                component: componentName,
+              },
+            }),
+          ],
+        });
+      }
       index += 1;
       const bodyLines: string[] = [];
       let foundComponentClose = false;
@@ -559,11 +640,22 @@ function parseBlocks(input: {
           sourcePath: input.sourcePath,
         });
       }
+      const source = normalizeSourceSnippet(bodyLines.join("\n"));
       blocks.push({
         type: "component",
         name: componentName,
-        body: bodyLines.join("\n").trim(),
+        props: parseComponentProps(
+          trimmed.replace(/^<\s*[A-Z][A-Za-z0-9]*/, "").replace(/>\s*$/, "")
+        ),
+        source,
+        body: source,
         selfClosing: false,
+        children: parseBlocks({
+          source,
+          sourcePath: input.sourcePath,
+          resolvedComponents: input.resolvedComponents,
+          idPrefix: `${normalizeRouteLikeId(input.sourcePath, "inline")}-component-${componentName}`,
+        }),
       });
       continue;
     }
@@ -634,6 +726,7 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
     const framework = input.framework ?? "core";
     let transformedSource = input.source;
     const componentsUsed = new Set<string>();
+    let resolvedComponents: Set<string> | undefined;
 
     if (input.compatPreset === "fumadocs-v15") {
       const compat = transformFumadocsV15({
@@ -641,6 +734,7 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
         sourcePath: input.sourcePath,
       });
       transformedSource = compat.transformed;
+      resolvedComponents = compat.importedComponents;
       for (const componentName of compat.componentsUsed) {
         componentsUsed.add(componentName);
       }
@@ -655,6 +749,8 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
     const blocks = parseBlocks({
       source: transformedSource,
       sourcePath: input.sourcePath,
+      resolvedComponents,
+      idPrefix: normalizeRouteLikeId(input.sourcePath, "inline"),
     });
     const headings = blocks
       .filter((block): block is Extract<CompiledContentBlock, { type: "heading" }> => block.type === "heading")
@@ -677,6 +773,7 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
 
     return {
       framework,
+      renderModelVersion: 2,
       source: input.source,
       transformedSource,
       blocks,
@@ -698,3 +795,8 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
     });
   }
 }
+
+export type {
+  CompiledContentArtifact,
+  CompiledContentBlock,
+} from "./types";

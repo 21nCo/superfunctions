@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -11,8 +12,18 @@ const docsfnRoot = resolve(scriptDir, "..");
 const repoRoot = resolve(docsfnRoot, "..");
 const fixturesRoot = resolve(docsfnRoot, "test-fixtures", "repo");
 const tempRoot = resolve(docsfnRoot, ".tmp", "migration-check");
+const summaryPath = resolve(tempRoot, "summary.json");
 const cliPrefix = resolve(docsfnRoot, "cli");
 const cliBin = resolve(cliPrefix, "bin", "docsfn.js");
+const proofRoutesPath = resolve(docsfnRoot, "examples", "proof-routes.json");
+
+const sharedSearchRuntimeBuildMatrix = [
+  { name: "@searchfn/core", prefix: resolve(repoRoot, "searchfn", "core") },
+  { name: "@searchfn/adapter-contracts", prefix: resolve(repoRoot, "searchfn", "adapter-contracts") },
+  { name: "@searchfn/adapter-memory", prefix: resolve(repoRoot, "searchfn", "adapter-memory") },
+  { name: "@searchfn/adapter-indexeddb", prefix: resolve(repoRoot, "searchfn", "adapter-indexeddb") },
+  { name: "@searchfn/client", prefix: resolve(repoRoot, "searchfn", "client") },
+];
 
 const fixtureSpecs = [
   {
@@ -59,6 +70,15 @@ function assert(condition, message) {
   }
 }
 
+function toRepoRelativePath(targetPath) {
+  const rel = relative(repoRoot, targetPath);
+  return rel.length === 0 ? "." : rel;
+}
+
+function commandToString(command, args) {
+  return [command, ...args].join(" ");
+}
+
 async function run(command, args, options = {}) {
   const cwd = options.cwd ?? repoRoot;
   const env = options.env ?? process.env;
@@ -94,6 +114,80 @@ async function walkFiles(root, results = []) {
     results.push(absolutePath);
   }
   return results;
+}
+
+async function fileExists(filePath) {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function writeSummary(status) {
+  await mkdir(tempRoot, { recursive: true });
+  await writeFile(summaryPath, `${JSON.stringify(status, null, 2)}\n`, "utf8");
+}
+
+async function verifyProofRoutes() {
+  const raw = JSON.parse(await readFile(proofRoutesPath, "utf8"));
+  assert(raw.version === 1, "proof-route inventory version must be 1");
+  assert(Array.isArray(raw.routes), "proof-route inventory must define routes");
+
+  const actualIds = raw.routes.map((route) => route.id);
+  const expectedIds = [...actualIds].sort((left, right) => left.localeCompare(right));
+  assert(
+    JSON.stringify(actualIds) === JSON.stringify(expectedIds),
+    `proof-route ids must be sorted deterministically (expected ${JSON.stringify(expectedIds)}, got ${JSON.stringify(actualIds)})`
+  );
+
+  const uniqueIds = new Set(actualIds);
+  assert(uniqueIds.size === actualIds.length, "proof-route ids must be unique");
+
+  const requiredSurfaces = ["api", "blog", "docs", "embedded"];
+  const requiredFrameworks = ["next", "sveltekit"];
+  for (const framework of requiredFrameworks) {
+    for (const surface of requiredSurfaces) {
+      assert(
+        raw.routes.some((route) => route.framework === framework && route.surface === surface),
+        `missing proof-route entry for ${framework}:${surface}`
+      );
+    }
+  }
+
+  const summary = [];
+  for (const route of raw.routes) {
+    assert(typeof route.routePattern === "string" && route.routePattern.startsWith("/"), `${route.id}: routePattern must start with /`);
+    assert(Array.isArray(route.routeFiles) && route.routeFiles.length > 0, `${route.id}: routeFiles must be a non-empty array`);
+    assert(
+      Array.isArray(route.requiredMarkers) && route.requiredMarkers.length > 0,
+      `${route.id}: requiredMarkers must be a non-empty array`
+    );
+
+    let combinedSource = "";
+    for (const relativePath of route.routeFiles) {
+      const absolutePath = resolve(repoRoot, relativePath);
+      assert(await fileExists(absolutePath), `${route.id}: missing proof route file ${relativePath}`);
+      const source = await readFile(absolutePath, "utf8");
+      combinedSource += `\n${source}`;
+    }
+
+    for (const marker of route.requiredMarkers) {
+      assert(combinedSource.includes(marker), `${route.id}: missing proof marker "${marker}"`);
+    }
+
+    summary.push({
+      id: route.id,
+      framework: route.framework,
+      surface: route.surface,
+      routePattern: route.routePattern,
+      routeFiles: route.routeFiles,
+      requiredMarkers: route.requiredMarkers,
+    });
+  }
+
+  return summary;
 }
 
 async function gatherCompatibilitySignals(fixtureRoot) {
@@ -176,7 +270,8 @@ async function runFixtureCheck(fixture) {
   const config = createFixtureConfig(fixture);
   await writeFile(configPath, `export default ${JSON.stringify(config, null, 2)};\n`, "utf8");
 
-  await run("node", [
+  const buildCommand = [
+    "node",
     cliBin,
     "build",
     "--root",
@@ -185,7 +280,8 @@ async function runFixtureCheck(fixture) {
     configPath,
     "--out-dir",
     fixtureOutDir,
-  ]);
+  ];
+  await run(buildCommand[0], buildCommand.slice(1));
 
   const diagnostics = JSON.parse(await readFile(resolve(fixtureOutDir, "diagnostics.json"), "utf8"));
   const manifest = JSON.parse(await readFile(resolve(fixtureOutDir, "manifest.json"), "utf8"));
@@ -223,38 +319,124 @@ async function runFixtureCheck(fixture) {
 
   return {
     fixture: fixture.id,
+    commands: [commandToString(buildCommand[0], buildCommand.slice(1))],
     routes: fixture.expectedRoutes,
     topLabels: actualPrefix,
     compatibilitySignals,
+    outputs: [
+      toRepoRelativePath(resolve(fixtureOutDir, "manifest.json")),
+      toRepoRelativePath(resolve(fixtureOutDir, "search.json")),
+      toRepoRelativePath(resolve(fixtureOutDir, "diagnostics.json")),
+      toRepoRelativePath(resolve(fixtureOutDir, "compat-report.json")),
+    ],
   };
 }
 
-async function main() {
+async function buildSharedSearchRuntimePackages() {
+  const builds = [];
+  for (const item of sharedSearchRuntimeBuildMatrix) {
+    const args = ["--prefix", item.prefix, "run", "build"];
+    await run("npm", args, { cwd: repoRoot });
+    builds.push({
+      name: item.name,
+      command: commandToString("npm", args),
+      prefix: toRepoRelativePath(item.prefix),
+    });
+  }
+  return builds;
+}
+
+export async function collectMigrationCheckStatus() {
   await rm(tempRoot, { recursive: true, force: true });
   await mkdir(tempRoot, { recursive: true });
 
-  console.log("[migration-check] ensuring docsfn CLI is built");
-  await run("npm", ["--prefix", cliPrefix, "run", "build"], { cwd: repoRoot });
+  const status = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    summaryPath: toRepoRelativePath(summaryPath),
+    status: "PENDING",
+    code: "OK",
+    proofRoutes: [],
+    sharedSearchRuntimeBuilds: [],
+    cliBuildCommand: commandToString("npm", ["--prefix", cliPrefix, "run", "build"]),
+    fixtures: [],
+  };
 
-  const summaries = [];
-  for (const fixture of fixtureSpecs) {
-    console.log(`[migration-check] checking ${fixture.id}`);
-    const summary = await runFixtureCheck(fixture);
-    summaries.push(summary);
-  }
+  try {
+    status.proofRoutes = await verifyProofRoutes();
+    status.sharedSearchRuntimeBuilds = await buildSharedSearchRuntimePackages();
+    await run("npm", ["--prefix", cliPrefix, "run", "build"], { cwd: repoRoot });
 
-  console.log("\n[migration-check] parity checks passed for canonical fixtures:");
-  for (const summary of summaries) {
-    console.log(`- ${summary.fixture}`);
-    console.log(`  routes: ${summary.routes.join(", ")}`);
-    console.log(`  sidebar labels: ${summary.topLabels.join(" | ")}`);
-    console.log(
-      `  compatibility signals: meta.json=${summary.compatibilitySignals.controlFiles}, tabs=${summary.compatibilitySignals.tabsCount}, mermaid=${summary.compatibilitySignals.mermaidCount}`
-    );
+    const fixtures = [];
+    for (const fixture of fixtureSpecs) {
+      fixtures.push(await runFixtureCheck(fixture));
+    }
+    status.fixtures = fixtures;
+    status.status = "PASS";
+    await writeSummary(status);
+    return {
+      ok: true,
+      code: "OK",
+      ...status,
+    };
+  } catch (error) {
+    status.status = "FAIL";
+    status.code = "DOCS_RELEASE_GATE_FAILED";
+    status.error = error instanceof Error ? error.message : String(error);
+    await writeSummary(status);
+    return {
+      ok: false,
+      code: "DOCS_RELEASE_GATE_FAILED",
+      ...status,
+    };
   }
 }
 
-main().catch((error) => {
-  console.error(`\n[migration-check] failed: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+function printStatus(status) {
+  console.log("[migration-check] verifying proof-route inventory");
+  for (const route of status.proofRoutes) {
+    console.log(`- ${route.id}: ${route.framework} ${route.surface} -> ${route.routePattern}`);
+    console.log(`  files: ${route.routeFiles.join(", ")}`);
+  }
+
+  console.log("[migration-check] building shared search runtime packages");
+  for (const build of status.sharedSearchRuntimeBuilds) {
+    console.log(`- ${build.name}: ${build.command}`);
+  }
+
+  console.log(`[migration-check] ensuring docsfn CLI is built`);
+  console.log(`- ${status.cliBuildCommand}`);
+
+  if (!status.ok) {
+    console.error(`\n[migration-check] ${status.code}: ${status.error}`);
+    console.error(`[migration-check] summary: ${summaryPath}`);
+    return;
+  }
+
+  console.log("\n[migration-check] parity checks passed for canonical fixtures:");
+  for (const fixture of status.fixtures) {
+    console.log(`- ${fixture.fixture}`);
+    console.log(`  routes: ${fixture.routes.join(", ")}`);
+    console.log(`  sidebar labels: ${fixture.topLabels.join(" | ")}`);
+    console.log(
+      `  compatibility signals: meta.json=${fixture.compatibilitySignals.controlFiles}, tabs=${fixture.compatibilitySignals.tabsCount}, mermaid=${fixture.compatibilitySignals.mermaidCount}`
+    );
+  }
+  console.log(`[migration-check] summary: ${summaryPath}`);
+}
+
+const isDirectRun = process.argv[1] ? resolve(process.argv[1]) === scriptPath : false;
+
+if (isDirectRun) {
+  collectMigrationCheckStatus()
+    .then((status) => {
+      printStatus(status);
+      if (!status.ok) {
+        process.exitCode = 1;
+      }
+    })
+    .catch((error) => {
+      console.error(`\n[migration-check] DOCS_RELEASE_GATE_FAILED: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    });
+}

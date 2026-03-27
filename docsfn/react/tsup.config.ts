@@ -6,7 +6,12 @@ import { defineConfig } from "tsup";
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: [
+    "src/index.ts",
+    "src/DocsContent.tsx",
+    "src/ApiReferenceRenderer.tsx",
+    "src/EmbeddedPage.tsx",
+  ],
   format: ["cjs", "esm"],
   dts: true,
   clean: true,

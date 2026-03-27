@@ -1,6 +1,6 @@
-import { InMemorySearchFn } from "searchfn";
+import { createMemorySearchClient, type SearchClient } from "@searchfn/client";
 import { createDiagnostic, createDocsError } from "./diagnostics";
-import type { DocsSearchArtifact, DocsSearchScope } from "./search";
+import type { DocsSearchArtifact, DocsSearchDocument, DocsSearchScope } from "./search";
 
 export type DocsSearchScopeFilter = DocsSearchScope | "all";
 
@@ -33,7 +33,8 @@ export interface CreateDocsSearchRuntimeInput {
 
 interface ValidatedArtifact {
   artifact: DocsSearchArtifact;
-  engine: InMemorySearchFn;
+  client: SearchClient;
+  documents: Map<string, DocsSearchDocument>;
 }
 
 function assertValidArtifact(artifact: DocsSearchArtifact): void {
@@ -62,6 +63,22 @@ function assertValidArtifact(artifact: DocsSearchArtifact): void {
       ],
     });
   }
+}
+
+function createSearchClientForArtifact(artifact: DocsSearchArtifact): SearchClient {
+  return createMemorySearchClient({
+    adapterConfig: {
+      pipeline: {
+        enableEdgeNGrams: true,
+        edgeNGramMinLength: 2,
+      },
+    },
+    defaults: {
+      prefix: true,
+      limit: 20,
+      limitPerResource: 20,
+    },
+  });
 }
 
 function sortResults(
@@ -125,15 +142,39 @@ export function createDocsSearchRuntime(
       }
 
       assertValidArtifact(artifact);
-      const engine = new InMemorySearchFn({
-        fields: artifact.fields,
-        pipeline: {
-          enableEdgeNGrams: true,
-          edgeNGramMinLength: 2,
-        },
+      const client = createSearchClientForArtifact(artifact);
+      await client.initialize?.({
+        resources: artifact.scopes.map((scope) => ({
+          name: scope,
+          searchFields: artifact.fields,
+        })),
       });
-      engine.importSnapshot(artifact.snapshot);
-      validated = { artifact, engine };
+      const documents = new Map<string, DocsSearchDocument>();
+
+      for (const scope of artifact.scopes) {
+        const scopedDocuments = artifact.documents.filter((document) => document.scope === scope);
+        if (scopedDocuments.length === 0) {
+          continue;
+        }
+        for (const document of scopedDocuments) {
+          documents.set(document.id, document);
+        }
+        await client.index({
+          resource: scope,
+          documents: scopedDocuments.map((document) => ({
+            id: document.id,
+            fields: {
+              title: document.title,
+              summary: document.summary,
+              headings: document.headings.join(" "),
+              tags: document.tags.join(" "),
+              body: document.body,
+            },
+          })),
+        });
+      }
+
+      validated = { artifact, client, documents };
       return validated;
     })();
 
@@ -173,20 +214,31 @@ export function createDocsSearchRuntime(
         });
       }
 
-      const hits = loaded.engine.searchDetailed(normalizedQuery, {
-        includeStored: true,
+      const resources = scope === "all" ? loaded.artifact.scopes : [scope];
+      const hits = await loaded.client.searchAll({
+        query: normalizedQuery,
+        resources,
         limit: Math.max(queryInput.limit ?? 20, 20),
+        limitPerResource: Math.max(queryInput.limit ?? 20, 20),
+        prefix: true,
       });
       const mapped = hits
-        .map((hit) => ({
-          id: String(hit.docId),
-          score: hit.score,
-          scope: String(hit.document?.scope ?? "") as DocsSearchScope,
-          kind: String(hit.document?.kind ?? "") as "page" | "api" | "post",
-          path: String(hit.document?.path ?? ""),
-          title: String(hit.document?.title ?? ""),
-          summary: String(hit.document?.summary ?? ""),
-        }))
+        .map((hit) => {
+          const document = loaded.documents.get(String(hit.id));
+          if (!document) {
+            return null;
+          }
+          return {
+            id: document.id,
+            score: hit.score,
+            scope: document.scope,
+            kind: document.kind,
+            path: document.path,
+            title: document.title,
+            summary: document.summary,
+          };
+        })
+        .filter((item): item is DocsSearchRuntimeResultItem => item !== null)
         .filter((item) => item.path.length > 0 && item.title.length > 0)
         .filter((item) => scope === "all" || item.scope === scope);
 

@@ -25,10 +25,34 @@ graph TD;
       compatPreset: "fumadocs-v15",
     });
 
+    expect(compiled.renderModelVersion).toBe(2);
     expect(compiled.headings).toEqual([{ level: 1, text: "Routes", slug: "routes" }]);
     expect(compiled.componentsUsed).toEqual(["DocsTab", "DocsTabs", "MermaidBlock"]);
-    expect(compiled.blocks.some((block) => block.type === "tabs")).toBe(true);
-    expect(compiled.blocks.some((block) => block.type === "mermaid")).toBe(true);
+    expect(compiled.blocks.find((block) => block.type === "tabs")).toMatchObject({
+      type: "tabs",
+      items: ["TypeScript", "Python"],
+      tabs: [
+        {
+          value: "TypeScript",
+          label: "TypeScript",
+          source: "TS body",
+          content: "TS body",
+          nodes: [{ type: "paragraph", text: "TS body" }],
+        },
+        {
+          value: "Python",
+          label: "Python",
+          source: "PY body",
+          content: "PY body",
+          nodes: [{ type: "paragraph", text: "PY body" }],
+        },
+      ],
+    });
+    expect(compiled.blocks.find((block) => block.type === "mermaid")).toMatchObject({
+      type: "mermaid",
+      id: "mermaid-content/docs/routes-mdx-01",
+      code: "graph TD;",
+    });
   });
 
   it("parses callout blocks", () => {
@@ -57,14 +81,14 @@ graph TD;
     ).toThrowError(/DOCS_COMPAT_UNSUPPORTED|Accordion/);
   });
 
-  it("rejects unsupported JSX components in compatibility mode (TV-MDX-001 negative)", () => {
+  it("fails unresolved JSX components in compatibility mode with DOCS_COMPONENT_UNRESOLVED", () => {
     expect(() =>
       compileMarkdown({
         source: "# Title\n\n<Foo />",
         sourcePath: "content/docs/foo.mdx",
         compatPreset: "fumadocs-v15",
       })
-    ).toThrowError(/DOCS_COMPAT_UNSUPPORTED|unsupported JSX component Foo/);
+    ).toThrowError(/DOCS_COMPONENT_UNRESOLVED|component Foo is not resolved/);
   });
 
   it("keeps imported non-fumadocs MDX components available in compatibility mode", () => {
@@ -75,6 +99,44 @@ graph TD;
     });
 
     expect(compiled.blocks.some((block) => block.type === "component" && block.name === "DemoCard")).toBe(true);
+  });
+
+  it("compiles nested component children and preserves normalized props", () => {
+    const compiled = compileMarkdown({
+      source: `import { DemoCard } from "./DemoCard";
+
+# Demo
+
+<DemoCard items={3} enabled rating={4.5}>
+## Nested
+
+Child body
+
+\`\`\`mermaid
+graph TD;
+\`\`\`
+</DemoCard>`,
+      sourcePath: "content/docs/demo-card.mdx",
+      compatPreset: "fumadocs-v15",
+    });
+
+    expect(compiled.blocks.find((block) => block.type === "component")).toMatchObject({
+      type: "component",
+      name: "DemoCard",
+      props: {
+        items: 3,
+        enabled: true,
+        rating: 4.5,
+      },
+      source: "## Nested\n\nChild body\n\n```mermaid\ngraph TD;\n```",
+      body: "## Nested\n\nChild body\n\n```mermaid\ngraph TD;\n```",
+      selfClosing: false,
+      children: [
+        { type: "heading", level: 2, text: "Nested", slug: "nested" },
+        { type: "paragraph", text: "Child body" },
+        { type: "mermaid", id: "mermaid-content/docs/demo-card-mdx-component-DemoCard-01", code: "graph TD;" },
+      ],
+    });
   });
 
   it("rejects unsafe html by default (TV-SEC-001)", () => {
@@ -102,6 +164,8 @@ graph TD;
 
     expect(reactCompiled.framework).toBe("react");
     expect(svelteCompiled.framework).toBe("svelte");
+    expect(reactCompiled.renderModelVersion).toBe(2);
+    expect(svelteCompiled.renderModelVersion).toBe(2);
     expect(reactCompiled.blocks).toEqual(svelteCompiled.blocks);
     expect(reactCompiled.toc).toEqual(svelteCompiled.toc);
   });

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { EmbeddedPage as ReactEmbeddedPage } from "@docsfn/react/EmbeddedPage";
 import { loadDocsSiteSource } from "@/source.config";
 
 type EmbeddedPageParams = {
@@ -37,24 +38,11 @@ export default async function EmbeddedPage(props: {
   }
 
   return (
-    <article className="docsfn-embedded-page" data-docsfn-embedded-page="true">
-      <h1>{page.title}</h1>
-      {page.description ? <p>{page.description}</p> : null}
-      {(page.headings ?? []).filter((heading) => heading.level > 1).length > 0 ? (
-        <section>
-          <h2>On this page</h2>
-          <ul className="docs-example-toc">
-            {(page.headings ?? [])
-              .filter((heading) => heading.level > 1)
-              .map((heading) => (
-                <li key={heading.slug}>
-                  <a href={`#${heading.slug}`}>{heading.text}</a>
-                </li>
-              ))}
-          </ul>
-        </section>
-      ) : null}
-      <pre className="docs-example-content">{page.body}</pre>
-    </article>
+    <section data-docsfn-proof-surface="embedded">
+      <ReactEmbeddedPage
+        page={page}
+        compatPreset={source.compatPreset}
+      />
+    </section>
   );
 }
