@@ -60,9 +60,9 @@ type StateRow = {
   provider_id: string;
   subject_kind: string;
   subject_key: string;
-  subject_payload: string;
+  subject_payload: unknown;
   redirect_uri: string;
-  requested_scopes: string;
+  requested_scopes: unknown;
   code_verifier?: string | null;
   nonce?: string | null;
   created_at: string;
@@ -88,11 +88,11 @@ type ConsentRow = {
   provider_id: string;
   subject_kind: string;
   subject_key: string;
-  subject_payload: string;
-  scope_set: string;
+  subject_payload: unknown;
+  scope_set: unknown;
   granted_at: string;
   updated_at: string;
-  metadata?: string | null;
+  metadata?: unknown;
 };
 
 type RevocationFailureRow = {
@@ -100,14 +100,14 @@ type RevocationFailureRow = {
   provider_id: string;
   subject_kind: string;
   subject_key: string;
-  subject_payload: string;
+  subject_payload: unknown;
   token_id?: string | null;
   token_type_hint?: string | null;
   error_code: string;
   error_message: string;
   retryable: boolean;
   occurred_at: string;
-  metadata?: string | null;
+  metadata?: unknown;
 };
 
 export class DbAdapterOAuthStateStore implements OAuthStateStore {
@@ -399,7 +399,7 @@ function mapStateRowToRecord(row: StateRow): OAuthStateRecord {
     providerId: row.provider_id,
     subject,
     redirectUri: row.redirect_uri,
-    requestedScopes: JSON.parse(row.requested_scopes) as string[],
+    requestedScopes: parseStringArrayValue(row.requested_scopes, "requested_scopes"),
     codeVerifier: row.code_verifier ?? undefined,
     nonce: row.nonce ?? undefined,
     createdAt: row.created_at,
@@ -457,10 +457,10 @@ function mapConsentRowToRecord(row: ConsentRow): OAuthConsentRecord {
     consentId: row.consent_id,
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
-    scopes: JSON.parse(row.scope_set) as string[],
+    scopes: parseStringArrayValue(row.scope_set, "scope_set"),
     grantedAt: row.granted_at,
     updatedAt: row.updated_at,
-    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+    metadata: row.metadata ? parseRecordValue(row.metadata, "metadata") : undefined
   };
 }
 
@@ -492,12 +492,42 @@ function mapRevocationFailureRowToRecord(row: RevocationFailureRow): OAuthRevoca
     errorMessage: row.error_message,
     retryable: row.retryable,
     occurredAt: row.occurred_at,
-    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+    metadata: row.metadata ? parseRecordValue(row.metadata, "metadata") : undefined
   };
 }
 
-function parseSubject(raw: string): OAuthStoredSubject {
-  const subject = JSON.parse(raw) as OAuthStoredSubject;
+function parseSubject(raw: unknown): OAuthStoredSubject {
+  const subject = parseJsonValue<OAuthStoredSubject>(raw);
   validateOAuthStoredSubject(subject);
   return cloneOAuthStoredSubject(subject);
+}
+
+function parseJsonValue<T>(raw: unknown): T {
+  if (typeof raw === "string") {
+    return JSON.parse(raw) as T;
+  }
+
+  return raw as T;
+}
+
+function parseStringArrayValue(raw: unknown, fieldName: string): string[] {
+  const value = parseJsonValue<unknown>(raw);
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new OAuthDbAdapterError("INTERNAL_ERROR", `${fieldName} must be an array of strings`);
+  }
+
+  return [...value];
+}
+
+function parseRecordValue(raw: unknown, fieldName: string): Record<string, unknown> {
+  const value = parseJsonValue<unknown>(raw);
+  if (!isPlainRecord(value)) {
+    throw new OAuthDbAdapterError("INTERNAL_ERROR", `${fieldName} must be an object`);
+  }
+
+  return { ...value };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

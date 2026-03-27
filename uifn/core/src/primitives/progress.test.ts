@@ -5,6 +5,8 @@ describe('progress primitive', () => {
   it('supports indeterminate mode with null aria values', () => {
     const progress = createProgress({ value: null, max: 100 });
     expect(progress.state.mode).toBe('indeterminate');
+    expect(progress.state.ariaValueMin).toBe(0);
+    expect(progress.state.ariaValueMax).toBe(100);
     expect(progress.state.ariaValueNow).toBeNull();
   });
 

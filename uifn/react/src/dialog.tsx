@@ -9,6 +9,7 @@ import { useOutsideClick } from './hooks/use-outside-click';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { useBodyScrollLock } from './hooks/use-body-scroll-lock';
 import { Slot } from './utils/slot';
+import { assertReactContext } from './utils/assert-context';
 
 const useIsomorphicLayoutEffect =
   typeof window !== 'undefined' ? React.useLayoutEffect : React.useEffect;
@@ -21,6 +22,8 @@ interface DialogContextValue {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   modal: boolean;
+  contentId: string;
+  triggerRef: React.RefObject<HTMLElement>;
   titleId?: string;
   descriptionId?: string;
   setTitleId: (id: string) => void;
@@ -30,11 +33,11 @@ interface DialogContextValue {
 const DialogContext = createContext<DialogContextValue | undefined>(undefined);
 
 const useDialogContext = () => {
-  const context = useContext(DialogContext);
-  if (!context) {
-    throw new Error('Dialog components must be used within a Dialog');
-  }
-  return context;
+  return assertReactContext(
+    useContext(DialogContext),
+    'Dialog',
+    'Dialog components must be used within a Dialog'
+  );
 };
 
 export interface DialogProps {
@@ -59,9 +62,22 @@ export const Dialog: React.FC<DialogProps> = (props) => {
     defaultProp: defaultOpen,
     onChange: onOpenChange,
   });
+  const contentId = useId(undefined, { prefix: 'dialog', slot: 'content' });
+  const triggerRef = useRef<HTMLElement>(null);
 
   const [titleId, setTitleId] = React.useState<string>();
   const [descriptionId, setDescriptionId] = React.useState<string>();
+  const previousOpenRef = React.useRef(!!open);
+
+  React.useEffect(() => {
+    if (previousOpenRef.current && !open) {
+      queueMicrotask(() => {
+        triggerRef.current?.focus();
+      });
+    }
+
+    previousOpenRef.current = !!open;
+  }, [open]);
 
   return (
     <DialogContext.Provider
@@ -69,6 +85,8 @@ export const Dialog: React.FC<DialogProps> = (props) => {
         open: !!open,
         onOpenChange: setOpen,
         modal,
+        contentId,
+        triggerRef,
         titleId,
         descriptionId,
         setTitleId,
@@ -93,6 +111,7 @@ export const DialogTrigger = React.forwardRef<HTMLButtonElement, DialogTriggerPr
     const { children, onClick, asChild = false, ...domProps } = props;
     const context = useDialogContext();
     const TriggerComp = asChild ? Slot : 'button';
+    const composedRef = useComposedRefs(ref, context.triggerRef);
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       onClick?.(e);
@@ -103,11 +122,11 @@ export const DialogTrigger = React.forwardRef<HTMLButtonElement, DialogTriggerPr
 
     return (
       <TriggerComp
-        ref={ref}
+        ref={composedRef}
         {...(!asChild ? { type: 'button' as const } : undefined)}
         aria-haspopup="dialog"
         aria-expanded={context.open}
-        aria-controls={context.open ? 'dialog-content' : undefined} // Ideally use generated ID
+        aria-controls={context.open ? context.contentId : undefined}
         data-state={context.open ? 'open' : 'closed'}
         onClick={handleClick}
         {...domProps}
@@ -230,7 +249,7 @@ export const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps
       <div
         ref={composedRef}
         role="dialog"
-        id="dialog-content"
+        id={context.contentId}
         aria-describedby={context.descriptionId}
         aria-labelledby={context.titleId}
         aria-modal={context.modal}

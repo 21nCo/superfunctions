@@ -4,6 +4,8 @@ import { useComposedRefs } from './hooks/use-composed-refs';
 import { usePosition, Side, Align } from './hooks/use-position';
 import { useOutsideClick } from './hooks/use-outside-click';
 import { Portal } from './portal';
+import { useId } from './hooks/use-id';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Combobox Root
@@ -16,6 +18,7 @@ interface ComboboxContextValue {
   onInputValueChange: (value: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  contentId: string;
   triggerRef: React.RefObject<HTMLElement>;
   contentRef: React.RefObject<HTMLElement>;
   inputRef: React.RefObject<HTMLInputElement>;
@@ -25,11 +28,11 @@ interface ComboboxContextValue {
 const ComboboxContext = createContext<ComboboxContextValue | undefined>(undefined);
 
 const useComboboxContext = () => {
-  const context = useContext(ComboboxContext);
-  if (!context) {
-    throw new Error('Combobox components must be used within a Combobox');
-  }
-  return context;
+  return assertReactContext(
+    useContext(ComboboxContext),
+    'Combobox',
+    'Combobox components must be used within a Combobox'
+  );
 };
 
 export interface ComboboxProps {
@@ -78,6 +81,7 @@ export const Combobox: React.FC<ComboboxProps> = (props) => {
     defaultProp: defaultOpen ?? false,
     onChange: onOpenChange,
   });
+  const contentId = useId(undefined, { prefix: 'combobox', slot: 'content' });
 
   const triggerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
@@ -102,6 +106,7 @@ export const Combobox: React.FC<ComboboxProps> = (props) => {
         onInputValueChange: setInputValue,
         open: !!open,
         onOpenChange: setOpen,
+        contentId,
         triggerRef,
         contentRef,
         inputRef,
@@ -163,7 +168,7 @@ export const ComboboxInput = React.forwardRef<HTMLInputElement, ComboboxInputPro
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={context.open}
-        aria-controls={context.open ? 'combobox-content' : undefined}
+        aria-controls={context.open ? context.contentId : undefined}
         disabled={context.disabled}
         value={context.inputValue}
         onChange={handleChange}
@@ -223,7 +228,7 @@ export const ComboboxContent = React.forwardRef<HTMLDivElement, ComboboxContentP
         <div
             ref={composedRef}
             role="listbox"
-            id="combobox-content"
+            id={context.contentId}
             style={{
                 ...positionStyle,
                 zIndex: 50,
@@ -258,6 +263,17 @@ export const ComboboxItem = React.forwardRef<HTMLDivElement, ComboboxItemProps>(
         const { value, children, onClick, ...domProps } = props;
         const context = useComboboxContext();
         const isSelected = context.value === value;
+        const textValue = React.useMemo(() => {
+            const flattened = React.Children.toArray(children)
+                .filter((child): child is string | number => typeof child === 'string' || typeof child === 'number')
+                .join('');
+            return flattened || value;
+        }, [children, value]);
+        const normalizedInput = context.inputValue.trim().toLowerCase();
+        const isVisible =
+            normalizedInput.length === 0 ||
+            textValue.toLowerCase().includes(normalizedInput) ||
+            value.toLowerCase().includes(normalizedInput);
 
         const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
             onClick?.(e);
@@ -272,6 +288,10 @@ export const ComboboxItem = React.forwardRef<HTMLDivElement, ComboboxItemProps>(
                 handleClick(e as any);
             }
         };
+
+        if (!isVisible) {
+            return null;
+        }
 
         return (
             <div

@@ -11,5 +11,7 @@
   <SliderTrack>
     <SliderRange />
   </SliderTrack>
-  <SliderThumb />
+  {#each defaultValue as _, index (index)}
+    <SliderThumb {index} />
+  {/each}
 </Slider>

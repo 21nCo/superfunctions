@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     class?: string;
@@ -7,7 +7,11 @@
   }
 
   let { class: className, onClick, ...rest }: Props = $props();
-  const context = getContext<any>('dialog');
+  const context = getRequiredContext<any>(
+    'dialog',
+    'DialogOverlay',
+    'Dialog components must be used within Dialog'
+  );
 
   function handleClick(e: MouseEvent) {
     if (context.modal) {

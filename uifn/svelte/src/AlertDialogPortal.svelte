@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
   import { portal } from './internal/portal';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -8,7 +8,11 @@
   }
 
   let { children, container }: Props = $props();
-  const ctx = getContext<any>('alert-dialog');
+  const ctx = getRequiredContext<any>(
+    'alert-dialog',
+    'AlertDialogPortal',
+    'AlertDialog components must be used within AlertDialog'
+  );
 </script>
 
 {#if ctx.open}

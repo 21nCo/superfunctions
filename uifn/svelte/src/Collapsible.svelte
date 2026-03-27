@@ -20,6 +20,7 @@
     class: className,
     ...rest
   }: Props = $props();
+  const initialDefaultOpen = (() => defaultOpen)();
 
   // Note: createCollapsibleMachine returns a state machine, but we might want a simpler controllable wrapper
   // similar to Accordion or Switch.
@@ -49,7 +50,7 @@
   
   // Let's implement custom logic here for now to match React's behavior (controlled).
   
-  let _open = $state(defaultOpen);
+  let _open = $state(initialDefaultOpen);
   
   // Derived open state (controlled or uncontrolled)
   let isOpen = $derived(openProp !== undefined ? openProp : _open);

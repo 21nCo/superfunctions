@@ -88,7 +88,7 @@
 ## Deliverables Summary
 
 - Files changed/added:
-  - `uifn/SPEC.md` (modified)
+  - `uifn/.conduct/SPEC.md` (modified)
   - `uifn/README.md` (added/updated in workspace)
   - `uifn/core/README.md` (modified)
   - `uifn/react/README.md` (modified)

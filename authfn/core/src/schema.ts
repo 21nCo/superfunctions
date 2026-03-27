@@ -1,12 +1,22 @@
 import type { TableSchema } from '@superfunctions/db';
-import type { AuthFnConfig, AuthFnSchemaDefinition } from './types.js';
-import { AuthFnConflictError } from './types.js';
+import { resolveSchemaPluginInputs } from './schema-plugin-descriptors.js';
+import { AuthFnConfigError, AuthFnConflictError } from './types.js';
+import type { AuthFnSchemaConfig, AuthFnSchemaDefinition } from './types.js';
 
 export const AUTHFN_SCHEMA_VERSION = 1;
 
-export function getSchema(config: AuthFnConfig): AuthFnSchemaDefinition {
+export function getSchema(config: AuthFnSchemaConfig): AuthFnSchemaDefinition {
+  if (!Array.isArray(config.plugins)) {
+    throw new AuthFnConfigError('authfn plugins must be provided as an array');
+  }
+
   const baseTables = createCoreTables();
-  const pluginTables = config.plugins.flatMap((plugin) => plugin.schema?.(config) ?? []);
+  const resolvedPlugins = resolveSchemaPluginInputs(config.plugins);
+  const resolvedConfig = {
+    ...config,
+    plugins: resolvedPlugins
+  };
+  const pluginTables = resolvedPlugins.flatMap((plugin) => plugin.schema?.(resolvedConfig) ?? []);
   const orderedTables = [...baseTables, ...pluginTables].map((table) => normalizeTableSchema(table));
 
   assertNoTableConflicts(orderedTables);

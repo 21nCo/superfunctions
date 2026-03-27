@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     value: string;
@@ -12,39 +13,64 @@
   }
 
   let { value, disabled = false, children, class: className, onClick, onFocus, onKeyDown, ...rest }: Props = $props();
+  const getValue = () => value;
 
-  const context = getContext<any>('tabs');
+  const context = getRequiredContext<any>(
+    'tabs',
+    'TabsTrigger',
+    'Tabs components must be used within Tabs'
+  );
+  let el: HTMLButtonElement;
 
-  let isSelected = $derived(context.value === value);
-  let triggerId = `${context.baseId}-trigger-${value}`;
-  let contentId = `${context.baseId}-content-${value}`;
+  let isSelected = $derived(context.value === getValue());
+  let isFocused = $derived((context.focusedItem ?? context.value) === getValue());
+  let triggerId = $derived(`${context.baseId}-trigger-${getValue()}`);
+  let contentId = $derived(`${context.baseId}-content-${getValue()}`);
+
+  onMount(() => {
+    context.registerTrigger(getValue(), el, disabled);
+    return () => {
+      context.unregisterTrigger(getValue());
+    };
+  });
 
   function handleClick(e: MouseEvent) {
     if (!disabled) {
-      context.setValue(value);
+      context.setValue(getValue());
+      context.focusItem(getValue());
     }
     onClick?.(e);
   }
 
   function handleFocus(e: FocusEvent) {
-    if (!disabled && context.activationMode === 'automatic') {
-      context.setValue(value);
+    if (!disabled) {
+      context.focusItem(getValue());
+      if (context.activationMode === 'automatic') {
+        context.setValue(getValue());
+      }
     }
     onFocus?.(e);
   }
 
   function handleKeyDown(e: KeyboardEvent) {
     if (disabled) return;
-    // Basic navigation support (Roving Focus is better but requires list context or DOM traversal)
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault();
+      context.handleTriggerKeyDown(e.key, getValue());
+      onKeyDown?.(e);
+      return;
+    }
+
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
-      context.setValue(value);
+      context.setValue(getValue());
     }
     onKeyDown?.(e);
   }
 </script>
 
 <button
+  bind:this={el}
   type="button"
   role="tab"
   aria-selected={isSelected}
@@ -53,7 +79,7 @@
   data-state={isSelected ? 'active' : 'inactive'}
   data-disabled={disabled ? '' : undefined}
   disabled={disabled}
-  tabindex={isSelected ? 0 : -1}
+  tabindex={isFocused ? 0 : -1}
   onclick={handleClick}
   onfocus={handleFocus}
   onkeydown={handleKeyDown}

@@ -1,6 +1,7 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
 import { getNextRovingFocusIndex } from '../utils/roving-focus';
-import { type ChangeMeta, createStore, uniqueStrings } from './shared';
+import { type ChangeMeta, createStore, shallowArrayEqual, uniqueStrings } from './shared';
 
 export type AccordionType = 'single' | 'multiple';
 
@@ -19,6 +20,7 @@ export interface AccordionState {
   value: string | string[];
   type: AccordionType;
   collapsible: boolean;
+  controlled: boolean;
   disabled: boolean;
   orientation: 'horizontal' | 'vertical';
   items: string[];
@@ -102,13 +104,23 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
     props.value ?? props.defaultValue,
     type
   );
+  const controlledState = createControllableStateController<string | string[]>({
+    value: props.value === undefined ? undefined : normalizeAccordionValue(props.value, type),
+    defaultValue: normalizeAccordionValue(props.defaultValue, type),
+    onChange: props.onValueChange,
+    isEqual:
+      type === 'single'
+        ? (a, b) => a === b
+        : (a, b) => shallowArrayEqual(a as string[], b as string[]),
+  });
 
   validateAccordionValue(initialValue, items, type);
 
   const store = createStore<AccordionState, string | string[]>({
-    value: initialValue,
+    value: controlledState.getValue(),
     type,
     collapsible,
+    controlled: controlledState.isControlled(),
     disabled,
     orientation,
     items,
@@ -120,22 +132,35 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
     nextValue: string | string[],
     meta: ChangeMeta<string | string[]>
   ) => {
-    validateAccordionValue(nextValue, store.getState().items, type);
+    const state = store.getState();
+    validateAccordionValue(nextValue, state.items, type);
+    const result =
+      meta.source === 'controlled-sync'
+        ? controlledState.syncValue(nextValue)
+        : controlledState.requestValue(nextValue);
     store.patchState(
       {
-        value: nextValue,
+        value: result.value,
         lastChangeMeta: meta,
         lastError: null,
       },
       meta
     );
-    props.onValueChange?.(nextValue);
   };
 
   const actions: AccordionActions = {
     setValue(nextValue) {
       const state = store.getState();
       const normalized = normalizeAccordionValue(nextValue, type);
+      const noChange =
+        type === 'single'
+          ? state.value === normalized
+          : shallowArrayEqual(state.value as string[], normalized as string[]);
+
+      if (noChange) {
+        return;
+      }
+
       emitValue(normalized, {
         source: 'programmatic',
         reason: 'set-value',
@@ -167,6 +192,10 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
               : currentValue
             : itemValue;
 
+        if (nextValue === currentValue) {
+          return;
+        }
+
         emitValue(nextValue, {
           source: 'user',
           reason: 'toggle-item',
@@ -181,6 +210,10 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
       const nextValue = currentValues.includes(itemValue)
         ? currentValues.filter((value) => value !== itemValue)
         : [...currentValues, itemValue];
+
+      if (shallowArrayEqual(currentValues, nextValue)) {
+        return;
+      }
 
       emitValue(nextValue, {
         source: 'user',
@@ -219,6 +252,14 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
         nextValue = (state.value as string[]).filter((value) => value !== itemValue);
       }
 
+      if (
+        (type === 'single' && nextValue !== state.value) ||
+        (type === 'multiple' &&
+          !shallowArrayEqual(nextValue as string[], state.value as string[]))
+      ) {
+        controlledState.syncValue(nextValue);
+      }
+
       store.patchState({
         items: nextItems,
         focusedItem: nextFocusedItem,
@@ -249,7 +290,7 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
         orientation: orientation,
       });
 
-      if (nextIndex < 0) {
+      if (nextIndex < 0 || nextIndex === currentIndex) {
         return null;
       }
 
@@ -273,6 +314,15 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
     syncValue(value) {
       const state = store.getState();
       const normalized = normalizeAccordionValue(value, type);
+      const noChange =
+        type === 'single'
+          ? state.value === normalized
+          : shallowArrayEqual(state.value as string[], normalized as string[]);
+
+      if (noChange) {
+        return;
+      }
+
       emitValue(normalized, {
         source: 'controlled-sync',
         reason: 'sync-value',

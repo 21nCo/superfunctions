@@ -19,14 +19,20 @@
     class: className,
     ...rest
   }: Props = $props();
+  const initialType = (() => type)();
+  const initialValue = (() => valueProp)();
+  const initialDefaultValue = (() => defaultValue)();
+  const initialCollapsible = (() => collapsible)();
+  const initialDisabled = (() => disabled)();
+  const notifyValueChange = (value: string | string[]) => onValueChange?.(value);
 
   const machine = createAccordion({
-    type,
-    value: valueProp,
-    defaultValue,
-    collapsible,
-    disabled,
-    onValueChange,
+    type: initialType,
+    value: initialValue,
+    defaultValue: initialDefaultValue,
+    collapsible: initialCollapsible,
+    disabled: initialDisabled,
+    onValueChange: notifyValueChange,
   });
 
   let state = $state(machine.state);

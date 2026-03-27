@@ -17,7 +17,8 @@
     "dev": "tsup --watch",
     "test": "vitest",
     "lint": "tsc --noEmit -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@uifn/core": "0.0.1"

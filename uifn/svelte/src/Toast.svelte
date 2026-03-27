@@ -20,11 +20,14 @@
     class: className, 
     ...rest 
   }: Props = $props();
+  const initialOpen = (() => openProp)();
+  const initialDefaultOpen = (() => defaultOpen)();
+  const notifyOpenChange = (open: boolean) => onOpenChange?.(open);
 
   const machine = createToast({
-    open: openProp,
-    defaultOpen,
-    onOpenChange
+    open: initialOpen,
+    defaultOpen: initialDefaultOpen,
+    onOpenChange: notifyOpenChange
   });
 
   let state = $state(machine.state);
@@ -34,6 +37,12 @@
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (openProp !== undefined && openProp !== state.open) {
+      machine.actions.syncOpen(openProp);
+    }
   });
 
   function startTimer() {
@@ -73,7 +82,7 @@
 
 {#if isOpen}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <li
+  <div
     role="status"
     aria-live="polite"
     aria-atomic="true"
@@ -85,5 +94,5 @@
     {...rest}
   >
     {@render children?.()}
-  </li>
+  </div>
 {/if}

@@ -28,16 +28,24 @@
     class: className,
     ...rest
   }: Props = $props();
+  const initialValue = (() => valueProp)();
+  const initialDefaultValue = (() => defaultValue)();
+  const initialMin = (() => min)();
+  const initialMax = (() => max)();
+  const initialStep = (() => step)();
+  const initialDisabled = (() => disabled)();
+  const initialOrientation = (() => orientation)();
+  const notifyValueChange = (value: number[]) => onValueChange?.(value);
 
   const machine = createSlider({
-    value: valueProp,
-    defaultValue,
-    min,
-    max,
-    step,
-    disabled,
-    orientation,
-    onValueChange
+    value: initialValue,
+    defaultValue: initialDefaultValue,
+    min: initialMin,
+    max: initialMax,
+    step: initialStep,
+    disabled: initialDisabled,
+    orientation: initialOrientation,
+    onValueChange: notifyValueChange
   });
 
   let state = $state(machine.state);
@@ -46,6 +54,12 @@
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (valueProp !== undefined && valueProp !== state.value) {
+      machine.actions.syncValue(valueProp);
+    }
   });
 
   // Helper to update specific thumb

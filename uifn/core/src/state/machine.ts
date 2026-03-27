@@ -103,3 +103,69 @@ export function createMachine<TContext, TEvent extends EventObject>(
 ) {
   return new StateMachine(config);
 }
+
+export interface ControllableStateControllerOptions<TValue> {
+  value?: TValue;
+  defaultValue: TValue;
+  onChange?: (value: TValue) => void;
+  isEqual?: (a: TValue, b: TValue) => boolean;
+}
+
+export interface ControllableStateRequestResult<TValue> {
+  value: TValue;
+  changed: boolean;
+  controlled: boolean;
+}
+
+export interface ControllableStateController<TValue> {
+  isControlled: () => boolean;
+  getValue: () => TValue;
+  requestValue: (nextValue: TValue) => ControllableStateRequestResult<TValue>;
+  syncValue: (nextValue: TValue) => ControllableStateRequestResult<TValue>;
+}
+
+export function createControllableStateController<TValue>(
+  options: ControllableStateControllerOptions<TValue>
+): ControllableStateController<TValue> {
+  const controlled = options.value !== undefined;
+  const isEqual = options.isEqual ?? Object.is;
+  let currentValue = controlled ? (options.value as TValue) : options.defaultValue;
+
+  return {
+    isControlled() {
+      return controlled;
+    },
+    getValue() {
+      return currentValue;
+    },
+    requestValue(nextValue) {
+      const previousValue = currentValue;
+      const changed = !isEqual(previousValue, nextValue);
+
+      if (!controlled) {
+        currentValue = nextValue;
+      }
+
+      if (changed) {
+        options.onChange?.(nextValue);
+      }
+
+      return {
+        value: controlled ? previousValue : currentValue,
+        changed,
+        controlled,
+      };
+    },
+    syncValue(nextValue) {
+      const previousValue = currentValue;
+      const changed = !isEqual(previousValue, nextValue);
+      currentValue = nextValue;
+
+      return {
+        value: currentValue,
+        changed,
+        controlled,
+      };
+    },
+  };
+}

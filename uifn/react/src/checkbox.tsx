@@ -1,6 +1,7 @@
 import React, { createContext, useContext } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
 import { CheckedState } from '@uifn/core/primitives/checkbox';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Checkbox Root
@@ -108,9 +109,11 @@ export interface CheckboxIndicatorProps extends React.HTMLAttributes<HTMLSpanEle
 export const CheckboxIndicator = React.forwardRef<HTMLSpanElement, CheckboxIndicatorProps>(
   (props, ref) => {
     const { children, forceMount, ...domProps } = props;
-    const context = useContext(CheckboxContext);
-
-    if (!context) throw new Error('CheckboxIndicator must be used within Checkbox');
+    const context = assertReactContext(
+      useContext(CheckboxContext),
+      'CheckboxIndicator',
+      'CheckboxIndicator must be used within Checkbox'
+    );
 
     if (!forceMount && !context.checked) return null;
 

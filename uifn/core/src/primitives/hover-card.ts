@@ -1,4 +1,6 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
+import { composePublicId, generateId, registerPublicId } from '../utils/id';
 import {
   computePosition,
   type Align,
@@ -12,6 +14,12 @@ import { type ChangeMeta, createStore } from './shared';
 
 export interface HoverCardState {
   open: boolean;
+  controlled: boolean;
+  ids: {
+    baseId: string;
+    triggerId: string;
+    contentId: string;
+  };
   openDelay: number;
   closeDelay: number;
   pendingOpenMs: number | null;
@@ -63,6 +71,7 @@ export interface CreateHoverCardProps {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
+  idBase?: string;
   openDelay?: number;
   closeDelay?: number;
   side?: Side;
@@ -89,9 +98,26 @@ function patchCleanup(
 }
 
 export function createHoverCard(props: CreateHoverCardProps = {}): HoverCardMachine {
-  const open = props.open ?? props.defaultOpen ?? false;
+  const openController = createControllableStateController<boolean>({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
+  const open = openController.getValue();
+  const baseId = props.idBase
+    ? registerPublicId(props.idBase, {
+        package: '@uifn/core',
+        component: 'HoverCard',
+      })
+    : generateId('hover-card');
   const store = createStore<HoverCardState, boolean>({
     open,
+    controlled: openController.isControlled(),
+    ids: {
+      baseId,
+      triggerId: registerPublicId(composePublicId({ prefix: baseId, slot: 'trigger' })),
+      contentId: registerPublicId(composePublicId({ prefix: baseId, slot: 'content' })),
+    },
     openDelay: props.openDelay ?? 700,
     closeDelay: props.closeDelay ?? 300,
     pendingOpenMs: null,
@@ -137,6 +163,10 @@ export function createHoverCard(props: CreateHoverCardProps = {}): HoverCardMach
       nextValue: nextOpen,
       inputModality,
     };
+    const result =
+      source === 'controlled-sync'
+        ? openController.syncValue(nextOpen)
+        : openController.requestValue(nextOpen);
 
     presence.setPresent(nextOpen);
     if (!nextOpen) {
@@ -145,7 +175,7 @@ export function createHoverCard(props: CreateHoverCardProps = {}): HoverCardMach
 
     store.patchState(
       {
-        open: nextOpen,
+        open: result.value,
         pendingOpenMs: null,
         pendingCloseMs: null,
         cleanup: {
@@ -158,8 +188,6 @@ export function createHoverCard(props: CreateHoverCardProps = {}): HoverCardMach
       },
       meta
     );
-
-    props.onOpenChange?.(nextOpen);
   };
 
   const actions: HoverCardActions = {

@@ -137,6 +137,62 @@ describe('@authfn/client password flows', () => {
     expect(observedCsrfHeader).toMatch(/^csrf_/);
   });
 
+  it('uses an explicit cookie prefix when the session cookie is httpOnly and hidden from the accessor', async () => {
+    const auth = createAuthFn({
+      ...createConfig(),
+      cookie: {
+        prefix: 'demo-auth'
+      }
+    });
+    const cookieJar = createCookieJar();
+    let observedCsrfHeader: string | null = null;
+
+    const client = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      cookieAccessor: () =>
+        cookieJar
+          .header()
+          .split('; ')
+          .filter((part) => !part.startsWith('demo-auth.session=') && !part.startsWith('__Secure-demo-auth.session='))
+          .join('; '),
+      cookiePrefix: 'demo-auth',
+      fetch: async (input, init) => {
+        const headers = new Headers(init?.headers);
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/sign-out')) {
+          observedCsrfHeader = headers.get('x-authfn-csrf');
+        }
+
+        const cookieHeader = cookieJar.header();
+        if (cookieHeader) {
+          headers.set('cookie', cookieHeader);
+        }
+
+        const response = await auth.router.handle(
+          new Request(url, {
+            method: init?.method,
+            headers,
+            body: init?.body
+          })
+        );
+        cookieJar.applySetCookies(response.headers.getSetCookie());
+        return response;
+      }
+    });
+
+    const signUp = await client.signUpWithPassword({
+      email: 'ada@example.com',
+      password: 'Sup3rSecurePassphrase!'
+    });
+    if (!signUp.ok) {
+      throw new Error('sign-up should have succeeded');
+    }
+
+    const signOut = await client.signOut();
+    expect(observedCsrfHeader).toMatch(/^csrf_/);
+    expect(signOut.ok).toBe(true);
+  });
+
   it('returns canonical auth errors for wrong passwords', async () => {
     const auth = createAuthFn(createConfig());
     const cookieJar = createCookieJar();

@@ -1,7 +1,16 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { isOutsideEventTarget } from './internal/dismissible';
+  import { getRequiredContext } from './internal/context';
   import { portal } from './internal/portal';
   import { position, type Side, type Align } from './internal/position';
+
+  interface ComboboxContext {
+    open: boolean;
+    contentId: string;
+    trigger: HTMLElement | null;
+    input: HTMLInputElement | null;
+    setOpen: (value: boolean) => void;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -21,19 +30,45 @@
     ...rest 
   }: Props = $props();
 
-  const ctx = getContext<any>('combobox');
+  const ctx = getRequiredContext<ComboboxContext>(
+    'combobox',
+    'ComboboxContent',
+    'Combobox components must be used within a Combobox'
+  );
   
   // Combobox content usually matches width of input
   // Position hook handles basic positioning.
   // We need to attach to input or trigger. Input is usually primary anchor.
   let anchor = $derived(ctx.input || ctx.trigger);
+  let contentEl: HTMLDivElement;
+
+  $effect(() => {
+    if (!ctx.open) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!isOutsideEventTarget(target, [contentEl, ctx.input, ctx.trigger])) {
+        return;
+      }
+
+      ctx.setOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  });
 </script>
 
 {#if ctx.open && anchor}
   <div use:portal>
     <div
+      bind:this={contentEl}
       role="listbox"
-      id="combobox-content"
+      id={ctx.contentId}
       data-state={ctx.open ? 'open' : 'closed'}
       use:position={{
         trigger: anchor,

@@ -6,12 +6,12 @@
   import ComboboxItem from '../ComboboxItem.svelte';
   import ComboboxItemIndicator from '../ComboboxItemIndicator.svelte';
 
-  let { defaultValue = '' } = $props();
+  let { defaultValue = '', inputLabel = 'Search items' } = $props();
 </script>
 
 <Combobox {defaultValue}>
   <div style="display: flex;">
-    <ComboboxInput />
+    <ComboboxInput aria-label={inputLabel} />
     <ComboboxTrigger>▼</ComboboxTrigger>
   </div>
   <ComboboxContent>

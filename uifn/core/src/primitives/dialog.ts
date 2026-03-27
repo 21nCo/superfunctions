@@ -1,5 +1,7 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
 import { createFocusTrapState } from '../utils/focus-trap';
+import { composePublicId, generateId, registerPublicId } from '../utils/id';
 import { type ChangeMeta, createStore } from './shared';
 
 export type DialogOpenReason =
@@ -21,6 +23,7 @@ export interface DialogProps {
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpenChangeDetail?: (open: boolean, reason: DialogChangeReason) => void;
+  idBase?: string;
   modal?: boolean;
   closeOnEscape?: boolean;
   closeOnOutsideInteraction?: boolean;
@@ -32,16 +35,27 @@ export interface DialogProps {
   role?: 'dialog' | 'alertdialog';
 }
 
+export interface DialogIds {
+  baseId: string;
+  triggerId: string;
+  contentId: string;
+  titleId: string;
+  descriptionId: string;
+}
+
 export interface DialogState {
   open: boolean;
+  controlled: boolean;
   modal: boolean;
   trapFocus: boolean;
+  focusTrapActive: boolean;
   scrollLock: boolean;
   scrollLocked: boolean;
   closeOnEscape: boolean;
   closeOnOutsideInteraction: boolean;
   outsideInteractionBehavior: 'close' | 'ignore' | 'disallow';
   role: 'dialog' | 'alertdialog';
+  ids: DialogIds;
   focusedElementId: string | null;
   returnFocusId: string | null;
   lastChangeReason: DialogChangeReason | null;
@@ -79,28 +93,53 @@ function resolveChangeReason(nextOpen: boolean, provided?: DialogChangeReason): 
   return nextOpen ? 'open-programmatic' : 'close-programmatic';
 }
 
-function buildDialogState(props: DialogProps): DialogState {
-  const open = props.open ?? props.defaultOpen ?? false;
+function createDialogIds(props: DialogProps): DialogIds {
+  const rolePrefix = props.role === 'alertdialog' ? 'alert-dialog' : 'dialog';
+  const baseId = props.idBase
+    ? registerPublicId(props.idBase, {
+        package: '@uifn/core',
+        component: props.role === 'alertdialog' ? 'AlertDialog' : 'Dialog',
+      })
+    : generateId(rolePrefix);
+
+  return {
+    baseId,
+    triggerId: registerPublicId(composePublicId({ prefix: baseId, slot: 'trigger' })),
+    contentId: registerPublicId(composePublicId({ prefix: baseId, slot: 'content' })),
+    titleId: registerPublicId(composePublicId({ prefix: baseId, slot: 'title' })),
+    descriptionId: registerPublicId(composePublicId({ prefix: baseId, slot: 'description' })),
+  };
+}
+
+function buildDialogState(
+  props: DialogProps,
+  open: boolean,
+  controlled: boolean,
+  ids: DialogIds
+): DialogState {
   const modal = props.modal ?? true;
   const trapFocus = props.trapFocus ?? modal;
-  const scrollLock = props.scrollLock ?? modal;
+  const scrollLock = modal ? true : props.scrollLock ?? false;
   const closeOnEscape = props.closeOnEscape ?? true;
   const outsideInteractionBehavior =
     props.outsideInteractionBehavior ??
     (props.closeOnOutsideInteraction === false ? 'ignore' : 'close');
   const closeOnOutsideInteraction = outsideInteractionBehavior === 'close';
-  const initialFocusId = props.initialFocusId ?? `${props.role ?? 'dialog'}-content`;
+  const initialFocusId = props.initialFocusId ?? ids.contentId;
 
   return {
     open,
+    controlled,
     modal,
     trapFocus,
+    focusTrapActive: open && trapFocus,
     scrollLock,
     scrollLocked: open && modal && scrollLock,
     closeOnEscape,
     closeOnOutsideInteraction,
     outsideInteractionBehavior,
     role: props.role ?? 'dialog',
+    ids,
     focusedElementId: open ? initialFocusId : null,
     returnFocusId: props.returnFocusId ?? null,
     lastChangeReason: null,
@@ -109,11 +148,22 @@ function buildDialogState(props: DialogProps): DialogState {
 }
 
 export function createDialog(props: DialogProps): DialogMachine {
-  const initialState = buildDialogState(props);
+  const openController = createControllableStateController<boolean>({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
+  const ids = createDialogIds(props);
+  const initialState = buildDialogState(
+    props,
+    openController.getValue(),
+    openController.isControlled(),
+    ids
+  );
   const store = createStore<DialogState, boolean>(initialState);
   const focusTrap = createFocusTrapState({
     active: initialState.open && initialState.trapFocus,
-    entryFocusId: initialState.focusedElementId,
+    entryFocusId: initialState.focusedElementId ?? initialState.ids.contentId,
     returnFocusId: initialState.returnFocusId,
   });
 
@@ -137,20 +187,26 @@ export function createDialog(props: DialogProps): DialogMachine {
       nextValue: nextOpen,
       inputModality,
     };
+    const result =
+      source === 'controlled-sync'
+        ? openController.syncValue(nextOpen)
+        : openController.requestValue(nextOpen);
+    const resolvedOpen = result.value;
 
     if (nextOpen) {
       const trapState = state.trapFocus
         ? focusTrap.activate({
-            entryFocusId: state.focusedElementId ?? `${state.role}-content`,
+            entryFocusId: state.focusedElementId ?? state.ids.contentId,
             returnFocusId: state.returnFocusId,
           })
         : focusTrap.getState();
 
       store.patchState(
         {
-          open: true,
-          scrollLocked: state.modal && state.scrollLock,
-          focusedElementId: trapState.currentFocusId ?? `${state.role}-content`,
+          open: resolvedOpen,
+          focusTrapActive: resolvedOpen && state.trapFocus,
+          scrollLocked: resolvedOpen && state.modal && state.scrollLock,
+          focusedElementId: trapState.currentFocusId ?? state.ids.contentId,
           returnFocusId: trapState.returnFocusId,
           lastChangeReason: reason,
           lastChangeMeta: nextMeta,
@@ -165,7 +221,8 @@ export function createDialog(props: DialogProps): DialogMachine {
 
       store.patchState(
         {
-          open: false,
+          open: resolvedOpen,
+          focusTrapActive: false,
           scrollLocked: false,
           focusedElementId: trapState.currentFocusId,
           returnFocusId: trapState.returnFocusId,
@@ -177,7 +234,6 @@ export function createDialog(props: DialogProps): DialogMachine {
       );
     }
 
-    props.onOpenChange?.(nextOpen);
     props.onOpenChangeDetail?.(nextOpen, reason);
   };
 

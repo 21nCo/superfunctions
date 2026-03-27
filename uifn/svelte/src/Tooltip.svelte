@@ -17,11 +17,14 @@
     delayDuration = 700, 
     children 
   }: Props = $props();
+  const initialOpen = (() => openProp)();
+  const initialDefaultOpen = (() => defaultOpen)();
+  const notifyOpenChange = (open: boolean) => onOpenChange?.(open);
 
   const machine = createTooltip({
-    open: openProp,
-    defaultOpen,
-    onOpenChange
+    open: initialOpen,
+    defaultOpen: initialDefaultOpen,
+    onOpenChange: notifyOpenChange
   });
 
   let state = $state(machine.state);
@@ -32,6 +35,12 @@
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (openProp !== undefined && openProp !== state.open) {
+      machine.actions.syncOpen(openProp);
+    }
   });
 
   function handleOpen() {

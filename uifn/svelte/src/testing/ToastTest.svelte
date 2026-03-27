@@ -6,7 +6,7 @@
   import ToastClose from '../ToastClose.svelte';
   import ToastViewport from '../ToastViewport.svelte';
 
-  let { defaultOpen = true, duration = 5000 } = $props();
+  let { defaultOpen = true, duration = 5000, includeViewport = true } = $props();
 </script>
 
 <ToastProvider>
@@ -15,5 +15,7 @@
     <ToastDescription>Toast Desc</ToastDescription>
     <ToastClose>Close</ToastClose>
   </Toast>
-  <ToastViewport />
+  {#if includeViewport}
+    <ToastViewport />
+  {/if}
 </ToastProvider>

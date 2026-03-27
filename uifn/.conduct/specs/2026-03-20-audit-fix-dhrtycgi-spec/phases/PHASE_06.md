@@ -18,7 +18,7 @@ Out of scope:
 
 # Deliverables
 
-- `uifn/SPEC.md`
+- `uifn/.conduct/SPEC.md`
 - `uifn/README.md`
 - `uifn/core/README.md`
 - `uifn/react/README.md`
