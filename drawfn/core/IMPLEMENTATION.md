@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully implemented a complete cross-framework drawing canvas library following the spec in `SPEC.md`.
+Successfully implemented a complete cross-framework drawing canvas library following the canonical spec bundle in `drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/SPEC.md`.
 
 ## Completed Features
 
@@ -246,7 +246,7 @@ From original spec, nice-to-haves for future:
 │   ├── tsup.config.ts
 │   ├── vitest.config.ts
 │   ├── README.md
-│   ├── SPEC.md
+│   ├── .conduct/specs/      # Canonical spec bundle
 │   └── IMPLEMENTATION.md
 │
 ├── drawfn-react/            # React adapter (3.4KB)

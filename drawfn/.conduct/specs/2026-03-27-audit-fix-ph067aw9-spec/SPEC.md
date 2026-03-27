@@ -539,12 +539,20 @@ export function drawfn(
 
 ## Event ordering
 
-For a committed content mutation:
+For a committed content mutation without a selection change:
 
 1. element-specific event (`elementAdded`, `elementUpdated`, or `elementRemoved`)
 2. `historyChanged`
 3. `sceneChanged`
 4. render scheduling
+
+For a committed content mutation that also changes selection:
+
+1. element-specific event (`elementAdded`, `elementUpdated`, or `elementRemoved`)
+2. `selectionChanged`
+3. `historyChanged`
+4. `sceneChanged`
+5. render scheduling
 
 For selection-only changes:
 
@@ -647,4 +655,3 @@ Behavior above these caps MUST fail deterministically with `SCENE_LIMIT_EXCEEDED
 - Nucleus migration work
 - changes to node/Nucleus-specific callbacks, preview fetching, or route-opening behavior
 - changes to `NodeElement` serialized shape beyond compatibility preservation
-

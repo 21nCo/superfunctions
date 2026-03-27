@@ -1618,18 +1618,36 @@ export class Drawfn {
       return;
     }
 
-    this.handlePointerUp({
-      ...e,
+    const forwarded = {
+      pointerId: e.pointerId,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      pressure: e.pressure,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      button: e.button,
+      buttons: e.buttons,
+      pointerType: e.pointerType,
       target: this.canvas,
       currentTarget: this.canvas,
-    } as PointerEvent);
+      preventDefault: () => e.preventDefault(),
+      stopPropagation: () => e.stopPropagation(),
+    } as unknown as PointerEvent;
+
+    this.handlePointerUp(forwarded);
   };
 
   private handleWheel = (e: WheelEvent): void => {
     e.preventDefault();
 
     const delta = e.deltaY * -0.001;
-    const newZoom = Math.max(0.1, Math.min(5, this.scene.camera.zoom + delta));
+    const newZoom = clamp(
+      this.scene.camera.zoom + delta,
+      MIN_CAMERA_ZOOM,
+      MAX_CAMERA_ZOOM
+    );
     const rect = this.canvas.getBoundingClientRect();
 
     const point = screenToCanvas(

@@ -341,6 +341,14 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     relatedPackages: ["oauth-core", "oauth-flow", "auth"],
   }),
   createTypeScriptPackageEntry({
+    slug: "oauth-router",
+    title: "OAuth Router",
+    category: "authentication",
+    order: 80,
+    summary: "Reuse OAuth browser and connection route factories on top of the shared HTTP layer.",
+    relatedPackages: ["oauth-flow", "oauth-http", "http"],
+  }),
+  createTypeScriptPackageEntry({
     slug: "http",
     title: "HTTP",
     category: "http",
@@ -387,6 +395,14 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     order: 60,
     summary: "Use `@superfunctions/http` in SvelteKit endpoints without custom glue code.",
     relatedPackages: ["http", "middleware", "webhooks"],
+  }),
+  createTypeScriptPackageEntry({
+    slug: "http-openapi",
+    title: "HTTP OpenAPI",
+    category: "http",
+    order: 70,
+    summary: "Generate deterministic OpenAPI documents from `@superfunctions/http` routers.",
+    relatedPackages: ["http", "http-next", "oauth-router"],
   }),
   createTypeScriptPackageEntry({
     slug: "middleware",

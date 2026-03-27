@@ -204,9 +204,17 @@ export class SelectTool extends BaseTool {
     };
 
     const elementsInBounds: string[] = [];
+    const isPointSelection = marqueeBounds.w === 0 && marqueeBounds.h === 0;
 
     for (const element of scene.elements) {
       if (element.locked) {
+        continue;
+      }
+
+      if (isPointSelection) {
+        if (isPointInOBB(this.marqueeStart, element)) {
+          elementsInBounds.push(element.id);
+        }
         continue;
       }
 
