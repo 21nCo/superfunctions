@@ -10,7 +10,6 @@ export type DocsBaseLayoutProps = {
     url?: string;
   };
   githubUrl?: string;
-  [key: string]: unknown;
 };
 
 export function createBaseLayoutOptions(
@@ -23,6 +22,6 @@ export function createBaseLayoutOptions(
       title,
       url: docsUrl,
     },
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}/tree/${encodeURIComponent(gitConfig.branch)}`,
   };
 }

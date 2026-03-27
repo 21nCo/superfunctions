@@ -19,7 +19,10 @@ export function DocsRootLayout({
 }: DocsRootLayoutProps) {
   return (
     <html lang={lang} suppressHydrationWarning>
-      <body className={bodyClassName} style={bodyStyle ?? { fontFamily: DEFAULT_FONT_FAMILY }}>
+      <body
+        className={bodyClassName}
+        style={{ fontFamily: DEFAULT_FONT_FAMILY, ...bodyStyle }}
+      >
         {children}
       </body>
     </html>
