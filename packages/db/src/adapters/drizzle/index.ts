@@ -314,9 +314,9 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
 
           if (row) {
             return row;
-          } else {
-            return (create as any) as T;
           }
+
+          throw new Error('Upsert failed to return a row');
         } else {
           const keys = Array.isArray(target) ? target.map((k) => (tbl as any)[k]) : [(tbl as any)[target as string]];
           const returning = select && select.length > 0 ? Object.fromEntries(select.map((k) => [k, (tbl as any)[k]])) : undefined;

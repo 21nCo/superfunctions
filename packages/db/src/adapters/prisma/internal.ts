@@ -63,8 +63,20 @@ function buildWhereSQL(
   let nextIndex = startIndex;
 
   for (const clause of where) {
+    const fieldSql = quoteInternalIdentifier(clause.field, dialect);
+
+    if (clause.value === null && clause.op === 'eq') {
+      parts.push(`${fieldSql} IS NULL`);
+      continue;
+    }
+
+    if (clause.value === null && clause.op === 'ne') {
+      parts.push(`${fieldSql} IS NOT NULL`);
+      continue;
+    }
+
     parts.push(
-      `${quoteInternalIdentifier(clause.field, dialect)} ${internalOperatorSql(clause.op)} ${placeholderFor(provider, nextIndex++)}`,
+      `${fieldSql} ${internalOperatorSql(clause.op)} ${placeholderFor(provider, nextIndex++)}`,
     );
     params.push(clause.value);
   }
