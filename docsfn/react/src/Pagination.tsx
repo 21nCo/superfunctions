@@ -1,5 +1,8 @@
+"use client";
+
 import React, { useEffect } from "react";
 import type { DocsPageSurface, DocsPageLink } from "./DocsLayout";
+import { navigateTo } from "./navigation";
 
 export interface PaginationProps {
   surface?: DocsPageSurface;
@@ -26,10 +29,10 @@ export function Pagination({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.altKey && event.key === "ArrowLeft" && resolvedPrevPage) {
-        window.location.href = resolvedPrevPage.path;
+        navigateTo(resolvedPrevPage.path);
       }
       if (event.altKey && event.key === "ArrowRight" && resolvedNextPage) {
-        window.location.href = resolvedNextPage.path;
+        navigateTo(resolvedNextPage.path);
       }
     };
 

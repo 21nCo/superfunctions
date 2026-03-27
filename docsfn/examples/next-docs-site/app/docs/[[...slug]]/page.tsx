@@ -7,8 +7,9 @@ import {
   resolveDocsPageSurface,
   resolveDocsRouteData,
 } from "@docsfn/next";
+import { ApiReferenceRenderer } from "@docsfn/react/ApiReferenceRenderer";
+import { DocsContent } from "@docsfn/react/DocsContent";
 import { loadDocsSiteSource } from "@/source.config";
-import { SearchArtifactStatus } from "../SearchArtifactStatus";
 
 type DocsPageParams = {
   slug?: string[];
@@ -168,7 +169,12 @@ export default async function DocsPage(props: {
               ))}
             </ul>
           </nav>
-          <SearchArtifactStatus />
+          <p className="docs-example-search-status" data-docsfn-search-runtime="true">
+            Search ready: {source.searchProbe.resultCount} hits for &ldquo;
+            {source.searchProbe.query}
+            &rdquo; ({source.searchProbe.scopes.join(", ")})
+            {source.searchProbe.firstPath ? ` -> ${source.searchProbe.firstPath}` : ""}
+          </p>
         </header>
 
         <nav aria-label="Breadcrumb">
@@ -193,7 +199,7 @@ export default async function DocsPage(props: {
         ) : null}
 
         {routeEntry.kind === "page" ? (
-          <article className="docs-example-article">
+          <article className="docs-example-article" data-docsfn-proof-surface="docs">
             <h1>{routeEntry.page.title}</h1>
             {routeEntry.page.description ? <p>{routeEntry.page.description}</p> : null}
 
@@ -210,15 +216,17 @@ export default async function DocsPage(props: {
               </section>
             ) : null}
 
-            <pre className="docs-example-content">{routeEntry.page.body}</pre>
+            <DocsContent
+              content={routeEntry.page.body}
+              sourcePath={routeEntry.page.id}
+              compatPreset={source.compatPreset}
+            />
           </article>
         ) : (
-          <article className="docs-example-article">
+          <article className="docs-example-article" data-docsfn-proof-surface="api">
             <h1>{routeEntry.api.title}</h1>
             <p>Route: {routeEntry.api.path}</p>
-            <pre className="docs-example-content">
-              {JSON.stringify(routeEntry.api.spec, null, 2)}
-            </pre>
+            <ApiReferenceRenderer api={routeEntry.api} />
           </article>
         )}
 

@@ -16,7 +16,7 @@ export class ArrowTool extends BaseTool {
       canvas
     );
 
-    context.recordHistory();
+    context.getDrawfn().beginGesture("add");
 
     this.points = [[point.x, point.y]];
 

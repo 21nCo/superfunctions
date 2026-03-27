@@ -1,10 +1,23 @@
-import { Drawfn, type DrawfnOptions, type Scene } from '@21n/drawfn';
+import {
+  Drawfn,
+  type DrawfnOptions,
+  type Scene,
+  type SceneChangedEvent,
+} from "drawfn";
 
-export type DrawfnActionOptions = Omit<DrawfnOptions, 'canvas'> & {
+export type DrawfnActionOptions = Omit<DrawfnOptions, "canvas"> & {
   scene?: Scene;
   onReady?: (drawfn: Drawfn) => void;
-  onSceneChange?: (scene: Scene) => void;
+  onSceneChange?: (scene: Scene, meta?: SceneChangedEvent) => void;
 };
+
+function scenesAreEqual(left?: Scene, right?: Scene): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return JSON.stringify(left) === JSON.stringify(right);
+}
 
 export function drawfn(canvas: HTMLCanvasElement, options?: DrawfnActionOptions) {
   const instance = new Drawfn({
@@ -12,32 +25,28 @@ export function drawfn(canvas: HTMLCanvasElement, options?: DrawfnActionOptions)
     overlayRoot: options?.overlayRoot,
     getImageBitmap: options?.getImageBitmap,
   });
+  let currentOptions = options;
 
-  if (options?.scene) {
+  const unsubscribeSceneChanged = instance.on("sceneChanged", (meta) => {
+    currentOptions?.onSceneChange?.(meta.scene, meta);
+  });
+
+  if (options?.scene && !scenesAreEqual(instance.getScene(), options.scene)) {
     instance.load(options.scene);
   }
 
-  // Setup scene change listeners
-  let unsubscribers: (() => void)[] = [];
-  if (options?.onSceneChange) {
-    unsubscribers.push(
-      instance.on('elementAdded', () => options.onSceneChange?.(instance.getScene())),
-      instance.on('elementUpdated', () => options.onSceneChange?.(instance.getScene())),
-      instance.on('elementRemoved', () => options.onSceneChange?.(instance.getScene()))
-    );
-  }
-
-  // Call onReady
   options?.onReady?.(instance);
 
   return {
     update(newOptions: DrawfnActionOptions) {
-      if (newOptions.scene && newOptions.scene !== options?.scene) {
+      currentOptions = newOptions;
+
+      if (newOptions.scene && !scenesAreEqual(instance.getScene(), newOptions.scene)) {
         instance.load(newOptions.scene);
       }
     },
     destroy() {
-      unsubscribers.forEach(unsub => unsub());
+      unsubscribeSceneChanged?.();
       instance.destroy();
     },
   };

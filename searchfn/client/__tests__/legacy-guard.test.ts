@@ -8,7 +8,6 @@ const SRC_ROOT = resolve(ROOT, "src");
 const REMOVED_DIR_PATTERNS = [
   "compat",
   "search-engine",
-  "in-memory-search",
   "pipeline",
   "indexing",
   "cache",
@@ -16,7 +15,7 @@ const REMOVED_DIR_PATTERNS = [
   "query",
 ];
 
-const REMOVED_SYMBOLS = ["SearchEngine", "InMemorySearchFn", "migrateFlexStoreToSearchFn"];
+const REMOVED_SYMBOLS = ["SearchEngine", "migrateFlexStoreToSearchFn"];
 
 function walkFiles(dir: string, files: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {

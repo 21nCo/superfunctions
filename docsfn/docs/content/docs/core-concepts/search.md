@@ -5,7 +5,7 @@ description: Configure docsfn search scopes, body indexing, artifacts, and the D
 
 # Search
 
-docsfn builds a **search artifact** (`DocsSearchArtifact`) at compile time and serves it as JSON. The browser loads that artifact (or fetches it lazily) and runs queries through **searchfn**’s in-memory engine.
+docsfn builds a **search artifact** (`DocsSearchArtifact`) at compile time and serves it as JSON. The browser loads that artifact (or fetches it lazily) and hydrates a **searchfn** memory client from the artifact documents.
 
 See also: [Configuration](./configuration), [CLI](./cli), [Content providers](./content-providers).
 
@@ -29,10 +29,27 @@ search: {
 Each indexed document carries a **`scope`** (`DocsSearchScope`). The runtime can filter results:
 
 - **`docs`** — documentation pages.
-- **`api`** — API reference entries derived from OpenAPI (and related sources).
+- **`api`** — API reference entries, including OpenAPI routes and any `/docs/api...` markdown routes that you classify with `search.routeScopeOverrides`.
 - **`blog`** — blog posts.
 
 `DocsSearch` defaults to scope filters **`["all", "docs", "api", "blog"]`**. Pass a narrower `scopes` prop if your site disables some collections.
+
+### Route-based scope overrides
+
+Use `search.routeScopeOverrides` when a route should search like API content even though the source file lives in the docs collection:
+
+```ts
+search: {
+  enabled: true,
+  scopes: ["docs", "api", "blog"],
+  routeScopeOverrides: [
+    { pattern: "/docs/api", scope: "api" },
+    { pattern: "/docs/api/**", scope: "api" },
+  ],
+},
+```
+
+That is the supported way to make Markdown package docs under `content/docs/api` appear in the API scope. `content.apiDir` should still point at your OpenAPI spec directory such as `content/api`.
 
 ## Body indexing modes
 
@@ -88,6 +105,6 @@ The dialog UI lets users restrict queries to **All**, **docs**, **api**, or **bl
 
 ## How scoring works (brief)
 
-The artifact embeds a **searchfn** snapshot. At query time, core wraps **`InMemorySearchFn`**, which applies **BM25-style full-text scoring** (term frequency / inverse document frequency) over the indexed fields, then sorts by **score**, **title**, and **path** for stable ordering.
+The build captures canonical search documents and engine metadata in the artifact. At query time, `createDocsSearchRuntime()` initializes a memory-backed **searchfn** client, indexes those documents by scope, and returns results sorted by **score**, **title**, and **path** for stable ordering.
 
 You do not configure BM25 weights in `docsfn.config.ts`; tuning is achieved by **scope**, **body indexing mode**, and content structure.

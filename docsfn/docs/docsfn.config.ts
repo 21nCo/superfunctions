@@ -41,6 +41,10 @@ const config: DocsConfig = {
     enabled: true,
     scopes: ["docs", "api", "blog"],
     bodyIndexing: "summary",
+    routeScopeOverrides: [
+      { pattern: "/docs/api", scope: "api" },
+      { pattern: "/docs/api/**", scope: "api" },
+    ],
   },
   auth: { enabled: false, mode: "public" },
   analytics: { enabled: false, provider: "watchfn", respectDnt: true },

@@ -1,5 +1,5 @@
-import { writable, derived, type Readable } from 'svelte/store';
-import type { Drawfn, Scene, ToolName, Camera } from '@21n/drawfn';
+import { writable } from "svelte/store";
+import type { Camera, Drawfn, ToolName } from "drawfn";
 
 export type DrawfnStore = {
   instance: Drawfn | null;
@@ -13,75 +13,75 @@ export type DrawfnStore = {
 };
 
 export function createDrawfnStore() {
-  const { subscribe, set, update } = writable<DrawfnStore>({
+  const initialState: DrawfnStore = {
     instance: null,
     isReady: false,
-    currentTool: 'select',
+    currentTool: "select",
     canUndo: false,
     canRedo: false,
     selectedIds: [],
     elementCount: 0,
     camera: { x: 0, y: 0, zoom: 1 },
+  };
+  const { subscribe, update } = writable<DrawfnStore>({
+    ...initialState,
   });
+  let unsubscribers: Array<() => void> = [];
+
+  function clearSubscriptions(): void {
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+    unsubscribers = [];
+  }
 
   return {
     subscribe,
     setInstance(instance: Drawfn) {
-      update(state => ({
+      clearSubscriptions();
+      update((state) => ({
         ...state,
         instance,
         isReady: true,
+        currentTool: instance.getTool(),
+        canUndo: false,
+        canRedo: false,
+        selectedIds: instance.getSelectedIds(),
         camera: instance.getCamera(),
         elementCount: instance.getElements().length,
       }));
 
-      // Subscribe to instance events
-      instance.on('historyChanged', ({ canUndo, canRedo }) => {
-        update(state => ({ ...state, canUndo, canRedo }));
-      });
-
-      instance.on('selectionChanged', (ids) => {
-        update(state => ({ ...state, selectedIds: ids }));
-      });
-
-      instance.on('elementAdded', () => {
-        update(state => ({
-          ...state,
-          elementCount: instance.getElements().length,
-        }));
-      });
-
-      instance.on('elementRemoved', () => {
-        update(state => ({
-          ...state,
-          elementCount: instance.getElements().length,
-        }));
-      });
-
-      instance.on('cameraChanged', (camera) => {
-        update(state => ({ ...state, camera }));
-      });
+      unsubscribers.push(
+        instance.on("historyChanged", ({ canUndo, canRedo }) => {
+          update((state) => ({ ...state, canUndo, canRedo }));
+        }) ?? (() => {}),
+        instance.on("selectionChanged", (selectedIds) => {
+          update((state) => ({ ...state, selectedIds }));
+        }) ?? (() => {}),
+        instance.on("sceneChanged", ({ scene }) => {
+          update((state) => ({
+            ...state,
+            elementCount: scene.elements.length,
+            camera: scene.camera,
+          }));
+        }) ?? (() => {})
+      );
     },
     setTool(tool: ToolName, opts?: any) {
-      update(state => {
+      update((state) => {
         state.instance?.setTool(tool, opts);
         return { ...state, currentTool: tool };
       });
     },
     clear() {
-      update(state => {
+      update((state) => {
         state.instance?.clear();
-        return state;
+        return { ...state };
       });
     },
     destroy() {
-      update(state => {
+      clearSubscriptions();
+      update((state) => {
         state.instance?.destroy();
-        return {
-          ...state,
-          instance: null,
-          isReady: false,
-        };
+        return { ...initialState };
       });
     },
   };

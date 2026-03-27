@@ -59,46 +59,28 @@ export default {
   preprocess: vitePreprocess(),
   kit: {
     adapter: adapter(),
-    alias: {
-      "@docsfn/core": path.resolve(dirname, "node_modules/@docsfn/core/dist/index.js"),
-      "@docsfn/sveltekit": path.resolve(dirname, "node_modules/@docsfn/sveltekit/dist/index.js"),
-      "@docsfn/svelte": path.resolve(dirname, "node_modules/@docsfn/svelte/dist/index.js"),
-      "@docsfn/provider-fs": path.resolve(dirname, "node_modules/@docsfn/provider-fs/dist/index.js"),
-    },
   },
 };
 ```
 
-Adjust `dist` vs `src` paths to match how your installed packages expose entry points.
+Installed apps should import the published package entry points directly. Reserve aliases for local monorepo development only.
 
 ---
 
-## Step 4 — Vite aliases for `@docsfn/svelte` components
+## Step 4 — Public Svelte component imports
 
-Import **individual `.svelte` files** from `@docsfn/svelte` (not the package barrel) inside client-rendered routes so Vite does not bundle Node code. In **`vite.config.ts`**:
+Import shipped components from `@docsfn/svelte` public exports. Use either the package root or the documented `.svelte` subpaths, but never internal package source directories:
 
-```ts
-import path from "node:path";
-import tailwindcss from "@tailwindcss/vite";
-import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig } from "vite";
-
-const svelteSrc = path.resolve("node_modules/@docsfn/svelte/src");
-
-export default defineConfig({
-  plugins: [tailwindcss(), sveltekit()],
-  resolve: {
-    alias: {
-      "@site/topbar": path.join(svelteSrc, "TopBar.svelte"),
-      "@site/breadcrumbs": path.join(svelteSrc, "Breadcrumbs.svelte"),
-      "@site/pagination": path.join(svelteSrc, "Pagination.svelte"),
-      "@site/docs-sidebar": path.join(svelteSrc, "DocsSidebar.svelte"),
-      "@site/docs-toc": path.join(svelteSrc, "DocsToc.svelte"),
-      "@site/api-reference-renderer": path.join(svelteSrc, "ApiReferenceRenderer.svelte"),
-      "@site/docs-search": path.join(svelteSrc, "DocsSearch.svelte"),
-    },
-  },
-});
+```svelte
+<script lang="ts">
+  import TopBar from "@docsfn/svelte/TopBar.svelte";
+  import Breadcrumbs from "@docsfn/svelte/Breadcrumbs.svelte";
+  import Pagination from "@docsfn/svelte/Pagination.svelte";
+  import DocsSidebar from "@docsfn/svelte/DocsSidebar.svelte";
+  import DocsToc from "@docsfn/svelte/DocsToc.svelte";
+  import ApiReferenceRenderer from "@docsfn/svelte/ApiReferenceRenderer.svelte";
+  import DocsSearch from "@docsfn/svelte/DocsSearch.svelte";
+</script>
 ```
 
 ---
@@ -123,7 +105,7 @@ const config: DocsConfig = {
     root: ".",
     docsDir: "content/docs",
     blogDir: "content/blog",
-    apiDir: "content/docs/api",
+    apiDir: "content/api",
     pagesDir: "content/pages",
     assetsDir: "static",
     metaFileName: "meta.json",
@@ -144,6 +126,26 @@ const config: DocsConfig = {
 };
 
 export default config;
+```
+
+Reserve the API collection for OpenAPI specs. If you also want hand-written package docs at `/docs/api/...`, keep those Markdown files under `content/docs/api` and classify them with:
+
+```ts
+search: {
+  enabled: true,
+  scopes: ["docs", "api", "blog"],
+  bodyIndexing: "summary",
+  routeScopeOverrides: [
+    { pattern: "/docs/api", scope: "api" },
+    { pattern: "/docs/api/**", scope: "api" },
+  ],
+},
+navigation: {
+  sidebars: {
+    docs: { title: "Docs", root: true, include: ["docs/**"] },
+    api: { title: "API", root: true, include: ["docs/api/**"] },
+  },
+},
 ```
 
 ---
@@ -331,18 +333,18 @@ export const load: PageServerLoad = async ({ params, parent }) => {
 
 ## Step 10 — Docs route `+page.svelte` (three-column layout)
 
-Use **`DocsContent`** for Markdown pages and **`ApiReferenceRenderer`** for API entries. Import compiled UI from `@site/*` aliases.
+Use **`DocsContent`** for Markdown pages and **`ApiReferenceRenderer`** for OpenAPI entries. Import shipped UI directly from the `@docsfn/svelte/*.svelte` public subpaths.
 
 ```svelte
 <!-- src/routes/docs/[...slug]/+page.svelte -->
 <s
 cript lang="ts">
   import DocsContent from "@docsfn/svelte/DocsContent.svelte";
-  import ApiReferenceRenderer from "@site/api-reference-renderer";
-  import Breadcrumbs from "@site/breadcrumbs";
-  import DocsSidebar from "@site/docs-sidebar";
-  import DocsToc from "@site/docs-toc";
-  import Pagination from "@site/pagination";
+  import ApiReferenceRenderer from "@docsfn/svelte/ApiReferenceRenderer.svelte";
+  import Breadcrumbs from "@docsfn/svelte/Breadcrumbs.svelte";
+  import DocsSidebar from "@docsfn/svelte/DocsSidebar.svelte";
+  import DocsToc from "@docsfn/svelte/DocsToc.svelte";
+  import Pagination from "@docsfn/svelte/Pagination.svelte";
   import type { PageData } from "./$types";
 
   interface Props {

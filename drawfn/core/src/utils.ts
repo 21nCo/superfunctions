@@ -1,7 +1,44 @@
-import type { Point, Bounds, Element, Camera } from './types';
+import type {
+  Point,
+  Bounds,
+  Element,
+  Camera,
+  DrawfnError,
+  DrawfnErrorCode,
+} from './types';
+
+export const MIN_CAMERA_ZOOM = 0.1;
+export const MAX_CAMERA_ZOOM = 5;
+export const MAX_SCENE_ELEMENTS = 2000;
+export const MAX_FREEDRAW_POINTS = 16384;
 
 export function generateId(): string {
   return `e_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+export function deepClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function createDrawfnError(
+  code: DrawfnErrorCode,
+  message: string,
+  details?: Record<string, unknown>,
+  recoverable = true
+): DrawfnError {
+  if (details && Object.keys(details).length > 0) {
+    return { code, message, details, recoverable };
+  }
+
+  return { code, message, recoverable };
 }
 
 export function screenToCanvas(

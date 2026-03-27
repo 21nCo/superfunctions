@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildManifest,
   buildSearchIndex,
+  createDocsSearchRuntime,
   loadDocsConfig,
   type DocsCompatPreset,
   type DocsManifest,
@@ -14,6 +15,12 @@ export interface DocsSiteSource {
   fixtureRoot: string;
   manifest: DocsManifest;
   searchArtifact: DocsSearchArtifact;
+  searchProbe: {
+    query: string;
+    resultCount: number;
+    firstPath?: string;
+    scopes: string[];
+  };
   siteTitle: string;
   canonicalUrl?: string;
   compatPreset: DocsCompatPreset;
@@ -36,6 +43,29 @@ function resolveFixtureRoot(): string {
   return DEFAULT_FIXTURE_ROOT;
 }
 
+async function buildSearchProbe(
+  searchArtifact: DocsSearchArtifact
+): Promise<DocsSiteSource["searchProbe"]> {
+  const probeQuery =
+    searchArtifact.documents.find((document) => document.title.trim().length > 0)?.title ??
+    searchArtifact.documents[0]?.summary ??
+    "docs";
+  const runtime = createDocsSearchRuntime({
+    artifact: searchArtifact,
+  });
+  const results = await runtime.query({
+    query: probeQuery,
+    limit: 5,
+  });
+
+  return {
+    query: probeQuery,
+    resultCount: results.length,
+    firstPath: results[0]?.path,
+    scopes: [...searchArtifact.scopes],
+  };
+}
+
 export async function loadDocsSiteSource(): Promise<DocsSiteSource> {
   if (!sourcePromise) {
     sourcePromise = (async () => {
@@ -51,11 +81,13 @@ export async function loadDocsSiteSource(): Promise<DocsSiteSource> {
       const searchArtifact = await buildSearchIndex(manifest, {
         search: config.search,
       });
+      const searchProbe = await buildSearchProbe(searchArtifact);
 
       return {
         fixtureRoot,
         manifest,
         searchArtifact,
+        searchProbe,
         siteTitle: config.site.title,
         canonicalUrl: config.site.canonicalUrl,
         compatPreset: config.compat?.preset ?? "none",

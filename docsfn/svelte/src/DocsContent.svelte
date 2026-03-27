@@ -3,19 +3,28 @@
   import {
     assertCompiledContentTrusted,
     compileSvelteContent,
+    createDiagnostic,
+    createDocsError,
     type CompiledContentArtifact,
+    type CompiledContentBlock,
+    type CompiledMermaidBlock,
     type DocsCompatPreset,
   } from "@docsfn/core/browser";
 
   export let compiled: CompiledContentArtifact | undefined = undefined;
+  export let blocks: CompiledContentBlock[] | undefined = undefined;
   export let content = "";
   export let sourcePath: string | undefined = undefined;
   export let compatPreset: DocsCompatPreset = "none";
   export let allowUnsafeHtml = false;
   export let unsafeHtmlAllowlist: string[] = [];
   export let components: Record<string, ComponentType | undefined> = {};
+  export let renderMermaid: ComponentType<{ block: CompiledMermaidBlock }> | undefined =
+    undefined;
+  export let keyPath = "root";
+  export let nested = false;
 
-  let activeTabs: Record<number, string> = {};
+  let activeTabs: Record<string, string> = {};
 
   $: compiledContent =
     compiled ??
@@ -37,16 +46,42 @@
     });
   }
 
-  function activateTab(index: number, value: string) {
+  $: renderedBlocks = blocks ?? compiledContent.blocks;
+
+  function activateTab(path: string, value: string) {
     activeTabs = {
       ...activeTabs,
-      [index]: value,
+      [path]: value,
     };
+  }
+
+  function createMissingComponentError(name: string) {
+    return createDocsError({
+      code: "DOCS_COMPONENT_UNRESOLVED",
+      message: `component ${name} is not resolved`,
+      diagnostics: [
+        createDiagnostic({
+          code: "DOCS_COMPONENT_UNRESOLVED",
+          message: `component ${name} is not resolved`,
+          details: {
+            component: name,
+          },
+        }),
+      ],
+    });
+  }
+
+  function resolveComponent(name: string): ComponentType {
+    const component = components[name];
+    if (!component) {
+      throw createMissingComponentError(name);
+    }
+    return component;
   }
 </script>
 
 <div class="docsfn-content">
-  {#each compiledContent.blocks as block, index}
+  {#each renderedBlocks as block, index (`${keyPath}:${block.type}:${index}`)}
     {#if block.type === "heading"}
       <svelte:element this={`h${block.level}`} id={block.slug}>{@html block.html}</svelte:element>
     {:else if block.type === "paragraph"}
@@ -58,44 +93,82 @@
     {:else if block.type === "code"}
       <pre data-docsfn-code="true"><code data-lang={block.lang}>{block.code}</code></pre>
     {:else if block.type === "mermaid"}
-      <pre data-docsfn-mermaid="true"><code>{block.code}</code></pre>
+      {#if renderMermaid}
+        <svelte:component this={renderMermaid} {block} />
+      {:else}
+        <div data-docsfn-mermaid="true" data-mermaid-id={block.id}>
+          <code>{block.code}</code>
+        </div>
+      {/if}
     {:else if block.type === "callout"}
       <aside data-docsfn-callout={block.kind}>
         {@html block.html}
       </aside>
     {:else if block.type === "tabs"}
       {@const fallbackTab = block.items[0] ?? block.tabs[0]?.value ?? ""}
-      {@const activeValue = activeTabs[index] ?? fallbackTab}
+      {@const tabKey = `${keyPath}.tab.${index}`}
+      {@const activeValue = activeTabs[tabKey] ?? fallbackTab}
       {@const activeTab = block.tabs.find((tab) => tab.value === activeValue) ?? block.tabs[0]}
+      {@const tablistId = `docsfn-tabs-${tabKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+      {@const panelId = `${tablistId}-panel`}
       <div data-docsfn-tabs="true">
         <div role="tablist" aria-label="Tabs">
-          {#each block.items as item}
+          {#each block.tabs as tab, tabIndex (tab.value)}
             <button
               type="button"
               role="tab"
-              aria-selected={item === activeValue}
-              on:click={() => activateTab(index, item)}
+              id={`${tablistId}-tab-${tabIndex}`}
+              aria-selected={tab.value === activeValue}
+              aria-controls={panelId}
+              tabindex={tab.value === activeValue ? 0 : -1}
+              on:click={() => activateTab(tabKey, tab.value)}
             >
-              {item}
+              {tab.label ?? tab.value}
             </button>
           {/each}
         </div>
-        <div role="tabpanel">
+        <div
+          id={panelId}
+          role="tabpanel"
+          aria-labelledby={
+            activeTab
+              ? `${tablistId}-tab-${block.tabs.findIndex((tab) => tab.value === activeTab.value)}`
+              : undefined
+          }
+        >
           {#if activeTab}
-            <pre>{activeTab.content}</pre>
+            <svelte:self
+              blocks={activeTab.nodes}
+              {components}
+              {renderMermaid}
+              {allowUnsafeHtml}
+              {unsafeHtmlAllowlist}
+              keyPath={`${tabKey}.${activeTab.value}`}
+              nested={true}
+            />
           {/if}
         </div>
       </div>
     {:else}
-      {#if components[block.name]}
-        <svelte:component this={components[block.name]}>{block.body ?? ""}</svelte:component>
-      {:else}
-        <div data-docsfn-component={block.name}>{block.body ?? ""}</div>
-      {/if}
+      <svelte:component this={resolveComponent(block.name)} {...block.props}>
+        {#if block.children.length > 0}
+          <svelte:self
+            blocks={block.children}
+            {components}
+            {renderMermaid}
+            {allowUnsafeHtml}
+            {unsafeHtmlAllowlist}
+            keyPath={`${keyPath}.component.${block.name}.${index}`}
+            nested={true}
+          />
+        {/if}
+      </svelte:component>
     {/if}
   {/each}
 
-  <div data-docsfn-page-actions="true">
-    <slot name="page-actions" />
-  </div>
+  {#if !nested}
+    <div data-docsfn-page-actions="true">
+      <slot name="page-actions" />
+    </div>
+  {/if}
 </div>

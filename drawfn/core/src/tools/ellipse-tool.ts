@@ -16,7 +16,7 @@ export class EllipseTool extends BaseTool {
       canvas
     );
 
-    context.recordHistory();
+    context.getDrawfn().beginGesture("add");
 
     const element: EllipseElement = {
       id: generateId(),

@@ -309,6 +309,14 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     relatedPackages: ["oauth-core", "http", "oauth-flow"],
   }),
   createTypeScriptPackageEntry({
+    slug: "oauth-router",
+    title: "OAuth Router",
+    category: "authentication",
+    order: 35,
+    summary: "Compose install, callback, and account routes for OAuth-powered applications.",
+    relatedPackages: ["oauth-core", "oauth-http", "auth"],
+  }),
+  createTypeScriptPackageEntry({
     slug: "oauth-storage",
     title: "OAuth Storage",
     category: "authentication",
@@ -339,6 +347,14 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     order: 70,
     summary: "Test OAuth integrations with reusable fixtures, fakes, and assertions.",
     relatedPackages: ["oauth-core", "oauth-flow", "auth"],
+  }),
+  createTypeScriptPackageEntry({
+    slug: "oauth-router",
+    title: "OAuth Router",
+    category: "authentication",
+    order: 80,
+    summary: "Reuse OAuth browser and connection route factories on top of the shared HTTP layer.",
+    relatedPackages: ["oauth-flow", "oauth-http", "http"],
   }),
   createTypeScriptPackageEntry({
     slug: "http",
@@ -381,12 +397,28 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     relatedPackages: ["http", "middleware", "oauth-http"],
   }),
   createTypeScriptPackageEntry({
+    slug: "http-openapi",
+    title: "HTTP OpenAPI",
+    category: "http",
+    order: 55,
+    summary: "Generate OpenAPI documents from the shared HTTP contract and route metadata.",
+    relatedPackages: ["http", "auth", "http-next"],
+  }),
+  createTypeScriptPackageEntry({
     slug: "http-sveltekit",
     title: "HTTP SvelteKit",
     category: "http",
     order: 60,
     summary: "Use `@superfunctions/http` in SvelteKit endpoints without custom glue code.",
     relatedPackages: ["http", "middleware", "webhooks"],
+  }),
+  createTypeScriptPackageEntry({
+    slug: "http-openapi",
+    title: "HTTP OpenAPI",
+    category: "http",
+    order: 70,
+    summary: "Generate deterministic OpenAPI documents from `@superfunctions/http` routers.",
+    relatedPackages: ["http", "http-next", "oauth-router"],
   }),
   createTypeScriptPackageEntry({
     slug: "middleware",

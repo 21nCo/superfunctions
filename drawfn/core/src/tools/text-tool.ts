@@ -1,13 +1,21 @@
 import { BaseTool } from "./base-tool";
-import type { TextElement, Point, ToolContext } from "../types";
-import { generateId, screenToCanvas } from "../utils";
+import type { TextElement, ToolContext } from "../types";
+import { canvasToScreen, generateId, screenToCanvas } from "../utils";
+
+type TextEditSession = {
+  mode: "create" | "edit";
+  element: TextElement;
+  context: ToolContext;
+  blurHandler: () => void;
+  outsideClickHandler: (event: MouseEvent) => void;
+  outsideClickTimer: number | null;
+};
 
 export class TextTool extends BaseTool {
   name = "text";
   private overlayRoot: HTMLElement | null = null;
   private activeTextarea: HTMLTextAreaElement | null = null;
-  private activeElementId: string | null = null;
-  private activeContext: ToolContext | null = null;
+  private activeSession: TextEditSession | null = null;
 
   constructor(overlayRoot?: HTMLElement) {
     super();
@@ -15,9 +23,7 @@ export class TextTool extends BaseTool {
   }
 
   handlePointerDown(e: PointerEvent, context: ToolContext): void {
-    if (this.activeTextarea && this.activeContext) {
-      this.commitText(this.activeContext);
-    }
+    this.commitText();
 
     const canvas = e.target as HTMLCanvasElement;
     const scene = context.getScene();
@@ -26,8 +32,6 @@ export class TextTool extends BaseTool {
       scene.camera,
       canvas
     );
-
-    context.recordHistory();
 
     const element: TextElement = {
       id: generateId(),
@@ -47,83 +51,38 @@ export class TextTool extends BaseTool {
       align: "left",
     };
 
-    this.activeElementId = context.addElement(element);
-    this.activeContext = context;
-
-    this.showTextInput(canvas, context, element);
+    context.getDrawfn().stageTextElement(element);
+    this.showTextInput(canvas, context, element, "create");
   }
 
-  editElement(id: string, canvas: HTMLCanvasElement, scene: any): void {
+  editElement(id: string, canvas: HTMLCanvasElement, context: ToolContext): void {
+    this.commitText();
+
+    const scene = context.getScene();
     const element = scene.elements.find((el: any) => el.id === id);
     if (!element || element.type !== "text") return;
 
-    // Create a temporary context for editing
-    // Note: This is a simplified approach - in production you'd want proper context
-    this.activeElementId = id;
-
-    // Show text input for existing element
-    const textarea = document.createElement("textarea");
-    const rect = canvas.getBoundingClientRect();
-
-    const screenX = element.x * scene.camera.zoom + scene.camera.x + rect.left;
-    const screenY = element.y * scene.camera.zoom + scene.camera.y + rect.top;
-
-    Object.assign(textarea.style, {
-      position: "fixed",
-      left: `${screenX}px`,
-      top: `${screenY}px`,
-      width: `${element.w * scene.camera.zoom}px`,
-      minHeight: `${element.h * scene.camera.zoom}px`,
-      font: `${element.fontSize * scene.camera.zoom}px ${element.fontFamily}`,
-      color: element.fill,
-      background: "transparent",
-      border: "2px solid #3b82f6",
-      outline: "none",
-      resize: "none",
-      padding: "4px",
-      zIndex: "10000",
-    });
-
-    textarea.value = element.text;
-    textarea.focus();
-    textarea.select(); // Select all text for easy editing
-
-    this.activeTextarea = textarea;
-    if (this.overlayRoot) {
-      this.overlayRoot.appendChild(textarea);
-    }
-
-    // Handle blur to commit changes
-    const handleBlur = () => {
-      if (this.activeTextarea && this.activeElementId) {
-        element.text = this.activeTextarea.value;
-        this.activeTextarea.remove();
-        this.activeTextarea = null;
-        this.activeElementId = null;
-      }
-    };
-
-    textarea.addEventListener("blur", handleBlur);
+    this.showTextInput(canvas, context, element, "edit");
+    this.activeTextarea?.select();
   }
 
   private showTextInput(
     canvas: HTMLCanvasElement,
     context: ToolContext,
-    element: TextElement
+    element: TextElement,
+    mode: "create" | "edit"
   ): void {
     if (!this.overlayRoot) return;
 
     const scene = context.getScene();
     const textarea = document.createElement("textarea");
     const rect = canvas.getBoundingClientRect();
-
-    const screenX = element.x * scene.camera.zoom + scene.camera.x + rect.left;
-    const screenY = element.y * scene.camera.zoom + scene.camera.y + rect.top;
+    const screenPoint = canvasToScreen({ x: element.x, y: element.y }, scene.camera);
 
     Object.assign(textarea.style, {
       position: "fixed",
-      left: `${screenX}px`,
-      top: `${screenY}px`,
+      left: `${screenPoint.x + rect.left}px`,
+      top: `${screenPoint.y + rect.top}px`,
       width: `${element.w * scene.camera.zoom}px`,
       minHeight: `${element.h * scene.camera.zoom}px`,
       font: `${element.fontSize * scene.camera.zoom}px ${element.fontFamily}`,
@@ -142,47 +101,85 @@ export class TextTool extends BaseTool {
     this.activeTextarea = textarea;
     this.overlayRoot.appendChild(textarea);
 
-    const handleClickOutside = (e: MouseEvent) => {
+    const blurHandler = () => {
+      this.commitText();
+    };
+    const outsideClickHandler = (e: MouseEvent) => {
       if (e.target !== textarea) {
-        this.commitText(context);
-        document.removeEventListener("click", handleClickOutside);
+        this.commitText();
       }
     };
 
-    textarea.addEventListener("blur", () => {
-      this.commitText(context);
-      document.removeEventListener("click", handleClickOutside);
-    });
+    this.activeSession = {
+      mode,
+      element,
+      context,
+      blurHandler,
+      outsideClickHandler,
+      outsideClickTimer: null,
+    };
 
-    setTimeout(() => {
-      document.addEventListener("click", handleClickOutside);
+    textarea.addEventListener("blur", blurHandler);
+
+    this.activeSession.outsideClickTimer = window.setTimeout(() => {
+      document.addEventListener("click", outsideClickHandler);
     }, 0);
   }
 
-  private commitText(context: ToolContext): void {
-    if (!this.activeTextarea || !this.activeElementId) return;
+  private cleanupSession(revertProvisional: boolean): void {
+    const session = this.activeSession;
+    const textarea = this.activeTextarea;
 
-    const text = this.activeTextarea.value;
-
-    if (text.trim() === "") {
-      context.removeElement(this.activeElementId);
-    } else {
-      context.updateElement(this.activeElementId, { text });
+    if (session?.outsideClickTimer != null) {
+      window.clearTimeout(session.outsideClickTimer);
     }
 
-    this.activeTextarea.remove();
+    if (textarea && session) {
+      textarea.removeEventListener("blur", session.blurHandler);
+    }
+    if (session) {
+      document.removeEventListener("click", session.outsideClickHandler);
+      if (revertProvisional && session.mode === "create") {
+        session.context.getDrawfn().discardStagedTextElement(session.element.id);
+      }
+    }
+
+    textarea?.remove();
     this.activeTextarea = null;
-    this.activeElementId = null;
-    this.activeContext = null;
+    this.activeSession = null;
+  }
+
+  private commitText(): void {
+    if (!this.activeTextarea || !this.activeSession) {
+      this.cleanupSession(false);
+      return;
+    }
+
+    const session = this.activeSession;
+    const text = this.activeTextarea.value;
+
+    this.cleanupSession(false);
+
+    if (session.mode === "create") {
+      session.context.getDrawfn().discardStagedTextElement(session.element.id);
+      if (text.trim() !== "") {
+        session.context.addElement({
+          ...session.element,
+          text,
+        });
+      }
+    } else {
+      const latest = session.context
+        .getScene()
+        .elements.find((element) => element.id === session.element.id);
+      if (latest?.type === "text" && latest.text !== text) {
+        session.context.updateElement(session.element.id, { text });
+      }
+    }
   }
 
   deactivate(): void {
-    if (this.activeTextarea) {
-      this.activeTextarea.remove();
-      this.activeTextarea = null;
-    }
-    this.activeElementId = null;
-    this.activeContext = null;
+    this.cleanupSession(true);
     super.deactivate();
   }
 }

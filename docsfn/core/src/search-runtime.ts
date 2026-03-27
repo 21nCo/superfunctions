@@ -1,6 +1,6 @@
-import { InMemorySearchFn } from "searchfn";
+import { InMemorySearchFn, createMemorySearchClient, type SearchClient } from "@searchfn/client";
 import { createDiagnostic, createDocsError } from "./diagnostics";
-import type { DocsSearchArtifact, DocsSearchScope } from "./search";
+import type { DocsSearchArtifact, DocsSearchDocument, DocsSearchScope } from "./search";
 
 export type DocsSearchScopeFilter = DocsSearchScope | "all";
 
@@ -33,7 +33,9 @@ export interface CreateDocsSearchRuntimeInput {
 
 interface ValidatedArtifact {
   artifact: DocsSearchArtifact;
-  engine: InMemorySearchFn;
+  client: SearchClient | null;
+  engine: InMemorySearchFn | null;
+  documents: Map<string, DocsSearchDocument>;
 }
 
 function assertValidArtifact(artifact: DocsSearchArtifact): void {
@@ -62,6 +64,34 @@ function assertValidArtifact(artifact: DocsSearchArtifact): void {
       ],
     });
   }
+}
+
+function createSearchClientForArtifact(artifact: DocsSearchArtifact): SearchClient {
+  return createMemorySearchClient({
+    adapterConfig: {
+      pipeline: {
+        enableEdgeNGrams: true,
+        edgeNGramMinLength: 2,
+      },
+    },
+    defaults: {
+      prefix: true,
+      limit: 20,
+      limitPerResource: 20,
+    },
+  });
+}
+
+function createSnapshotSearchEngine(artifact: DocsSearchArtifact): InMemorySearchFn {
+  const engine = new InMemorySearchFn({
+    fields: artifact.fields,
+    pipeline: {
+      enableEdgeNGrams: true,
+      edgeNGramMinLength: 2,
+    },
+  });
+  engine.importSnapshot(artifact.snapshot);
+  return engine;
 }
 
 function sortResults(
@@ -125,15 +155,51 @@ export function createDocsSearchRuntime(
       }
 
       assertValidArtifact(artifact);
-      const engine = new InMemorySearchFn({
-        fields: artifact.fields,
-        pipeline: {
-          enableEdgeNGrams: true,
-          edgeNGramMinLength: 2,
-        },
+      const documents = new Map<string, DocsSearchDocument>();
+
+      for (const document of artifact.documents) {
+        documents.set(document.id, document);
+      }
+
+      if (artifact.schemaVersion === 1 && artifact.snapshot) {
+        validated = {
+          artifact,
+          client: null,
+          engine: createSnapshotSearchEngine(artifact),
+          documents,
+        };
+        return validated;
+      }
+
+      const client = createSearchClientForArtifact(artifact);
+      await client.initialize?.({
+        resources: artifact.scopes.map((scope) => ({
+          name: scope,
+          searchFields: artifact.fields,
+        })),
       });
-      engine.importSnapshot(artifact.snapshot);
-      validated = { artifact, engine };
+
+      for (const scope of artifact.scopes) {
+        const scopedDocuments = artifact.documents.filter((document) => document.scope === scope);
+        if (scopedDocuments.length === 0) {
+          continue;
+        }
+        await client.index({
+          resource: scope,
+          documents: scopedDocuments.map((document) => ({
+            id: document.id,
+            fields: {
+              title: document.title,
+              summary: document.summary,
+              headings: document.headings.join(" "),
+              tags: document.tags.join(" "),
+              body: document.body,
+            },
+          })),
+        });
+      }
+
+      validated = { artifact, client, engine: null, documents };
       return validated;
     })();
 
@@ -173,20 +239,72 @@ export function createDocsSearchRuntime(
         });
       }
 
-      const hits = loaded.engine.searchDetailed(normalizedQuery, {
-        includeStored: true,
+      if (loaded.engine) {
+        const engineResults = loaded.engine.searchDetailed(normalizedQuery, {
+          fields: loaded.artifact.fields,
+          limit: loaded.artifact.documents.length || Math.max(queryInput.limit ?? 20, 20),
+        });
+        const mapped = engineResults
+          .map((hit) => {
+            const document = loaded.documents.get(String(hit.docId));
+            if (!document) {
+              return null;
+            }
+            return {
+              id: document.id,
+              score: hit.score,
+              scope: document.scope,
+              kind: document.kind,
+              path: document.path,
+              title: document.title,
+              summary: document.summary,
+            };
+          })
+          .filter((item): item is DocsSearchRuntimeResultItem => item !== null)
+          .filter((item) => item.path.length > 0 && item.title.length > 0)
+          .filter((item) => scope === "all" || item.scope === scope);
+
+        return sortResults(mapped, queryInput.limit ?? 20);
+      }
+
+      if (!loaded.client) {
+        throw createDocsError({
+          code: "DOCS_ARTIFACT_INVALID",
+          message: "search runtime backend is unavailable",
+          diagnostics: [
+            createDiagnostic({
+              code: "DOCS_ARTIFACT_INVALID",
+              message: "search runtime backend is unavailable",
+            }),
+          ],
+        });
+      }
+
+      const resources = scope === "all" ? loaded.artifact.scopes : [scope];
+      const hits = await loaded.client.searchAll({
+        query: normalizedQuery,
+        resources,
         limit: Math.max(queryInput.limit ?? 20, 20),
+        limitPerResource: Math.max(queryInput.limit ?? 20, 20),
+        prefix: true,
       });
       const mapped = hits
-        .map((hit) => ({
-          id: String(hit.docId),
-          score: hit.score,
-          scope: String(hit.document?.scope ?? "") as DocsSearchScope,
-          kind: String(hit.document?.kind ?? "") as "page" | "api" | "post",
-          path: String(hit.document?.path ?? ""),
-          title: String(hit.document?.title ?? ""),
-          summary: String(hit.document?.summary ?? ""),
-        }))
+        .map((hit) => {
+          const document = loaded.documents.get(String(hit.id));
+          if (!document) {
+            return null;
+          }
+          return {
+            id: document.id,
+            score: hit.score,
+            scope: document.scope,
+            kind: document.kind,
+            path: document.path,
+            title: document.title,
+            summary: document.summary,
+          };
+        })
+        .filter((item): item is DocsSearchRuntimeResultItem => item !== null)
         .filter((item) => item.path.length > 0 && item.title.length > 0)
         .filter((item) => scope === "all" || item.scope === scope);
 

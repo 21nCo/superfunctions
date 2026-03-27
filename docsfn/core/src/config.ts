@@ -110,6 +110,14 @@ const docsConfigSchema = z.object({
       scopes: z.array(z.enum(["docs", "api", "blog"])),
       bodyIndexing: z.enum(["full", "summary", "disabled"]).optional(),
       maxArtifactBytes: z.number().int().positive().optional(),
+      routeScopeOverrides: z
+        .array(
+          z.object({
+            pattern: z.string().min(1, "search.routeScopeOverrides[].pattern is required"),
+            scope: z.string().min(1, "search.routeScopeOverrides[].scope is required"),
+          })
+        )
+        .optional(),
     })
     .optional(),
   auth: z
