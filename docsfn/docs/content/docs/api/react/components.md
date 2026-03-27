@@ -62,9 +62,8 @@ Renders **`docsfn-layout`**: optional top bar, sidebar column (**`DocsSidebar`**
 | **`surface`** | `DocsPageSurface?` | Supplies `sidebar` and `route` when props below omitted |
 | **`sidebar`** | `Sidebar?` | From manifest; required unless on `surface` |
 | **`activePath`** | `string?` | Highlights current item |
-| **`defaultCollapsedGroups`** | `string[]?` | Group ids start collapsed |
 
-Uses **`@uifn/react`** **`Collapsible`** + **`ScrollArea`** for nested sidebar items.
+Uses **`@uifn/react`** **`Collapsible`** + **`ScrollArea`** for nested sidebar items. Groups expand when `item.expanded === true` or when a descendant link matches `activePath`.
 
 ## `Breadcrumbs`
 

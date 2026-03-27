@@ -29,7 +29,7 @@ Logging + tracker (MANDATORY, append-only):
   - command = `execute`
   - agent_name = provided by user if available else `unknown-agent`
   - phase(s) = `PHASE_{NN}`
-  - path = path to the Phase Completion Report file (e.g. `.conduct/{spec_folder}/phase-reports/PHASE_{NN}-{yyyy-mm-dd}-{unique-id}-report.md`)
+  - path = repository-relative path to the Phase Completion Report file (e.g. `.conduct/{spec_folder}/phase-reports/PHASE_{NN}-{yyyy-mm-dd}-{unique-id}-report.md`); NEVER write an absolute filesystem path
 -
 - Additionally, when this execution is associated with a spec folder, you MUST maintain the project-level tracker file:
   - The spec’s `.conduct` root (the parent of `.conduct/specs/{spec_folder}`) MUST contain a `tracker.csv` file alongside `logs.csv` that tracks issue/spec completion status.
@@ -89,8 +89,8 @@ Execution steps (follow in order):
        - agent_name
        - model name/version (if known)
        - launcher (editor/IDE name or "CLI" if available)
-       - workspace/project absolute path (if available)
-       - OS + shell (if available)
+       - workspace/project path recorded as `repo root` or another repository-relative path only; NEVER include an absolute filesystem path
+       - OS + shell in sanitized form only (for example `Darwin arm64`, shell `zsh`); NEVER include hostnames, computer names, usernames, home-directory paths, or full shell executable paths
        - repo metadata if available (git: branch, commit, dirty status)
      - Phase: PHASE_{NN}
      - Status: PASS / BLOCKED / PARTIAL
@@ -114,6 +114,8 @@ Constraints:
 - Do not change public APIs beyond what this phase requires.
 - Do not refactor unrelated code.
 - Do not expand scope to “make it nicer”; only meet acceptance criteria.
+- Do not write machine-specific metadata into the Phase Completion Report, logs, or any committed artifact. Use repository-relative paths and sanitized environment details only.
+- Verification commands written into the report MUST be reproducible from the checked-out repository root without machine-specific absolute paths.
 
 User input:
 - Phase number NN = <NN>

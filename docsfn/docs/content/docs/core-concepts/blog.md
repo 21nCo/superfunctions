@@ -32,7 +32,7 @@ Missing or invalid `date` fails manifest build with **`DOCS_ARTIFACT_INVALID`**.
 
 ## Draft filtering
 
-`parseDraftFlag` treats a post as draft when:
+Internally, the build pipeline treats a post as draft when:
 
 - `draft: true` (boolean), or
 - string **`"true"`**, **`"yes"`** (case-insensitive), or **`"1"`**, or

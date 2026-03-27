@@ -26,7 +26,7 @@ See also: [CLI](./cli), [Security](./security).
 - **`details`** — Machine-readable context (duplicate route ids, blocked HTML categories, etc.).
 - **`suggestion`** — Optional remediation text.
 
-## Error codes (complete list)
+## Error codes (17 codes)
 
 | Code | Typical cause |
 | --- | --- |

@@ -31,10 +31,12 @@ description: Markdown compilation and CompiledContentBlock types in @docsfn/core
 | --- | --- |
 | `heading` | `level`, `text`, `slug`. |
 | `paragraph` | `text`. |
+| `list` | `ordered`, `items[]` (each `{ text }`), `html`. |
 | `code` | `lang?`, `code`. |
 | `mermaid` | `code` (diagram source). |
 | `tabs` | `items`, `tabs[]` with `value` + `content`. |
 | `callout` | `kind`: note \| tip \| warning \| info \| caution; `text`. |
+| `table` | `html` (rendered HTML table). |
 | `component` | `name`, optional `body`, `selfClosing`. |
 
 Fumadocs preset may rewrite `Tabs`/`Tab` imports to docsfn component names before parsing.

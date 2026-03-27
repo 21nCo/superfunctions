@@ -97,7 +97,7 @@ Configure non-overlapping `include` patterns (as in the [Configuration](./config
 
 ## Default open vs collapsed groups
 
-In `@docsfn/svelte`, `SidebarGroup` uses **collapsible** UI. A group is shown **open** when `collapsed === false` on the item **or** when any descendant link matches the active route (`hasActiveChild`). You can pass `defaultCollapsedGroups` to `DocsSidebar` to start specific groups closed by name.
+In `@docsfn/svelte`, `SidebarGroup` uses **collapsible** UI. A group is shown **open** when `expanded === true` on the item **or** when any descendant link matches the active route (`hasActiveChild`). You can pass `defaultCollapsedGroups` to `DocsSidebar` to start specific groups closed by name.
 
 ## Hidden pages
 

@@ -33,7 +33,7 @@ In **`docsfn.config.ts`** each version entry uses optional **`default: true`** f
 
 ## URL generation
 
-For **docs** pages, **`buildRoute`** resolves **`resolveVersionContext`** from logical path + frontmatter, then **`applyVersionToSlug`**:
+For **docs** pages, **`buildRoute`** resolves **`resolveVersionContext`** from logical path + frontmatter, then applies the version to the slug internally:
 
 - **path-prefix:** `[version, ...restOfSlug]`
 - **path-segment:** `[...restOfSlug, version]`

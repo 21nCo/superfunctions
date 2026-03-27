@@ -128,7 +128,7 @@ editLink: {
 | **Type** | `Array<Record<string, unknown>>` |
 | **Required** | no |
 | **Default** | `undefined` |
-| **Description** | Declarative actions (e.g. “View source”) surfaced by UI packages. |
+| **Description** | Declarative actions surfaced by UI packages. Each entry is passed through to the page surface as-is. Adapters expose them via `surface.pageActions` and components like `DocsContent` render them in the `pageActionsSlot` region. Common use: edit links, “View source” buttons, or feedback widgets. |
 
 ---
 

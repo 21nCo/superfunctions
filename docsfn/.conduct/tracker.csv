@@ -5,3 +5,4 @@ id, desc, status, completedAt, completionDoc
 2026-03-22-r7k4m2n9-issue,docsfn ships broken out-of-the-box experience: no inline markdown rendering and no list support and no default theme CSS,1,2026-03-22T18:45:00Z,2026-03-22-m4k8v2p9-completion
 2026-03-22-q9x3k7m2-issue,docsfn/docs contains library-level code (types + renderer + layout) that belongs in @docsfn/core and @docsfn/svelte due to missing browser-safe sub-entry,1,2026-03-22T20:30:00Z,2026-03-22-p7k4m8r2-completion
 2026-03-22-v8k3m7q2-issue,docsfn layout + table rendering + sidebar collapse semantics + TOC active indicator are broken across core and framework packages,1,2026-03-22T20:45:00Z,2026-03-22-n5q8k3m1-completion
+2026-03-26-k7m4p9q2-full-audit,Docsfn docs do not reflect latest implemented code — 6 FAIL and 15 PARTIAL findings,1,2026-03-27T12:00:00Z,2026-03-27-r7k4m9n2-completion

@@ -9,3 +9,5 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-22T20:30:00Z,claude-sonnet-4-6,Cursor,execute-issue,claude-sonnet-4-6,,docsfn/.conduct/issue-completions/2026-03-22-p7k4m8r2-completion.md
 2026-03-22T23:59:30Z,Claude Opus 4.6,unknown,document-issue,unknown-agent,,docsfn/.conduct/issues/2026-03-22-v8k3m7q2-issue.md
 2026-03-22T20:45:00Z,claude-sonnet-4-6,Cursor,execute-issue,unknown-agent,,docsfn/.conduct/issue-completions/2026-03-22-n5q8k3m1-completion.md
+2026-03-26T12:00:00Z,Claude Opus 4.6,Claude Code CLI,audit,claude-opus-4-6,,.conduct/audits/2026-03-26-k7m4p9q2-full-audit.md
+2026-03-27T12:00:00Z,Claude Opus 4.6,Claude Code CLI,execute-issue,claude-opus-4-6,,docsfn/.conduct/issue-completions/2026-03-27-r7k4m9n2-completion.md

@@ -54,3 +54,21 @@ Relative to **`config.content.root`** (or `options.root`):
 ## `DocsContentProvider` interface (core)
 
 Defined in **`@docsfn/core`**: `providerId`, `listEntries`, `loadEntry`, optional `loadAsset` / `watch`, and legacy **`list()`**.
+
+## Provider utility functions (`@docsfn/core`)
+
+These helpers are useful when implementing custom content providers:
+
+| Function | Description |
+| --- | --- |
+| **`normalizeProviderPath(inputPath)`** | Normalizes a file path to POSIX forward-slash format. |
+| **`createSourceEntryId(collection, relativePath)`** | Generates a stable, unique id for a source entry. |
+| **`stableSortSourceEntries(entries)`** | Deterministic sort by collection then relativePath. |
+| **`assertUniqueSourceEntryIds(entries)`** | Throws `DOCS_PROVIDER_ERROR` on duplicate ids. |
+| **`validateSourceEntries(entries)`** | Returns `DocsDiagnostic[]` for invalid entries (non-throwing). |
+| **`assertValidSourceEntries(entries)`** | Validates and returns entries; throws on errors. |
+| **`createProviderError(input)`** | Factory for `DOCS_PROVIDER_ERROR` `DocsError`. |
+| **`createProviderRemoteFetchError(input)`** | Factory for `DOCS_REMOTE_FETCH_FAILED` `DocsError`. |
+| **`sha256FromBuffer(buffer)`** | Computes SHA-256 hex digest from a `Buffer`. |
+| **`normalizeToPosixPath(value)`** | Converts backslashes to forward slashes. |
+| **`toLegacyRawEntries(entries)`** | Maps `DocsSourceEntry[]` to `RawContentEntry[]` for legacy consumers. |

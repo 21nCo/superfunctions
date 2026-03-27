@@ -82,10 +82,12 @@ Your site supplies renderers for known components or falls back to placeholders.
 | --- | --- |
 | `heading` | TOC + anchors. |
 | `paragraph` | Plain text paragraph. |
+| `list` | Ordered or unordered list with item texts. |
 | `code` | Fenced code (non-mermaid). |
 | `mermaid` | Diagram source. |
 | `tabs` | Tab metadata + per-tab content strings. |
 | `callout` | Alert kind + text. |
+| `table` | HTML table from Markdown pipe-table syntax. |
 | `component` | Custom component segment. |
 
 ## Fumadocs compatibility

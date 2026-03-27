@@ -15,6 +15,10 @@ Builds a single **`Sidebar`** from normalized pages + per-directory **`meta.json
 
 Produces **`Record<string, Sidebar>`**: always includes **`default`**, then one entry per **`config.navigation.sidebars`** key filtered by `include` globs.
 
+### `buildAutoSidebar(pages)`
+
+Convenience function: builds a **`Sidebar`** directly from an array of **`DocPage`** objects without config or meta rules. Useful for programmatic sidebar construction.
+
 ## Sidebar utilities
 
 ### `flattenSidebarLinks(sidebar)`
