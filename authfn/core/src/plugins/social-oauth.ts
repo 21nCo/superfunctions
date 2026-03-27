@@ -168,7 +168,7 @@ function createSocialRoutes(
         const result = await flowService.start({
           providerId,
           redirectUri: callbackUri,
-          scopes: authorizeScopes(providerSettings, requestId),
+          scopes: await authorizeScopes(providerSettings, requestId),
           subject: {
             kind: 'browser-auth',
             intentId: createIdentifier('intent'),
@@ -646,17 +646,17 @@ function resolveProviderSettings(
   };
 }
 
-function authorizeScopes(
+async function authorizeScopes(
   settings: ResolvedProviderSettings,
   requestId: string
-): string[] {
+): Promise<string[]> {
   const registry = createDefaultProviderPolicyRegistry(() => new Date().toISOString());
   registry.assertOperationAllowed({
     providerId: settings.providerId,
     operation: 'auth.signin',
     featureMode: 'metadata-only'
   });
-  registry.validateScopes({
+  await registry.validateScopes({
     providerId: settings.providerId,
     feature: 'auth.social.profile',
     requestedScopes: settings.scopes,

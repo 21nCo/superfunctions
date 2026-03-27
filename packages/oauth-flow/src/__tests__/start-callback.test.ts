@@ -26,6 +26,7 @@ class CountingStateStore extends MemoryOAuthStateStore {
 function createHarness(options?: {
   startAt?: string;
   tokenStorageMode?: "encrypted-required" | "plaintext-unsafe";
+  omitTokenStorageMode?: boolean;
   providerRuntimeConfig?: {
     google?: {
       clientId?: string;
@@ -72,7 +73,11 @@ function createHarness(options?: {
     resolveProviderRuntimeConfig: options?.resolveProviderRuntimeConfig,
     stateStore,
     tokenVault,
-    tokenStorageMode: options?.tokenStorageMode ?? "plaintext-unsafe",
+    ...(options?.omitTokenStorageMode
+      ? {}
+      : {
+          tokenStorageMode: options?.tokenStorageMode ?? "plaintext-unsafe"
+        }),
     tokenHttpClient,
     now,
     emitEvent: (event) => events.push(event)
@@ -252,6 +257,32 @@ describe("oauth-flow start/callback invariants", () => {
       code: "OAUTH_STATE_REPLAYED",
       status: 400,
       retryable: false
+    });
+  });
+
+  it("handleCallback() keeps legacy plaintext vaults working when tokenStorageMode is omitted", async () => {
+    const { service, tokenVault } = createHarness({
+      omitTokenStorageMode: true
+    });
+
+    const started = await service.start({
+      providerId: "google",
+      tenantId: "tenant_1",
+      userId: "user_1",
+      connectionId: "conn_legacy_plaintext",
+      redirectUri: "https://app.example/callback"
+    });
+
+    const connected = await service.handleCallback({
+      code: "auth-code",
+      state: started.stateId,
+      redirectUri: "https://app.example/callback"
+    });
+
+    expect(connected.connectionId).toBe("conn_legacy_plaintext");
+    await expect(tokenVault.getByConnection("conn_legacy_plaintext")).resolves.toMatchObject({
+      providerId: "google",
+      connectionId: "conn_legacy_plaintext"
     });
   });
 

@@ -344,6 +344,43 @@ describe("oauth-flow refresh/disconnect lifecycle", () => {
     );
   });
 
+  it("disconnect() accepts legacy hooks that only perform side effects and return void", async () => {
+    const { service, tokenVault, events } = createHarness({
+      identityHooks: {
+        onDisconnected: async () => {}
+      }
+    });
+    await seedConnection(service, "conn_void_hook");
+
+    const result = await service.disconnect({
+      connectionId: "conn_void_hook",
+      providerId: "google",
+      revokeRemote: false,
+      requestId: "req_disconnect_void"
+    });
+
+    expect(result.connectionCleanup).toEqual({
+      attempted: true,
+      deleted: false,
+      reason: "retained"
+    });
+    expect(result.connectionDeleted).toBe(false);
+    expect(await tokenVault.getByConnection("conn_void_hook")).toBeNull();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        name: "oauth.flow.disconnect.success",
+        requestId: "req_disconnect_void",
+        details: {
+          remoteRevokeAttempted: false,
+          localDeleted: true,
+          cleanupAttempted: true,
+          cleanupDeleted: false,
+          cleanupReason: "retained"
+        }
+      })
+    );
+  });
+
   it("disconnect() surfaces OAUTH_HOOK_FAILED only after local cleanup and emits redaction-safe details", async () => {
     const { service, tokenVault, events } = createHarness({
       identityHooks: {

@@ -20,9 +20,10 @@ import {
   MemoryTokenVault,
 } from "@superfunctions/oauth-storage";
 
+const encryptionKeyHex = process.env.OAUTH_TOKEN_ENCRYPTION_KEY_HEX!;
 const tokenVault = new EncryptedTokenVault(
   new MemoryTokenVault(),
-  new AesGcmTokenCipher(() => Buffer.alloc(32, 7)),
+  new AesGcmTokenCipher(() => Buffer.from(encryptionKeyHex, "hex")),
 );
 
 const flow = createOAuthFlowService({
@@ -51,10 +52,13 @@ const flow = createOAuthFlowService({
 
 It owns orchestration and lifecycle hooks, not route adapters. Use `@superfunctions/oauth-router` when you want reusable HTTP endpoints.
 
+Keep `OAUTH_TOKEN_ENCRYPTION_KEY_HEX` as a deployment secret with 32 random bytes encoded as hex.
+
 ## Production Notes
 
-- The default `tokenStorageMode` is `encrypted-required`.
-- Plain `TokenVault` persistence is blocked unless you explicitly opt into `plaintext-unsafe`.
+- `EncryptedTokenVault` defaults to `tokenStorageMode: "encrypted-required"`.
+- Legacy plain `TokenVault` wiring stays writable by default for backward compatibility, but new production deployments should migrate to `EncryptedTokenVault`.
+- Set `tokenStorageMode: "encrypted-required"` explicitly if you want upgrades to fail closed on plaintext persistence.
 - `plaintext-unsafe` is for tests, local prototypes, and temporary migration windows only.
 - `disconnect()` now reports `connectionCleanup`, and `connectionDeleted` remains only as a deprecated compatibility alias of `connectionCleanup.deleted`.
 - Keep `resolveProviderRuntimeConfig` deterministic across app servers and background workers.

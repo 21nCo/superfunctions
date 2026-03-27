@@ -205,7 +205,7 @@ export type OAuthFlowIdentityHooks = {
   onConnected?: (result: OAuthFlowCallbackResult) => Promise<void>;
   onDisconnected?: (
     input: OAuthFlowDisconnectContext
-  ) => Promise<OAuthFlowConnectionCleanup> | OAuthFlowConnectionCleanup;
+  ) => Promise<OAuthFlowConnectionCleanup | void> | OAuthFlowConnectionCleanup | void;
 };
 
 export interface OAuthFlowService {
@@ -1017,7 +1017,11 @@ class DefaultOAuthFlowService implements OAuthFlowService {
   }
 
   private getTokenStorageMode(): OAuthTokenStorageMode {
-    return this.config.tokenStorageMode ?? "encrypted-required";
+    if (this.config.tokenStorageMode) {
+      return this.config.tokenStorageMode;
+    }
+
+    return isEncryptedTokenVault(this.config.tokenVault) ? "encrypted-required" : "plaintext-unsafe";
   }
 }
 
@@ -1217,6 +1221,14 @@ function validateDisconnectCleanupResult(
   value: unknown,
   input: OAuthFlowDisconnectContext
 ): OAuthFlowConnectionCleanup {
+  if (value === undefined) {
+    return {
+      attempted: true,
+      deleted: false,
+      reason: "retained"
+    };
+  }
+
   if (!value || typeof value !== "object") {
     throw invalidDisconnectCleanupResult(input);
   }

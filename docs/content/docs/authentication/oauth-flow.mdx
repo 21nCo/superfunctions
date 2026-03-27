@@ -47,9 +47,10 @@ import {
   MemoryTokenVault,
 } from "@superfunctions/oauth-storage";
 
+const encryptionKeyHex = process.env.OAUTH_TOKEN_ENCRYPTION_KEY_HEX!;
 const tokenVault = new EncryptedTokenVault(
   new MemoryTokenVault(),
-  new AesGcmTokenCipher(() => Buffer.alloc(32, 7)),
+  new AesGcmTokenCipher(() => Buffer.from(encryptionKeyHex, "hex")),
 );
 
 const flow = createOAuthFlowService({
@@ -67,6 +68,8 @@ const flow = createOAuthFlowService({
   tokenVault,
 });
 ```
+
+Keep `OAUTH_TOKEN_ENCRYPTION_KEY_HEX` as a deployment secret with 32 random bytes encoded as hex.
 
 From there you can issue the authorization redirect and later complete the callback with the same service.
 
@@ -90,11 +93,13 @@ const connected = await flow.handleCallback({
 
 The first concept is connection-centric lifecycle management. `start()` captures the provider choice, redirect URI, and subject. `handleCallback()` consumes state and writes the token record. `refresh()` and `disconnect()` then act on the long-lived connection record over time. That lets apps such as `plugfn` or `authfn` reuse one service in routes, workers, and background cleanup tasks.
 
-The second concept is security posture around token persistence. `oauth-flow` now defaults `tokenStorageMode` to `encrypted-required`. If you pass a plain `TokenVault`, writes fail with `OAUTH_TOKEN_STORAGE_UNSAFE` unless you explicitly opt into `plaintext-unsafe`. That makes secure storage the default contract instead of a documentation suggestion.
+The second concept is security posture around token persistence. `EncryptedTokenVault` defaults `tokenStorageMode` to `encrypted-required`, while legacy plain `TokenVault` wiring remains writable by default for backward compatibility. That keeps upgrades from breaking established integrations while still making encrypted storage the recommended production contract.
 
 ## Compatibility Notes
 
-- `tokenStorageMode` defaults to `encrypted-required`.
+- `EncryptedTokenVault` defaults to `tokenStorageMode: "encrypted-required"`.
+- Legacy plain `TokenVault` wiring stays writable by default for backward compatibility.
+- Set `tokenStorageMode: "encrypted-required"` explicitly if you want upgrades to fail closed on plaintext persistence.
 - `plaintext-unsafe` exists only for tests, local prototypes, and controlled migration windows.
 - `disconnect()` returns `connectionCleanup` as the canonical cleanup signal.
 - `connectionDeleted` remains as a deprecated alias of `connectionCleanup.deleted` for compatibility.

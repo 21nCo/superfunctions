@@ -5,7 +5,7 @@ Reusable OAuth token transport for code exchange, refresh, revocation, retries, 
 ## Install
 
 ```bash
-npm install @superfunctions/oauth-http @superfunctions/oauth-core
+npm install @superfunctions/oauth-http @superfunctions/oauth-core @superfunctions/oauth-providers
 ```
 
 ## Quick Start

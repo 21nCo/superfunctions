@@ -41,7 +41,7 @@ sequenceDiagram
 ## Production Guidance
 
 - Prefer `EncryptedTokenVault` so ciphertext, not plaintext token JSON, becomes the durable record format.
-- `oauth-flow` defaults to `encrypted-required`; `plaintext-unsafe` should stay limited to tests and tightly controlled migration windows.
+- `oauth-flow` fails closed by default when you use `EncryptedTokenVault`; legacy plain `TokenVault` setups remain writable for backward compatibility, and `plaintext-unsafe` should stay limited to tests and tightly controlled migration windows.
 - `createDefaultProviderPolicyRegistry()` is an in-memory convenience path. Durable consent or audit retention requires explicit stores.
 - `oauth-router` is the route-inventory layer. Framework adapters still belong in `@superfunctions/http-*` packages or the consuming app.
 
