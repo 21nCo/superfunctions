@@ -62,6 +62,11 @@ export class ToolManager {
     tool?.handlePointerUp(e, context);
   }
 
+  handlePointerCancel(e: PointerEvent, context: ToolContext): void {
+    const tool = this.tools.get(this.currentTool);
+    tool?.handlePointerCancel(e, context);
+  }
+
   handleKeyDown(e: KeyboardEvent, context: ToolContext): void {
     const tool = this.tools.get(this.currentTool);
     tool?.handleKeyDown(e, context);

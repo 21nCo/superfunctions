@@ -1,7 +1,7 @@
 import { BaseTool } from "./base-tool";
 import type { Element, Point, ToolContext } from "../types";
-import { screenToCanvas, isPointInBounds, getElementBounds } from "../utils";
-import { isPointInOBB } from "../geometry";
+import { screenToCanvas, boundsIntersect, getElementBounds } from "../utils";
+import { getOBBBounds, isPointInOBB } from "../geometry";
 
 type HandleType =
   | "nw"
@@ -48,11 +48,11 @@ export class SelectTool extends BaseTool {
 
     for (const id of selectedIds) {
       const element = scene.elements.find((el) => el.id === id);
-      if (!element) continue;
+      if (!element || element.locked) continue;
 
       const handle = this.getHandleAtPoint(element, point, scene.camera.zoom);
       if (handle) {
-        context.recordHistory();
+        context.getDrawfn().beginGesture("update");
         this.dragStart = point;
         this.dragElementId = element.id;
         this.dragHandle = handle;
@@ -68,6 +68,9 @@ export class SelectTool extends BaseTool {
 
     for (let i = scene.elements.length - 1; i >= 0; i--) {
       const element = scene.elements[i];
+      if (element.locked) {
+        continue;
+      }
 
       // Use rotation-aware hit testing
       if (isPointInOBB(point, element)) {
@@ -94,16 +97,16 @@ export class SelectTool extends BaseTool {
         this.lastClickPoint = point;
         this.lastClickedElementId = element.id;
 
-        context.recordHistory();
+        context.getDrawfn().beginGesture("update");
         this.dragStart = point;
         this.dragElementId = element.id;
         this.dragHandle = null;
 
         if (!selectedIds.has(element.id)) {
-          if (!e.shiftKey) {
-            selectedIds.clear();
-          }
-          selectedIds.add(element.id);
+          const nextSelection = e.shiftKey
+            ? [...Array.from(selectedIds), element.id]
+            : [element.id];
+          context.setSelection(nextSelection);
         }
         return;
       }
@@ -111,7 +114,7 @@ export class SelectTool extends BaseTool {
 
     // No element hit - start marquee selection
     if (!e.shiftKey) {
-      selectedIds.clear();
+      context.setSelection([]);
     }
     this.marqueeStart = point;
     this.marqueeCurrent = point;
@@ -157,17 +160,13 @@ export class SelectTool extends BaseTool {
   handlePointerUp(e: PointerEvent, context: ToolContext): void {
     // Handle marquee selection completion
     if (this.isMarqueeActive && this.marqueeStart && this.marqueeCurrent) {
-      const selection = context.getSelection();
       const elementsInMarquee = this.getElementsInMarquee(context);
+      const currentSelection = Array.from(context.getSelection());
 
-      if (e.shiftKey) {
-        // Add to selection
-        elementsInMarquee.forEach((id) => selection.add(id));
-      } else {
-        // Replace selection
-        selection.clear();
-        elementsInMarquee.forEach((id) => selection.add(id));
-      }
+      const nextSelection = e.shiftKey
+        ? Array.from(new Set([...currentSelection, ...elementsInMarquee]))
+        : elementsInMarquee;
+      context.setSelection(nextSelection);
 
       this.marqueeStart = null;
       this.marqueeCurrent = null;
@@ -197,20 +196,32 @@ export class SelectTool extends BaseTool {
     const minY = Math.min(this.marqueeStart.y, this.marqueeCurrent.y);
     const maxX = Math.max(this.marqueeStart.x, this.marqueeCurrent.x);
     const maxY = Math.max(this.marqueeStart.y, this.marqueeCurrent.y);
+    const marqueeBounds = {
+      x: minX,
+      y: minY,
+      w: maxX - minX,
+      h: maxY - minY,
+    };
 
     const elementsInBounds: string[] = [];
+    const isPointSelection = marqueeBounds.w === 0 && marqueeBounds.h === 0;
 
     for (const element of scene.elements) {
-      // Check if element's center point is within marquee bounds
-      const centerX = element.x + element.w / 2;
-      const centerY = element.y + element.h / 2;
+      if (element.locked) {
+        continue;
+      }
 
-      if (
-        centerX >= minX &&
-        centerX <= maxX &&
-        centerY >= minY &&
-        centerY <= maxY
-      ) {
+      if (isPointSelection) {
+        if (isPointInOBB(this.marqueeStart, element)) {
+          elementsInBounds.push(element.id);
+        }
+        continue;
+      }
+
+      const elementBounds =
+        element.rotation !== 0 ? getOBBBounds(element) : getElementBounds(element);
+
+      if (boundsIntersect(elementBounds, marqueeBounds)) {
         elementsInBounds.push(element.id);
       }
     }

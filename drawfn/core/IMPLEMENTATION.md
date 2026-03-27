@@ -2,11 +2,11 @@
 
 ## Overview
 
-Successfully implemented a complete cross-framework drawing canvas library following the spec in `SPEC.md`.
+Successfully implemented a complete cross-framework drawing canvas library following the canonical spec bundle in `drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec/SPEC.md`.
 
 ## Completed Features
 
-### Core Library (`@21n/drawfn`)
+### Core Library (`drawfn`)
 
 #### 1. **Type System** (`src/types.ts`)
 - Complete type definitions for all element types
@@ -98,7 +98,7 @@ Successfully implemented a complete cross-framework drawing canvas library follo
 - Bounding box calculations
 - Geometry helpers
 
-### React Adapter (`@21n/drawfn-react`)
+### React Adapter (`@drawfn/react`)
 
 #### 1. **useDrawfn Hook** (`src/use-drawfn.ts`)
 - React hook for drawfn instance management
@@ -117,7 +117,7 @@ Successfully implemented a complete cross-framework drawing canvas library follo
 - Auto-manages drawfn lifecycle
 - Props for scene, events, options
 
-### Svelte Adapter (`@21n/drawfn-svelte`)
+### Svelte Adapter (`@drawfn/svelte`)
 
 #### 1. **drawfn Action** (`src/drawfn-action.ts`)
 - Svelte action for using drawfn on canvas elements
@@ -246,7 +246,7 @@ From original spec, nice-to-haves for future:
 │   ├── tsup.config.ts
 │   ├── vitest.config.ts
 │   ├── README.md
-│   ├── SPEC.md
+│   ├── .conduct/specs/      # Canonical spec bundle
 │   └── IMPLEMENTATION.md
 │
 ├── drawfn-react/            # React adapter (3.4KB)
@@ -298,10 +298,10 @@ npm run build -- --filter="@21n/*"  # Build all 21n packages
 
 ## Version
 
-- `@21n/drawfn`: 0.1.0
-- `@21n/drawfn-react`: 0.1.0
-- `@21n/drawfn-svelte`: 0.1.0
+- `drawfn`: 0.1.0
+- `@drawfn/react`: 0.1.0
+- `@drawfn/svelte`: 0.1.0
 
 ## License
 
-Apache-2.0
+MIT

@@ -1,11 +1,11 @@
-# @21n/drawfn-react
+# @drawfn/react
 
-React adapter for @21n/drawfn drawing canvas library.
+React adapter for the `drawfn` drawing canvas library.
 
 ## Installation
 
 ```bash
-npm install @21n/drawfn-react @21n/drawfn perfect-freehand
+npm install @drawfn/react drawfn perfect-freehand
 ```
 
 ## Quick Start
@@ -13,7 +13,7 @@ npm install @21n/drawfn-react @21n/drawfn perfect-freehand
 ### Using the DrawfnCanvas Component
 
 ```tsx
-import { DrawfnCanvas } from '@21n/drawfn-react';
+import { DrawfnCanvas } from '@drawfn/react';
 import { useState } from 'react';
 
 function App() {
@@ -39,12 +39,12 @@ function App() {
 ### Using the useDrawfn Hook
 
 ```tsx
-import { useDrawfn, Canvas } from '@21n/drawfn-react';
+import { useDrawfn, Canvas } from '@drawfn/react';
 
 function App() {
   const { canvasRef, setTool, undo, redo, getScene } = useDrawfn({
-    onSceneChange: (scene) => {
-      console.log('Scene changed:', scene);
+    onSceneChange: (scene, meta) => {
+      console.log('Scene changed:', meta?.reason, scene);
     },
   });
 
@@ -64,7 +64,7 @@ function App() {
 ### Controlled Scene
 
 ```tsx
-import { DrawfnCanvas } from '@21n/drawfn-react';
+import { DrawfnCanvas } from '@drawfn/react';
 import { useState } from 'react';
 
 function App() {
@@ -84,7 +84,7 @@ function App() {
 ### Export Canvas
 
 ```tsx
-import { useDrawfn, Canvas } from '@21n/drawfn-react';
+import { useDrawfn, Canvas } from '@drawfn/react';
 
 function App() {
   const { canvasRef, exportPNG, exportSVG } = useDrawfn();
@@ -140,11 +140,18 @@ Returns an object with:
 Props:
 - All canvas props (width, height, style, etc.)
 - `scene?` - Initial or controlled scene
-- `onSceneChange?` - Callback when scene changes
+- `onSceneChange?` - Callback when scene changes: `(scene, meta?) => void`
 - `onReady?` - Callback when drawfn is initialized
 - `overlayRoot?` - Root element for text editing overlay
 - `getImageBitmap?` - Custom image loader
 
+### Export Options
+
+- `exportPNG({ padding, scale, transparent, selectedOnly, fitContent })`
+  - Defaults: `padding: 20`, `scale: 2`, `transparent: false`, `selectedOnly: false`, `fitContent: false`
+- `exportSVG({ padding, scale, selectedOnly, fitContent })`
+  - Defaults: `padding: 20`, `scale: 1`, `selectedOnly: false`, `fitContent: false`
+
 ## License
 
-Apache-2.0
+MIT

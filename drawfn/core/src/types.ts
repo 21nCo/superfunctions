@@ -109,6 +109,27 @@ export type Scene = {
   background: Background;
 };
 
+export type DrawfnErrorCode =
+  | "INVALID_SCENE"
+  | "UNSUPPORTED_SCENE_VERSION"
+  | "SCENE_LIMIT_EXCEEDED"
+  | "ELEMENT_NOT_FOUND"
+  | "EDIT_CONTEXT_CONFLICT"
+  | "EXPORT_EMPTY_SELECTION"
+  | "EXPORT_IMAGE_LOAD_FAILED"
+  | "EXPORT_RENDER_FAILED";
+
+export type DrawfnError = {
+  code: DrawfnErrorCode;
+  message: string;
+  details?: Record<string, unknown>;
+  recoverable: boolean;
+};
+
+export type DrawfnResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: DrawfnError };
+
 export type ToolName =
   | "select"
   | "pan"
@@ -120,6 +141,32 @@ export type ToolName =
   | "image"
   | "node";
 
+export type SceneChangeReason =
+  | "load"
+  | "clear"
+  | "add"
+  | "update"
+  | "remove"
+  | "reorder"
+  | "camera"
+  | "undo"
+  | "redo"
+  | "text-commit";
+
+export type SceneChangedEvent = {
+  reason: SceneChangeReason;
+  scene: Scene;
+  changedElementIds: string[];
+  canUndo: boolean;
+  canRedo: boolean;
+};
+
+export type HistoryChangedEvent = {
+  canUndo: boolean;
+  canRedo: boolean;
+  depth: number;
+};
+
 export type DrawfnEventMap = {
   pointerDown: [PointerEvent];
   pointerMove: [PointerEvent];
@@ -128,8 +175,10 @@ export type DrawfnEventMap = {
   elementUpdated: [Element];
   elementRemoved: [string];
   selectionChanged: [string[]];
-  historyChanged: [{ canUndo: boolean; canRedo: boolean }];
+  historyChanged: [HistoryChangedEvent];
   cameraChanged: [Camera];
+  sceneChanged: [SceneChangedEvent];
+  error: [DrawfnError];
 };
 
 export type DrawfnEvent = keyof DrawfnEventMap;
@@ -161,7 +210,7 @@ export interface ToolContext {
   /** Remove an element from the scene */
   removeElement(id: string): void;
 
-  /** Record current state in history */
+  /** Begin a gesture transaction snapshot when appropriate */
   recordHistory(): void;
 
   /** Get read-only copy of the scene */
@@ -175,4 +224,7 @@ export interface ToolContext {
 
   /** Get current selection */
   getSelection(): Set<string>;
+
+  /** Replace selection through the canonical emission path */
+  setSelection(ids: string[]): void;
 }

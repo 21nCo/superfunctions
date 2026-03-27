@@ -1,9 +1,13 @@
-import React from 'react';
-import { Canvas, type CanvasProps } from './Canvas';
-import { useDrawfn, type UseDrawfnOptions } from './use-drawfn';
+import React from "react";
+import { Canvas, type CanvasProps } from "./Canvas";
+import {
+  useDrawfn,
+  type UseDrawfnOptions,
+  type UseDrawfnResult,
+} from "./use-drawfn";
 
 export type DrawfnCanvasProps = CanvasProps & UseDrawfnOptions & {
-  onReady?: (drawfn: ReturnType<typeof useDrawfn>) => void;
+  onReady?: (value: UseDrawfnResult) => void;
 };
 
 export function DrawfnCanvas({
@@ -20,12 +24,26 @@ export function DrawfnCanvas({
     overlayRoot,
     getImageBitmap,
   });
+  const readyInstanceRef = React.useRef<UseDrawfnResult["drawfn"]>(null);
 
   React.useEffect(() => {
-    if (drawfn.isReady && onReady) {
-      onReady(drawfn);
+    if (!drawfn.isReady || !drawfn.drawfn || !onReady) {
+      return;
     }
-  }, [drawfn.isReady, onReady]);
+
+    if (readyInstanceRef.current === drawfn.drawfn) {
+      return;
+    }
+
+    readyInstanceRef.current = drawfn.drawfn;
+    onReady(drawfn);
+  }, [drawfn.drawfn, drawfn.isReady, onReady]);
+
+  React.useEffect(() => {
+    if (!drawfn.isReady) {
+      readyInstanceRef.current = null;
+    }
+  }, [drawfn.isReady]);
 
   return <Canvas ref={drawfn.canvasRef} {...canvasProps} />;
 }
