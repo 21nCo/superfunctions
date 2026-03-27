@@ -1,4 +1,4 @@
-import type { Route, RouteContext } from "@superfunctions/http";
+import type { AuthRouteMeta, HttpRouteMeta, OpenApiRouteMeta, Route, RouteContext } from "@superfunctions/http";
 import type {
   OAuthFlowCallbackInput,
   OAuthFlowCallbackResult,
@@ -8,6 +8,12 @@ import type {
 } from "@superfunctions/oauth-flow";
 
 export type OAuthBrowserCallbackMode = "redirect" | "json";
+
+export type OAuthBrowserRouteMetaOverrides = {
+  start?: HttpRouteMeta;
+  callback?: HttpRouteMeta;
+  disconnect?: HttpRouteMeta;
+};
 
 export interface OAuthBrowserRouteConfig {
   basePath: string;
@@ -36,6 +42,7 @@ export interface OAuthBrowserRouteConfig {
     request: Request,
     context: RouteContext
   ) => Promise<unknown> | unknown;
+  routeMeta?: OAuthBrowserRouteMetaOverrides;
   requestIdHeader?: string;
 }
 
@@ -46,7 +53,7 @@ export function createOAuthBrowserRoutes(config: OAuthBrowserRouteConfig): Route
     {
       method: "POST",
       path: joinPath(config.basePath, "start"),
-      meta: { auth: { mode: "none" } },
+      meta: resolveRouteMeta({ auth: { mode: "none" } }, config.routeMeta?.start),
       handler: async (request, context) => {
         const requestId = request.headers.get(requestIdHeader) ?? undefined;
         const input = await config.resolveStartInput(request, context);
@@ -60,7 +67,7 @@ export function createOAuthBrowserRoutes(config: OAuthBrowserRouteConfig): Route
     {
       method: "GET",
       path: joinPath(config.basePath, "callback/:provider"),
-      meta: { auth: { mode: "none" } },
+      meta: resolveRouteMeta({ auth: { mode: "none" } }, config.routeMeta?.callback),
       handler: async (request, context) => {
         const requestId = request.headers.get(requestIdHeader) ?? undefined;
         const resolvedInput = (await config.resolveCallbackInput?.(request, context)) ?? {};
@@ -88,7 +95,7 @@ export function createOAuthBrowserRoutes(config: OAuthBrowserRouteConfig): Route
     {
       method: "POST",
       path: joinPath(config.basePath, "disconnect/:provider"),
-      meta: { auth: { mode: "none" } },
+      meta: resolveRouteMeta({ auth: { mode: "hybrid" } }, config.routeMeta?.disconnect),
       handler: async (request, context) => {
         const requestId = request.headers.get(requestIdHeader) ?? undefined;
         const input =
@@ -104,6 +111,55 @@ export function createOAuthBrowserRoutes(config: OAuthBrowserRouteConfig): Route
       }
     }
   ];
+}
+
+function resolveRouteMeta(defaultMeta: HttpRouteMeta, overrideMeta: HttpRouteMeta | undefined): HttpRouteMeta {
+  if (!overrideMeta) {
+    return defaultMeta;
+  }
+
+  return {
+    ...defaultMeta,
+    ...overrideMeta,
+    auth: mergeAuthMeta(defaultMeta.auth, overrideMeta.auth),
+    openapi: mergeOpenApiMeta(defaultMeta.openapi, overrideMeta.openapi)
+  };
+}
+
+function mergeAuthMeta(
+  defaultMeta: AuthRouteMeta | undefined,
+  overrideMeta: AuthRouteMeta | undefined
+): AuthRouteMeta | undefined {
+  if (!defaultMeta) {
+    return overrideMeta ? { ...overrideMeta } : undefined;
+  }
+
+  if (!overrideMeta) {
+    return { ...defaultMeta };
+  }
+
+  return {
+    ...defaultMeta,
+    ...overrideMeta
+  };
+}
+
+function mergeOpenApiMeta(
+  defaultMeta: OpenApiRouteMeta | undefined,
+  overrideMeta: OpenApiRouteMeta | undefined
+): OpenApiRouteMeta | undefined {
+  if (!defaultMeta) {
+    return overrideMeta ? { ...overrideMeta } : undefined;
+  }
+
+  if (!overrideMeta) {
+    return { ...defaultMeta };
+  }
+
+  return {
+    ...defaultMeta,
+    ...overrideMeta
+  };
 }
 
 function joinPath(basePath: string, suffix: string): string {

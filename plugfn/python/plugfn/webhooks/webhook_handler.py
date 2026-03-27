@@ -1,185 +1,162 @@
 """Webhook handler for processing provider webhooks."""
 
-import hmac
 import hashlib
+import hmac
+import json
+import time
 from typing import Any, Callable, Dict, List, Optional
+
+
+class WebhookHandlerError(Exception):
+    """Deterministic webhook verification error."""
+
+    def __init__(self, code: str, message: str, status: int = 400):
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+SIGNED_PROVIDERS = {"github", "slack"}
 
 
 class WebhookHandler:
     """Handles incoming webhooks from providers."""
 
     def __init__(self, provider_registry: Any, logger: Any):
-        """Initialize webhook handler.
-
-        Args:
-            provider_registry: Provider registry
-            logger: Logger instance
-        """
         self.provider_registry = provider_registry
         self.logger = logger
-
-        # Map of provider -> event -> handlers
         self._handlers: Dict[str, Dict[str, List[Callable]]] = {}
 
-    def register_handler(
-        self, provider: str, event: str, handler: Callable
-    ) -> None:
-        """Register a webhook handler.
-
-        Args:
-            provider: Provider name
-            event: Event name (e.g., "issues.opened")
-            handler: Async function to handle the event
-        """
+    def register_handler(self, provider: str, event: str, handler: Callable) -> None:
         if provider not in self._handlers:
             self._handlers[provider] = {}
-
         if event not in self._handlers[provider]:
             self._handlers[provider][event] = []
 
         self._handlers[provider][event].append(handler)
+        self.logger.info(f"Registered webhook handler for {provider}.{event}")
 
-        self.logger.info(
-            f"Registered webhook handler for {provider}.{event}",
-        )
-
-    def unregister_handler(
-        self, provider: str, event: str, handler: Callable
-    ) -> None:
-        """Unregister a webhook handler.
-
-        Args:
-            provider: Provider name
-            event: Event name
-            handler: Handler function to remove
-        """
+    def unregister_handler(self, provider: str, event: str, handler: Callable) -> None:
         if (
             provider in self._handlers
             and event in self._handlers[provider]
             and handler in self._handlers[provider][event]
         ):
             self._handlers[provider][event].remove(handler)
-
-            self.logger.info(
-                f"Unregistered webhook handler for {provider}.{event}",
-            )
+            self.logger.info(f"Unregistered webhook handler for {provider}.{event}")
 
     async def handle_webhook(
         self,
         provider: str,
         event: str,
-        payload: Dict[str, Any],
+        payload: Optional[Dict[str, Any]],
         headers: Dict[str, str],
         secret: Optional[str] = None,
+        raw_body: Optional[bytes] = None,
     ) -> List[Any]:
-        """Handle an incoming webhook.
+        provider_obj = self.provider_registry.get_provider(provider)
+        if not provider_obj:
+            raise WebhookHandlerError("VALIDATION_ERROR", f"Provider {provider} not found", 404)
 
-        Args:
-            provider: Provider name
-            event: Event name
-            payload: Webhook payload
-            headers: Request headers
-            secret: Optional webhook secret for signature verification
+        normalized_headers = _normalize_headers(headers)
+        signed_provider = provider in SIGNED_PROVIDERS
+        if signed_provider:
+            if not secret:
+                raise WebhookHandlerError(
+                    "WEBHOOK_SECRET_NOT_FOUND",
+                    f"secret not configured for {provider}",
+                    400,
+                )
+            if raw_body is None:
+                raise WebhookHandlerError(
+                    "WEBHOOK_RAW_BODY_REQUIRED",
+                    f"raw request body is required for {provider}",
+                    400,
+                )
+            self._verify_signature(provider, raw_body, normalized_headers, secret)
 
-        Returns:
-            List of handler results
-
-        Raises:
-            ValueError: If signature verification fails
-        """
-        # Verify signature if secret provided
-        if secret:
-            self._verify_signature(provider, payload, headers, secret)
-
-        # Get handlers for this event
+        parsed_payload = payload if payload is not None else _parse_payload(raw_body)
         handlers = self._handlers.get(provider, {}).get(event, [])
-
         if not handlers:
-            self.logger.warn(
-                f"No handlers registered for {provider}.{event}",
-            )
+            self.logger.warn(f"No handlers registered for {provider}.{event}")
             return []
 
-        # Execute all handlers
-        import asyncio
-
-        results = []
+        results: List[Any] = []
         for handler in handlers:
             try:
-                result = await handler(payload)
-                results.append(result)
-            except Exception as e:
+                results.append(await handler(parsed_payload))
+            except Exception as error:
                 self.logger.error(
-                    f"Error in webhook handler for {provider}.{event}: {str(e)}",
-                    {"error": str(e)},
+                    f"Error in webhook handler for {provider}.{event}: {str(error)}",
+                    {"error": str(error)},
                 )
-                results.append({"error": str(e)})
+                results.append({"error": str(error)})
 
         return results
 
     def _verify_signature(
-        self, provider: str, payload: Dict[str, Any], headers: Dict[str, str], secret: str
+        self, provider: str, raw_body: bytes, headers: Dict[str, str], secret: str
     ) -> None:
-        """Verify webhook signature.
-
-        Args:
-            provider: Provider name
-            payload: Webhook payload
-            headers: Request headers
-            secret: Webhook secret
-
-        Raises:
-            ValueError: If signature is invalid
-        """
-        # Provider-specific signature verification
-        # This is a simplified example; real implementations vary by provider
-
         if provider == "github":
             signature_header = headers.get("x-hub-signature-256", "")
             if not signature_header:
-                raise ValueError("Missing signature header")
+                raise WebhookHandlerError("WEBHOOK_SIGNATURE_INVALID", "Missing signature header")
 
-            # Compute expected signature
-            import json
-
-            payload_bytes = json.dumps(payload).encode("utf-8")
-            expected_signature = (
-                "sha256="
-                + hmac.new(
-                    secret.encode("utf-8"), payload_bytes, hashlib.sha256
-                ).hexdigest()
-            )
+            expected_signature = "sha256=" + hmac.new(
+                secret.encode("utf-8"), raw_body, hashlib.sha256
+            ).hexdigest()
 
             if not hmac.compare_digest(signature_header, expected_signature):
-                raise ValueError("Invalid webhook signature")
+                raise WebhookHandlerError(
+                    "WEBHOOK_SIGNATURE_INVALID", "Invalid webhook signature"
+                )
+            return
 
-        elif provider == "slack":
+        if provider == "slack":
             signature_header = headers.get("x-slack-signature", "")
             timestamp = headers.get("x-slack-request-timestamp", "")
-
             if not signature_header or not timestamp:
-                raise ValueError("Missing signature headers")
-
-            # Verify timestamp to prevent replay attacks
-            import time
+                raise WebhookHandlerError(
+                    "WEBHOOK_SIGNATURE_INVALID",
+                    "Missing signature headers",
+                )
 
             if abs(time.time() - int(timestamp)) > 60 * 5:
-                raise ValueError("Request timestamp too old")
+                raise WebhookHandlerError(
+                    "WEBHOOK_SIGNATURE_INVALID",
+                    "Request timestamp too old",
+                )
 
-            # Compute expected signature
-            import json
-
-            sig_basestring = f"v0:{timestamp}:{json.dumps(payload)}"
-            expected_signature = (
-                "v0="
-                + hmac.new(
-                    secret.encode("utf-8"),
-                    sig_basestring.encode("utf-8"),
-                    hashlib.sha256,
-                ).hexdigest()
-            )
+            signature_payload = f"v0:{timestamp}:".encode("utf-8") + raw_body
+            expected_signature = "v0=" + hmac.new(
+                secret.encode("utf-8"),
+                signature_payload,
+                hashlib.sha256,
+            ).hexdigest()
 
             if not hmac.compare_digest(signature_header, expected_signature):
-                raise ValueError("Invalid webhook signature")
+                raise WebhookHandlerError(
+                    "WEBHOOK_SIGNATURE_INVALID", "Invalid webhook signature"
+                )
 
-        # Add more provider-specific verification as needed
+
+def _normalize_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    normalized: Dict[str, str] = {}
+    for key, value in headers.items():
+        normalized[key.lower()] = value
+    return normalized
+
+
+def _parse_payload(raw_body: Optional[bytes]) -> Dict[str, Any]:
+    if not raw_body:
+        return {}
+
+    try:
+        parsed = json.loads(raw_body.decode("utf-8"))
+    except Exception as error:
+        raise WebhookHandlerError("VALIDATION_ERROR", f"invalid webhook payload: {error}") from error
+
+    if not isinstance(parsed, dict):
+        raise WebhookHandlerError("VALIDATION_ERROR", "webhook payload must be a JSON object")
+
+    return parsed

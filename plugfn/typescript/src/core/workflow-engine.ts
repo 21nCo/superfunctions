@@ -9,6 +9,7 @@ import { WorkflowStatus, WorkflowExecutionStatus } from '../types/workflow.js';
 import type { Logger } from '../types/action.js';
 import { WorkflowStorage } from '../storage/workflow-storage.js';
 import { WebhookHandler } from '../webhooks/webhook-handler.js';
+import type { TriggerHandler } from '../types/trigger.js';
 
 interface PersistedWorkflowState {
   idempotencyKey?: string;
@@ -19,7 +20,37 @@ interface PersistedWorkflowState {
   errorCode?: string;
 }
 
+interface WorkflowTriggerBinding {
+  backend: 'webhook-handler';
+  provider: string;
+  event: string;
+  handler: TriggerHandler;
+}
+
+export class WorkflowEngineError extends Error {
+  readonly code:
+    | 'WORKFLOW_TRIGGER_UNREGISTER_FAILED'
+    | 'WORKFLOW_DURABILITY_UNSUPPORTED';
+  readonly status: number;
+  readonly retryable = false;
+  readonly details: Record<string, unknown>;
+
+  constructor(
+    code: 'WORKFLOW_TRIGGER_UNREGISTER_FAILED' | 'WORKFLOW_DURABILITY_UNSUPPORTED',
+    message: string,
+    details: Record<string, unknown> = {}
+  ) {
+    super(message);
+    this.name = 'WorkflowEngineError';
+    this.code = code;
+    this.status = 409;
+    this.details = details;
+  }
+}
+
 export class WorkflowEngine {
+  private readonly triggerBindings = new Map<string, WorkflowTriggerBinding>();
+
   constructor(
     private workflowStorage: WorkflowStorage,
     private webhookHandler: WebhookHandler,
@@ -30,7 +61,7 @@ export class WorkflowEngine {
     const created = await this.workflowStorage.create(workflow);
 
     if (workflow.status === WorkflowStatus.Enabled) {
-      this.registerTrigger(created);
+      await this.registerTrigger(created);
     }
 
     this.logger.info(`Workflow created: ${created.name}`, { workflowId: created.id });
@@ -51,8 +82,8 @@ export class WorkflowEngine {
       throw new Error(`Workflow ${id} not found`);
     }
 
-    await this.workflowStorage.update(id, { status: WorkflowStatus.Enabled });
-    this.registerTrigger(workflow);
+    const updated = await this.workflowStorage.update(id, { status: WorkflowStatus.Enabled });
+    await this.registerTrigger(updated);
 
     this.logger.info(`Workflow enabled: ${workflow.name}`, { workflowId: id });
   }
@@ -63,16 +94,16 @@ export class WorkflowEngine {
       throw new Error(`Workflow ${id} not found`);
     }
 
-    await this.workflowStorage.update(id, { status: WorkflowStatus.Disabled });
-    this.unregisterTrigger(workflow);
+    const updated = await this.workflowStorage.update(id, { status: WorkflowStatus.Disabled });
+    await this.unregisterTrigger(updated);
 
     this.logger.info(`Workflow disabled: ${workflow.name}`, { workflowId: id });
   }
 
   async delete(id: string): Promise<void> {
     const workflow = await this.workflowStorage.get(id);
-    if (workflow) {
-      this.unregisterTrigger(workflow);
+    if (workflow && (workflow.status === WorkflowStatus.Enabled || this.triggerBindings.has(workflow.id))) {
+      await this.unregisterTrigger(workflow);
     }
 
     await this.workflowStorage.delete(id);
@@ -91,7 +122,7 @@ export class WorkflowEngine {
 
     const idempotencyKey = this.resolveIdempotencyKey(triggerPayload);
     const existingExecution = idempotencyKey
-      ? await this.findExecutionByIdempotencyKey(workflowId, idempotencyKey)
+      ? await this.workflowStorage.findExecutionByIdempotencyKey(workflowId, idempotencyKey)
       : null;
 
     if (existingExecution && existingExecution.status === WorkflowExecutionStatus.Completed) {
@@ -196,16 +227,17 @@ export class WorkflowEngine {
       const completedExecution = await this.getExecutionById(workflowId, execution.id);
       return completedExecution ?? execution;
     } catch (error) {
+      const failure = normalizeWorkflowExecutionFailure(error);
       this.logger.error(`Workflow execution failed: ${workflow.name}`, {
         workflowId,
         executionId: execution.id,
-        error,
+        error: failure.error,
       });
 
       if (workflow.definition.errorHandlers) {
         for (const errorHandler of workflow.definition.errorHandlers) {
           try {
-            await errorHandler.handler(error as Error, context);
+            await errorHandler.handler(failure.error, context);
           } catch (handlerError) {
             this.logger.error('Error handler failed', { handlerError });
           }
@@ -214,20 +246,20 @@ export class WorkflowEngine {
 
       await this.workflowStorage.updateExecution(execution.id, {
         status: WorkflowExecutionStatus.Failed,
-        error: `WORKFLOW_STEP_FAILED:${(error as Error).message}`,
+        error: `${failure.code}:${failure.error.message}`,
         output: this.buildExecutionOutput(context.data, {
           idempotencyKey,
           completedStepIds,
-          retriable: true,
+          retriable: failure.retriable,
           resumed,
           failedStepId: activeStepId,
-          errorCode: 'WORKFLOW_STEP_FAILED',
+          errorCode: failure.code,
         }),
         completedAt: new Date(),
         durationMs: Date.now() - startedAtMs,
       });
 
-      throw error;
+      throw failure.error;
     }
   }
 
@@ -265,8 +297,14 @@ export class WorkflowEngine {
 
       case 'delay': {
         const ms = this.convertDelayToMs(step);
-        await new Promise((resolve) => setTimeout(resolve, ms));
-        break;
+        throw new WorkflowEngineError(
+          'WORKFLOW_DURABILITY_UNSUPPORTED',
+          `delay step ${step.id} requires a durable scheduler`,
+          {
+            stepId: step.id,
+            durationMs: ms,
+          }
+        );
       }
 
       default:
@@ -325,8 +363,12 @@ export class WorkflowEngine {
     };
   }
 
-  private registerTrigger(workflow: Workflow): void {
-    const handler = async (event: any) => {
+  private async registerTrigger(workflow: Workflow): Promise<void> {
+    if (this.triggerBindings.has(workflow.id)) {
+      await this.unregisterTrigger(workflow, { allowMissing: true });
+    }
+
+    const handler: TriggerHandler = async (event: any) => {
       try {
         await this.execute(workflow.id, event);
       } catch (error) {
@@ -339,10 +381,60 @@ export class WorkflowEngine {
       workflow.definition.trigger.event,
       handler
     );
+
+    this.triggerBindings.set(workflow.id, {
+      backend: 'webhook-handler',
+      provider: workflow.definition.trigger.provider,
+      event: workflow.definition.trigger.event,
+      handler,
+    });
+
+    this.logger.info('Workflow trigger registered', {
+      workflowId: workflow.id,
+      backend: 'webhook-handler',
+      provider: workflow.definition.trigger.provider,
+      event: workflow.definition.trigger.event,
+    });
   }
 
-  private unregisterTrigger(workflow: Workflow): void {
-    this.logger.debug(`Unregistering trigger for workflow ${workflow.id}`);
+  private async unregisterTrigger(
+    workflow: Workflow,
+    options: { allowMissing?: boolean } = {}
+  ): Promise<void> {
+    const binding = this.triggerBindings.get(workflow.id);
+
+    if (!binding) {
+      this.logger.error('Workflow trigger unregister failed: missing active binding', {
+        workflowId: workflow.id,
+        provider: workflow.definition.trigger.provider,
+        event: workflow.definition.trigger.event,
+      });
+
+      if (options.allowMissing) {
+        return;
+      }
+
+      throw new WorkflowEngineError(
+        'WORKFLOW_TRIGGER_UNREGISTER_FAILED',
+        `active trigger binding not found for workflow ${workflow.id}`,
+        {
+          workflowId: workflow.id,
+          provider: workflow.definition.trigger.provider,
+          event: workflow.definition.trigger.event,
+          backend: 'webhook-handler',
+        }
+      );
+    }
+
+    this.webhookHandler.off(binding.provider, binding.event, binding.handler);
+    this.triggerBindings.delete(workflow.id);
+
+    this.logger.info('Workflow trigger unregistered', {
+      workflowId: workflow.id,
+      backend: binding.backend,
+      provider: binding.provider,
+      event: binding.event,
+    });
   }
 
   private buildExecutionInput(triggerPayload: any, idempotencyKey?: string): any {
@@ -415,50 +507,43 @@ export class WorkflowEngine {
     return undefined;
   }
 
-  private async findExecutionByIdempotencyKey(
-    workflowId: string,
-    idempotencyKey: string
-  ): Promise<WorkflowExecution | null> {
-    const executions = await this.workflowStorage.listExecutions(workflowId, 1000);
-
-    for (const execution of executions) {
-      const executionKey = this.extractExecutionIdempotencyKey(execution);
-      if (executionKey === idempotencyKey) {
-        return execution;
-      }
-    }
-
-    return null;
-  }
-
-  private extractExecutionIdempotencyKey(execution: WorkflowExecution): string | undefined {
-    const input = execution.input as Record<string, any> | undefined;
-    if (input && typeof input === 'object') {
-      const workflowInput = input.__workflow as Record<string, any> | undefined;
-      if (typeof workflowInput?.idempotencyKey === 'string' && workflowInput.idempotencyKey.length > 0) {
-        return workflowInput.idempotencyKey;
-      }
-      if (typeof input.idempotencyKey === 'string' && input.idempotencyKey.length > 0) {
-        return input.idempotencyKey;
-      }
-    }
-
-    const output = execution.output as Record<string, any> | undefined;
-    if (output && typeof output === 'object') {
-      const workflowOutput = output.__workflow as Record<string, any> | undefined;
-      if (typeof workflowOutput?.idempotencyKey === 'string' && workflowOutput.idempotencyKey.length > 0) {
-        return workflowOutput.idempotencyKey;
-      }
-    }
-
-    return undefined;
-  }
-
   private async getExecutionById(
     workflowId: string,
     executionId: string
   ): Promise<WorkflowExecution | null> {
-    const executions = await this.workflowStorage.listExecutions(workflowId, 1000);
-    return executions.find((execution) => execution.id === executionId) ?? null;
+    const execution = await this.workflowStorage.getExecution(executionId);
+    if (!execution || execution.workflowId !== workflowId) {
+      return null;
+    }
+
+    return execution;
   }
+}
+
+function normalizeWorkflowExecutionFailure(error: unknown): {
+  code: string;
+  retriable: boolean;
+  error: Error;
+} {
+  if (error instanceof WorkflowEngineError) {
+    return {
+      code: error.code,
+      retriable: false,
+      error,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      code: 'WORKFLOW_STEP_FAILED',
+      retriable: true,
+      error,
+    };
+  }
+
+  return {
+    code: 'WORKFLOW_STEP_FAILED',
+    retriable: true,
+    error: new Error('workflow execution failed'),
+  };
 }

@@ -40,10 +40,10 @@ describe("oauth-providers auth runtime coverage", () => {
     });
   });
 
-  it("covers auth-oriented scope and operation policies deterministically", () => {
+  it("covers auth-oriented scope and operation policies deterministically", async () => {
     const registry = createDefaultProviderPolicyRegistry(() => "2026-03-21T00:00:00.000Z");
 
-    const googleAuth = registry.validateScopes({
+    const googleAuth = await registry.validateScopes({
       providerId: "google",
       feature: "auth.social.profile",
       requestedScopes: ["openid", "email", "profile"],

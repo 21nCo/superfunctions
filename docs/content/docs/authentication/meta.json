@@ -8,6 +8,7 @@
     "oauth-providers",
     "oauth-storage",
     "oauth-flow",
+    "oauth-router",
     "oauth-testing"
   ]
 }

@@ -7,10 +7,10 @@ try:
     from .fastapi import mount_plugfn as mount_plugfn_fastapi
     __all__.append("mount_plugfn_fastapi")
 except ImportError:
-    pass
+    mount_plugfn_fastapi = None
 
 try:
     from .flask import mount_plugfn as mount_plugfn_flask
     __all__.append("mount_plugfn_flask")
 except ImportError:
-    pass
+    mount_plugfn_flask = None

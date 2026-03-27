@@ -1,159 +1,205 @@
-import type { Adapter } from '../../types/config.js';
+import { memoryAdapter } from '@superfunctions/db/testing';
+import type { Adapter as DbAdapter, HealthStatus, TableSchema, TransactionAdapter, ValidationResult } from '@superfunctions/db';
 import type { Connection } from '../../types/connection.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
 import type { WebhookRecord } from '../webhook-storage.js';
+import {
+  createPlugFnDatabaseAdapter,
+  DEFAULT_PLUGFN_STORAGE_MODELS,
+  type PlugFnDatabaseStorageAdapter,
+} from './database.js';
 
 /**
  * In-memory storage adapter for testing and development
  */
-export class MemoryAdapter implements Adapter {
-  private connections = new Map<string, Connection>();
-  private webhooks = new Map<string, WebhookRecord>();
-  private workflows = new Map<string, Workflow>();
-  private workflowExecutions = new Map<string, WorkflowExecution>();
-  private actionLogs = new Map<string, any>();
+export class MemoryAdapter implements DbAdapter {
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly capabilities: DbAdapter['capabilities'];
+  readonly internal: DbAdapter['internal'];
+  private readonly db: DbAdapter;
+  private readonly storage: PlugFnDatabaseStorageAdapter;
+
+  constructor() {
+    this.db = memoryAdapter();
+    this.id = this.db.id;
+    this.name = this.db.name;
+    this.version = this.db.version;
+    this.capabilities = this.db.capabilities;
+    this.internal = this.db.internal;
+    this.storage = createPlugFnDatabaseAdapter({
+      database: this.db,
+      models: DEFAULT_PLUGFN_STORAGE_MODELS,
+    });
+  }
+
+  async create<T = any>(params: Parameters<DbAdapter['create']>[0]): Promise<T> {
+    return this.db.create<T>(params);
+  }
+
+  async findOne<T = any>(params: Parameters<DbAdapter['findOne']>[0]): Promise<T | null> {
+    return this.db.findOne<T>(params);
+  }
+
+  async findMany<T = any>(params: Parameters<DbAdapter['findMany']>[0]): Promise<T[]> {
+    return this.db.findMany<T>(params);
+  }
+
+  async update<T = any>(params: Parameters<DbAdapter['update']>[0]): Promise<T> {
+    return this.db.update<T>(params);
+  }
+
+  async delete(params: Parameters<DbAdapter['delete']>[0]): Promise<void> {
+    await this.db.delete(params);
+  }
+
+  async createMany<T = any>(params: Parameters<DbAdapter['createMany']>[0]): Promise<T[]> {
+    return this.db.createMany<T>(params);
+  }
+
+  async updateMany(params: Parameters<DbAdapter['updateMany']>[0]): Promise<number> {
+    return this.db.updateMany(params);
+  }
+
+  async deleteMany(params: Parameters<DbAdapter['deleteMany']>[0]): Promise<number> {
+    return this.db.deleteMany(params);
+  }
+
+  async upsert<T = any>(params: Parameters<DbAdapter['upsert']>[0]): Promise<T> {
+    return this.db.upsert<T>(params);
+  }
+
+  async count(params: Parameters<DbAdapter['count']>[0]): Promise<number> {
+    return this.db.count(params);
+  }
+
+  async transaction<R>(callback: (trx: TransactionAdapter) => Promise<R>): Promise<R> {
+    return this.db.transaction(callback);
+  }
+
+  async initialize(): Promise<void> {
+    await this.db.initialize();
+  }
+
+  async isHealthy(): Promise<HealthStatus> {
+    return this.db.isHealthy();
+  }
+
+  async close(): Promise<void> {
+    await this.db.close();
+  }
+
+  async getSchemaVersion(namespace: string): Promise<number> {
+    return this.db.getSchemaVersion(namespace);
+  }
+
+  async setSchemaVersion(namespace: string, version: number): Promise<void> {
+    await this.db.setSchemaVersion(namespace, version);
+  }
+
+  async validateSchema(schema: TableSchema): Promise<ValidationResult> {
+    return this.db.validateSchema(schema);
+  }
 
   // Connections
-  async createConnection(connection: Connection): Promise<void> {
-    this.connections.set(connection.id, connection);
+  async createConnection(connection: Connection): Promise<Connection> {
+    return this.storage.createConnection(connection);
   }
 
   async getConnection(id: string): Promise<Connection | null> {
-    return this.connections.get(id) || null;
+    return this.storage.getConnection(id);
   }
 
   async listConnections(userId: string, provider?: string): Promise<Connection[]> {
-    const connections = Array.from(this.connections.values()).filter(
-      (c) => c.userId === userId && (!provider || c.provider === provider)
-    );
-    return connections;
+    return this.storage.listConnections(userId, provider);
   }
 
-  async updateConnection(id: string, updates: Partial<Connection>): Promise<void> {
-    const connection = this.connections.get(id);
-    if (!connection) {
-      throw new Error(`Connection ${id} not found`);
-    }
-    this.connections.set(id, { ...connection, ...updates } as Connection);
+  async updateConnection(id: string, updates: Partial<Connection>): Promise<Connection> {
+    return this.storage.updateConnection(id, updates);
   }
 
   async deleteConnection(id: string): Promise<void> {
-    this.connections.delete(id);
+    await this.storage.deleteConnection(id);
   }
 
   // Webhooks
-  async createWebhook(webhook: WebhookRecord): Promise<void> {
-    this.webhooks.set(webhook.id, webhook);
+  async createWebhook(webhook: WebhookRecord): Promise<WebhookRecord> {
+    return this.storage.createWebhook(webhook);
   }
 
   async getWebhook(id: string): Promise<WebhookRecord | null> {
-    return this.webhooks.get(id) || null;
+    return this.storage.getWebhook(id);
   }
 
   async listWebhooks(provider?: string): Promise<WebhookRecord[]> {
-    const webhooks = Array.from(this.webhooks.values());
-    return provider ? webhooks.filter((w) => w.provider === provider) : webhooks;
+    return this.storage.listWebhooks(provider);
   }
 
-  async updateWebhook(id: string, updates: Partial<WebhookRecord>): Promise<void> {
-    const webhook = this.webhooks.get(id);
-    if (!webhook) {
-      throw new Error(`Webhook ${id} not found`);
-    }
-    this.webhooks.set(id, { ...webhook, ...updates } as WebhookRecord);
+  async updateWebhook(id: string, updates: Partial<WebhookRecord>): Promise<WebhookRecord> {
+    return this.storage.updateWebhook(id, updates);
   }
 
   async deleteWebhook(id: string): Promise<void> {
-    this.webhooks.delete(id);
+    await this.storage.deleteWebhook(id);
   }
 
   // Workflows
-  async createWorkflow(workflow: Workflow): Promise<void> {
-    this.workflows.set(workflow.id, workflow);
+  async createWorkflow(workflow: Workflow): Promise<Workflow> {
+    return this.storage.createWorkflow(workflow);
   }
 
   async getWorkflow(id: string): Promise<Workflow | null> {
-    return this.workflows.get(id) || null;
+    return this.storage.getWorkflow(id);
   }
 
   async listWorkflows(userId?: string, status?: string): Promise<Workflow[]> {
-    let workflows = Array.from(this.workflows.values());
-    
-    if (userId) {
-      workflows = workflows.filter((w) => w.userId === userId);
-    }
-    
-    if (status) {
-      workflows = workflows.filter((w) => w.status === status);
-    }
-    
-    return workflows;
+    return this.storage.listWorkflows(userId, status);
   }
 
-  async updateWorkflow(id: string, updates: Partial<Workflow>): Promise<void> {
-    const workflow = this.workflows.get(id);
-    if (!workflow) {
-      throw new Error(`Workflow ${id} not found`);
-    }
-    this.workflows.set(id, { ...workflow, ...updates } as Workflow);
+  async updateWorkflow(id: string, updates: Partial<Workflow>): Promise<Workflow> {
+    return this.storage.updateWorkflow(id, updates);
   }
 
   async deleteWorkflow(id: string): Promise<void> {
-    this.workflows.delete(id);
+    await this.storage.deleteWorkflow(id);
   }
 
   // Workflow executions
-  async createWorkflowExecution(execution: WorkflowExecution): Promise<void> {
-    this.workflowExecutions.set(execution.id, execution);
+  async createWorkflowExecution(execution: WorkflowExecution): Promise<WorkflowExecution> {
+    return this.storage.createWorkflowExecution(execution);
   }
 
-  async updateWorkflowExecution(id: string, updates: Partial<WorkflowExecution>): Promise<void> {
-    const execution = this.workflowExecutions.get(id);
-    if (!execution) {
-      throw new Error(`Workflow execution ${id} not found`);
-    }
-    this.workflowExecutions.set(id, { ...execution, ...updates } as WorkflowExecution);
+  async updateWorkflowExecution(
+    id: string,
+    updates: Partial<WorkflowExecution>
+  ): Promise<WorkflowExecution> {
+    return this.storage.updateWorkflowExecution(id, updates);
   }
 
   async listWorkflowExecutions(workflowId: string, limit = 50): Promise<WorkflowExecution[]> {
-    const executions = Array.from(this.workflowExecutions.values())
-      .filter((e) => e.workflowId === workflowId)
-      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
-      .slice(0, limit);
-    
-    return executions;
+    return this.storage.listWorkflowExecutions(workflowId, limit);
   }
 
   // Action logs
-  async createActionLog(log: any): Promise<void> {
-    this.actionLogs.set(log.id, log);
+  async createActionLog(log: any): Promise<Record<string, unknown>> {
+    return this.storage.createActionLog(log);
   }
 
   async listActionLogs(filters: any, limit = 100): Promise<any[]> {
-    let logs = Array.from(this.actionLogs.values());
-    
-    if (filters.userId) {
-      logs = logs.filter((l) => l.userId === filters.userId);
-    }
-    
-    if (filters.provider) {
-      logs = logs.filter((l) => l.provider === filters.provider);
-    }
-    
-    if (filters.status) {
-      logs = logs.filter((l) => l.status === filters.status);
-    }
-    
-    return logs.slice(0, limit);
+    return this.storage.listActionLogs(filters, limit);
   }
 
   // Utility methods
   clear(): void {
-    this.connections.clear();
-    this.webhooks.clear();
-    this.workflows.clear();
-    this.workflowExecutions.clear();
-    this.actionLogs.clear();
+    void Promise.all([
+      this.deleteMany({ model: DEFAULT_PLUGFN_STORAGE_MODELS.connections, where: [] }),
+      this.deleteMany({ model: DEFAULT_PLUGFN_STORAGE_MODELS.webhooks, where: [] }),
+      this.deleteMany({ model: DEFAULT_PLUGFN_STORAGE_MODELS.workflows, where: [] }),
+      this.deleteMany({ model: DEFAULT_PLUGFN_STORAGE_MODELS.workflowExecutions, where: [] }),
+      this.deleteMany({ model: DEFAULT_PLUGFN_STORAGE_MODELS.actionLogs, where: [] }),
+      this.deleteMany({ model: DEFAULT_PLUGFN_STORAGE_MODELS.oauthStates, where: [] }),
+      this.deleteMany({ model: DEFAULT_PLUGFN_STORAGE_MODELS.oauthTokens, where: [] }),
+    ]);
   }
 }
-

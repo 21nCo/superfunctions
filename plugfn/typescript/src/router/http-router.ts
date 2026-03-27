@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createRouter, type Middleware, type Route, type Router } from '@superfunctions/http';
 import type { PlugFn } from '../core/plug-fn.js';
+import type { PlugFnPrincipal } from '../types/config.js';
 
 export interface RouteAuthContext {
   userId: string;
@@ -44,21 +45,27 @@ export function createPlugFnRouter(
   options: PlugFnRouterOptions = {}
 ): Router<PlugFnContext> {
   const maxWebhookPayloadBytes = options.maxWebhookPayloadBytes ?? DEFAULT_WEBHOOK_PAYLOAD_MAX_BYTES;
+  const authenticate = options.authenticate ?? plugFn.config.auth.authenticate;
 
   const requireAuth: Middleware<PlugFnContext> = async (request, context, next) => {
-    const authContext = await resolveAuthContext(request, options.authenticate);
-    if (!authContext) {
-      return errorResponse({
-        code: 'TENANT_ACCESS_DENIED',
-        message: 'authentication required',
-        status: 401,
-        retryable: false,
-        details: {},
-      });
-    }
+    try {
+      const authContext = await resolveAuthContext(request, authenticate);
+      if (!authContext) {
+        return errorResponse({
+          code: 'PLUGFN_AUTH_REQUIRED',
+          message: 'authentication required',
+          status: 401,
+          retryable: false,
+          details: {},
+        });
+      }
 
-    context.authContext = authContext;
-    return next();
+      context.authContext = authContext;
+      assertIdentityMatchesQuery(new URL(request.url).searchParams, authContext);
+      return next();
+    } catch (error) {
+      return errorResponse(toDeterministicError(error));
+    }
   };
 
   const routes: Route<PlugFnContext>[] = withV2Routes([
@@ -103,11 +110,18 @@ export function createPlugFnRouter(
         const { provider, event } = ctx.params;
 
         try {
-          const payload = await parseJsonBody(req, { maxBytes: maxWebhookPayloadBytes });
+          const rawBody = await readRequestBytes(req, { maxBytes: maxWebhookPayloadBytes });
           const headers = normalizeHeaders(req.headers);
           const secret = await resolveWebhookSecret(provider, req, headers, options.webhookSecret);
 
-          const webhookEvent = await ctx.plugFn.webhooks.handle(provider, event, payload, headers, secret);
+          const webhookEvent = await ctx.plugFn.webhooks.handle(
+            provider,
+            event,
+            undefined,
+            headers,
+            secret,
+            { rawBody }
+          );
 
           return successResponse({
             event: webhookEvent,
@@ -282,7 +296,7 @@ export function createPlugFnRouter(
 function requireAuthContext(context: PlugFnContext): RouteAuthContext {
   if (!context.authContext) {
     throw {
-      code: 'TENANT_ACCESS_DENIED',
+      code: 'PLUGFN_AUTH_REQUIRED',
       message: 'authentication required',
       status: 401,
     };
@@ -295,33 +309,11 @@ async function resolveAuthContext(
   request: Request,
   authenticate?: PlugFnRouterOptions['authenticate']
 ): Promise<RouteAuthContext | null> {
-  if (authenticate) {
-    return (await authenticate(request)) ?? null;
-  }
-
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!authenticate) {
     return null;
   }
 
-  const token = authHeader.slice('Bearer '.length).trim();
-  if (!token) {
-    return null;
-  }
-
-  const tokenPrefix = 'valid-session-for-user-';
-  const userId = token.startsWith(tokenPrefix)
-    ? token.slice(tokenPrefix.length)
-    : token.startsWith('user:')
-      ? token.slice('user:'.length)
-      : token;
-
-  if (!userId) {
-    return null;
-  }
-
-  const tenantId = request.headers.get('x-tenant-id') ?? undefined;
-  return { userId, tenantId };
+  return normalizeAuthContext(await authenticate(request));
 }
 
 async function resolveWebhookSecret(
@@ -353,6 +345,13 @@ async function parseJsonBody(
   request: Request,
   options: ParseJsonBodyOptions = {}
 ): Promise<Record<string, any>> {
+  return parseJsonText(await readRequestText(request, options));
+}
+
+async function readRequestBytes(
+  request: Request,
+  options: ParseJsonBodyOptions = {}
+): Promise<Uint8Array> {
   const maxBytes = options.maxBytes;
   if (maxBytes !== undefined) {
     const contentLength = parseContentLength(request.headers.get('content-length'));
@@ -362,19 +361,11 @@ async function parseJsonBody(
   }
 
   try {
-    const body = await request.text();
-    if (maxBytes !== undefined && byteSize(body) > maxBytes) {
+    const body = new Uint8Array(await request.arrayBuffer());
+    if (maxBytes !== undefined && body.byteLength > maxBytes) {
       throw payloadTooLargeError(maxBytes);
     }
-    if (!body) {
-      return {};
-    }
-
-    const parsed = JSON.parse(body);
-    if (!parsed || typeof parsed !== 'object') {
-      return {};
-    }
-    return parsed as Record<string, any>;
+    return body;
   } catch (error) {
     if (
       error &&
@@ -384,6 +375,30 @@ async function parseJsonBody(
     ) {
       throw error;
     }
+    return new Uint8Array();
+  }
+}
+
+async function readRequestText(
+  request: Request,
+  options: ParseJsonBodyOptions = {}
+): Promise<string> {
+  const body = await readRequestBytes(request, options);
+  return new TextDecoder().decode(body);
+}
+
+function parseJsonText(body: string): Record<string, any> {
+  try {
+    if (!body) {
+      return {};
+    }
+
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+    return parsed as Record<string, any>;
+  } catch {
     return {};
   }
 }
@@ -406,6 +421,30 @@ function assertIdentityMatches(body: Record<string, any>, authContext: RouteAuth
       status: 403,
     };
   }
+}
+
+function assertIdentityMatchesQuery(
+  query: URLSearchParams,
+  authContext: RouteAuthContext
+): void {
+  assertIdentityMatches(
+    {
+      userId: query.get('user') ?? query.get('uid') ?? Object.fromEntries(query).userId,
+      tenantId: Object.fromEntries(query).tenantId,
+    },
+    authContext
+  );
+}
+
+function normalizeAuthContext(principal: PlugFnPrincipal | null): RouteAuthContext | null {
+  if (!principal) {
+    return null;
+  }
+
+  return {
+    userId: principal.userId,
+    tenantId: principal.tenantId,
+  };
 }
 
 function asString(value: unknown): string | undefined {
@@ -538,10 +577,6 @@ function parseContentLength(value: string | null): number | undefined {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function byteSize(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
 }
 
 function payloadTooLargeError(maxBytes: number): DeterministicError {

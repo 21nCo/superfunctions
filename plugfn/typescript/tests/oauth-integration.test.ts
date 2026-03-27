@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { plugFn } from '../src/core/plug-fn.js';
 import { MemoryAdapter } from '../src/storage/adapters/memory.js';
+import { DEFAULT_PLUGFN_STORAGE_MODELS } from '../src/storage/adapters/database.js';
 import type { Provider } from '../src/types/provider.js';
 import { AuthType } from '../src/types/provider.js';
 
@@ -67,8 +68,8 @@ describe('PlugFn OAuth e2e via shared packages', () => {
 
     const tokenRecord = await readTokenRecord(adapter, connection.id);
     expect(tokenRecord).not.toBeNull();
-    expect(tokenRecord?.keyRef).toBe('plugfn-key-v1');
-    expect(tokenRecord?.encryptedPayload).not.toContain('access-token-1');
+    expect(tokenRecord?.key_ref).toBe('plugfn-key-v1');
+    expect(tokenRecord?.encrypted_payload).not.toContain('access-token-1');
 
     await expect(
       plug.connections.handleCallback({
@@ -149,7 +150,7 @@ describe('PlugFn OAuth e2e via shared packages', () => {
     });
 
     const tokenAfter = await readTokenRecord(adapter, connection.id);
-    expect(tokenAfter?.encryptedPayload).toBe(tokenBefore?.encryptedPayload);
+    expect(tokenAfter?.encrypted_payload).toBe(tokenBefore?.encrypted_payload);
 
     const persistedConnection = await plug.connections.get(connection.id);
     expect(persistedConnection.id).toBe(connection.id);
@@ -204,13 +205,8 @@ function createGoogleProvider(): Provider {
 }
 
 async function readTokenRecord(adapter: MemoryAdapter, connectionId: string): Promise<any | null> {
-  const entries = await adapter.listConnections('__oauth_token_system__', '__oauth_token_system__');
-  for (const entry of entries) {
-    const record = entry?.metadata?.oauthTokenRecord;
-    if (record?.connectionId === connectionId) {
-      return record;
-    }
-  }
-
-  return null;
+  return adapter.findOne({
+    model: DEFAULT_PLUGFN_STORAGE_MODELS.oauthTokens,
+    where: [{ field: 'connection_id', operator: 'eq', value: connectionId }],
+  });
 }

@@ -1,29 +1,139 @@
 import { describe, expect, it } from "vitest";
-import { ProviderPolicyError, createDefaultProviderPolicyRegistry } from "../src/index.js";
+import {
+  MemoryProviderPolicyAuditStore,
+  MemoryProviderPolicyConsentStore,
+  ProviderPolicyError,
+  ProviderPolicyRegistry,
+  createDefaultProviderPolicyRegistry,
+  listProviderPolicies
+} from "../src/index.js";
 
 describe("oauth-providers policy registry", () => {
-  it("accepts allowed scopes and records consent metadata", () => {
-    const registry = createDefaultProviderPolicyRegistry(() => "2026-03-11T00:00:00.000Z");
-    const result = registry.validateScopes({
+  it("writes durable consent and audit records through async stores", async () => {
+    const consentStore = new MemoryProviderPolicyConsentStore();
+    const auditStore = new MemoryProviderPolicyAuditStore();
+    const generatedIds = ["consent_fixed_01", "audit_fixed_01"];
+    const registry = new ProviderPolicyRegistry(listProviderPolicies(), {
+      consentStore,
+      auditStore,
+      idGenerator: () => {
+        const next = generatedIds.shift();
+        if (!next) {
+          throw new Error("unexpected id request");
+        }
+        return next;
+      },
+      now: () => "2026-03-27T00:00:00.000Z"
+    });
+
+    const result = await registry.validateScopes({
       providerId: "google",
       feature: "mail.read.metadata",
       requestedScopes: ["https://www.googleapis.com/auth/gmail.readonly"],
-      tenantId: "t1",
-      userId: "u1",
-      purpose: "mail.read.metadata"
+      tenantId: "tenant_1",
+      userId: "user_1",
+      purpose: "mail preview"
     });
 
     expect(result.authorized).toBe(true);
-    expect(result.consentRecord.scopes).toEqual(["https://www.googleapis.com/auth/gmail.readonly"]);
-    expect(result.consentRecord.purpose).toBe("mail.read.metadata");
-    expect(result.consentRecord.policyVersion).toBe("2026-03-11");
-    expect(registry.getConsentRecords()).toHaveLength(1);
+    expect(result.consentRecord).toMatchObject({
+      consentId: "consent_fixed_01",
+      policyVersion: "2026-03-11"
+    });
+
+    const audit = await registry.recordPolicyVersionUpdate({
+      providerId: "google",
+      newVersion: "2026-03-27",
+      actor: "admin_1",
+      reason: "compliance-update"
+    });
+
+    expect(audit).toMatchObject({
+      auditEventId: "audit_fixed_01",
+      fromVersion: "2026-03-11",
+      toVersion: "2026-03-27"
+    });
+
+    await expect(consentStore.list()).resolves.toMatchObject([
+      {
+        consentId: "consent_fixed_01",
+        policyVersion: "2026-03-11"
+      }
+    ]);
+    await expect(auditStore.list()).resolves.toMatchObject([
+      {
+        auditEventId: "audit_fixed_01",
+        fromVersion: "2026-03-11",
+        toVersion: "2026-03-27"
+      }
+    ]);
   });
 
-  it("rejects disallowed scopes with OAUTH_SCOPE_DISALLOWED", () => {
+  it("surfaces deterministic store failures for consent persistence", async () => {
+    const registry = new ProviderPolicyRegistry(listProviderPolicies(), {
+      consentStore: {
+        async put() {
+          throw new Error("disk offline");
+        },
+        async list() {
+          return [];
+        }
+      },
+      auditStore: new MemoryProviderPolicyAuditStore(),
+      idGenerator: () => "consent_failure_01",
+      now: () => "2026-03-27T00:00:00.000Z"
+    });
+
+    await expect(
+      registry.validateScopes({
+        providerId: "google",
+        feature: "mail.read.metadata",
+        requestedScopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+        tenantId: "tenant_1",
+        userId: "user_1",
+        purpose: "mail preview"
+      })
+    ).rejects.toMatchObject({
+      code: "PROVIDER_POLICY_STORE_FAILED",
+      message: "failed to persist provider policy consent record"
+    });
+  });
+
+  it("keeps the default registry usable as an in-memory convenience path with injected ids", async () => {
+    const generatedIds = ["consent_test_01"];
+    const registry = createDefaultProviderPolicyRegistry({
+      idGenerator: () => {
+        const next = generatedIds.shift();
+        if (!next) {
+          throw new Error("unexpected id request");
+        }
+        return next;
+      },
+      now: () => "2026-03-27T00:00:00.000Z"
+    });
+
+    const result = await registry.validateScopes({
+      providerId: "github",
+      feature: "profile.basic",
+      requestedScopes: ["read:user", "user:email"],
+      tenantId: "tenant_1",
+      userId: "user_1",
+      purpose: "profile import"
+    });
+
+    expect(result.authorized).toBe(true);
+    expect(result.consentRecord.consentId).toBe("consent_test_01");
+    await expect(registry.getConsentRecords()).resolves.toMatchObject([
+      {
+        consentId: "consent_test_01"
+      }
+    ]);
+  });
+
+  it("rejects disallowed scopes with OAUTH_SCOPE_DISALLOWED", async () => {
     const registry = createDefaultProviderPolicyRegistry(() => "2026-03-11T00:00:00.000Z");
 
-    expect(() =>
+    await expect(
       registry.validateScopes({
         providerId: "google",
         feature: "mail.read.metadata",
@@ -32,12 +142,10 @@ describe("oauth-providers policy registry", () => {
         userId: "u1",
         purpose: "mail.read.metadata"
       })
-    ).toThrowError(
-      expect.objectContaining({
-        code: "OAUTH_SCOPE_DISALLOWED",
-        message: "requested scope not allowed for feature"
-      })
-    );
+    ).rejects.toMatchObject({
+      code: "OAUTH_SCOPE_DISALLOWED",
+      message: "requested scope not allowed for feature"
+    });
   });
 
   it("allows provider operation when policy permits it", () => {
@@ -67,22 +175,6 @@ describe("oauth-providers policy registry", () => {
         message: "operation not allowed by policy"
       })
     );
-  });
-
-  it("audit-logs policy version changes", () => {
-    const registry = createDefaultProviderPolicyRegistry(() => "2026-03-12T12:00:00.000Z");
-    const audit = registry.recordPolicyVersionUpdate({
-      providerId: "google",
-      newVersion: "2026-03-12",
-      actor: "admin-user",
-      reason: "provider compliance update"
-    });
-
-    expect(audit.fromVersion).toBe("2026-03-11");
-    expect(audit.toVersion).toBe("2026-03-12");
-    expect(audit.actor).toBe("admin-user");
-    expect(registry.getPolicy("google").policyVersion).toBe("2026-03-12");
-    expect(registry.getPolicyAuditEvents()).toHaveLength(1);
   });
 
   it("throws validation error for unknown provider policy", () => {

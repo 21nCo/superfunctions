@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   createDefaultProviderPolicyRegistry,
 } from '@superfunctions/oauth-providers';
@@ -22,6 +23,7 @@ import {
   parseGmailPushPayload,
   type GmailWatchClient,
 } from './gmail.watch.js';
+import type { WebhookVerificationContext } from '../../types/trigger.js';
 
 const defaultCheckpointStore = new MemoryGmailCheckpointStore();
 const defaultMessageStore = new MemoryGmailMessageStore();
@@ -287,6 +289,9 @@ export const gmailProvider: Provider = {
       webhookConfig: {
         path: '/webhooks/gmail/mail-update',
         method: 'POST',
+        verifySignature: async (payload, signature, secret, context) => {
+          return verifyGmailSignature(payload, signature, secret, context);
+        },
       },
       schema: z.object({
         message: z
@@ -452,4 +457,33 @@ function isGmailApiMessage(value: unknown): value is GmailApiMessage {
     typeof candidate.id === 'string' &&
     (candidate.payload === undefined || typeof candidate.payload === 'object')
   );
+}
+
+function verifyGmailSignature(
+  _payload: unknown,
+  signature: string,
+  secret: string,
+  context: WebhookVerificationContext
+): boolean {
+  if (!signature || !secret) {
+    return false;
+  }
+
+  const rawBody = context.rawBody;
+  if (!rawBody || rawBody.byteLength === 0) {
+    return false;
+  }
+
+  const normalizedSignature = signature.startsWith('sha256=')
+    ? signature.slice('sha256='.length)
+    : signature;
+  const expected = createHmac('sha256', secret).update(Buffer.from(rawBody)).digest('hex');
+  const actualBuffer = Buffer.from(normalizedSignature, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(actualBuffer, expectedBuffer);
 }

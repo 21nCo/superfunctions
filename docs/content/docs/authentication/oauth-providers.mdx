@@ -1,19 +1,30 @@
 ---
 title: OAuth Providers
-description: Reuse curated provider descriptors and policy helpers for common OAuth providers instead of modeling every endpoint yourself.
+description: Reuse curated provider descriptors and policy registry primitives for common OAuth providers.
 ---
 
-`@superfunctions/oauth-providers` is the convenience layer for teams that want shared provider defaults instead of hand-authoring descriptors for every OAuth integration. The package ships curated descriptors and policy definitions for providers such as Google, Microsoft, Yahoo, Apple, and GitHub. It is especially helpful when you want a stable public package to depend on, but you do not want every application team to rediscover endpoint URLs, default scopes, or common capability constraints on its own.
-
-This package does not perform OAuth by itself. Think of it as the shared registry that feeds [`oauth-core`](/docs/authentication/oauth-core) and [`oauth-flow`](/docs/authentication/oauth-flow). It becomes most useful when your product integrates with multiple providers, when your compliance or platform team wants one place to enforce allowed scopes, or when your SDK wants to expose a provider selector with known-good defaults.
+`@superfunctions/oauth-providers` packages the shared provider knowledge we do not want every app to rediscover on its own: descriptor metadata, default scopes, capability rules, and policy helpers for common providers. It is the place where Superfunctions packages can agree on what “GitHub”, “Google”, or “Apple” means before any specific app wires those providers into routes or lifecycle services.
 
 ## What It Is
 
-`@superfunctions/oauth-providers` exports provider descriptors, provider policies, registry helpers, and convenience accessors such as `getOAuthProviderDescriptor()` and `createDefaultProviderPolicyRegistry()`. A descriptor tells the rest of the stack where to authorize, where to exchange tokens, which scopes are reasonable defaults, whether PKCE is supported, and which token authentication method to use. A policy definition goes further by expressing whether certain operations or feature modes are allowed for that provider.
+The package exports:
+
+- provider descriptors such as `getOAuthProviderDescriptor("github")`
+- bundled provider policies
+- `ProviderPolicyRegistry`
+- `createDefaultProviderPolicyRegistry()`
+
+Descriptors feed `oauth-core` and `oauth-flow`. The policy registry adds scope validation, operation checks, consent recording, and policy-audit events on top of those descriptors.
 
 ## When To Use It
 
-Use this package when shared defaults are more valuable than complete control. It is a great fit for application teams integrating with common SaaS providers, platform teams that need a consistent consent and scope policy layer, and library authors who want to support a handful of providers with minimal setup. If your provider is private, niche, or heavily customized, you can still bypass this package and pass your own descriptor directly to `oauth-core` or `oauth-flow`.
+Use `@superfunctions/oauth-providers` when you want shared provider defaults and policy enforcement:
+
+- apps integrating with common SaaS providers
+- shared packages that should expose a known-good provider inventory
+- platform/compliance layers that need scope and operation policy checks
+
+If you have a private or highly customized provider, you can bypass this package and pass your own descriptor directly to [`oauth-core`](/docs/authentication/oauth-core) or [`oauth-flow`](/docs/authentication/oauth-flow).
 
 ## Install
 
@@ -23,78 +34,74 @@ npm install @superfunctions/oauth-providers @superfunctions/oauth-core
 
 ## Quick Start
 
-The simplest use case is to load a descriptor and hand it to your OAuth service.
-
-```ts
-import { getOAuthProviderDescriptor } from "@superfunctions/oauth-providers";
-
-const github = getOAuthProviderDescriptor("github");
-
-console.log(github.authorizationUrl);
-console.log(github.defaultScopes);
-```
-
-If you want a policy-aware registry, create the default registry and ask it to validate scopes or operation rules.
-
-```ts
-import { createDefaultProviderPolicyRegistry } from "@superfunctions/oauth-providers";
-
-const registry = createDefaultProviderPolicyRegistry();
-
-const consent = registry.validateScopes({
-  providerId: "github",
-  feature: "profile.basic",
-  requestedScopes: ["read:user", "user:email"],
-  tenantId: "tenant_1",
-  userId: "user_1",
-  purpose: "Connect a GitHub account to show profile metadata",
-});
-```
-
-## Core Concepts
-
-Descriptors and policies solve different problems. The descriptor is transport and authorization metadata for the OAuth protocol itself. The policy layer is product logic: which feature modes are allowed, which scopes are acceptable for a feature, and whether a certain operation should be blocked for compliance or product-shape reasons. Keeping those concerns together in one package is useful because it gives consumers a sensible starting point without hard-coding policy logic throughout the application.
-
-The policy registry is also a practical audit boundary. It records consent decisions, exposes stable policy versions, and can reject scope requests that do not align with a provider’s allowed feature set. That is valuable for external products that want to explain why a requested scope or operation was denied instead of returning a vague “provider not supported” error.
-
-## Real-World Example
-
-Suppose your product lets users connect provider accounts but only for a narrow metadata-reading feature. You can use the registry to validate scopes and operations before you ever redirect the user to consent.
-
 ```ts
 import {
   createDefaultProviderPolicyRegistry,
   getOAuthProviderDescriptor,
 } from "@superfunctions/oauth-providers";
 
-const registry = createDefaultProviderPolicyRegistry();
 const github = getOAuthProviderDescriptor("github");
+const registry = createDefaultProviderPolicyRegistry();
+
+const consent = await registry.validateScopes({
+  providerId: "github",
+  feature: "profile.basic",
+  requestedScopes: github.defaultScopes,
+  tenantId: "tenant_1",
+  userId: "user_1",
+  purpose: "Connect a GitHub account",
+});
+
+console.log(consent.consentRecord.policyVersion);
+```
+
+## Core Concepts
+
+Descriptors and policies solve different problems. The descriptor is OAuth protocol metadata. The policy layer answers product and compliance questions: are these scopes allowed for this feature, is this operation permitted, and which policy version authorized the consent decision?
+
+The registry is intentionally explicit about persistence now. `createDefaultProviderPolicyRegistry()` gives you an in-memory convenience registry so tests and quickstarts stay small, but durable consent/audit history only exists if you supply explicit `consentStore` and `auditStore` implementations.
+
+## Production Guidance
+
+- Treat `createDefaultProviderPolicyRegistry()` as in-memory convenience, not as your durable audit system.
+- For production consent/audit retention, pass explicit async stores.
+- Registry write APIs are async because persistence is part of the real contract now.
+- If a store write fails, the registry raises `PROVIDER_POLICY_STORE_FAILED` rather than pretending consent or audit state was recorded.
+
+## Real-World Example
+
+This pattern fits a platform that wants both curated descriptors and durable policy evidence.
+
+```ts
+import {
+  ProviderPolicyRegistry,
+  listProviderPolicies,
+} from "@superfunctions/oauth-providers";
+
+const registry = new ProviderPolicyRegistry(listProviderPolicies(), {
+  consentStore,
+  auditStore,
+});
 
 registry.assertOperationAllowed({
   providerId: "github",
   operation: "oauth.revoke",
 });
 
-const { consentRecord } = registry.validateScopes({
+await registry.recordPolicyVersionUpdate({
   providerId: "github",
-  feature: "profile.basic",
-  requestedScopes: github.defaultScopes,
-  tenantId: "tenant_42",
-  userId: "user_99",
-  purpose: "Link a GitHub profile to an internal developer portal",
+  newVersion: "2026-03-27",
+  actor: "compliance-bot",
+  reason: "restricted scope cleanup",
 });
-
-console.log(consentRecord.policyVersion);
 ```
-
-That pattern is a strong fit for products with reviewable scope policies or customers who need evidence that your integration requested only the scopes required for a feature. When you need to go beyond the bundled providers, you can still use the same downstream stack by supplying your own descriptor alongside or instead of the built-in registry.
 
 ## Related Packages
 
-- [`oauth-core`](/docs/authentication/oauth-core) when you need to plug the descriptors into a low-level OAuth service.
-- [`oauth-flow`](/docs/authentication/oauth-flow) when you want high-level orchestration with curated providers.
-- [`oauth-testing`](/docs/authentication/oauth-testing) when your tests need predictable provider descriptors and in-memory fixtures.
+- [`oauth-core`](/docs/authentication/oauth-core) for the provider-neutral service layer
+- [`oauth-flow`](/docs/authentication/oauth-flow) for high-level orchestration
+- [`oauth-testing`](/docs/authentication/oauth-testing) for deterministic fixtures
 
 ## Troubleshooting
 
-If a provider lookup fails, confirm the provider ID matches one of the exported registry IDs exactly. If scope validation fails, inspect the feature name and the requested scopes before assuming the provider is unsupported; the registry enforces feature-specific policies, not just global provider availability. When a bundled provider is close but not quite right for your application, prefer cloning the descriptor into your own configuration rather than mutating shared defaults at runtime.
+If a provider lookup fails, verify the provider ID matches one of the exported IDs exactly. If scope validation fails, inspect the feature name and requested scopes before assuming the provider is unsupported. If policy persistence is required for your product, do not ship with the default in-memory convenience registry; provide real stores and monitor `PROVIDER_POLICY_STORE_FAILED` as an operational error.

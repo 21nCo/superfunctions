@@ -4,7 +4,13 @@ import { githubOAuthProviderDescriptor, githubProviderPolicy } from "./providers
 import { googleOAuthProviderDescriptor, googleProviderPolicy } from "./providers/google.js";
 import { microsoftOAuthProviderDescriptor, microsoftProviderPolicy } from "./providers/microsoft.js";
 import { yahooOAuthProviderDescriptor, yahooProviderPolicy } from "./providers/yahoo.js";
-import { ProviderPolicyRegistry, type OAuthProviderId, type ProviderPolicyDefinition } from "./policy-registry.js";
+import {
+  ProviderPolicyRegistry,
+  type OAuthProviderId,
+  type ProviderPolicyDefinition,
+  type ProviderPolicyRegistryOptions
+} from "./policy-registry.js";
+import { MemoryProviderPolicyAuditStore, MemoryProviderPolicyConsentStore } from "./stores.js";
 
 export const authOAuthProviderIds = ["google", "apple", "github"] as const;
 export type AuthOAuthProviderId = (typeof authOAuthProviderIds)[number];
@@ -50,12 +56,18 @@ export function listAuthProviderPolicies(): ProviderPolicyDefinition[] {
 }
 
 export function createDefaultProviderPolicyRegistry(
-  now?: () => string
+  options?: ProviderPolicyRegistryOptions | (() => string)
 ): ProviderPolicyRegistry {
-  return new ProviderPolicyRegistry(listProviderPolicies(), now);
+  const resolvedOptions = typeof options === "function" ? { now: options } : options;
+  return new ProviderPolicyRegistry(listProviderPolicies(), {
+    ...resolvedOptions,
+    consentStore: resolvedOptions?.consentStore ?? new MemoryProviderPolicyConsentStore(),
+    auditStore: resolvedOptions?.auditStore ?? new MemoryProviderPolicyAuditStore()
+  });
 }
 
 export * from "./policy-registry.js";
+export * from "./stores.js";
 export * from "./providers/google.js";
 export * from "./providers/microsoft.js";
 export * from "./providers/yahoo.js";

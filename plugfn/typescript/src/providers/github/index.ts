@@ -4,6 +4,7 @@ import type { Provider } from '../../types/provider.js';
 import { AuthType } from '../../types/provider.js';
 import { TriggerType } from '../../types/trigger.js';
 import type { ActionContext } from '../../types/action.js';
+import type { WebhookVerificationContext } from '../../types/trigger.js';
 
 /**
  * GitHub provider
@@ -329,8 +330,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: '/webhooks/github/issues',
         method: 'POST',
-        verifySignature: async (payload, signature, secret) => {
-          return verifyGitHubSignature(payload, signature, secret);
+        verifySignature: async (payload, signature, secret, context) => {
+          return verifyGitHubSignatureRaw(payload, signature, secret, context);
         },
       },
 
@@ -370,8 +371,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: '/webhooks/github/pull-request',
         method: 'POST',
-        verifySignature: async (payload, signature, secret) => {
-          return verifyGitHubSignature(payload, signature, secret);
+        verifySignature: async (payload, signature, secret, context) => {
+          return verifyGitHubSignatureRaw(payload, signature, secret, context);
         },
       },
 
@@ -409,8 +410,8 @@ export const githubProvider: Provider = {
       webhookConfig: {
         path: '/webhooks/github/issue-comment',
         method: 'POST',
-        verifySignature: async (payload, signature, secret) => {
-          return verifyGitHubSignature(payload, signature, secret);
+        verifySignature: async (payload, signature, secret, context) => {
+          return verifyGitHubSignatureRaw(payload, signature, secret, context);
         },
       },
 
@@ -450,13 +451,23 @@ export const githubProvider: Provider = {
   },
 };
 
-function verifyGitHubSignature(payload: any, signature: string, secret: string): boolean {
+function verifyGitHubSignatureRaw(
+  _payload: any,
+  signature: string,
+  secret: string,
+  context: WebhookVerificationContext
+): boolean {
   if (!signature || !secret) {
     return false;
   }
 
+  const rawBody = context.rawBody;
+  if (!rawBody || rawBody.byteLength === 0) {
+    return false;
+  }
+
   const normalizedSignature = signature.startsWith('sha256=') ? signature.slice('sha256='.length) : signature;
-  const expected = createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+  const expected = createHmac('sha256', secret).update(Buffer.from(rawBody)).digest('hex');
 
   const actualBuffer = Buffer.from(normalizedSignature, 'utf8');
   const expectedBuffer = Buffer.from(expected, 'utf8');
@@ -467,4 +478,3 @@ function verifyGitHubSignature(payload: any, signature: string, secret: string):
 
   return timingSafeEqual(actualBuffer, expectedBuffer);
 }
-

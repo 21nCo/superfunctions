@@ -239,11 +239,16 @@ export const stripeProvider: Provider = {
       webhookConfig: {
         path: '/webhooks/stripe/payment',
         method: 'POST',
-        verifySignature: async (payload, signature, secret) => {
+        verifySignature: async (_payload, signature, secret, context) => {
+          const rawBody = context.rawBody;
+          if (!signature || !secret || !rawBody || rawBody.byteLength === 0) {
+            return false;
+          }
+
           const crypto = require('crypto');
           const expectedSignature = crypto
             .createHmac('sha256', secret)
-            .update(JSON.stringify(payload))
+            .update(Buffer.from(rawBody))
             .digest('hex');
           return signature === expectedSignature;
         },
@@ -307,4 +312,3 @@ export const stripeProvider: Provider = {
     window: 1000, // 1 second
   },
 };
-

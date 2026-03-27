@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createRouter } from "@superfunctions/http";
 import type {
   OAuthFlowCallbackResult,
+  OAuthFlowConnectionCleanup,
   OAuthFlowDisconnectResult,
   OAuthFlowService,
   OAuthFlowStartResult
@@ -32,6 +33,11 @@ function createFlowServiceMocks() {
     disconnected: true,
     remoteRevokeAttempted: true,
     localTokenDeleted: true,
+    connectionCleanup: {
+      attempted: true,
+      deleted: true,
+      reason: "deleted"
+    } satisfies OAuthFlowConnectionCleanup,
     connectionDeleted: true
   } satisfies OAuthFlowDisconnectResult));
 
@@ -66,6 +72,63 @@ describe("oauth-router route factories", () => {
       "/auth/social/callback/:provider",
       "/auth/social/disconnect/:provider"
     ]);
+    expect(routes.map((route) => route.meta?.auth?.mode)).toEqual(["none", "none", "hybrid"]);
+  });
+
+  it("applies secure default auth metadata for connection routes", () => {
+    const { service } = createFlowServiceMocks();
+    const routes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+
+    expect(routes.map((route) => route.path)).toEqual([
+      "/oauth/connections/start",
+      "/oauth/connections/callback/:provider",
+      "/oauth/connections/disconnect/:provider"
+    ]);
+    expect(routes.map((route) => route.meta?.auth?.mode)).toEqual(["hybrid", "none", "hybrid"]);
+  });
+
+  it("allows explicit per-route auth metadata overrides", () => {
+    const { service } = createFlowServiceMocks();
+    const browserRoutes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never,
+      routeMeta: {
+        disconnect: {
+          auth: {
+            mode: "none"
+          }
+        }
+      }
+    });
+    const connectionRoutes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never,
+      routeMeta: {
+        start: {
+          auth: {
+            mode: "bearer",
+            scopes: ["connections:write"]
+          }
+        },
+        disconnect: {
+          auth: {
+            mode: "cookie-session",
+            csrf: true
+          }
+        }
+      }
+    });
+
+    expect(browserRoutes.map((route) => route.meta?.auth?.mode)).toEqual(["none", "none", "none"]);
+    expect(connectionRoutes.map((route) => route.meta?.auth?.mode)).toEqual(["bearer", "none", "cookie-session"]);
+    expect(connectionRoutes[0]?.meta?.auth?.scopes).toEqual(["connections:write"]);
+    expect(connectionRoutes[2]?.meta?.auth?.csrf).toBe(true);
   });
 
   it("supports browser callback JSON completion mode and propagates request ids", async () => {
@@ -179,5 +242,6 @@ describe("oauth-router route factories", () => {
       "/oauth/connections/callback/:provider",
       "/oauth/connections/disconnect/:provider"
     ]);
+    expect(connectionRoutes.map((route) => route.meta?.auth?.mode)).toEqual(["hybrid", "none", "hybrid"]);
   });
 });

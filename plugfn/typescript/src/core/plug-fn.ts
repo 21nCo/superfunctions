@@ -1,4 +1,4 @@
-import type { PlugFnConfig, MetricsOptions } from '../types/config.js';
+import type { PlugFnConfig, MetricsOptions, PlugFnPrincipal } from '../types/config.js';
 import type {
   ActionOptions,
 
@@ -33,6 +33,14 @@ import { ConsoleLogger } from '../utils/logger.js';
  * Main PlugFn SDK interface
  */
 export interface PlugFn {
+  config: {
+    auth: {
+      authenticate(request: Request): Promise<PlugFnPrincipal | null>;
+    };
+    baseUrl: string;
+    integrations: Record<string, PlugFnConfig['integrations'][string]>;
+  };
+
   // Connection management
   connections: {
     getAuthUrl(options: GetAuthUrlOptions): Promise<string>;
@@ -62,7 +70,10 @@ export interface PlugFn {
       event: string,
       payload: any,
       headers: Record<string, string>,
-      secret?: string
+      secret?: string,
+      options?: {
+        rawBody?: Uint8Array;
+      }
     ): Promise<any>;
   };
 
@@ -89,6 +100,7 @@ export interface PlugFn {
 export function plugFn(config: PlugFnConfig): PlugFn {
   // Initialize logger
   const logger: Logger = config.logger || new ConsoleLogger('[PlugFn]');
+  const normalizedAuthProvider = normalizeAuthProvider(config.auth);
 
   // Initialize storage
   const connectionStorage = new AdapterConnectionStorage(config.database);
@@ -108,7 +120,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
 
   const providerMap = providerRegistry['providers'] as Map<string, Provider>;
   const oauthFlowDependencies = createConnectionManagerOAuthDependencies({
-    adapter: config.database,
+    database: config.database,
     providers: providerMap,
     integrationConfigs,
     baseUrl: config.baseUrl,
@@ -148,6 +160,12 @@ export function plugFn(config: PlugFnConfig): PlugFn {
 
   // Create the main API
   const api: PlugFn = {
+    config: {
+      auth: normalizedAuthProvider,
+      baseUrl: config.baseUrl,
+      integrations: config.integrations,
+    },
+
     // Connection management
     connections: {
       getAuthUrl: (options) => connectionManager.getAuthUrl(options),
@@ -172,8 +190,8 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     webhooks: {
       on: (provider, event, handler) => webhookHandler.on(provider, event, handler),
       off: (provider, event, handler) => webhookHandler.off(provider, event, handler),
-      handle: (provider, event, payload, headers, secret) =>
-        webhookHandler.handleWebhook(provider, event, payload, headers, secret),
+      handle: (provider, event, payload, headers, secret, options) =>
+        webhookHandler.handleWebhook(provider, event, payload, headers, secret, options),
     },
 
     // Provider management
@@ -242,4 +260,53 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       return providerProxy;
     },
   }) as PlugFn;
+}
+
+function normalizeAuthProvider(configuredAuth: PlugFnConfig['auth']): {
+  authenticate(request: Request): Promise<PlugFnPrincipal | null>;
+} {
+  if (typeof configuredAuth.authenticate === 'function') {
+    return {
+      authenticate: async (request: Request) => {
+        const principal = await configuredAuth.authenticate!(request);
+        return normalizePrincipal(principal);
+      },
+    };
+  }
+
+  return {
+    authenticate: async (request: Request) => {
+      if (typeof configuredAuth.getUserId === 'function') {
+        const userId = await configuredAuth.getUserId(request);
+        return normalizePrincipal(userId);
+      }
+
+      if (typeof configuredAuth.requireAuth === 'function') {
+        try {
+          const userId = await configuredAuth.requireAuth(request);
+          return normalizePrincipal(userId);
+        } catch {
+          return null;
+        }
+      }
+
+      return null;
+    },
+  };
+}
+
+function normalizePrincipal(value: PlugFnPrincipal | string | null | undefined): PlugFnPrincipal | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return value.length > 0 ? { userId: value } : null;
+  }
+
+  if (typeof value === 'object' && typeof value.userId === 'string' && value.userId.length > 0) {
+    return value;
+  }
+
+  return null;
 }

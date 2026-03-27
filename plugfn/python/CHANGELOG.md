@@ -262,7 +262,7 @@ issue = await plug.github.issues.create(
 - **v0.3.0**: Redis caching, advanced rate limiting
 - **v0.4.0**: Workflow builder, visual editor
 - **v0.5.0**: CLI tool, provider generator
-- **v1.0.0**: Production-ready, full feature parity
+- **v1.0.0**: Production claim considered only after the release gate and provider matrix both pass
 
 ### Contributing
 

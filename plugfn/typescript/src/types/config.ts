@@ -3,55 +3,23 @@ import type { RetryOptions } from './action.js';
 import type { RateLimitConfig } from './provider.js';
 import type { Adapter as DbAdapter } from '@superfunctions/db';
 
-/**
- * Subset of @superfunctions/db Adapter methods used by PlugFn persistence.
- * This keeps PlugFn contracts anchored to the shared DB abstraction.
- */
-export type PlugFnDbAdapterContract = Partial<DbAdapter>;
-
-export interface PlugFnDatabaseAdapter extends PlugFnDbAdapterContract {
-  // Connections
-  createConnection(connection: any): Promise<void>;
-  getConnection(id: string): Promise<any>;
-  listConnections(userId: string, provider?: string): Promise<any[]>;
-  updateConnection(id: string, updates: any): Promise<void>;
-  deleteConnection(id: string): Promise<void>;
-
-  // Webhooks
-  createWebhook(webhook: any): Promise<void>;
-  getWebhook(id: string): Promise<any>;
-  listWebhooks(provider?: string): Promise<any[]>;
-  updateWebhook(id: string, updates: any): Promise<void>;
-  deleteWebhook(id: string): Promise<void>;
-
-  // Workflows
-  createWorkflow(workflow: any): Promise<void>;
-  getWorkflow(id: string): Promise<any>;
-  listWorkflows(userId?: string, status?: string): Promise<any[]>;
-  updateWorkflow(id: string, updates: any): Promise<void>;
-  deleteWorkflow(id: string): Promise<void>;
-
-  // Workflow executions
-  createWorkflowExecution(execution: any): Promise<void>;
-  updateWorkflowExecution(id: string, updates: any): Promise<void>;
-  listWorkflowExecutions(workflowId: string, limit?: number): Promise<any[]>;
-
-  // Action logs
-  createActionLog(log: any): Promise<void>;
-  listActionLogs(filters: any, limit?: number): Promise<any[]>;
-}
-
-/**
- * Backward-compatible alias retained for one minor release.
- */
+export type PlugFnDatabaseAdapter = DbAdapter;
 export type Adapter = PlugFnDatabaseAdapter;
+
+export interface PlugFnPrincipal {
+  userId: string;
+  tenantId?: string;
+  roles?: string[];
+  metadata?: Record<string, unknown>;
+}
 
 /**
  * Auth provider interface
  */
 export interface AuthProvider {
-  getUserId(request: any): Promise<string | null>;
-  requireAuth(request: any): Promise<string>;
+  authenticate?(request: Request): Promise<PlugFnPrincipal | null> | PlugFnPrincipal | null;
+  getUserId?(request: any): Promise<string | null>;
+  requireAuth?(request: any): Promise<string>;
 }
 
 /**
@@ -127,7 +95,7 @@ export interface GlobalRetryConfig extends RetryOptions {
  * Main PlugFn configuration
  */
 export interface PlugFnConfig {
-  database: Adapter;
+  database: DbAdapter;
   auth: AuthProvider;
   baseUrl: string;
   encryptionKey: string;

@@ -135,14 +135,27 @@ Abstracts data persistence.
 
 **Responsibilities:**
 - Connection storage
+- OAuth state storage
+- OAuth token storage
 - Workflow storage
 - Webhook configuration storage
 - Action logs
 
+**Canonical model names:**
+- `connections`
+- `oauth_states`
+- `oauth_tokens`
+- `workflows`
+- `workflow_executions`
+
+**TypeScript ownership after Phase 01:**
+- `src/storage/adapters/database.ts` owns the PlugFn model mapping and shared-db adapter layer.
+- `src/storage/oauth-state-store.ts` owns first-class OAuth state persistence backed by `@superfunctions/oauth-storage`.
+- `src/storage/oauth-token-vault.ts` owns first-class OAuth token persistence backed by `@superfunctions/oauth-storage`.
+
 **Adapters:**
-- Memory (for testing)
-- Database (Drizzle ORM, SQLAlchemy)
-- File system
+- Memory (for testing, via `@superfunctions/db` memory adapter)
+- Shared database adapter contract from `@superfunctions/db`
 
 ## Data Flow
 
@@ -382,4 +395,3 @@ GITHUB_CLIENT_SECRET=...
 - AI-powered action suggestions
 - Community provider marketplace
 - Enterprise features (SSO, audit logs)
-
