@@ -19,7 +19,17 @@ Example:
     >>> app.register_blueprint(blueprint)
 """
 
-from .adapter import FlaskRequestAdapter, create_blueprint, to_flask_response
+from .adapter import (
+    FlaskRequestAdapter,
+    create_blueprint,
+    to_flask_handler,
+    to_flask_response,
+)
 
 __version__ = "0.1.0"
-__all__ = ["FlaskRequestAdapter", "create_blueprint", "to_flask_response"]
+__all__ = [
+    "FlaskRequestAdapter",
+    "create_blueprint",
+    "to_flask_handler",
+    "to_flask_response",
+]

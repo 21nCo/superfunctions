@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Callable, Dict, List
 
@@ -18,6 +19,7 @@ from superfunctions.http import (
 
 SUPERFUNCTIONS_ROUTE_ATTR = "__superfunctions_route__"
 SUPERFUNCTIONS_ROUTE_META_ATTR = "__superfunctions_route_meta__"
+logger = logging.getLogger(__name__)
 
 
 class FastAPIRequestAdapter:
@@ -111,6 +113,20 @@ def to_fastapi_response(response: Response) -> FastAPIResponse:
     return fastapi_response
 
 
+def _internal_error_response() -> FastAPIResponse:
+    return to_fastapi_response(
+        Response(
+            status=500,
+            body={
+                "error": {
+                    "message": "Internal server error",
+                    "code": "INTERNAL_ERROR",
+                }
+            },
+        )
+    )
+
+
 def create_handler(handler: Callable, route: Route):
     """
     Create a FastAPI handler from a superfunctions handler.
@@ -147,12 +163,9 @@ def create_handler(handler: Callable, route: Route):
             # Convert HTTP errors to responses
             return to_fastapi_response(e.to_response())
         
-        except Exception as e:
-            # Handle unexpected errors
-            return JSONResponse(
-                content={"error": {"message": str(e), "code": "INTERNAL_ERROR"}},
-                status_code=500,
-            )
+        except Exception:
+            logger.exception("Unhandled error while processing FastAPI route")
+            return _internal_error_response()
 
     setattr(fastapi_handler, SUPERFUNCTIONS_ROUTE_ATTR, route)
     setattr(fastapi_handler, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
@@ -267,5 +280,8 @@ def to_fastapi_handler(handler: Callable) -> Callable:
             return to_fastapi_response(response)
         except HttpError as e:
             return to_fastapi_response(e.to_response())
+        except Exception:
+            logger.exception("Unhandled error while processing FastAPI handler")
+            return _internal_error_response()
 
     return wrapper

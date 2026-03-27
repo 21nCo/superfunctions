@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
-from typing import Any, Callable, Dict, List
+import threading
+from typing import Any, Awaitable, Callable, Dict, List
 
 from flask import Blueprint, Request as FlaskRequest, Response as FlaskResponse, jsonify, request
 from superfunctions.http import (
@@ -18,6 +20,7 @@ from superfunctions.http import (
 
 SUPERFUNCTIONS_ROUTE_ATTR = "__superfunctions_route__"
 SUPERFUNCTIONS_ROUTE_META_ATTR = "__superfunctions_route_meta__"
+logger = logging.getLogger(__name__)
 
 
 class FlaskRequestAdapter:
@@ -106,6 +109,46 @@ def to_flask_response(response: Response) -> FlaskResponse:
     return flask_response
 
 
+def _internal_error_response() -> FlaskResponse:
+    return to_flask_response(
+        Response(
+            status=500,
+            body={
+                "error": {
+                    "message": "Internal server error",
+                    "code": "INTERNAL_ERROR",
+                }
+            },
+        )
+    )
+
+
+def _run_async_handler(factory: Callable[[], Awaitable[Response]]) -> Response:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+
+    result: dict[str, Response] = {}
+    error: dict[str, BaseException] = {}
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(factory())
+        except BaseException as exc:
+            error["value"] = exc
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+
+    if "value" in error:
+        raise error["value"]
+    if "value" not in result:
+        raise RuntimeError("Flask adapter failed to execute async handler")
+    return result["value"]
+
+
 def create_handler(handler: Callable, route: Route):
     """
     Create a Flask handler from a superfunctions handler.
@@ -132,7 +175,7 @@ def create_handler(handler: Callable, route: Route):
             )
             
             # Call handler (async)
-            response = asyncio.run(handler(adapted_request, context))
+            response = _run_async_handler(lambda: handler(adapted_request, context))
             
             # Convert response
             return to_flask_response(response)
@@ -141,9 +184,9 @@ def create_handler(handler: Callable, route: Route):
             # Convert HTTP errors to responses
             return to_flask_response(e.to_response())
         
-        except Exception as e:
-            # Handle unexpected errors
-            return jsonify({"error": {"message": str(e), "code": "INTERNAL_ERROR"}}), 500
+        except Exception:
+            logger.exception("Unhandled error while processing Flask route")
+            return _internal_error_response()
 
     setattr(flask_handler, SUPERFUNCTIONS_ROUTE_ATTR, route)
     setattr(flask_handler, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
@@ -249,9 +292,12 @@ def to_flask_handler(handler: Callable) -> Callable:
         )
         
         try:
-            response = asyncio.run(handler(adapted_request, context))
+            response = _run_async_handler(lambda: handler(adapted_request, context))
             return to_flask_response(response)
         except HttpError as e:
             return to_flask_response(e.to_response())
+        except Exception:
+            logger.exception("Unhandled error while processing Flask handler")
+            return _internal_error_response()
 
     return wrapper

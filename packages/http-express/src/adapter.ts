@@ -88,16 +88,13 @@ async function convertToExpressResponse(
     expressResponse.statusMessage = webResponse.statusText;
   }
 
-  const setCookies = getSetCookieValues(webResponse.headers);
+  const { headers, setCookies } = collectResponseHeaders(webResponse.headers);
   if (setCookies.length > 0) {
     expressResponse.setHeader('set-cookie', setCookies);
   }
 
   // Set headers
-  webResponse.headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'set-cookie' && setCookies.length > 0) {
-      return;
-    }
+  headers.forEach(([key, value]) => {
     expressResponse.setHeader(key, value);
   });
 
@@ -110,12 +107,26 @@ async function convertToExpressResponse(
   }
 }
 
-function getSetCookieValues(headers: Headers): string[] {
+function collectResponseHeaders(
+  headers: Headers
+): { headers: Array<[string, string]>; setCookies: string[] } {
   const maybeHeaders = headers as Headers & {
     getSetCookie?: () => string[];
   };
+  const supportsGetSetCookie = typeof maybeHeaders.getSetCookie === 'function';
+  const setCookies = supportsGetSetCookie ? maybeHeaders.getSetCookie() : [];
+  const headerEntries: Array<[string, string]> = [];
 
-  return typeof maybeHeaders.getSetCookie === 'function'
-    ? maybeHeaders.getSetCookie()
-    : [];
+  headers.forEach((value, key) => {
+    if (key.toLowerCase() === 'set-cookie') {
+      if (!supportsGetSetCookie) {
+        setCookies.push(value);
+      }
+      return;
+    }
+
+    headerEntries.push([key, value]);
+  });
+
+  return { headers: headerEntries, setCookies };
 }

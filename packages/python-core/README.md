@@ -36,15 +36,14 @@ Install adapter packages separately based on your stack:
 ### HTTP Framework Adapters
 
 ```bash
-# FastAPI (coming soon)
+# FastAPI
 pip install superfunctions-fastapi
 
-# Flask (coming soon)
+# Flask
 pip install superfunctions-flask
-
-# Django (coming soon)
-pip install superfunctions-django
 ```
+
+Additional framework adapters will be added over time.
 
 ## Documentation
 

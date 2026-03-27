@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request as FastAPIRequest
 from fastapi.testclient import TestClient
 
 
@@ -17,13 +17,9 @@ for path in (FASTAPI_ROOT, PYTHON_CORE_ROOT):
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from superfunctions.http import Response, Route, SetCookie  # noqa: E402
-from superfunctions.http.openapi import generate_openapi_document  # noqa: E402
-from superfunctions.http.types import HttpMethod  # noqa: E402
-from superfunctions_fastapi.adapter import (  # noqa: E402
-    SUPERFUNCTIONS_ROUTE_ATTR,
-    create_router,
-)
+from superfunctions.http import HttpError, HttpMethod, Response, Route, SetCookie, generate_openapi_document  # noqa: E402
+from superfunctions_fastapi import create_router, to_fastapi_handler  # noqa: E402
+from superfunctions_fastapi.adapter import SUPERFUNCTIONS_ROUTE_ATTR  # noqa: E402
 
 
 def test_fastapi_adapter_preserves_repeated_cookies_and_route_metadata() -> None:
@@ -96,3 +92,103 @@ def test_fastapi_adapter_preserves_repeated_cookies_and_route_metadata() -> None
             }
         }
     }
+
+
+def test_to_fastapi_handler_supports_http_errors_and_non_json_bodies() -> None:
+    app = FastAPI()
+
+    async def text_handler(request, context):
+        return Response(status=201, body="created")
+
+    async def bytes_handler(request, context):
+        return Response(status=202, body=b"payload")
+
+    async def error_handler(request, context):
+        raise HttpError("Short and stout", status=418, code="TEAPOT")
+
+    text_route = to_fastapi_handler(text_handler)
+    bytes_route = to_fastapi_handler(bytes_handler)
+    error_route = to_fastapi_handler(error_handler)
+
+    @app.get("/text")
+    async def text_endpoint(request: FastAPIRequest):
+        return await text_route(request)
+
+    @app.get("/bytes")
+    async def bytes_endpoint(request: FastAPIRequest):
+        return await bytes_route(request)
+
+    @app.get("/error")
+    async def error_endpoint(request: FastAPIRequest):
+        return await error_route(request)
+
+    client = TestClient(app)
+
+    text_response = client.get("/text")
+    assert text_response.status_code == 201
+    assert text_response.text == "created"
+    assert text_response.headers["content-type"].startswith("text/plain")
+
+    bytes_response = client.get("/bytes")
+    assert bytes_response.status_code == 202
+    assert bytes_response.content == b"payload"
+
+    error_response = client.get("/error")
+    assert error_response.status_code == 418
+    assert error_response.json() == {
+        "error": {
+            "message": "Short and stout",
+            "code": "TEAPOT",
+            "details": {},
+        }
+    }
+
+
+def test_fastapi_adapter_internal_errors_are_generic_for_router_and_wrapper() -> None:
+    app = FastAPI()
+
+    async def crash_handler(request, context):
+        raise RuntimeError("secret router failure")
+
+    async def crash_wrapper_handler(request, context):
+        raise RuntimeError("secret wrapper failure")
+
+    router = create_router(
+        [
+            Route(
+                method=HttpMethod.GET,
+                path="/crash",
+                handler=crash_handler,
+            )
+        ],
+        prefix="/api",
+    )
+    app.include_router(router)
+
+    wrapper_route = to_fastapi_handler(crash_wrapper_handler)
+
+    @app.get("/wrapped-crash")
+    async def wrapped_crash_endpoint(request: FastAPIRequest):
+        return await wrapper_route(request)
+
+    client = TestClient(app)
+
+    router_response = client.get("/api/crash")
+    assert router_response.status_code == 500
+    assert router_response.json() == {
+        "error": {
+            "message": "Internal server error",
+            "code": "INTERNAL_ERROR",
+        }
+    }
+    assert "secret router failure" not in router_response.text
+
+    wrapper_response = client.get("/wrapped-crash")
+    assert wrapper_response.status_code == 500
+    assert wrapper_response.json() == {
+        "error": {
+            "message": "Internal server error",
+            "code": "INTERNAL_ERROR",
+        }
+    }
+    assert "secret wrapper failure" not in wrapper_response.text

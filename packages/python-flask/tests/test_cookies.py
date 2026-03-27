@@ -1,25 +1,11 @@
 from __future__ import annotations
 
-import os
-import sys
-
 from flask import Flask
+import pytest
 
-
-TESTS_DIR = os.path.dirname(__file__)
-FLASK_ROOT = os.path.abspath(os.path.join(TESTS_DIR, ".."))
-PYTHON_CORE_ROOT = os.path.abspath(
-    os.path.join(TESTS_DIR, "..", "..", "python-core")
-)
-
-for path in (FLASK_ROOT, PYTHON_CORE_ROOT):
-    if path not in sys.path:
-        sys.path.insert(0, path)
-
-from superfunctions.http import Response, Route, SetCookie  # noqa: E402
-from superfunctions.http.openapi import generate_openapi_document  # noqa: E402
-from superfunctions.http.types import HttpMethod  # noqa: E402
-from superfunctions_flask.adapter import SUPERFUNCTIONS_ROUTE_ATTR, create_blueprint  # noqa: E402
+from superfunctions.http import HttpError, HttpMethod, Response, Route, SetCookie, generate_openapi_document
+from superfunctions_flask import create_blueprint, to_flask_handler
+from superfunctions_flask.adapter import SUPERFUNCTIONS_ROUTE_ATTR, _run_async_handler
 
 
 def test_flask_adapter_preserves_repeated_cookies_and_route_metadata() -> None:
@@ -67,12 +53,15 @@ def test_flask_adapter_preserves_repeated_cookies_and_route_metadata() -> None:
 
     set_cookie_headers = response.headers.getlist("Set-Cookie")
     assert len(set_cookie_headers) == 2
-    assert "Domain=example.com" in set_cookie_headers[0]
-    assert "SameSite=None" in set_cookie_headers[0]
-    assert "HttpOnly" in set_cookie_headers[0]
-    assert "Domain=example.com" in set_cookie_headers[1]
-    assert "SameSite=Strict" in set_cookie_headers[1]
-    assert "HttpOnly" not in set_cookie_headers[1]
+    cookies_by_name = {
+        header.split("=", 1)[0]: header for header in set_cookie_headers
+    }
+    assert "Domain=example.com" in cookies_by_name["__Secure-authfn.session"]
+    assert "SameSite=None" in cookies_by_name["__Secure-authfn.session"]
+    assert "HttpOnly" in cookies_by_name["__Secure-authfn.session"]
+    assert "Domain=example.com" in cookies_by_name["authfn.csrf"]
+    assert "SameSite=Strict" in cookies_by_name["authfn.csrf"]
+    assert "HttpOnly" not in cookies_by_name["authfn.csrf"]
 
     preserved_handler = app.view_functions["superfunctions.post_auth_session"]
     preserved = getattr(preserved_handler, SUPERFUNCTIONS_ROUTE_ATTR)
@@ -90,3 +79,109 @@ def test_flask_adapter_preserves_repeated_cookies_and_route_metadata() -> None:
             }
         }
     }
+
+
+def test_to_flask_handler_supports_http_errors_and_non_json_bodies() -> None:
+    app = Flask(__name__)
+
+    async def text_handler(request, context):
+        return Response(status=201, body="created")
+
+    async def bytes_handler(request, context):
+        return Response(status=202, body=b"payload")
+
+    async def error_handler(request, context):
+        raise HttpError("Short and stout", status=418, code="TEAPOT")
+
+    text_route = to_flask_handler(text_handler)
+    bytes_route = to_flask_handler(bytes_handler)
+    error_route = to_flask_handler(error_handler)
+
+    @app.route("/text")
+    def text_endpoint():
+        return text_route()
+
+    @app.route("/bytes")
+    def bytes_endpoint():
+        return bytes_route()
+
+    @app.route("/error")
+    def error_endpoint():
+        return error_route()
+
+    client = app.test_client()
+
+    text_response = client.get("/text")
+    assert text_response.status_code == 201
+    assert text_response.get_data(as_text=True) == "created"
+    assert text_response.headers["Content-Type"].startswith("text/plain")
+
+    bytes_response = client.get("/bytes")
+    assert bytes_response.status_code == 202
+    assert bytes_response.data == b"payload"
+
+    error_response = client.get("/error")
+    assert error_response.status_code == 418
+    assert error_response.get_json() == {
+        "error": {
+            "message": "Short and stout",
+            "code": "TEAPOT",
+            "details": {},
+        }
+    }
+
+
+def test_flask_adapter_internal_errors_are_generic_for_blueprint_and_wrapper() -> None:
+    async def crash_handler(request, context):
+        raise RuntimeError("secret blueprint failure")
+
+    async def crash_wrapper_handler(request, context):
+        raise RuntimeError("secret wrapper failure")
+
+    routes = [
+        Route(
+            method=HttpMethod.GET,
+            path="/crash",
+            handler=crash_handler,
+        )
+    ]
+    app = Flask(__name__)
+    app.register_blueprint(create_blueprint(routes, url_prefix="/api"))
+
+    wrapped_route = to_flask_handler(crash_wrapper_handler)
+
+    @app.route("/wrapped-crash")
+    def wrapped_crash_endpoint():
+        return wrapped_route()
+
+    client = app.test_client()
+
+    blueprint_response = client.get("/api/crash")
+    assert blueprint_response.status_code == 500
+    assert blueprint_response.get_json() == {
+        "error": {
+            "message": "Internal server error",
+            "code": "INTERNAL_ERROR",
+        }
+    }
+    assert "secret blueprint failure" not in blueprint_response.get_data(as_text=True)
+
+    wrapper_response = client.get("/wrapped-crash")
+    assert wrapper_response.status_code == 500
+    assert wrapper_response.get_json() == {
+        "error": {
+            "message": "Internal server error",
+            "code": "INTERNAL_ERROR",
+        }
+    }
+    assert "secret wrapper failure" not in wrapper_response.get_data(as_text=True)
+
+
+@pytest.mark.asyncio
+async def test_flask_async_bridge_supports_running_event_loop() -> None:
+    async def resolve_response() -> Response:
+        return Response(status=204)
+
+    response = _run_async_handler(resolve_response)
+
+    assert response.status == 204
