@@ -546,8 +546,14 @@ class ProviderProxy:
         Returns:
             Async function to execute the action
         """
+        actions = self._provider.actions if hasattr(self._provider, "actions") else {}
+
+        matching_prefix = f"{action_name}."
+        if any(name.startswith(matching_prefix) for name in actions.keys()):
+            return ActionNamespaceProxy(self, action_name)
+
         # Check if action exists
-        if not hasattr(self._provider, "actions") or action_name not in self._provider.actions:
+        if action_name not in actions:
             raise AttributeError(
                 f"Action '{action_name}' not found in provider '{self._provider_name}'"
             )
@@ -585,3 +591,14 @@ class ProviderProxy:
             return result["data"]
 
         return execute_action
+
+
+class ActionNamespaceProxy:
+    """Nested proxy for dotted provider action groups such as issues.create."""
+
+    def __init__(self, provider_proxy: ProviderProxy, namespace: str):
+        self._provider_proxy = provider_proxy
+        self._namespace = namespace
+
+    def __getattr__(self, action_name: str) -> Callable:
+        return getattr(self._provider_proxy, f"{self._namespace}.{action_name}")

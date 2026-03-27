@@ -1,3 +1,4 @@
 id, desc, status, completedAt, completionDoc
 2026-03-11-new-1gdtvan4-spec,Build production-ready shared OAuth and email integration infrastructure for Finatron and Fellotron with plugfn/authfn reuse,1,2026-03-12T06:41:58Z,
 2026-03-12-k7m4r9q2-full-audit,Resolve plugfn/authfn audit gaps for deterministic routing envelopes OAuth contract and limits,1,2026-03-12T11:18:51Z,2026-03-12-m4q2r8n1-completion
+2026-03-27-audit-fix-x4p8m2q7-spec,Make PlugFn a truthful production-ready shared integration runtime with hardened shared OAuth auth webhook lifecycle Python parity and release gates,1,2026-03-27T07:25:19Z,

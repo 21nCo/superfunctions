@@ -1,102 +1,87 @@
-# PlugFn Release Gates (Phase 00 Scaffold)
+# PlugFn Release Gates
 
-## Scope
+## Canonical command
 
-This gate scaffold covers Phase 00 mapped requirements:
-
-- `ARCH-002`
-- `OPS-001`
-- `OPS-002`
-
-## Gate model
-
-Each gate has:
-
-1. Gate ID
-2. Requirement mapping
-3. Vector mapping
-4. Command(s)
-5. Pass criteria
-6. Fail behavior
-7. Baseline status (Phase 00)
-
-## Gates
-
-### GATE-ARCH-002-SHARED-OAUTH
-
-- Requirement mapping: `ARCH-002`
-- Vector mapping: `TV-ARCH-SHARED-USE-POS`, `TV-ARCH-SHARED-USE-NEG`
-- Commands:
+The authoritative repo-root release proof is:
 
 ```bash
-rg -n "from '@superfunctions/oauth-" /Users/serro/Documents/dev/n/superfunctions/plugfn/typescript/src
-rg -n "from '../auth/oauth-flow|MemoryTokenStore" /Users/serro/Documents/dev/n/superfunctions/plugfn/typescript/src/core /Users/serro/Documents/dev/n/superfunctions/plugfn/typescript/src/auth
+npm run gate:plugfn-release
 ```
 
-- Pass criteria:
-  - At least one shared OAuth import is present.
-  - Legacy duplication pattern grep returns zero matches.
-- Fail behavior:
-  - Return `ERR_LEGACY_OAUTH_DUPLICATION` and block release.
-- Baseline status (Phase 00): `FAIL`.
-  - Reason: no shared package imports yet; legacy patterns present.
+This command is the only supported global readiness check for PlugFn. It emits a deterministic JSON result with step status, docs inventory status, and the final production-claim rule.
 
-### GATE-OPS-001-PLUGFN-HARDENING
+## Gate coverage
 
-- Requirement mapping: `OPS-001`
-- Vector mapping: `TV-OPS-HARDEN-POS`, `TV-OPS-HARDEN-NEG`
-- Commands:
+`npm run gate:plugfn-release` proves all of the following from the repository root:
+
+1. `npm --prefix plugfn/typescript run build`
+2. `npm --prefix plugfn/typescript run type-check`
+3. `npm --prefix plugfn/typescript test -- --run`
+4. `npm --prefix plugfn/typescript test -- --run tests/e2e/oauth-callback.test.ts tests/e2e/webhook-verification.test.ts`
+5. `npm --prefix plugfn/cli run build`
+6. `npm --prefix plugfn/cli run type-check`
+7. `npm --prefix plugfn/cli test -- --run`
+8. `python3 -m pytest -q plugfn/python/tests`
+9. docs/status inventory checks for:
+   - portable paths in public docs
+   - package-name truth
+   - current gate wording
+   - readiness-matrix coverage for `github`, `linear`, `clickup`, and `gmail`
+
+## Production-ready claim rule
+
+PlugFn still does not make blanket claims for every provider or vertical module.
+
+A PlugFn provider or runtime surface may be described as production-ready only when both conditions are true on the same commit:
+
+1. `npm run gate:plugfn-release` passes
+2. the surface is marked `production` in [../provider-readiness-matrix.md](../provider-readiness-matrix.md)
+
+Anything outside that boundary remains `beta`, `experimental`, `vertical-only`, or `unsupported` according to the matrix.
+
+## Repo-root verification commands
+
+These commands are the reproducible verification surface documented by Phase 08:
 
 ```bash
-cd /Users/serro/Documents/dev/n/superfunctions/plugfn/typescript && npm test -- --run
+npm run gate:plugfn-release
+npm test --workspace plugfn
+npm test --workspace @plugfn/cli
+python3 -m pytest -q plugfn/python/tests
 ```
 
-- Pass criteria:
-  - Zero failed tests in required suite.
-  - Regression paths for previously failing scenarios are covered.
-  - No placeholder critical-path behavior remains.
-- Fail behavior:
-  - Any test failure blocks release.
-  - Placeholder critical-path commands block release.
-- Baseline status (Phase 00): `FAIL`.
-  - Reason: 3 failed tests in `tests/basic.test.ts`; CLI test command still placeholder.
+## Phase 04 runtime semantics
 
-### GATE-OPS-002-CROSS-WORKSPACE-MATRIX
+Workflow lifecycle hardening in Phase 04 uses the following production-truth model:
 
-- Requirement mapping: `OPS-002`
-- Vector mapping: `TV-OPS-MATRIX-POS`, `TV-OPS-MATRIX-NEG`
-- Command:
+- Trigger backend coverage: in-process `WebhookHandler` bindings only.
+- Unregister semantics: disable/delete must detach the active local binding; if no live binding exists to detach, the runtime returns `WORKFLOW_TRIGGER_UNREGISTER_FAILED` instead of silently logging and continuing.
+- Durability model: idempotent resume is DB-backed through `workflow_executions` state, so failed executions can resume after restart or from another engine instance when the same durable storage is shared.
+- Delay semantics: process-local timers are not treated as production-safe. Delay steps fail closed with `WORKFLOW_DURABILITY_UNSUPPORTED` until a durable scheduler backend exists.
 
-```bash
-cd /Users/serro/Documents/dev/n/superfunctions
-turbo run build test --filter=@superfunctions/oauth-core --filter=@superfunctions/oauth-http --filter=@superfunctions/oauth-storage --filter=@superfunctions/oauth-providers --filter=plugfn --filter=@authfn/core
-```
+CLI diagnostics in Phase 04 use the following deterministic exit-code contract:
 
-- Pass criteria:
-  - All required workspace build and test tasks succeed.
-  - OAuth connection and callback test scenarios pass in automation.
-- Fail behavior:
-  - Any failed workspace task returns `ERR_RELEASE_GATE_FAILED` and blocks release.
-- Baseline status (Phase 00): `FAIL`.
-  - Reason: shared OAuth workspaces not yet created and `plugfn` baseline tests currently failing.
+- `0`: runtime load, connection resolution, provider action, and any requested OAuth/webhook diagnostics all passed.
+- `1`: validation or runtime/config loading failed before provider execution.
+- `2`: provider registration, connection resolution, or action execution failed.
+- `3`: requested webhook diagnostic failed.
 
-## Execution order
+## Phase 00 documentation checks
 
-1. Run `GATE-ARCH-002-SHARED-OAUTH` first.
-2. Run `GATE-OPS-001-PLUGFN-HARDENING` second.
-3. Run `GATE-OPS-002-CROSS-WORKSPACE-MATRIX` last.
+These checks are intentionally lightweight and only prove contract truth, not runtime readiness. They should look for:
 
-Release may proceed only when all three gates pass in a single evidence run.
+- outdated scoped-package install instructions
+- machine-specific local paths in public docs
+- broad unsupported readiness language in the primary contract docs
 
-## Evidence requirements
+Expected interpretation:
 
-1. Save command output logs per gate under a phase-specific evidence folder.
-2. Include timestamps and git commit hashes in gate execution records.
-3. Keep gate logs append-only for auditability.
+- old package names should be absent from public docs
+- machine-specific absolute paths should be absent from public docs
+- broad unsupported readiness claims should be absent from the primary contract docs
 
-## Runbook links for release artifacts
+## Historical baseline at Phase 00
 
-1. `docs/runbooks/oauth-incident.md`
-2. `docs/runbooks/provider-throttle-incident.md`
-3. `docs/runbooks/webhook-security-incident.md`
-4. `docs/runbooks/mail-delivery-incident.md`
+- repo-root release gate: not implemented yet
+- global production-ready claim: not allowed
+- provider truth source: [../provider-readiness-matrix.md](../provider-readiness-matrix.md)

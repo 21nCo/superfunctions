@@ -1,0 +1,92 @@
+---
+title: OAuth Router
+description: Expose reusable OAuth routes with secure defaults on top of the shared oauth-flow service.
+---
+
+`@superfunctions/oauth-router` turns `oauth-flow` into a reusable route inventory instead of forcing every app to hand-write the same start, callback, and disconnect handlers. It is intentionally small: route factories in, framework adapters out. Your app still chooses the HTTP adapter, auth/session boundary, and how request context becomes flow input.
+
+## What It Is
+
+The package exports two route factories:
+
+- `createOAuthBrowserRoutes(...)`
+- `createOAuthConnectionRoutes(...)`
+
+Both return `@superfunctions/http` `Route[]` definitions that can be mounted through any supported HTTP adapter.
+
+## When To Use It
+
+Use `oauth-router` when you already want `oauth-flow` but also want consistent route exposure across apps:
+
+- browser auth / social-login style flows
+- customer connection management routes
+- packages such as `plugfn` that should not duplicate HTTP handler glue in every integration surface
+
+If your app needs completely custom routing, you can still call `flowService.start()`, `handleCallback()`, and `disconnect()` directly.
+
+## Install
+
+```bash
+npm install @superfunctions/oauth-router @superfunctions/oauth-flow @superfunctions/http
+```
+
+Use your preferred HTTP adapter in the app layer, for example `@superfunctions/http-express` or `@superfunctions/http-hono`.
+
+## Quick Start
+
+```ts
+import { createOAuthBrowserRoutes } from "@superfunctions/oauth-router";
+
+const routes = createOAuthBrowserRoutes({
+  basePath: "/auth/social",
+  flowService,
+  async resolveStartInput(request) {
+    return (await request.json()) as never;
+  },
+});
+```
+
+## Default Route Posture
+
+The factories now ship with secure defaults:
+
+- browser routes: `start=none`, `callback=none`, `disconnect=hybrid`
+- connection routes: `start=hybrid`, `callback=none`, `disconnect=hybrid`
+
+That keeps provider callbacks open while avoiding unauthenticated disconnect by default.
+
+## Route Metadata Overrides
+
+You can override metadata per route through `routeMeta`, and overrides merge shallowly with nested `auth` and `openapi` objects.
+
+```ts
+import { createOAuthConnectionRoutes } from "@superfunctions/oauth-router";
+
+const routes = createOAuthConnectionRoutes({
+  basePath: "/oauth/connections",
+  flowService,
+  async resolveStartInput(request) {
+    return (await request.json()) as never;
+  },
+  routeMeta: {
+    start: {
+      auth: {
+        mode: "bearer",
+        scopes: ["connections:write"],
+      },
+    },
+  },
+});
+```
+
+## Relationship To The Rest Of The Stack
+
+- [`oauth-flow`](/docs/authentication/oauth-flow) owns lifecycle orchestration.
+- [`oauth-router`](/docs/authentication/oauth-router) owns reusable route definitions.
+- `@superfunctions/http-*` adapters own framework-specific mounting.
+
+That split is what lets apps such as `plugfn` reuse one lifecycle engine and one route inventory across Express, Hono, Fastify, or other adapters without copying auth metadata and callback parsing logic into every app.
+
+## Troubleshooting
+
+If callback routes fail because a request is blocked before it reaches `oauth-flow`, inspect your adapter/session middleware before blaming the provider. If a route needs stricter auth metadata than the defaults, use `routeMeta` instead of cloning the factory. If your app needs redirect-on-callback behavior for browser auth, use the browser route factory’s callback mode options rather than building a parallel custom callback stack.

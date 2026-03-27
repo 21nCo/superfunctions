@@ -1,21 +1,12 @@
-import {
-  DefaultOAuthService,
-  type OAuthProviderDescriptor,
-  type OAuthTokenSet,
-} from '@superfunctions/oauth-core';
-import {
-  DefaultOAuthTokenHttpClient,
-  type OAuthTokenEndpointResponse,
-  type OAuthTokenHttpClient,
-} from '@superfunctions/oauth-http';
-import {
-  MemoryOAuthStateStore,
-  type OAuthStateStore,
-} from '@superfunctions/oauth-storage';
+import type { OAuthTokenHttpClient } from '@superfunctions/oauth-http';
+import type { OAuthStateStore } from '@superfunctions/oauth-storage';
 import type { OAuth2Config, OAuth2RuntimeConfig, TokenResponse } from '../types/provider.js';
 import type { OAuthState } from './types.js';
+import {
+  createLegacyOAuthFlowDelegate,
+  type LegacyOAuthFlowDelegate,
+} from './oauth-flow-legacy-delegate.js';
 
-const LEGACY_PROVIDER_ID = 'legacy-oauth-provider';
 const LEGACY_PATH_WARNING_CODE = 'DEPRECATED_PATH' as const;
 const LEGACY_PATH_WARNING_MESSAGE =
   '[DEPRECATED_PATH] plugfn/auth/oauth-flow is deprecated and will be removed in plugfn@0.2.0. ' +
@@ -33,37 +24,27 @@ function warnLegacyPath(): void {
 warnLegacyPath();
 
 export class OAuthFlowHandler {
-  private readonly stateStore: OAuthStateStore;
-  private readonly tokenClient: OAuthTokenHttpClient;
+  private readonly delegate: LegacyOAuthFlowDelegate;
 
   constructor(
-    stateStore: OAuthStateStore = new MemoryOAuthStateStore(),
-    private readonly stateTimeout = 600000,
-    tokenClient: OAuthTokenHttpClient = new DefaultOAuthTokenHttpClient()
+    firstArg?: OAuthStateStore | LegacyOAuthFlowDelegate,
+    stateTimeout = 600000,
+    tokenClient?: OAuthTokenHttpClient
   ) {
-    this.stateStore = stateStore;
-    this.tokenClient = tokenClient;
+    this.delegate = isLegacyOAuthFlowDelegate(firstArg)
+      ? firstArg
+      : createLegacyOAuthFlowDelegate({
+          stateStore: firstArg,
+          stateTimeout,
+          tokenClient,
+        });
   }
 
   async getAuthorizationUrl(
     config: OAuth2Config,
     runtimeConfig: OAuth2RuntimeConfig
   ): Promise<{ url: string; state: string }> {
-    const provider = toOAuthProviderDescriptor(config);
-    const service = this.createOAuthService(provider, runtimeConfig);
-
-    const result = await service.createAuthorizationRequest({
-      providerId: LEGACY_PROVIDER_ID,
-      tenantId: '',
-      userId: '',
-      redirectUri: runtimeConfig.redirectUri,
-      scopes: runtimeConfig.scopes,
-    });
-
-    return {
-      url: result.authorizationUrl,
-      state: result.stateId,
-    };
+    return this.delegate.getAuthorizationUrl(config, runtimeConfig);
   }
 
   async exchangeCodeForToken(
@@ -71,98 +52,19 @@ export class OAuthFlowHandler {
     runtimeConfig: OAuth2RuntimeConfig,
     code: string
   ): Promise<TokenResponse> {
-    const provider = toOAuthProviderDescriptor(config);
-    const response = await this.tokenClient.exchangeToken({
-      provider,
-      grantType: 'authorization_code',
-      clientId: runtimeConfig.clientId,
-      clientSecret: runtimeConfig.clientSecret,
-      redirectUri: runtimeConfig.redirectUri,
-      code,
-      scopes: runtimeConfig.scopes,
-    });
-
-    return toLegacyTokenResponse(response);
+    return this.delegate.exchangeCodeForToken(config, runtimeConfig, code);
   }
 
   async refreshAccessToken(
     config: OAuth2Config,
     runtimeConfig: OAuth2RuntimeConfig,
-    refreshToken: string
+    renewalCredential: string
   ): Promise<TokenResponse> {
-    const provider = toOAuthProviderDescriptor(config);
-    const response = await this.tokenClient.exchangeToken({
-      provider,
-      grantType: 'refresh_token',
-      clientId: runtimeConfig.clientId,
-      clientSecret: runtimeConfig.clientSecret,
-      redirectUri: runtimeConfig.redirectUri,
-      refreshToken,
-      scopes: runtimeConfig.scopes,
-    });
-
-    return toLegacyTokenResponse(response);
+    return this.delegate.refreshAccessToken(config, runtimeConfig, renewalCredential);
   }
 
   async verifyState(state: string): Promise<OAuthState | null> {
-    const consumed = await this.stateStore.consume(state, new Date().toISOString());
-    if (!consumed) {
-      return null;
-    }
-
-    return {
-      userId: consumed.userId,
-      provider: consumed.providerId,
-      redirectUri: consumed.redirectUri,
-      scopes: [...consumed.requestedScopes],
-      timestamp: Date.parse(consumed.createdAt),
-    };
-  }
-
-  private createOAuthService(
-    provider: OAuthProviderDescriptor,
-    runtimeConfig: OAuth2RuntimeConfig
-  ): DefaultOAuthService {
-    return new DefaultOAuthService({
-      providers: {
-        [LEGACY_PROVIDER_ID]: provider,
-      },
-      providerRuntimeConfig: {
-        [LEGACY_PROVIDER_ID]: {
-          clientId: runtimeConfig.clientId,
-          allowlistedRedirectUris: [runtimeConfig.redirectUri],
-        },
-      },
-      stateStore: this.stateStore,
-      stateTtlMs: this.stateTimeout,
-      exchangeCodeForToken: async ({ provider: currentProvider, code, redirectUri, codeVerifier, scopes }) => {
-        const response = await this.tokenClient.exchangeToken({
-          provider: currentProvider,
-          grantType: 'authorization_code',
-          clientId: runtimeConfig.clientId,
-          clientSecret: runtimeConfig.clientSecret,
-          redirectUri,
-          code,
-          codeVerifier,
-          scopes,
-        });
-
-        return toOAuthTokenSet(response);
-      },
-      refreshToken: async ({ provider: currentProvider, refreshToken, redirectUri, scopes }) => {
-        const response = await this.tokenClient.exchangeToken({
-          provider: currentProvider,
-          grantType: 'refresh_token',
-          clientId: runtimeConfig.clientId,
-          clientSecret: runtimeConfig.clientSecret,
-          redirectUri,
-          refreshToken,
-          scopes,
-        });
-
-        return toOAuthTokenSet(response);
-      },
-    });
+    return this.delegate.verifyState(state);
   }
 }
 
@@ -180,47 +82,19 @@ export function getLegacyOAuthFlowDeprecationNotice(): {
   };
 }
 
-function toOAuthProviderDescriptor(config: OAuth2Config): OAuthProviderDescriptor {
-  const rawConfig = config as unknown as Record<string, unknown>;
-  const rawTokenAuthMethod = rawConfig.tokenAuthMethod;
-  const tokenAuthMethod =
-    rawTokenAuthMethod === 'client_secret_basic' || rawTokenAuthMethod === 'client_secret_post'
-      ? rawTokenAuthMethod
-      : 'client_secret_post';
-
-  return {
-    id: LEGACY_PROVIDER_ID,
-    authorizationUrl: config.authorizationUrl,
-    tokenUrl: config.tokenUrl,
-    defaultScopes: [...config.scopes],
-    supportsPkce: true,
-    supportsRefreshToken: true,
-    scopeSeparator: config.scopeSeparator === ',' ? ',' : ' ',
-    tokenAuthMethod,
-  };
-}
-
-function toLegacyTokenResponse(response: OAuthTokenEndpointResponse): TokenResponse {
-  return {
-    access_token: response.accessToken,
-    refresh_token: response.refreshToken,
-    expires_in: response.expiresIn,
-    token_type: response.tokenType,
-    scope: response.scope,
-  };
-}
-
-function toOAuthTokenSet(response: OAuthTokenEndpointResponse): OAuthTokenSet {
-  const now = Date.now();
-  return {
-    accessToken: response.accessToken,
-    refreshToken: response.refreshToken,
-    expiresAt:
-      response.expiresIn !== undefined
-        ? new Date(now + response.expiresIn * 1000).toISOString()
-        : undefined,
-    scope: response.scope,
-    tokenType: response.tokenType,
-    idToken: response.idToken,
-  };
+function isLegacyOAuthFlowDelegate(
+  value: OAuthStateStore | LegacyOAuthFlowDelegate | undefined
+): value is LegacyOAuthFlowDelegate {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'getAuthorizationUrl' in value &&
+    typeof value.getAuthorizationUrl === 'function' &&
+    'exchangeCodeForToken' in value &&
+    typeof value.exchangeCodeForToken === 'function' &&
+    'refreshAccessToken' in value &&
+    typeof value.refreshAccessToken === 'function' &&
+    'verifyState' in value &&
+    typeof value.verifyState === 'function'
+  );
 }

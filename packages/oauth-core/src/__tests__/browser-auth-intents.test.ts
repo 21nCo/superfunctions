@@ -125,6 +125,44 @@ describe("oauth-core browser-auth intents", () => {
     expect(new URL(result.authorizationUrl).searchParams.get("client_id")).toBe("eu-client-id");
   });
 
+  it("reconstructs browser-auth subject details during callback exchange", async () => {
+    const { service, exchangeCodeForToken } = createBrowserAuthService();
+
+    const result = await service.createAuthorizationRequest({
+      providerId: "google",
+      redirectUri: "https://app/callback",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_04",
+        tenantId: "tenant_1",
+        regionId: "eu-west-1",
+        returnTo: "https://app.example/post-auth",
+        metadata: { source: "signup" }
+      }
+    });
+
+    await service.handleCallback({
+      providerId: "google",
+      code: "code_123",
+      state: result.stateId,
+      redirectUri: "https://app/callback"
+    });
+
+    expect(exchangeCodeForToken).toHaveBeenCalledTimes(1);
+    expect(exchangeCodeForToken.mock.calls[0]?.[0]).toMatchObject({
+      code: "code_123",
+      redirectUri: "https://app/callback",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_04",
+        tenantId: "tenant_1",
+        regionId: "eu-west-1",
+        returnTo: "https://app.example/post-auth",
+        metadata: { source: "signup" }
+      }
+    });
+  });
+
   it("fails with canonical provider errors for unsupported providers", async () => {
     const { service } = createBrowserAuthService();
 

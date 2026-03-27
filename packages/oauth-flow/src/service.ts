@@ -3,10 +3,25 @@ import {
   DefaultOAuthService,
   OAuthCoreError,
   type AuthorizationResult,
+  type OAuthIntentSubject as CoreOAuthIntentSubject,
   type OAuthProviderDescriptor,
+  type OAuthProviderRuntimeConfig as CoreOAuthProviderRuntimeConfig,
+  type OAuthProviderRuntimeConfigResolverInput,
   type OAuthTokenSet
 } from "@superfunctions/oauth-core";
-import { DefaultOAuthTokenHttpClient, OAuthHttpError, type OAuthTokenEndpointResponse, type OAuthTokenHttpClient } from "@superfunctions/oauth-http";
+import {
+  DefaultOAuthTokenHttpClient,
+  OAuthHttpError,
+  type OAuthClientSecretResolver as CoreOAuthClientSecretResolver,
+  type OAuthResolvedClientSecret as CoreOAuthResolvedClientSecret,
+  type OAuthRevocationRequest,
+  type OAuthSecretResolverContext as CoreOAuthSecretResolverContext,
+  type OAuthTokenAuthMethod as CoreOAuthTokenAuthMethod,
+  type OAuthTokenEndpointRequest,
+  type OAuthTokenEndpointResponse,
+  type OAuthTokenGrantType as CoreOAuthTokenGrantType,
+  type OAuthTokenHttpClient
+} from "@superfunctions/oauth-http";
 import type {
   EncryptedTokenVault,
   OAuthStateRecord,
@@ -15,21 +30,8 @@ import type {
   TokenVault
 } from "@superfunctions/oauth-storage";
 
-type OAuthIntentSubject =
-  | {
-      kind: "connection";
-      tenantId: string;
-      userId: string;
-      connectionId?: string;
-    }
-  | {
-      kind: "browser-auth";
-      intentId: string;
-      tenantId?: string;
-      regionId?: string;
-      returnTo?: string;
-      metadata?: Record<string, unknown>;
-    };
+/** @deprecated Import from @superfunctions/oauth-core directly. */
+export type OAuthIntentSubject = CoreOAuthIntentSubject;
 
 type OAuthStoredStateRecord = OAuthStateRecord & {
   subject?: OAuthIntentSubject;
@@ -40,49 +42,31 @@ type OAuthStoredStateRecord = OAuthStateRecord & {
   metadata?: Record<string, unknown>;
 };
 
-type OAuthTokenGrantType = "authorization_code" | "refresh_token" | "client_credentials";
-type OAuthTokenAuthMethod = "client_secret_post" | "client_secret_basic";
+/** @deprecated Import from @superfunctions/oauth-http directly. */
+export type OAuthTokenGrantType = CoreOAuthTokenGrantType;
+/** @deprecated Import from @superfunctions/oauth-http directly. */
+export type OAuthTokenAuthMethod = CoreOAuthTokenAuthMethod;
+/** @deprecated Import from @superfunctions/oauth-http directly. */
+export type OAuthResolvedClientSecret = CoreOAuthResolvedClientSecret;
+/** @deprecated Import from @superfunctions/oauth-http directly. */
+export type OAuthSecretResolverContext = CoreOAuthSecretResolverContext;
+/** @deprecated Import from @superfunctions/oauth-http directly. */
+export type OAuthClientSecretResolver = CoreOAuthClientSecretResolver;
 
-type OAuthResolvedClientSecret = {
-  clientSecret: string;
-  tokenAuthMethod?: OAuthTokenAuthMethod;
-};
-
-type OAuthSecretResolverContext = {
-  provider: OAuthProviderDescriptor;
-  operation: "exchange" | "revoke";
-  clientId: string;
-  grantType?: OAuthTokenGrantType;
-  redirectUri?: string;
-  scopes?: string[];
-  tokenTypeHint?: "access_token" | "refresh_token";
-};
-
-type OAuthClientSecretResolver = (
-  input: OAuthSecretResolverContext
-) => Promise<OAuthResolvedClientSecret> | OAuthResolvedClientSecret;
-
-type OAuthExchangeTokenInput = {
-  provider: OAuthProviderDescriptor;
-  grantType: OAuthTokenGrantType;
-  clientId: string;
-  clientSecret?: string;
+export interface OAuthFlowProviderRuntimeConfig extends CoreOAuthProviderRuntimeConfig {
+  clientSecret?: OAuthResolvedClientSecret["clientSecret"];
   clientSecretResolver?: OAuthClientSecretResolver;
-  redirectUri?: string;
-  code?: string;
-  codeVerifier?: string;
-  refreshToken?: string;
-  scopes?: string[];
-};
+}
 
-type OAuthRevokeTokenInput = {
-  provider: OAuthProviderDescriptor;
-  clientId: string;
-  clientSecret?: string;
-  clientSecretResolver?: OAuthClientSecretResolver;
-  token: string;
-  tokenTypeHint?: "access_token" | "refresh_token";
-};
+/**
+ * @deprecated Import the base runtime config from @superfunctions/oauth-core, or use OAuthFlowProviderRuntimeConfig
+ * when client-secret fields are required by oauth-flow consumers.
+ */
+export type OAuthProviderRuntimeConfig = OAuthFlowProviderRuntimeConfig;
+
+export type OAuthFlowProviderRuntimeConfigResolver = (
+  input: OAuthProviderRuntimeConfigResolverInput
+) => Promise<OAuthFlowProviderRuntimeConfig> | OAuthFlowProviderRuntimeConfig;
 
 type CreateAuthorizationRequestInput = {
   providerId: string;
@@ -111,6 +95,8 @@ export interface OAuthFlowResolvedIdentity {
   metadata?: Record<string, unknown>;
   persistTokens?: boolean;
 }
+
+export type OAuthTokenStorageMode = "encrypted-required" | "plaintext-unsafe";
 
 export type OAuthFlowStartInput = {
   providerId: string;
@@ -155,6 +141,34 @@ export type OAuthFlowDisconnectInput = {
   requestId?: string;
 };
 
+export type OAuthFlowConnectionCleanupReason = "deleted" | "not-found" | "retained" | "not-configured";
+
+export type OAuthFlowConnectionCleanup = {
+  attempted: boolean;
+  deleted: boolean;
+  reason: OAuthFlowConnectionCleanupReason;
+};
+
+export type OAuthFlowDisconnectTokenMetadata = {
+  tokenId: string;
+  tenantId: string;
+  userId: string;
+  providerId: string;
+  connectionId: string;
+  keyRef: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+};
+
+export type OAuthFlowDisconnectContext = OAuthFlowDisconnectInput & {
+  revokeRemote: boolean;
+  subject?: OAuthFlowSubject;
+  tokenMetadata?: OAuthFlowDisconnectTokenMetadata;
+  remoteRevokeAttempted: boolean;
+  localTokenDeleted: boolean;
+};
+
 export type OAuthFlowStartResult = AuthorizationResult & {
   providerId: string;
 };
@@ -172,6 +186,8 @@ export type OAuthFlowDisconnectResult = {
   disconnected: boolean;
   remoteRevokeAttempted: boolean;
   localTokenDeleted: boolean;
+  connectionCleanup: OAuthFlowConnectionCleanup;
+  /** @deprecated Use connectionCleanup.deleted. */
   connectionDeleted: boolean;
 };
 
@@ -187,7 +203,9 @@ export type OAuthFlowIdentityHooks = {
     input: OAuthFlowResolveBrowserAuthIdentityInput
   ) => Promise<OAuthFlowResolvedIdentity | null> | OAuthFlowResolvedIdentity | null;
   onConnected?: (result: OAuthFlowCallbackResult) => Promise<void>;
-  onDisconnected?: (input: OAuthFlowDisconnectInput) => Promise<void>;
+  onDisconnected?: (
+    input: OAuthFlowDisconnectContext
+  ) => Promise<OAuthFlowConnectionCleanup> | OAuthFlowConnectionCleanup;
 };
 
 export interface OAuthFlowService {
@@ -196,13 +214,6 @@ export interface OAuthFlowService {
   refresh(input: OAuthFlowRefreshInput): Promise<OAuthTokenSet>;
   disconnect(input: OAuthFlowDisconnectInput): Promise<OAuthFlowDisconnectResult>;
 }
-
-export type OAuthProviderRuntimeConfig = {
-  clientId: string;
-  clientSecret?: string;
-  allowlistedRedirectUris?: string[];
-  clientSecretResolver?: OAuthClientSecretResolver;
-};
 
 export type OAuthFlowEventName =
   | "oauth.flow.started"
@@ -228,9 +239,11 @@ export type OAuthFlowEvent = {
 
 export type OAuthFlowServiceConfig = {
   providers: Record<string, OAuthProviderDescriptor>;
-  providerRuntimeConfig: Record<string, OAuthProviderRuntimeConfig>;
+  providerRuntimeConfig?: Record<string, OAuthFlowProviderRuntimeConfig>;
+  resolveProviderRuntimeConfig?: OAuthFlowProviderRuntimeConfigResolver;
   stateStore: OAuthStateStore;
   tokenVault: TokenVault | EncryptedTokenVault;
+  tokenStorageMode?: OAuthTokenStorageMode;
   tokenHttpClient?: OAuthTokenHttpClient;
   identityHooks?: OAuthFlowIdentityHooks;
   keyRef?: string;
@@ -248,6 +261,7 @@ export type OAuthFlowErrorCode =
   | "OAUTH_PROVIDER_UNSUPPORTED"
   | "OAUTH_RUNTIME_CONFIG_INVALID"
   | "OAUTH_SECRET_RESOLUTION_FAILED"
+  | "OAUTH_TOKEN_STORAGE_UNSAFE"
   | "OAUTH_TOKEN_REFRESH_FAILED"
   | "OAUTH_TOKEN_EXCHANGE_FAILED"
   | "VALIDATION_ERROR"
@@ -277,7 +291,6 @@ export class OAuthFlowError extends Error {
 type HookPayloadMap = {
   resolveBrowserAuthIdentity: OAuthFlowResolveBrowserAuthIdentityInput;
   onConnected: OAuthFlowCallbackResult;
-  onDisconnected: OAuthFlowDisconnectInput;
 };
 
 type HookName = keyof HookPayloadMap;
@@ -319,14 +332,25 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     this.now = config.now ?? (() => new Date());
     this.tokenHttpClient = config.tokenHttpClient ?? new DefaultOAuthTokenHttpClient();
     const exchangeToken = this.tokenHttpClient.exchangeToken.bind(this.tokenHttpClient) as (
-      input: OAuthExchangeTokenInput
+      input: OAuthTokenEndpointRequest
     ) => Promise<OAuthTokenEndpointResponse>;
     this.coreService = new DefaultOAuthService({
       providers: config.providers,
-      providerRuntimeConfig: mapRuntimeConfig(config.providerRuntimeConfig),
+      resolveProviderRuntimeConfig: async (input) => {
+        const runtime = await this.getRuntimeConfig(input);
+        return {
+          clientId: runtime.clientId,
+          allowlistedRedirectUris: runtime.allowlistedRedirectUris
+        };
+      },
       stateStore: config.stateStore,
       exchangeCodeForToken: async (input) => {
-        const runtime = this.getRuntimeConfig(input.provider.id);
+        const runtime = await this.getRuntimeConfig({
+          providerId: input.provider.id,
+          subject: input.subject,
+          redirectUri: input.redirectUri,
+          scopes: input.scopes
+        });
         const response = await exchangeToken({
           provider: input.provider,
           grantType: "authorization_code",
@@ -521,10 +545,9 @@ class DefaultOAuthFlowService implements OAuthFlowService {
 
     try {
       const exchangeToken = this.tokenHttpClient.exchangeToken.bind(this.tokenHttpClient) as (
-        request: OAuthExchangeTokenInput
+        request: OAuthTokenEndpointRequest
       ) => Promise<OAuthTokenEndpointResponse>;
       const provider = this.getProvider(input.providerId);
-      const runtime = this.getRuntimeConfig(input.providerId);
       const existing = await this.getTokenSetByConnection(input.connectionId);
       if (!existing) {
         throw new OAuthFlowError("OAUTH_TOKEN_REFRESH_FAILED", "OAuth token record not found for connection", {
@@ -539,6 +562,18 @@ class DefaultOAuthFlowService implements OAuthFlowService {
           retryable: false
         });
       }
+
+      const runtime = await this.getRuntimeConfig({
+        providerId: input.providerId,
+        subject: {
+          kind: "connection",
+          tenantId: existing.record.tenantId,
+          userId: existing.record.userId,
+          connectionId: existing.record.connectionId
+        },
+        redirectUri: input.redirectUri,
+        scopes: input.scopes
+      });
 
       const response = await exchangeToken({
         provider,
@@ -584,20 +619,36 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     const requestId = input.requestId ?? randomUUID();
     let remoteRevokeAttempted = false;
     let localTokenDeleted = false;
-    let connectionDeleted = false;
+    let connectionCleanup: OAuthFlowConnectionCleanup = {
+      attempted: false,
+      deleted: false,
+      reason: "not-configured"
+    };
 
     try {
       const revokeToken = this.tokenHttpClient.revokeToken.bind(this.tokenHttpClient) as (
-        request: OAuthRevokeTokenInput
+        request: OAuthRevocationRequest
       ) => Promise<void>;
       const provider = this.getProvider(input.providerId);
-      const runtime = this.getRuntimeConfig(input.providerId);
       const tokenRecord = await this.getTokenSetByConnection(input.connectionId);
       const revokeRemote = input.revokeRemote ?? false;
 
       let revokeError: OAuthFlowError | null = null;
       if (revokeRemote && provider.revocationUrl && tokenRecord) {
         remoteRevokeAttempted = true;
+        const runtime = await this.getRuntimeConfig({
+          providerId: input.providerId,
+          subject: {
+            kind: "connection",
+            tenantId: tokenRecord.record.tenantId,
+            userId: tokenRecord.record.userId,
+            connectionId: tokenRecord.record.connectionId
+          },
+          redirectUri: undefined,
+          scopes: undefined,
+          prompt: undefined,
+          loginHint: undefined
+        });
         const tokenToRevoke = tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken;
         try {
           await revokeToken({
@@ -615,19 +666,14 @@ class DefaultOAuthFlowService implements OAuthFlowService {
 
       await this.deleteTokenByConnection(input.connectionId);
       localTokenDeleted = tokenRecord !== null;
-      connectionDeleted = true;
-
-      await invokeIdentityHook(this.config.identityHooks, "onDisconnected", input);
+      const disconnectContext = this.createDisconnectContext(input, tokenRecord, remoteRevokeAttempted, localTokenDeleted);
+      connectionCleanup = await this.runDisconnectHook(disconnectContext);
 
       if (revokeError) {
         const errorWithFlags = new OAuthFlowError("INTERNAL_ERROR", "provider revoke failed after local cleanup", {
           status: 502,
           retryable: false,
-          details: {
-            remoteRevokeAttempted,
-            localTokenDeleted,
-            connectionDeleted
-          }
+          details: toDisconnectEventDetails(remoteRevokeAttempted, localTokenDeleted, connectionCleanup)
         });
         this.emitEvent({
           name: "oauth.flow.disconnect.failed",
@@ -646,7 +692,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         disconnected: true,
         remoteRevokeAttempted,
         localTokenDeleted,
-        connectionDeleted
+        connectionCleanup,
+        connectionDeleted: connectionCleanup.deleted
       };
 
       this.emitEvent({
@@ -655,7 +702,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         providerId: input.providerId,
         at: this.now().toISOString(),
         ok: true,
-        connectionId: input.connectionId
+        connectionId: input.connectionId,
+        details: toDisconnectEventDetails(remoteRevokeAttempted, localTokenDeleted, connectionCleanup)
       });
 
       return result;
@@ -734,6 +782,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
       return tokenId;
     }
 
+    this.assertTokenStorageIsSafe("handleCallback", input.providerId, input.connectionId);
+
     const record: TokenRecord = {
       tokenId,
       tenantId,
@@ -775,12 +825,40 @@ class DefaultOAuthFlowService implements OAuthFlowService {
     return provider;
   }
 
-  private getRuntimeConfig(providerId: string): OAuthProviderRuntimeConfig {
-    const runtime = this.config.providerRuntimeConfig[providerId];
-    if (!runtime) {
-      throw new OAuthFlowError("OAUTH_RUNTIME_CONFIG_INVALID", `Missing runtime OAuth config for provider: ${providerId}`, {
+  private async getRuntimeConfig(
+    input: OAuthProviderRuntimeConfigResolverInput
+  ): Promise<OAuthFlowProviderRuntimeConfig> {
+    if (this.config.resolveProviderRuntimeConfig) {
+      try {
+        const resolved = await this.config.resolveProviderRuntimeConfig(input);
+        if (!resolved?.clientId) {
+          throw new OAuthFlowError("OAUTH_RUNTIME_CONFIG_INVALID", "Resolved OAuth runtime config missing clientId", {
+            status: 500,
+            retryable: false,
+            details: { providerId: input.providerId }
+          });
+        }
+
+        return resolved;
+      } catch (error) {
+        if (error instanceof OAuthFlowError) {
+          throw error;
+        }
+
+        throw new OAuthFlowError("OAUTH_RUNTIME_CONFIG_INVALID", "Failed to resolve OAuth runtime config", {
+          status: 500,
+          retryable: false,
+          details: { providerId: input.providerId }
+        });
+      }
+    }
+
+    const runtime = this.config.providerRuntimeConfig?.[input.providerId];
+    if (!runtime?.clientId) {
+      throw new OAuthFlowError("OAUTH_RUNTIME_CONFIG_INVALID", `Missing runtime OAuth config for provider: ${input.providerId}`, {
         status: 500,
-        retryable: false
+        retryable: false,
+        details: { providerId: input.providerId }
       });
     }
 
@@ -851,6 +929,8 @@ class DefaultOAuthFlowService implements OAuthFlowService {
       return;
     }
 
+    this.assertTokenStorageIsSafe("refresh", existing.providerId, existing.connectionId);
+
     await this.config.tokenVault.put({
       ...existing,
       encryptedPayload: JSON.stringify(tokenSet),
@@ -861,6 +941,83 @@ class DefaultOAuthFlowService implements OAuthFlowService {
 
   private async deleteTokenByConnection(connectionId: string): Promise<void> {
     await this.config.tokenVault.deleteByConnection(connectionId);
+  }
+
+  private createDisconnectContext(
+    input: OAuthFlowDisconnectInput,
+    tokenRecord: { record: TokenRecord; tokenSet: OAuthTokenSet } | null,
+    remoteRevokeAttempted: boolean,
+    localTokenDeleted: boolean
+  ): OAuthFlowDisconnectContext {
+    return {
+      ...input,
+      revokeRemote: input.revokeRemote ?? false,
+      subject: tokenRecord
+        ? {
+            kind: "connection",
+            tenantId: tokenRecord.record.tenantId,
+            userId: tokenRecord.record.userId,
+            connectionId: tokenRecord.record.connectionId
+          }
+        : undefined,
+      tokenMetadata: tokenRecord ? toDisconnectTokenMetadata(tokenRecord.record) : undefined,
+      remoteRevokeAttempted,
+      localTokenDeleted
+    };
+  }
+
+  private async runDisconnectHook(input: OAuthFlowDisconnectContext): Promise<OAuthFlowConnectionCleanup> {
+    const hook = this.config.identityHooks?.onDisconnected;
+    if (!hook) {
+      return {
+        attempted: false,
+        deleted: false,
+        reason: "not-configured"
+      };
+    }
+
+    let result: unknown;
+    try {
+      result = await hook(input);
+    } catch {
+      throw new OAuthFlowError("OAUTH_HOOK_FAILED", "identity hook failed", {
+        status: 500,
+        retryable: false,
+        details: toDisconnectEventDetails(input.remoteRevokeAttempted, input.localTokenDeleted, {
+          attempted: true,
+          deleted: false,
+          reason: "retained"
+        })
+      });
+    }
+
+    return validateDisconnectCleanupResult(result, input);
+  }
+
+  private assertTokenStorageIsSafe(operation: "handleCallback" | "refresh", providerId: string, connectionId: string): void {
+    if (isEncryptedTokenVault(this.config.tokenVault) || this.getTokenStorageMode() === "plaintext-unsafe") {
+      return;
+    }
+
+    throw new OAuthFlowError(
+      "OAUTH_TOKEN_STORAGE_UNSAFE",
+      "encrypted token storage is required unless plaintext-unsafe mode is explicitly enabled",
+      {
+        status: 500,
+        retryable: false,
+        details: {
+          operation,
+          providerId,
+          connectionId,
+          storageMode: this.getTokenStorageMode(),
+          vaultKind: "plaintext"
+        }
+      }
+    );
+  }
+
+  private getTokenStorageMode(): OAuthTokenStorageMode {
+    return this.config.tokenStorageMode ?? "encrypted-required";
   }
 }
 
@@ -960,21 +1117,6 @@ function cloneResolvedIdentity(identity: OAuthFlowResolvedIdentity): OAuthFlowRe
   };
 }
 
-function mapRuntimeConfig(
-  runtimeConfig: Record<string, OAuthProviderRuntimeConfig>
-): Record<string, { clientId: string; allowlistedRedirectUris?: string[] }> {
-  const mapped: Record<string, { clientId: string; allowlistedRedirectUris?: string[] }> = {};
-
-  for (const [providerId, runtime] of Object.entries(runtimeConfig)) {
-    mapped[providerId] = {
-      clientId: runtime.clientId,
-      allowlistedRedirectUris: runtime.allowlistedRedirectUris
-    };
-  }
-
-  return mapped;
-}
-
 function mapToOAuthFlowError(error: unknown): OAuthFlowError {
   if (error instanceof OAuthFlowError) {
     return error;
@@ -1069,6 +1211,89 @@ function parseTokenPayload(payload: string): OAuthTokenSet {
       retryable: false
     });
   }
+}
+
+function validateDisconnectCleanupResult(
+  value: unknown,
+  input: OAuthFlowDisconnectContext
+): OAuthFlowConnectionCleanup {
+  if (!value || typeof value !== "object") {
+    throw invalidDisconnectCleanupResult(input);
+  }
+
+  const candidate = value as Partial<OAuthFlowConnectionCleanup>;
+  if (
+    typeof candidate.attempted !== "boolean" ||
+    typeof candidate.deleted !== "boolean" ||
+    (candidate.reason !== "deleted" &&
+      candidate.reason !== "not-found" &&
+      candidate.reason !== "retained" &&
+      candidate.reason !== "not-configured")
+  ) {
+    throw invalidDisconnectCleanupResult(input);
+  }
+
+  if (!isValidDisconnectCleanupSemantics(candidate)) {
+    throw invalidDisconnectCleanupResult(input);
+  }
+
+  return {
+    attempted: candidate.attempted,
+    deleted: candidate.deleted,
+    reason: candidate.reason
+  };
+}
+
+function invalidDisconnectCleanupResult(input: OAuthFlowDisconnectContext): OAuthFlowError {
+  return new OAuthFlowError("VALIDATION_ERROR", "disconnect hook returned invalid cleanup result", {
+    status: 500,
+    retryable: false,
+    details: toDisconnectEventDetails(input.remoteRevokeAttempted, input.localTokenDeleted, {
+      attempted: true,
+      deleted: false,
+      reason: "retained"
+    })
+  });
+}
+
+function isValidDisconnectCleanupSemantics(candidate: Partial<OAuthFlowConnectionCleanup>): candidate is OAuthFlowConnectionCleanup {
+  if (candidate.attempted === false) {
+    return candidate.deleted === false && candidate.reason === "not-configured";
+  }
+
+  if (candidate.deleted === true) {
+    return candidate.reason === "deleted";
+  }
+
+  return candidate.reason === "not-found" || candidate.reason === "retained";
+}
+
+function toDisconnectTokenMetadata(record: TokenRecord): OAuthFlowDisconnectTokenMetadata {
+  return {
+    tokenId: record.tokenId,
+    tenantId: record.tenantId,
+    userId: record.userId,
+    providerId: record.providerId,
+    connectionId: record.connectionId,
+    keyRef: record.keyRef,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    expiresAt: record.expiresAt
+  };
+}
+
+function toDisconnectEventDetails(
+  remoteRevokeAttempted: boolean,
+  localTokenDeleted: boolean,
+  connectionCleanup: OAuthFlowConnectionCleanup
+): Record<string, unknown> {
+  return {
+    remoteRevokeAttempted,
+    localDeleted: localTokenDeleted,
+    cleanupAttempted: connectionCleanup.attempted,
+    cleanupDeleted: connectionCleanup.deleted,
+    cleanupReason: connectionCleanup.reason
+  };
 }
 
 export function createOAuthFlowService(config: OAuthFlowServiceConfig): OAuthFlowService {

@@ -1,19 +1,31 @@
 ---
 title: OAuth Flow
-description: Orchestrate OAuth start, callback, refresh, and disconnect workflows with one high-level service.
+description: Orchestrate OAuth start, callback, refresh, and disconnect workflows with the shared production-safe lifecycle service.
 ---
 
-`@superfunctions/oauth-flow` is the high-level orchestration package for teams that want a complete OAuth lifecycle instead of assembling every lower-level piece manually. It wraps the hardest parts of the flow into one service: starting an install, validating the callback, persisting tokens, refreshing connections, disconnecting providers, and emitting lifecycle events. That makes it the fastest path from “we need OAuth in our app” to a working integration surface.
-
-For external application teams, this package is often the right default because it keeps the flow logic in one place while still letting you choose providers, storage, hooks, and HTTP transport. For library authors or platform teams with unusual orchestration needs, it also serves as a reference implementation for how the lower-level packages fit together.
+`@superfunctions/oauth-flow` is the highest-level package in the shared OAuth family. It composes `oauth-core`, `oauth-http`, and `oauth-storage` into one service that can start installs, validate callbacks, persist tokens, refresh them later, and disconnect providers when a user or worker asks for cleanup. For most external apps and Superfunctions packages, this is the right default abstraction because it centralizes the lifecycle rules without forcing a specific framework adapter.
 
 ## What It Is
 
-`@superfunctions/oauth-flow` exports `createOAuthFlowService()` together with the types used by the resulting service. The service supports `start()`, `handleCallback()`, `refresh()`, and `disconnect()`. Internally it composes [`oauth-core`](/docs/authentication/oauth-core) for state and callback invariants, [`oauth-http`](/docs/authentication/oauth-http) for token transport, and [`oauth-storage`](/docs/authentication/oauth-storage) for state and token persistence.
+The package exports `createOAuthFlowService()` plus the service and hook types around it. A configured `OAuthFlowService` supports:
+
+- `start()`
+- `handleCallback()`
+- `refresh()`
+- `disconnect()`
+
+It is orchestration, not routing. If you want reusable HTTP endpoints on top of the flow service, add [`oauth-router`](/docs/authentication/oauth-router).
 
 ## When To Use It
 
-Use this package when your application needs a real OAuth installation lifecycle and you want sensible defaults without losing important hooks. It is a good fit for SaaS integrations, marketplace installs, developer portals that connect customer accounts to providers, and any service that needs refresh-token maintenance or disconnect cleanup. If you only need authentication at request time, `@superfunctions/auth` is enough. If you need custom orchestration around a lower-level policy engine, the `oauth-core` path gives you more control.
+Use `@superfunctions/oauth-flow` when your application or shared function needs a real OAuth lifecycle:
+
+- customer-managed SaaS integrations
+- marketplace/provider installs
+- background refresh workers
+- explicit disconnect and local cleanup workflows
+
+If you need lower-level control over state handling and token exchange, start from [`oauth-core`](/docs/authentication/oauth-core) and [`oauth-http`](/docs/authentication/oauth-http) instead.
 
 ## Install
 
@@ -23,15 +35,22 @@ npm install @superfunctions/oauth-flow @superfunctions/oauth-providers @superfun
 
 ## Quick Start
 
-The quickest setup is to provide one or more provider descriptors, runtime secrets, and storage adapters.
+The production-safe default is encrypted token persistence.
 
 ```ts
 import { createOAuthFlowService } from "@superfunctions/oauth-flow";
 import { getOAuthProviderDescriptor } from "@superfunctions/oauth-providers";
 import {
+  AesGcmTokenCipher,
+  EncryptedTokenVault,
   MemoryOAuthStateStore,
   MemoryTokenVault,
 } from "@superfunctions/oauth-storage";
+
+const tokenVault = new EncryptedTokenVault(
+  new MemoryTokenVault(),
+  new AesGcmTokenCipher(() => Buffer.alloc(32, 7)),
+);
 
 const flow = createOAuthFlowService({
   providers: {
@@ -45,11 +64,11 @@ const flow = createOAuthFlowService({
     },
   },
   stateStore: new MemoryOAuthStateStore(),
-  tokenVault: new MemoryTokenVault(),
+  tokenVault,
 });
 ```
 
-From there, your app can start an install and later complete the callback with the same service.
+From there you can issue the authorization redirect and later complete the callback with the same service.
 
 ```ts
 const started = await flow.start({
@@ -69,64 +88,56 @@ const connected = await flow.handleCallback({
 
 ## Core Concepts
 
-The package draws a clear line between subject identity, provider configuration, and token persistence. `start()` captures the subject (`tenantId`, `userId`, optional `connectionId`) together with the provider choice and redirect URI. `handleCallback()` consumes the stored state, exchanges the authorization code, and writes the resulting token record. `refresh()` and `disconnect()` then operate on that connection-centric token record over time.
+The first concept is connection-centric lifecycle management. `start()` captures the provider choice, redirect URI, and subject. `handleCallback()` consumes state and writes the token record. `refresh()` and `disconnect()` then act on the long-lived connection record over time. That lets apps such as `plugfn` or `authfn` reuse one service in routes, workers, and background cleanup tasks.
 
-The second concept is hooks and events. Identity hooks let your application react when a connection is created or removed, while emitted events provide a stable stream of lifecycle outcomes such as `oauth.flow.started` and `oauth.flow.refresh.failed`. That makes the package useful beyond a single web request: the same service can feed analytics, auditing, or support tooling.
+The second concept is security posture around token persistence. `oauth-flow` now defaults `tokenStorageMode` to `encrypted-required`. If you pass a plain `TokenVault`, writes fail with `OAUTH_TOKEN_STORAGE_UNSAFE` unless you explicitly opt into `plaintext-unsafe`. That makes secure storage the default contract instead of a documentation suggestion.
+
+## Compatibility Notes
+
+- `tokenStorageMode` defaults to `encrypted-required`.
+- `plaintext-unsafe` exists only for tests, local prototypes, and controlled migration windows.
+- `disconnect()` returns `connectionCleanup` as the canonical cleanup signal.
+- `connectionDeleted` remains as a deprecated alias of `connectionCleanup.deleted` for compatibility.
 
 ## Real-World Example
 
-An application that offers customer-managed provider connections usually needs a full lifecycle: launch install, persist the connection, refresh the token in the background, and let users disconnect later. `@superfunctions/oauth-flow` is designed for exactly that surface.
+This is the shape we expect most Superfunctions integrations to use: one flow service, optional identity hooks, and route exposure through `oauth-router`.
 
 ```ts
 import { createOAuthFlowService } from "@superfunctions/oauth-flow";
-import { getOAuthProviderDescriptor } from "@superfunctions/oauth-providers";
-import {
-  MemoryOAuthStateStore,
-  MemoryTokenVault,
-} from "@superfunctions/oauth-storage";
+import { createOAuthConnectionRoutes } from "@superfunctions/oauth-router";
 
 const flow = createOAuthFlowService({
-  providers: { github: getOAuthProviderDescriptor("github") },
-  providerRuntimeConfig: {
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-      allowlistedRedirectUris: ["https://app.example/oauth/github/callback"],
-    },
-  },
-  stateStore: new MemoryOAuthStateStore(),
-  tokenVault: new MemoryTokenVault(),
+  providers,
+  resolveProviderRuntimeConfig,
+  stateStore,
+  tokenVault,
   identityHooks: {
-    async onConnected(result) {
-      console.log("connected", result.connectionId, result.providerId);
-    },
     async onDisconnected(input) {
-      console.log("disconnected", input.connectionId);
+      return {
+        attempted: true,
+        deleted: true,
+        reason: "deleted",
+      };
     },
   },
 });
 
-await flow.refresh({
-  connectionId: "github-primary",
-  providerId: "github",
-  redirectUri: "https://app.example/oauth/github/callback",
-});
-
-await flow.disconnect({
-  connectionId: "github-primary",
-  providerId: "github",
-  revokeRemote: true,
+const routes = createOAuthConnectionRoutes({
+  basePath: "/oauth/connections",
+  flowService: flow,
+  async resolveStartInput(request) {
+    return (await request.json()) as never;
+  },
 });
 ```
 
-That example shows why `oauth-flow` is the high-level path in this category: your application code coordinates business events and HTTP routes, while the package handles replay protection, token merging during refresh, revocation attempts, and cleanup flags.
-
 ## Related Packages
 
-- [`oauth-core`](/docs/authentication/oauth-core) when you need lower-level OAuth primitives instead of a complete lifecycle service.
-- [`oauth-storage`](/docs/authentication/oauth-storage) for the state store and token vault abstractions used by the flow.
-- [`oauth-testing`](/docs/authentication/oauth-testing) when you want in-memory helpers for deterministic lifecycle tests.
+- [`oauth-router`](/docs/authentication/oauth-router) for reusable route factories
+- [`oauth-storage`](/docs/authentication/oauth-storage) for state/token persistence and `EncryptedTokenVault`
+- [`oauth-providers`](/docs/authentication/oauth-providers) for curated provider descriptors and policy helpers
 
 ## Troubleshooting
 
-If `start()` fails before producing an authorization URL, inspect the configured provider ID and redirect allowlist before you look at token transport. If `handleCallback()` reports a replay or mismatch error, verify that the callback request used the same redirect URI and state issued by `start()`. If refresh fails but the old token record should remain valid, check your application’s error handling rather than assuming the token was overwritten; the service is designed to keep the prior record intact when refresh exchange fails.
+If `start()` fails before producing a redirect URL, inspect provider IDs, runtime config resolution, and redirect allowlists first. If callback writes fail with `OAUTH_TOKEN_STORAGE_UNSAFE`, switch to `EncryptedTokenVault` or explicitly choose `plaintext-unsafe` for a non-production harness. If disconnect behavior is surprising, inspect `connectionCleanup` instead of the deprecated `connectionDeleted` alias to understand whether local connection cleanup was attempted and whether it actually deleted anything.

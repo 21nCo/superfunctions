@@ -1,2 +1,3 @@
 timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-21T14:40:09Z,Codex (GPT-5),Codex Desktop,spec,unknown-agent,,/Users/serro/Documents/dev/n/superfunctions/packages/.conduct/specs/2026-03-21-new-o4p8n2r6-spec
+2026-03-27T01:33:22Z,unknown,Codex Desktop,spec,unknown-agent,,packages/.conduct/specs/2026-03-27-audit-fix-q9m4k2r7-spec

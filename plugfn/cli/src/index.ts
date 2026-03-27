@@ -43,8 +43,11 @@ program
   .command('test')
   .description('Test connections and actions')
   .option('-p, --provider <name>', 'Provider to test')
+  .option('-u, --user-id <id>', 'User ID to resolve connections for')
   .option('-a, --action <name>', 'Action to test')
-  .option('-c, --connection <id>', 'Connection ID to use')
+  .option('-c, --connection-id <id>', 'Connection ID to use')
+  .option('--params-file <path>', 'JSON file with action params')
+  .option('--webhook-fixture <path>', 'JSON file with webhook diagnostic fixture')
   .option('--json', 'Emit machine-readable JSON output')
   .option('--live', 'Run optional provider live health check')
   .action(testCommand);

@@ -5,8 +5,10 @@ import { linearProvider } from '../../../src/providers/linear/index.js';
 import { WebhookHandler } from '../../../src/webhooks/webhook-handler.js';
 import { NoopLogger } from '../../../src/utils/logger.js';
 
-function sign(payload: unknown, secret: string): string {
-  const digest = createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+const encoder = new TextEncoder();
+
+function sign(rawBody: string, secret: string): string {
+  const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
   return `sha256=${digest}`;
 }
 
@@ -29,20 +31,29 @@ describe('linear webhook verification', () => {
       },
     };
     const secret = 'linear-secret';
+    const rawBody = JSON.stringify(payload);
 
     const accepted = await webhookHandler.handleWebhook(
       'linear',
       'issue.updated',
-      payload,
-      { 'x-signature': sign(payload, secret) },
-      secret
+      undefined,
+      { 'x-signature': sign(rawBody, secret) },
+      secret,
+      { rawBody: encoder.encode(rawBody) }
     );
 
     expect(accepted.verified).toBe(true);
     expect(handler).toHaveBeenCalledTimes(1);
 
     await expect(
-      webhookHandler.handleWebhook('linear', 'issue.updated', payload, { 'x-signature': 'bad' }, secret)
+      webhookHandler.handleWebhook(
+        'linear',
+        'issue.updated',
+        undefined,
+        { 'x-signature': 'bad' },
+        secret,
+        { rawBody: encoder.encode(rawBody) }
+      )
     ).rejects.toMatchObject({
       code: 'WEBHOOK_SIGNATURE_INVALID',
     });
@@ -70,13 +81,15 @@ describe('linear webhook verification', () => {
       },
     };
     const secret = 'linear-secret';
+    const rawBody = JSON.stringify(payload);
 
     const accepted = await webhookHandler.handleWebhook(
       'linear',
       'issue_comment.created',
-      payload,
-      { 'x-signature': sign(payload, secret) },
-      secret
+      undefined,
+      { 'x-signature': sign(rawBody, secret) },
+      secret,
+      { rawBody: encoder.encode(rawBody) }
     );
 
     expect(accepted.verified).toBe(true);
@@ -86,9 +99,10 @@ describe('linear webhook verification', () => {
       webhookHandler.handleWebhook(
         'linear',
         'issue_comment.created',
-        payload,
+        undefined,
         { 'x-signature': 'sha256=invalid' },
-        secret
+        secret,
+        { rawBody: encoder.encode(rawBody) }
       )
     ).rejects.toMatchObject({
       code: 'WEBHOOK_SIGNATURE_INVALID',

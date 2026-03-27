@@ -5,8 +5,10 @@ import { githubProvider } from '../../../src/providers/github/index.js';
 import { WebhookHandler } from '../../../src/webhooks/webhook-handler.js';
 import { NoopLogger } from '../../../src/utils/logger.js';
 
-function sign(payload: unknown, secret: string): string {
-  const digest = createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+const encoder = new TextEncoder();
+
+function sign(rawBody: string, secret: string): string {
+  const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
   return `sha256=${digest}`;
 }
 
@@ -37,13 +39,15 @@ describe('github webhook verification', () => {
       },
     };
     const secret = 'github-secret';
+    const rawBody = JSON.stringify(payload);
 
     const accepted = await handler.handleWebhook(
       'github',
       'pull_request.closed',
-      payload,
-      { 'x-hub-signature-256': sign(payload, secret) },
-      secret
+      undefined,
+      { 'x-hub-signature-256': sign(rawBody, secret) },
+      secret,
+      { rawBody: encoder.encode(rawBody) }
     );
     expect(accepted.verified).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -52,9 +56,10 @@ describe('github webhook verification', () => {
       handler.handleWebhook(
         'github',
         'pull_request.closed',
-        payload,
+        undefined,
         { 'x-hub-signature-256': 'sha256=bad' },
-        secret
+        secret,
+        { rawBody: encoder.encode(rawBody) }
       )
     ).rejects.toMatchObject({
       code: 'WEBHOOK_SIGNATURE_INVALID',
@@ -91,13 +96,15 @@ describe('github webhook verification', () => {
       },
     };
     const secret = 'github-secret';
+    const rawBody = JSON.stringify(payload);
 
     const accepted = await handler.handleWebhook(
       'github',
       'issue_comment.created',
-      payload,
-      { 'x-hub-signature-256': sign(payload, secret) },
-      secret
+      undefined,
+      { 'x-hub-signature-256': sign(rawBody, secret) },
+      secret,
+      { rawBody: encoder.encode(rawBody) }
     );
     expect(accepted.verified).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -106,9 +113,10 @@ describe('github webhook verification', () => {
       handler.handleWebhook(
         'github',
         'issue_comment.created',
-        payload,
+        undefined,
         { 'x-hub-signature-256': 'sha256=invalid' },
-        secret
+        secret,
+        { rawBody: encoder.encode(rawBody) }
       )
     ).rejects.toMatchObject({
       code: 'WEBHOOK_SIGNATURE_INVALID',

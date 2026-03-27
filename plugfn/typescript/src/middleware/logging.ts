@@ -1,5 +1,9 @@
 import type { Logger } from '../types/action.js';
-import type { Adapter } from '../types/config.js';
+import type { Adapter as DbAdapter } from '@superfunctions/db';
+import {
+  ensurePlugFnDatabaseAdapter,
+  type PlugFnDatabaseStorageAdapter,
+} from '../storage/adapters/database.js';
 
 export interface ActionLogEntry {
   id: string;
@@ -21,11 +25,15 @@ export interface ActionLogEntry {
  * Logging middleware for action execution
  */
 export class LoggingMiddleware {
+  private readonly adapter?: PlugFnDatabaseStorageAdapter;
+
   constructor(
     private logger: Logger,
-    private adapter?: Adapter,
+    adapter?: DbAdapter | PlugFnDatabaseStorageAdapter,
     private options: { logRequests?: boolean; logResponses?: boolean } = {}
-  ) {}
+  ) {
+    this.adapter = adapter ? ensurePlugFnDatabaseAdapter(adapter) : undefined;
+  }
 
   /**
    * Log action start
@@ -86,7 +94,7 @@ export class LoggingMiddleware {
     };
 
     try {
-      await this.adapter.createActionLog(logEntry);
+      await this.adapter.createActionLog(logEntry as unknown as Record<string, unknown>);
     } catch (error) {
       this.logger.error('Failed to persist action log', { error });
     }
@@ -128,4 +136,3 @@ export class LoggingMiddleware {
     return `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
-

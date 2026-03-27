@@ -1,19 +1,24 @@
 ---
 title: OAuth Storage
-description: Persist OAuth state and tokens with shared in-memory, SQL, DB-adapter, and encrypted vault primitives.
+description: Persist OAuth state and tokens with shared contracts, durable adapters, and encrypted token vault helpers.
 ---
 
-`@superfunctions/oauth-storage` is the persistence layer for the OAuth stack. It gives you contracts and adapters for two kinds of records: short-lived OAuth state used during redirect/callback handling, and longer-lived token records used for refresh and disconnect workflows. That sounds simple, but getting the boundaries right matters. State needs to be consumed exactly once and expire quickly. Tokens need durable lookup by connection ID, optional encryption, and key rotation support.
-
-This package is relevant to both application developers and library authors. App teams use it to choose where OAuth data lives: memory for tests, SQL for a simple server, or `@superfunctions/db` when they want the shared database adapter abstraction. Library authors use it because they can depend on storage interfaces instead of bundling one database driver into every OAuth feature.
+`@superfunctions/oauth-storage` is the persistence layer for the shared OAuth stack. It owns redirect state, token persistence, consent records, revocation-failure records, and encryption helpers, while leaving flow orchestration and HTTP transport to neighboring packages. That makes it the place where production data-safety choices become concrete: state should be single-use and short-lived, while tokens should be durable, indexed by connection, and encrypted before they become long-lived records.
 
 ## What It Is
 
-`@superfunctions/oauth-storage` exports `OAuthStateStore`, `TokenVault`, in-memory adapters, SQL adapters, a DB-adapter bridge, and token-encryption helpers. It also includes helper functions such as `consumeOAuthState()`, `purgeExpiredOAuthStates()`, and `getOAuthStorageSchema()` for the common lifecycle around those stores. The package intentionally stays focused on storage contracts and encryption primitives; it does not perform provider HTTP calls or decide when to start or refresh an OAuth flow.
+The package exports `OAuthStateStore`, `TokenVault`, consent/revocation-failure store contracts, in-memory adapters, SQL adapters, a `@superfunctions/db` bridge, and token-encryption helpers such as `EncryptedTokenVault` and `AesGcmTokenCipher`. It intentionally stays below the orchestration layer. It does not decide when installs start or how callbacks are exposed over HTTP.
 
 ## When To Use It
 
-Use this package whenever you need redirect state or token persistence outside a single request. That includes production OAuth installs, refresh-token workers, provider disconnect workflows, and test suites that should simulate real state consumption. If your use case is only generic request authentication, you do not need this package. If you want the full lifecycle service, use it together with [`oauth-flow`](/docs/authentication/oauth-flow).
+Use `@superfunctions/oauth-storage` whenever OAuth state or token material must survive the current request:
+
+- production OAuth installs
+- background refresh workers
+- provider disconnect cleanup
+- test harnesses that should exercise real storage contracts
+
+If you want a higher-level lifecycle service, pair it with [`oauth-flow`](/docs/authentication/oauth-flow). If you only need testing helpers, [`oauth-testing`](/docs/authentication/oauth-testing) re-exports the in-memory fixtures.
 
 ## Install
 
@@ -23,30 +28,29 @@ npm install @superfunctions/oauth-storage @superfunctions/db
 
 ## Quick Start
 
-For tests or a small prototype, the in-memory stores are the fastest way to get started.
+For production persistence, wrap your `TokenVault` in `EncryptedTokenVault`.
 
 ```ts
 import {
+  AesGcmTokenCipher,
+  EncryptedTokenVault,
   MemoryOAuthStateStore,
   MemoryTokenVault,
 } from "@superfunctions/oauth-storage";
 
 const stateStore = new MemoryOAuthStateStore();
-const tokenVault = new MemoryTokenVault();
+const cipher = new AesGcmTokenCipher((keyRef) => {
+  if (keyRef !== "oauth-default") {
+    throw new Error("unknown keyRef");
+  }
 
-await stateStore.put({
-  stateId: "st_1",
-  tenantId: "tenant_1",
-  userId: "user_1",
-  providerId: "github",
-  redirectUri: "https://app.example/oauth/callback",
-  requestedScopes: ["read:user"],
-  createdAt: new Date().toISOString(),
-  expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+  return Buffer.alloc(32, 7);
 });
+
+const tokenVault = new EncryptedTokenVault(new MemoryTokenVault(), cipher);
 ```
 
-If you need a portable schema and SQL-backed storage, use the SQL helpers or the DB adapter bridge.
+If you want the shared database abstraction, `createOAuthDbStorage(...)` resolves the canonical model names for you.
 
 ```ts
 import {
@@ -54,65 +58,53 @@ import {
   getOAuthStorageSchema,
 } from "@superfunctions/oauth-storage";
 
-const schemaStatements = getOAuthStorageSchema();
-
+const schema = getOAuthStorageSchema();
 const { stateStore, tokenVault, models } = createOAuthDbStorage({
   adapter: dbAdapter,
-  models: {
-    oauthStates: "oauth_states",
-    oauthTokenVault: "oauth_token_vault",
-  },
 });
 
-console.log(models.oauthStates, models.oauthTokenVault);
+console.log(schema);
+console.log(models.oauthStates); // oauth_states
+console.log(models.oauthTokenVault); // oauth_tokens
 ```
 
 ## Core Concepts
 
-The two core interfaces serve different lifecycles. `OAuthStateStore` holds temporary redirect state and supports one-time consumption plus expiry cleanup. `TokenVault` stores connection-bound token records and must support lookup by token ID and connection ID, deletion by connection, and optional key rotation. Keeping those interfaces separate makes it much easier to reason about replay protection and token retention policies.
+`OAuthStateStore` and `TokenVault` solve different lifecycle problems. State records exist to bind the authorization redirect to the callback and should be consumed exactly once. Token records live longer, are keyed by `connectionId`, and must support later refresh, revoke, and deletion workflows. Keeping those interfaces separate is what allows the higher-level stack to enforce replay protection without coupling long-lived tokens to short-lived redirect state.
 
-The encryption helpers are the other major concept. `EncryptedTokenVault` wraps any `TokenVault` and delegates encryption to a `TokenCipher` such as `AesGcmTokenCipher`. That gives you a clean place to manage key references and rotation without changing the higher-level OAuth lifecycle code. If your team already has a KMS or secrets-management story, you can plug its key material into the cipher’s key resolver.
+The second important concept is encrypted-at-rest token persistence. `EncryptedTokenVault` wraps any `TokenVault` implementation and delegates encryption/decryption to a `TokenCipher`, typically `AesGcmTokenCipher`. That keeps database adapters generic while making ciphertext the durable record format instead of plaintext JSON.
+
+## Production Guidance
+
+- The default token table/model name is `oauth_tokens`.
+- `MemoryOAuthStateStore` and `MemoryTokenVault` are convenience tools for tests and local prototypes, not horizontally scaled production storage.
+- Prefer `EncryptedTokenVault` whenever tokens leave process memory.
+- If you already use a custom token table/model name, keep passing `models.oauthTokenVault` while your schema migration catches up.
 
 ## Real-World Example
 
-Imagine a multi-tenant integration service that stores provider tokens in a shared database but wants application-level encryption and key rotation. `EncryptedTokenVault` lets you keep the database adapter generic while still treating ciphertext as the only durable payload.
+The pattern below is a good fit for a multi-tenant integration service that wants portable DB adapters but still requires encrypted token payloads.
 
 ```ts
 import {
   AesGcmTokenCipher,
   EncryptedTokenVault,
-  MemoryTokenVault,
+  createOAuthDbStorage,
 } from "@superfunctions/oauth-storage";
 
-const cipher = new AesGcmTokenCipher((keyRef) => {
-  if (keyRef !== "oauth-default") {
-    throw new Error("unknown key reference");
-  }
-
-  return Buffer.alloc(32, 7);
-});
-
-const vault = new EncryptedTokenVault(new MemoryTokenVault(), cipher);
-
-await vault.putTokenSet({
-  tokenId: "tok_1",
-  tenantId: "tenant_1",
-  userId: "user_1",
-  providerId: "github",
-  connectionId: "conn_1",
-  keyRef: "oauth-default",
-  tokenSet: { accessToken: "secret-access-token", refreshToken: "secret-refresh-token" },
-});
+const stores = createOAuthDbStorage({ adapter: dbAdapter });
+const cipher = new AesGcmTokenCipher(() => Buffer.alloc(32, 7));
+const tokenVault = new EncryptedTokenVault(stores.tokenVault, cipher);
 ```
 
-That structure works well for external products because your business logic can depend on `TokenVault` or `EncryptedTokenVault` while your persistence choice stays behind the interface. You can start with the in-memory or SQL adapters and later migrate to a different `@superfunctions/db` adapter without rewriting the rest of the OAuth lifecycle.
+That separation is especially useful in the Superfunctions ecosystem because packages such as `plugfn` or `authfn` can reuse the same persistence boundary without embedding a framework-specific database implementation.
 
 ## Related Packages
 
-- [`oauth-core`](/docs/authentication/oauth-core) for the service that consumes redirect state and callback invariants.
-- [`oauth-flow`](/docs/authentication/oauth-flow) for high-level lifecycle orchestration backed by a state store and token vault.
-- [DB](/docs/data-storage/db) if you want a portable database adapter beneath the OAuth storage layer.
+- [`oauth-core`](/docs/authentication/oauth-core) for redirect/state invariants above the storage layer
+- [`oauth-flow`](/docs/authentication/oauth-flow) for lifecycle orchestration
+- [`oauth-testing`](/docs/authentication/oauth-testing) for deterministic in-memory fixtures
 
 ## Troubleshooting
 
-If state consumption keeps returning `null`, inspect the timestamps first: expired state and already-consumed state are intentionally treated as invalid. If token lookup by connection ID fails after a refresh or callback, confirm you preserved the same `connectionId` across the lifecycle. When adding encryption, make sure your key resolver always returns a 32-byte key for the referenced key ID; if the key material shape changes between environments, the decryption failure will surface as a token-vault error long before your app sees a usable token payload.
+If callback handling reports missing or invalid state, check expiry and one-time consumption semantics before you inspect provider transport. If refresh or disconnect cannot find a token, verify the same `connectionId` is preserved across callback, refresh, and disconnect paths. If encrypted token reads fail after a deployment, inspect key resolution and key length first; `AesGcmTokenCipher` expects stable 32-byte key material for the referenced `keyRef`.

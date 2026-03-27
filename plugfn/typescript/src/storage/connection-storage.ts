@@ -1,5 +1,9 @@
 import type { Connection, ConnectionStatus } from '../types/connection.js';
-import type { Adapter } from '../types/config.js';
+import type { Adapter as DbAdapter } from '@superfunctions/db';
+import {
+  ensurePlugFnDatabaseAdapter,
+  type PlugFnDatabaseStorageAdapter,
+} from './adapters/database.js';
 
 /**
  * Connection storage interface
@@ -18,7 +22,11 @@ export interface ConnectionStorage {
  * Connection storage implementation using adapter
  */
 export class AdapterConnectionStorage implements ConnectionStorage {
-  constructor(private adapter: Adapter) {}
+  private readonly adapter: PlugFnDatabaseStorageAdapter;
+
+  constructor(adapter: DbAdapter | PlugFnDatabaseStorageAdapter) {
+    this.adapter = ensurePlugFnDatabaseAdapter(adapter);
+  }
 
   async create(connection: Omit<Connection, 'id' | 'createdAt' | 'updatedAt'>): Promise<Connection> {
     const id = this.generateId();
@@ -31,8 +39,7 @@ export class AdapterConnectionStorage implements ConnectionStorage {
       updatedAt: now,
     };
     
-    await this.adapter.createConnection(fullConnection);
-    return fullConnection;
+    return this.adapter.createConnection(fullConnection);
   }
 
   async get(id: string): Promise<Connection | null> {
@@ -83,4 +90,3 @@ export class AdapterConnectionStorage implements ConnectionStorage {
     return `conn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
-

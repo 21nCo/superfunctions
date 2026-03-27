@@ -1,6 +1,7 @@
 import type { WebhookEvent, TriggerHandler } from '../types/trigger.js';
 import type { Logger } from '../types/action.js';
 import { ProviderRegistry } from '../core/provider-registry.js';
+import type { WebhookVerificationContext } from '../types/trigger.js';
 
 export class WebhookHandlerError extends Error {
   readonly code:
@@ -35,7 +36,10 @@ export class WebhookHandler {
     event: string,
     payload: any,
     headers: Record<string, string>,
-    secret?: string
+    secret?: string,
+    options: {
+      rawBody?: Uint8Array;
+    } = {}
   ): Promise<WebhookEvent> {
     const providerObj = this.providerRegistry.get(provider);
     if (!providerObj) {
@@ -45,6 +49,10 @@ export class WebhookHandler {
     const { triggerKey, trigger } = this.resolveTrigger(provider, event, providerObj.triggers ?? {});
     const normalizedHeaders = normalizeHeaders(headers);
     const signature = getSignature(provider, normalizedHeaders);
+    const verificationContext: WebhookVerificationContext = {
+      rawBody: options.rawBody,
+      headers: normalizedHeaders,
+    };
 
     let verified = true;
     if (trigger.webhookConfig?.verifySignature) {
@@ -53,7 +61,12 @@ export class WebhookHandler {
       }
 
       try {
-        verified = await trigger.webhookConfig.verifySignature(payload, signature, secret);
+        verified = await trigger.webhookConfig.verifySignature(
+          payload,
+          signature,
+          secret,
+          verificationContext
+        );
       } catch (error) {
         this.logger.error(`Webhook signature verification failed for ${provider}.${triggerKey}`, { error });
         throw new WebhookHandlerError('WEBHOOK_SIGNATURE_INVALID', 'signature verification failed');
@@ -64,9 +77,10 @@ export class WebhookHandler {
       }
     }
 
+    const parsedPayload = payload ?? parseWebhookPayload(options.rawBody);
     const transformedPayload = trigger.webhookConfig?.transformPayload
-      ? trigger.webhookConfig.transformPayload(payload)
-      : payload;
+      ? trigger.webhookConfig.transformPayload(parsedPayload)
+      : parsedPayload;
 
     const webhookEvent: WebhookEvent = {
       id: this.generateEventId(),
@@ -235,6 +249,9 @@ function getSignature(provider: string, headers: Record<string, string>): string
   const providerHeaderCandidates: Record<string, string[]> = {
     stripe: ['stripe-signature'],
     github: ['x-hub-signature-256', 'x-hub-signature'],
+    linear: ['linear-signature', 'x-linear-signature', 'x-signature'],
+    clickup: ['x-signature', 'clickup-signature'],
+    gmail: ['x-goog-signature-256', 'x-goog-signature', 'x-signature'],
     slack: ['x-slack-signature'],
   };
 
@@ -249,6 +266,23 @@ function getSignature(provider: string, headers: Record<string, string>): string
   }
 
   return '';
+}
+
+function parseWebhookPayload(rawBody?: Uint8Array): any {
+  if (!rawBody || rawBody.byteLength === 0) {
+    return {};
+  }
+
+  const rawText = new TextDecoder().decode(rawBody);
+  if (rawText.length === 0) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(rawText);
+  } catch (error) {
+    throw new WebhookHandlerError('VALIDATION_ERROR', 'invalid webhook payload', 400);
+  }
 }
 
 function getEventId(payload: any, headers: Record<string, string>): string | undefined {

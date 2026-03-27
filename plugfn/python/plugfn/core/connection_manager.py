@@ -1,7 +1,7 @@
 """Connection manager for handling user connections to providers."""
 
-import secrets
 import json
+import secrets
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 
@@ -42,6 +42,7 @@ class ConnectionManager:
 
         self.token_storage = SecureTokenStorage(encryption_key)
         self.oauth_handler = OAuthFlowHandler(MemoryTokenStore())
+        self._json_encoder = json.JSONEncoder()
 
     async def get_auth_url(
         self,
@@ -107,7 +108,7 @@ class ConnectionManager:
         }
 
         await self.oauth_handler.token_store.set(
-            f"oauth:state:{final_state}", json.dumps(state_data), ttl=600
+            f"oauth:state:{final_state}", self._encode_json(state_data), ttl=600
         )
 
         self.logger.info(f"Generated auth URL for {provider}", {"user_id": user_id})
@@ -161,7 +162,7 @@ class ConnectionManager:
         )
 
         # Encrypt credentials
-        encrypted_creds = self.token_storage.encrypt(json.dumps(tokens))
+        encrypted_creds = self.token_storage.encrypt(self._encode_json(tokens))
 
         # Create connection
         connection_id = f"conn_{secrets.token_urlsafe(16)}"
@@ -293,7 +294,7 @@ class ConnectionManager:
         )
 
         # Update credentials
-        encrypted_creds = self.token_storage.encrypt(json.dumps(new_tokens))
+        encrypted_creds = self.token_storage.encrypt(self._encode_json(new_tokens))
 
         now = datetime.now()
         expires_at = None
@@ -341,3 +342,15 @@ class ConnectionManager:
         await self.storage.update_connection(
             connection_id, {"last_used_at": datetime.now()}
         )
+
+    def resolve_webhook_secret(self, provider: str) -> Optional[str]:
+        """Resolve the configured webhook secret for a provider, if present."""
+        config = self.integration_configs.get(provider, {})
+        for key in ("webhook_secret", "signing_secret", "webhookSigningSecret", "signingSecret"):
+            value = config.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    def _encode_json(self, value: Dict[str, Any]) -> str:
+        return self._json_encoder.encode(value)

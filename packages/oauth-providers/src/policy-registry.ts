@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type { OAuthProviderDescriptor } from "@superfunctions/oauth-core";
+import { MemoryProviderPolicyAuditStore, MemoryProviderPolicyConsentStore } from "./stores.js";
+import type { ProviderPolicyAuditStore, ProviderPolicyConsentStore } from "./stores.js";
 
 export type OAuthProviderId = "google" | "microsoft" | "yahoo" | "apple" | "github";
 export type ProviderFeatureMode = "metadata-only" | "snippet" | "full-body";
@@ -94,6 +97,7 @@ export interface PolicyVersionUpdateInput {
 }
 
 export interface PolicyAuditEvent {
+  auditEventId: string;
   providerId: OAuthProviderId;
   fromVersion: string;
   toVersion: string;
@@ -102,12 +106,30 @@ export interface PolicyAuditEvent {
   changedAt: string;
 }
 
+export type ProviderPolicyIdKind = "consent" | "audit";
+export type ProviderPolicyIdGenerator = (kind: ProviderPolicyIdKind) => string;
+
+export interface ProviderPolicyRegistryOptions {
+  consentStore?: ProviderPolicyConsentStore;
+  auditStore?: ProviderPolicyAuditStore;
+  idGenerator?: ProviderPolicyIdGenerator;
+  now?: () => string;
+}
+
 export class ProviderPolicyError extends Error {
-  readonly code: "OAUTH_SCOPE_DISALLOWED" | "PROVIDER_POLICY_BLOCKED" | "VALIDATION_ERROR";
+  readonly code:
+    | "OAUTH_SCOPE_DISALLOWED"
+    | "PROVIDER_POLICY_BLOCKED"
+    | "PROVIDER_POLICY_STORE_FAILED"
+    | "VALIDATION_ERROR";
   readonly details?: Record<string, unknown>;
 
   constructor(
-    code: "OAUTH_SCOPE_DISALLOWED" | "PROVIDER_POLICY_BLOCKED" | "VALIDATION_ERROR",
+    code:
+      | "OAUTH_SCOPE_DISALLOWED"
+      | "PROVIDER_POLICY_BLOCKED"
+      | "PROVIDER_POLICY_STORE_FAILED"
+      | "VALIDATION_ERROR",
     message: string,
     details?: Record<string, unknown>
   ) {
@@ -120,16 +142,20 @@ export class ProviderPolicyError extends Error {
 
 export class ProviderPolicyRegistry {
   private readonly policies = new Map<OAuthProviderId, ProviderPolicyDefinition>();
-  private readonly consentRecords: ConsentRecord[] = [];
-  private readonly auditEvents: PolicyAuditEvent[] = [];
+  private readonly consentStore: ProviderPolicyConsentStore;
+  private readonly auditStore: ProviderPolicyAuditStore;
   private readonly now: () => string;
+  private readonly idGenerator: ProviderPolicyIdGenerator;
 
-  constructor(policies: ReadonlyArray<ProviderPolicyDefinition>, now: () => string = () => new Date().toISOString()) {
+  constructor(policies: ReadonlyArray<ProviderPolicyDefinition>, options: ProviderPolicyRegistryOptions = {}) {
     for (const policy of policies) {
       this.policies.set(policy.providerId, clonePolicy(policy));
     }
 
-    this.now = now;
+    this.consentStore = options.consentStore ?? new MemoryProviderPolicyConsentStore();
+    this.auditStore = options.auditStore ?? new MemoryProviderPolicyAuditStore();
+    this.now = options.now ?? (() => new Date().toISOString());
+    this.idGenerator = options.idGenerator ?? defaultProviderPolicyIdGenerator;
   }
 
   getPolicy(providerId: OAuthProviderId): ProviderPolicyDefinition {
@@ -145,7 +171,7 @@ export class ProviderPolicyRegistry {
     return [...this.policies.values()].map((policy) => clonePolicy(policy));
   }
 
-  validateScopes(input: ScopeValidationInput): ScopeValidationResult {
+  async validateScopes(input: ScopeValidationInput): Promise<ScopeValidationResult> {
     const policy = this.getPolicy(input.providerId);
     const featurePolicy = policy.featureScopes[input.feature];
     if (!featurePolicy) {
@@ -165,7 +191,7 @@ export class ProviderPolicyRegistry {
     }
 
     const consentRecord: ConsentRecord = {
-      consentId: createConsentId(),
+      consentId: this.idGenerator("consent"),
       tenantId: input.tenantId,
       userId: input.userId,
       providerId: input.providerId,
@@ -176,7 +202,20 @@ export class ProviderPolicyRegistry {
       policyVersion: policy.policyVersion
     };
 
-    this.consentRecords.push(consentRecord);
+    try {
+      await this.consentStore.put(consentRecord);
+    } catch (error) {
+      throw new ProviderPolicyError(
+        "PROVIDER_POLICY_STORE_FAILED",
+        "failed to persist provider policy consent record",
+        {
+          providerId: input.providerId,
+          feature: input.feature,
+          cause: error instanceof Error ? error.message : String(error)
+        }
+      );
+    }
+
     return {
       authorized: true,
       consentRecord: cloneConsent(consentRecord)
@@ -210,42 +249,59 @@ export class ProviderPolicyRegistry {
     };
   }
 
-  recordPolicyVersionUpdate(input: PolicyVersionUpdateInput): PolicyAuditEvent {
+  async recordPolicyVersionUpdate(input: PolicyVersionUpdateInput): Promise<PolicyAuditEvent> {
     const currentPolicy = this.policies.get(input.providerId);
     if (!currentPolicy) {
       throw new ProviderPolicyError("VALIDATION_ERROR", `provider policy not found: ${input.providerId}`);
     }
 
+    const changedAt = input.changedAt ?? this.now();
     const updated: ProviderPolicyDefinition = {
       ...currentPolicy,
       policyVersion: input.newVersion
     };
-    this.policies.set(input.providerId, updated);
-
     const auditEvent: PolicyAuditEvent = {
+      auditEventId: this.idGenerator("audit"),
       providerId: input.providerId,
       fromVersion: currentPolicy.policyVersion,
       toVersion: input.newVersion,
       actor: input.actor,
       reason: input.reason,
-      changedAt: input.changedAt ?? this.now()
+      changedAt
     };
-    this.auditEvents.push(auditEvent);
-    return { ...auditEvent };
+
+    try {
+      await this.auditStore.put(auditEvent);
+    } catch (error) {
+      throw new ProviderPolicyError(
+        "PROVIDER_POLICY_STORE_FAILED",
+        "failed to persist provider policy audit event",
+        {
+          providerId: input.providerId,
+          fromVersion: currentPolicy.policyVersion,
+          toVersion: input.newVersion,
+          cause: error instanceof Error ? error.message : String(error)
+        }
+      );
+    }
+
+    this.policies.set(input.providerId, updated);
+    return cloneAuditEvent(auditEvent);
   }
 
-  getConsentRecords(): ConsentRecord[] {
-    return this.consentRecords.map((record) => cloneConsent(record));
+  async getConsentRecords(): Promise<ConsentRecord[]> {
+    const records = await this.consentStore.list();
+    return records.map((record) => cloneConsent(record));
   }
 
-  getPolicyAuditEvents(): PolicyAuditEvent[] {
-    return this.auditEvents.map((event) => ({ ...event }));
+  async getPolicyAuditEvents(): Promise<PolicyAuditEvent[]> {
+    const events = await this.auditStore.list();
+    return events.map((event) => cloneAuditEvent(event));
   }
 }
 
-function createConsentId(): string {
-  const entropy = Math.random().toString(36).slice(2, 10);
-  return `consent_${entropy}`;
+function defaultProviderPolicyIdGenerator(kind: ProviderPolicyIdKind): string {
+  return `${kind}_${randomUUID()}`;
 }
 
 function clonePolicy(policy: ProviderPolicyDefinition): ProviderPolicyDefinition {
@@ -289,4 +345,8 @@ function cloneConsent(record: ConsentRecord): ConsentRecord {
     ...record,
     scopes: [...record.scopes]
   };
+}
+
+function cloneAuditEvent(event: PolicyAuditEvent): PolicyAuditEvent {
+  return { ...event };
 }

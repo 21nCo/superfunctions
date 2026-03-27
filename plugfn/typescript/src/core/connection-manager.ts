@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import type { Adapter as DbAdapter } from '@superfunctions/db';
 import type {
   Connection,
   Credentials,
@@ -10,7 +10,6 @@ import type {
   OAuth2Credentials,
 } from '../types/connection.js';
 import { ConnectionStatus } from '../types/connection.js';
-import type { Adapter } from '../types/config.js';
 import type { Provider, OAuth2Config } from '../types/provider.js';
 import { AuthType } from '../types/provider.js';
 import type { Logger } from '../types/action.js';
@@ -26,21 +25,17 @@ import {
 } from '@superfunctions/oauth-http';
 import { createOAuthFlowService, type OAuthFlowService } from '@superfunctions/oauth-flow';
 import {
-  AesGcmTokenCipher,
-  EncryptedTokenVault,
-  type OAuthStateRecord,
   type OAuthStateStore,
-  type TokenKeyResolver,
   type TokenRecord,
-  type TokenVault,
+  EncryptedTokenVault,
 } from '@superfunctions/oauth-storage';
 import { oauthProviderDescriptors } from '@superfunctions/oauth-providers';
-
-const OAUTH_STATE_SYSTEM_USER = '__oauth_state_system__';
-const OAUTH_STATE_SYSTEM_PROVIDER = '__oauth_state_system__';
-const OAUTH_TOKEN_SYSTEM_USER = '__oauth_token_system__';
-const OAUTH_TOKEN_SYSTEM_PROVIDER = '__oauth_token_system__';
-const DEFAULT_TOKEN_KEY_REF = 'plugfn-key-v1';
+import { ensurePlugFnDatabaseAdapter } from '../storage/adapters/database.js';
+import { createPlugFnOAuthStateStore } from '../storage/oauth-state-store.js';
+import {
+  createPlugFnEncryptedTokenVault,
+  DEFAULT_TOKEN_KEY_REF,
+} from '../storage/oauth-token-vault.js';
 
 interface OAuthClientConfig {
   clientId: string;
@@ -56,7 +51,7 @@ export interface ConnectionManagerOAuthDependencies {
 }
 
 interface CreateConnectionManagerOAuthDependenciesInput {
-  adapter: Adapter;
+  database: DbAdapter;
   providers: Map<string, Provider>;
   integrationConfigs: Map<string, any>;
   baseUrl: string;
@@ -79,14 +74,14 @@ export function createConnectionManagerOAuthDependencies(
   input: CreateConnectionManagerOAuthDependenciesInput
 ): ConnectionManagerOAuthDependencies {
   const now = input.now ?? (() => new Date());
-  const stateStore = new AdapterOAuthStateStore(input.adapter);
-  const tokenVaultStore = new AdapterTokenVault(input.adapter);
   const tokenHttpClient = input.tokenHttpClient ?? new DefaultOAuthTokenHttpClient();
-  const encryptedTokenVault = new EncryptedTokenVault(
-    tokenVaultStore,
-    new AesGcmTokenCipher(createDefaultTokenKeyResolver(input.encryptionKey)),
-    () => now().toISOString()
-  );
+  const runtimeStorage = ensurePlugFnDatabaseAdapter(input.database);
+  const stateStore = createPlugFnOAuthStateStore(input.database);
+  const { encryptedTokenVault } = createPlugFnEncryptedTokenVault({
+    database: input.database,
+    encryptionKey: input.encryptionKey,
+    now: () => now().toISOString(),
+  });
 
   const oauthProviderMap = createProviderDescriptorRegistry(input.providers);
   const oauthClientConfigMap = createOAuthClientConfigMap(input.integrationConfigs, input.baseUrl);
@@ -101,7 +96,12 @@ export function createConnectionManagerOAuthDependencies(
     now,
     identityHooks: {
       onDisconnected: async ({ connectionId }) => {
-        await input.adapter.deleteConnection(connectionId);
+        await runtimeStorage.deleteConnection(connectionId);
+        return {
+          attempted: true,
+          deleted: true,
+          reason: 'deleted',
+        };
       },
     },
   });
@@ -178,21 +178,33 @@ export class ConnectionManager {
       state: options.state,
       redirectUri,
     });
+    const subjectUserId = callbackResult.subject.userId ?? statePreview.userId;
+    const callbackConnectionId = callbackResult.connectionId;
+    if (!subjectUserId || !callbackConnectionId) {
+      throw new Error('OAuth callback did not resolve a stable connection subject');
+    }
 
     const credentials = this.toOAuth2Credentials(callbackResult.tokenSet);
+    const pendingTokenEntry = await this.encryptedTokenVault.getTokenSetByConnection(
+      callbackConnectionId
+    );
+    if (!pendingTokenEntry) {
+      throw new Error(`OAuth token record missing for connection ${callbackConnectionId}`);
+    }
+
     const connection = await this.connectionStorage.create({
-      userId: callbackResult.subject.userId,
+      userId: subjectUserId,
       provider: providerId,
       name: options.connectionName,
       status: ConnectionStatus.Active,
-      credentials: this.tokenStorage.encryptCredentials(credentials),
+      credentials: toEncryptedCredentials(pendingTokenEntry.record),
       scopes: statePreview.requestedScopes,
       expiresAt: credentials.expiresAt,
       connectedAt: new Date(),
     });
 
     const persistedTokenRecord = await this.rebindTokenConnection(
-      callbackResult.connectionId,
+      callbackConnectionId,
       connection.id
     );
 
@@ -203,7 +215,7 @@ export class ConnectionManager {
     });
 
     this.logger.info(`Connection created: ${providerId}`, {
-      userId: callbackResult.subject.userId,
+      userId: subjectUserId,
       connectionId: updatedConnection.id,
     });
 
@@ -461,140 +473,6 @@ export class ConnectionManager {
   }
 }
 
-class AdapterOAuthStateStore implements OAuthStateStore {
-  constructor(private readonly adapter: Adapter) {}
-
-  async put(record: OAuthStateRecord): Promise<void> {
-    const connectionId = stateConnectionId(record.stateId);
-    const existing = await this.adapter.getConnection(connectionId);
-    if (!existing) {
-      await this.adapter.createConnection(buildStateConnectionRecord(record));
-      return;
-    }
-
-    await this.adapter.updateConnection(connectionId, {
-      metadata: {
-        oauthStateRecord: record,
-      },
-      updatedAt: new Date(),
-    });
-  }
-
-  async get(stateId: string): Promise<OAuthStateRecord | null> {
-    const stateConnection = await this.adapter.getConnection(stateConnectionId(stateId));
-    if (!stateConnection) {
-      return null;
-    }
-
-    return extractOAuthStateRecord(stateConnection);
-  }
-
-  async consume(stateId: string, consumedAt: string): Promise<OAuthStateRecord | null> {
-    const current = await this.get(stateId);
-    if (!current) {
-      return null;
-    }
-
-    if (current.consumedAt) {
-      return null;
-    }
-
-    if (Date.parse(current.expiresAt) <= Date.parse(consumedAt)) {
-      return null;
-    }
-
-    const consumedRecord: OAuthStateRecord = {
-      ...current,
-      consumedAt,
-    };
-
-    await this.put(consumedRecord);
-    return consumedRecord;
-  }
-
-  async deleteExpired(before: string): Promise<number> {
-    const entries = await this.adapter.listConnections(OAUTH_STATE_SYSTEM_USER, OAUTH_STATE_SYSTEM_PROVIDER);
-    let deleted = 0;
-
-    for (const entry of entries) {
-      const record = extractOAuthStateRecord(entry);
-      if (!record) {
-        continue;
-      }
-
-      if (Date.parse(record.expiresAt) < Date.parse(before)) {
-        await this.adapter.deleteConnection(stateConnectionId(record.stateId));
-        deleted += 1;
-      }
-    }
-
-    return deleted;
-  }
-}
-
-class AdapterTokenVault implements TokenVault {
-  constructor(private readonly adapter: Adapter) {}
-
-  async put(record: TokenRecord): Promise<void> {
-    const connectionId = tokenConnectionId(record.tokenId);
-    const existing = await this.adapter.getConnection(connectionId);
-    if (!existing) {
-      await this.adapter.createConnection(buildTokenConnectionRecord(record));
-      return;
-    }
-
-    await this.adapter.updateConnection(connectionId, {
-      metadata: {
-        oauthTokenRecord: record,
-      },
-      updatedAt: new Date(),
-    });
-  }
-
-  async get(tokenId: string): Promise<TokenRecord | null> {
-    const tokenConnection = await this.adapter.getConnection(tokenConnectionId(tokenId));
-    if (!tokenConnection) {
-      return null;
-    }
-
-    return extractTokenRecord(tokenConnection);
-  }
-
-  async getByConnection(connectionId: string): Promise<TokenRecord | null> {
-    const entries = await this.adapter.listConnections(OAUTH_TOKEN_SYSTEM_USER, OAUTH_TOKEN_SYSTEM_PROVIDER);
-    for (const entry of entries) {
-      const record = extractTokenRecord(entry);
-      if (record && record.connectionId === connectionId) {
-        return record;
-      }
-    }
-
-    return null;
-  }
-
-  async rotateKey(tokenId: string, newKeyRef: string): Promise<void> {
-    const current = await this.get(tokenId);
-    if (!current) {
-      return;
-    }
-
-    await this.put({
-      ...current,
-      keyRef: newKeyRef,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  async deleteByConnection(connectionId: string): Promise<void> {
-    const record = await this.getByConnection(connectionId);
-    if (!record) {
-      return;
-    }
-
-    await this.adapter.deleteConnection(tokenConnectionId(record.tokenId));
-  }
-}
-
 function createProviderDescriptorRegistry(
   providers: Map<string, Provider>
 ): Record<string, OAuthProviderDescriptor> {
@@ -768,12 +646,6 @@ function buildOAuthProviderDescriptor(providerId: string, provider: Provider): O
   };
 }
 
-function createDefaultTokenKeyResolver(encryptionKey: string): TokenKeyResolver {
-  return async (keyRef: string): Promise<Buffer> => {
-    return createHash('sha256').update(`${keyRef}:${encryptionKey}`).digest();
-  };
-}
-
 function toEncryptedCredentials(record: TokenRecord): EncryptedCredentials {
   return {
     encrypted: record.encryptedPayload,
@@ -783,70 +655,6 @@ function toEncryptedCredentials(record: TokenRecord): EncryptedCredentials {
     schemaVersion: 'oauth-v1',
     algorithm: 'aes-256-gcm',
   };
-}
-
-function buildStateConnectionRecord(record: OAuthStateRecord): Connection {
-  const createdAt = new Date(record.createdAt);
-
-  return {
-    id: stateConnectionId(record.stateId),
-    userId: OAUTH_STATE_SYSTEM_USER,
-    provider: OAUTH_STATE_SYSTEM_PROVIDER,
-    status: ConnectionStatus.Active,
-    credentials: {
-      encrypted: 'system',
-      algorithm: 'internal',
-    },
-    metadata: {
-      oauthStateRecord: record,
-    },
-    connectedAt: createdAt,
-    createdAt,
-    updatedAt: new Date(),
-  };
-}
-
-function buildTokenConnectionRecord(record: TokenRecord): Connection {
-  const createdAt = new Date(record.createdAt);
-
-  return {
-    id: tokenConnectionId(record.tokenId),
-    userId: OAUTH_TOKEN_SYSTEM_USER,
-    provider: OAUTH_TOKEN_SYSTEM_PROVIDER,
-    status: ConnectionStatus.Active,
-    credentials: {
-      encrypted: record.encryptedPayload,
-      encryptedPayload: record.encryptedPayload,
-      keyRef: record.keyRef,
-      tokenId: record.tokenId,
-      schemaVersion: 'oauth-v1',
-      algorithm: 'aes-256-gcm',
-    },
-    metadata: {
-      oauthTokenRecord: record,
-    },
-    connectedAt: createdAt,
-    createdAt,
-    updatedAt: new Date(),
-  };
-}
-
-function extractOAuthStateRecord(entry: any): OAuthStateRecord | null {
-  const record = entry?.metadata?.oauthStateRecord;
-  return record ?? null;
-}
-
-function extractTokenRecord(entry: any): TokenRecord | null {
-  const record = entry?.metadata?.oauthTokenRecord;
-  return record ?? null;
-}
-
-function stateConnectionId(stateId: string): string {
-  return `oauth_state_${stateId}`;
-}
-
-function tokenConnectionId(tokenId: string): string {
-  return `oauth_token_${tokenId}`;
 }
 
 function compareConnectionPriority(a: Connection, b: Connection): number {

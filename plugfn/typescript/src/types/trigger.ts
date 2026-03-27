@@ -11,10 +11,20 @@ export enum TriggerType {
 /**
  * Webhook configuration
  */
+export interface WebhookVerificationContext {
+  rawBody?: Uint8Array;
+  headers: Record<string, string>;
+}
+
 export interface WebhookConfig {
   path: string;
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  verifySignature?: (payload: any, signature: string, secret: string) => Promise<boolean>;
+  verifySignature?: (
+    payload: any,
+    signature: string,
+    secret: string,
+    context: WebhookVerificationContext
+  ) => Promise<boolean> | boolean;
   transformPayload?: (payload: any) => any;
 }
 
@@ -84,4 +94,3 @@ export interface PollingTriggerOptions {
   onChange: (newItems: any[], prevItems: any[]) => Promise<void>;
   compareField?: string;
 }
-

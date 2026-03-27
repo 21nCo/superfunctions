@@ -2,3 +2,4 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-11T17:50:55Z,gpt-5 (Codex),Codex Desktop,spec,unknown-agent,,.conduct/specs/2026-03-11-new-1gdtvan4-spec
 2026-03-12T08:15:00Z,claude-opus-4-6,VS Code,audit,unknown-agent,,.conduct/audits/2026-03-12-k7m4r9q2-full-audit.md
 2026-03-12T11:18:51Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-12-m4q2r8n1-completion.md
+2026-03-27T04:14:48Z,unknown,Codex Desktop,spec,unknown-agent,,plugfn/.conduct/specs/2026-03-27-audit-fix-x4p8m2q7-spec
