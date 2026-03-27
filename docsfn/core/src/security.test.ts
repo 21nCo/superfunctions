@@ -52,6 +52,28 @@ describe("security", () => {
     ).not.toThrow();
   });
 
+  it("ignores unsafe-looking html when it appears inside fenced code samples", () => {
+    expect(() =>
+      assertSourceEntriesTrusted({
+        entries: [
+          createEntry({
+            id: "docs:guide/code-sample.mdx",
+            relativePath: "guide/code-sample.mdx",
+            body: [
+              "# Guide",
+              "",
+              "```html",
+              "<script>alert(1)</script>",
+              "```",
+              "",
+              "Use `onClick=` only inside examples.",
+            ].join("\n"),
+          }),
+        ],
+      })
+    ).not.toThrow();
+  });
+
   it("applies the same trust model for compiled content artifacts", () => {
     expect(() =>
       assertCompiledContentTrusted({

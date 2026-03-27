@@ -5,6 +5,11 @@ export class PanTool extends BaseTool {
   name = "pan";
   private dragStart: Point | null = null;
 
+  deactivate(): void {
+    super.deactivate();
+    this.dragStart = null;
+  }
+
   handlePointerDown(e: PointerEvent, context: ToolContext): void {
     this.dragStart = { x: e.clientX, y: e.clientY };
   }

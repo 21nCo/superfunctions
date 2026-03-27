@@ -103,37 +103,6 @@ export function transformFumadocsV15(
     componentsUsed.push("MermaidBlock");
   }
 
-  const jsxComponentPattern = /<\s*([A-Z][A-Za-z0-9]*)\b/g;
-  const allowedInCompat = new Set([
-    "DocsTabs",
-    "DocsTab",
-    "MermaidBlock",
-    "Callout",
-    ...importedComponents,
-  ]);
-
-  for (const match of transformed.matchAll(jsxComponentPattern)) {
-    const componentName = match[1];
-    if (!allowedInCompat.has(componentName)) {
-      throw createDocsError({
-        code: "DOCS_COMPAT_UNSUPPORTED",
-        message: `unsupported JSX component ${componentName} in compatibility mode`,
-        diagnostics: [
-          createDiagnostic({
-            code: "DOCS_COMPAT_UNSUPPORTED",
-            message: `unsupported JSX component ${componentName} in compatibility mode`,
-            location: {
-              absolutePath: input.sourcePath,
-            },
-            details: {
-              component: componentName,
-            },
-          }),
-        ],
-      });
-    }
-  }
-
   return {
     transformed,
     importedComponents,

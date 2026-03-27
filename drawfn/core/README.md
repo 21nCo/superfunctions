@@ -1,4 +1,4 @@
-# @21n/drawfn
+# drawfn
 
 Cross-framework drawing canvas library for brainstorming and simple sketching.
 
@@ -16,13 +16,13 @@ Cross-framework drawing canvas library for brainstorming and simple sketching.
 ## Installation
 
 ```bash
-npm install @21n/drawfn perfect-freehand
+npm install drawfn perfect-freehand
 ```
 
 ## Quick Start
 
 ```typescript
-import { Drawfn } from '@21n/drawfn';
+import { Drawfn } from 'drawfn';
 
 const canvas = document.querySelector('canvas');
 const drawfn = new Drawfn({ canvas });
@@ -30,9 +30,9 @@ const drawfn = new Drawfn({ canvas });
 // Set a tool
 drawfn.setTool('pen');
 
-// Listen to events
-drawfn.on('elementAdded', (element) => {
-  console.log('New element added:', element);
+// Listen to scene changes
+drawfn.on('sceneChanged', ({ scene, reason }) => {
+  console.log('Scene changed because of', reason, scene);
 });
 
 // Export the scene
@@ -68,6 +68,7 @@ const drawfn = new Drawfn({
 
 **Scene Management**
 - `load(scene: Scene)`: Load a scene from JSON
+- `loadScene(sceneData: unknown): DrawfnResult<Scene>`: Tolerantly validate and load a serialized scene
 - `getScene(): Scene`: Get current scene as JSON
 - `clear()`: Clear the entire canvas
 
@@ -101,13 +102,13 @@ const drawfn = new Drawfn({
 
 **Export**
 - `exportPNG(opts?): Promise<Blob>`: Export as PNG
-  - Options: `{ padding?: number; scale?: number; transparent?: boolean }`
+  - Options: `{ padding?: number; scale?: number; transparent?: boolean; selectedOnly?: boolean; fitContent?: boolean }`
 - `exportSVG(opts?): Promise<string>`: Export as SVG (includes freedraw, arrows, images)
-  - Options: `{ padding?: number; scale?: number }`
+  - Options: `{ padding?: number; scale?: number; selectedOnly?: boolean; fitContent?: boolean }`
 
 **Events**
 - `on(event, handler): () => void`: Subscribe to events, returns unsubscribe function
-  - Events: `pointerDown`, `pointerMove`, `pointerUp`, `elementAdded`, `elementUpdated`, `elementRemoved`, `selectionChanged`, `historyChanged`, `cameraChanged`
+  - Events: `pointerDown`, `pointerMove`, `pointerUp`, `elementAdded`, `elementUpdated`, `elementRemoved`, `selectionChanged`, `historyChanged`, `cameraChanged`, `sceneChanged`, `error`
 
 **Cleanup**
 - `destroy()`: Cleanup and remove event listeners
@@ -116,7 +117,7 @@ const drawfn = new Drawfn({
 
 See `example.html` for a complete vanilla JS example with toolbar and all tools.
 
-For React examples, see `@21n/drawfn-react` package.
+For React examples, see the `@drawfn/react` package.
 
 ## Keyboard Shortcuts
 
@@ -134,4 +135,4 @@ For React examples, see `@21n/drawfn-react` package.
 
 ## License
 
-Apache-2.0
+MIT

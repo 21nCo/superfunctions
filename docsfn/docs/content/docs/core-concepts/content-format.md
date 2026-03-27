@@ -199,6 +199,6 @@ Blog and **api** collections use separate directories and routing conventions.
 | **api** | `content/api` | OpenAPI **JSON/YAML** only. |
 | **assets** | `static` / `public` | Binary/static files. |
 
-Hand-written **API reference** in Markdown normally lives under **docs** (e.g. `content/docs/api/`) so it participates in the docs sidebar and search **docs** scope.
+Hand-written API Markdown can still live under the **docs** collection (for example `content/docs/api/overview.md`). Those files keep normal docs semantics, but you can intentionally classify `/docs/api...` routes into the **api** sidebar and search scope with `navigation.sidebars.api.include` and `search.routeScopeOverrides`.
 
 For configuration details, see [Configuration](./configuration).

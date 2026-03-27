@@ -1,6 +1,52 @@
 import type { Element, Point, Bounds } from "./types";
 import { rotatePoint } from "./utils";
 
+export type SelectionHandlePoint = {
+  type: "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w" | "rotate";
+  point: Point;
+};
+
+export function getTupleBounds(points: Array<[number, number, number?]>): {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  w: number;
+  h: number;
+} {
+  if (points.length === 0) {
+    return {
+      minX: 0,
+      minY: 0,
+      maxX: 0,
+      maxY: 0,
+      w: 0,
+      h: 0,
+    };
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    w: maxX - minX,
+    h: maxY - minY,
+  };
+}
+
 /**
  * Get the four corners of an element's oriented bounding box
  */
@@ -81,6 +127,41 @@ export function getOBBBounds(element: Element): Bounds {
     w: maxX - minX,
     h: maxY - minY,
   };
+}
+
+export function getMidpoint(a: Point, b: Point): Point {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+  };
+}
+
+export function getSelectionHandlePoints(
+  element: Element,
+  zoom: number
+): SelectionHandlePoint[] {
+  const [nw, ne, se, sw] = getOBBCorners(element);
+  const center = { x: element.x + element.w / 2, y: element.y + element.h / 2 };
+  const unrotatedRotateHandle = {
+    x: element.x + element.w / 2,
+    y: element.y - 20 / zoom,
+  };
+  const rotateHandle =
+    element.rotation === 0
+      ? unrotatedRotateHandle
+      : rotatePoint(unrotatedRotateHandle, center, element.rotation);
+
+  return [
+    { type: "nw", point: nw },
+    { type: "ne", point: ne },
+    { type: "sw", point: sw },
+    { type: "se", point: se },
+    { type: "n", point: getMidpoint(nw, ne) },
+    { type: "s", point: getMidpoint(sw, se) },
+    { type: "e", point: getMidpoint(ne, se) },
+    { type: "w", point: getMidpoint(nw, sw) },
+    { type: "rotate", point: rotateHandle },
+  ];
 }
 
 /**

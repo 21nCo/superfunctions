@@ -169,6 +169,113 @@ export interface DocsSidebarDefinition {
   include?: string[];
 }
 
+export type DocsSearchScope = "docs" | "api" | "blog";
+
+export interface DocsSearchRouteScopeOverride {
+  pattern: string;
+  scope: string;
+}
+
+export interface DocsSearchConfig {
+  enabled: boolean;
+  scopes: DocsSearchScope[];
+  bodyIndexing?: "full" | "summary" | "disabled";
+  maxArtifactBytes?: number;
+  routeScopeOverrides?: DocsSearchRouteScopeOverride[];
+}
+
+export interface CompiledHeadingBlock {
+  type: "heading";
+  level: number;
+  text: string;
+  html: string;
+  slug: string;
+}
+
+export interface CompiledParagraphBlock {
+  type: "paragraph";
+  text: string;
+  html: string;
+}
+
+export interface CompiledListBlock {
+  type: "list";
+  ordered: boolean;
+  items: Array<{ text: string }>;
+  html: string;
+}
+
+export interface CompiledTableBlock {
+  type: "table";
+  html: string;
+}
+
+export interface CompiledCodeBlock {
+  type: "code";
+  lang?: string;
+  code: string;
+}
+
+export interface CompiledMermaidBlock {
+  type: "mermaid";
+  id: string;
+  code: string;
+}
+
+export interface CompiledCalloutBlock {
+  type: "callout";
+  kind: "note" | "tip" | "warning" | "info" | "caution";
+  text: string;
+  html: string;
+}
+
+export interface CompiledTabsTab {
+  value: string;
+  label?: string;
+  source: string;
+  content: string;
+  nodes: CompiledContentBlock[];
+}
+
+export interface CompiledTabsBlock {
+  type: "tabs";
+  items: string[];
+  tabs: CompiledTabsTab[];
+}
+
+export interface CompiledComponentBlock {
+  type: "component";
+  name: string;
+  props: Record<string, string | number | boolean>;
+  source: string;
+  body?: string;
+  selfClosing: boolean;
+  children: CompiledContentBlock[];
+}
+
+export type CompiledContentBlock =
+  | CompiledHeadingBlock
+  | CompiledParagraphBlock
+  | CompiledListBlock
+  | CompiledTableBlock
+  | CompiledCodeBlock
+  | CompiledMermaidBlock
+  | CompiledCalloutBlock
+  | CompiledTabsBlock
+  | CompiledComponentBlock;
+
+export interface CompiledContentArtifact {
+  framework: "core" | "react" | "svelte";
+  renderModelVersion: 2;
+  source: string;
+  transformedSource: string;
+  blocks: CompiledContentBlock[];
+  headings: DocHeading[];
+  toc: DocHeading[];
+  componentsUsed: string[];
+  diagnostics: DocsDiagnostic[];
+}
+
 export interface DocsConfig {
   schemaVersion: 1;
   site: DocsSiteConfig;
@@ -193,12 +300,7 @@ export interface DocsConfig {
     topNav?: DocsTopNavItem[];
     sidebars?: Record<string, DocsSidebarDefinition>;
   };
-  search?: {
-    enabled: boolean;
-    scopes: Array<"docs" | "api" | "blog">;
-    bodyIndexing?: "full" | "summary" | "disabled";
-    maxArtifactBytes?: number;
-  };
+  search?: DocsSearchConfig;
   auth?: {
     enabled: boolean;
     mode: "public" | "private" | "mixed";
@@ -220,9 +322,11 @@ export type DocsErrorCode =
   | "DOCS_ROUTE_NOT_FOUND"
   | "DOCS_VERSION_INVALID"
   | "DOCS_COMPAT_UNSUPPORTED"
+  | "DOCS_COMPONENT_UNRESOLVED"
   | "DOCS_MDX_COMPILE_FAILED"
   | "DOCS_HTML_UNSAFE"
   | "DOCS_SEARCH_BUILD_FAILED"
+  | "DOCS_SEARCH_SCOPE_INVALID"
   | "DOCS_OPENAPI_PARSE_FAILED"
   | "DOCS_REMOTE_FETCH_FAILED"
   | "DOCS_AUTH_REQUIRED"

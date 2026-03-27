@@ -26,11 +26,27 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
+    "./DocsContent": {
+      "types": "./dist/DocsContent.d.ts",
+      "import": "./dist/DocsContent.js",
+      "require": "./dist/DocsContent.cjs"
+    },
+    "./ApiReferenceRenderer": {
+      "types": "./dist/ApiReferenceRenderer.d.ts",
+      "import": "./dist/ApiReferenceRenderer.js",
+      "require": "./dist/ApiReferenceRenderer.cjs"
+    },
+    "./EmbeddedPage": {
+      "types": "./dist/EmbeddedPage.d.ts",
+      "import": "./dist/EmbeddedPage.js",
+      "require": "./dist/EmbeddedPage.cjs"
+    },
     "./theme.css": "./dist/theme.css",
     "./theme-base.css": "./dist/theme-base.css"
   },
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "test": "vitest"
   },
   "author": "21n",
   "license": "MIT",

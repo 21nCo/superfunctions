@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>@21n/drawfn Example</title>
+  <title>drawfn Example</title>
   <style>
     * {
       margin: 0;
@@ -208,10 +208,8 @@
       }
     });
 
-    // Listen to events
-    drawfn.on('elementAdded', () => updateStatus());
-    drawfn.on('elementRemoved', () => updateStatus());
-    drawfn.on('cameraChanged', () => updateStatus());
+    // Keep the status line synced with all committed scene changes.
+    drawfn.on('sceneChanged', () => updateStatus());
 
     // Initial status
     updateStatus();

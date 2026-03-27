@@ -25,19 +25,27 @@ export interface UnsafeHtmlMatch {
   match: string;
 }
 
+function stripCodeExamples(source: string): string {
+  return source
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/~~~[\s\S]*?~~~/g, " ")
+    .replace(/`[^`\n]+`/g, " ");
+}
+
 export function findUnsafeHtml(source: string): UnsafeHtmlMatch[] {
+  const normalizedSource = stripCodeExamples(source);
   const matches: UnsafeHtmlMatch[] = [];
 
   for (const tag of BLOCKED_HTML_TAGS) {
     const regex = new RegExp(`<\\s*${tag}\\b`, "i");
-    const found = source.match(regex);
+    const found = normalizedSource.match(regex);
     if (found) {
       matches.push({ category: `blocked-tag:${tag}`, match: found[0] });
     }
   }
 
   for (const pattern of BLOCKED_HTML_PATTERNS) {
-    const found = source.match(pattern.regex);
+    const found = normalizedSource.match(pattern.regex);
     if (found) {
       matches.push({ category: pattern.category, match: found[0] });
     }

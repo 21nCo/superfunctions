@@ -16,7 +16,7 @@ export class RectangleTool extends BaseTool {
       canvas
     );
 
-    context.recordHistory();
+    context.getDrawfn().beginGesture("add");
 
     const element: RectangleElement = {
       id: generateId(),
