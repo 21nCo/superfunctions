@@ -338,6 +338,34 @@ describe("buildSearchIndex", () => {
     expect(artifact.documents.length).toBe(2);
   });
 
+  it("redacts sensitive tokens from fully indexed body content", async () => {
+    const manifest = createManifest();
+    manifest.pages["docs:secret"] = {
+      kind: "page",
+      id: "docs:secret",
+      slug: "secret",
+      path: "/docs/secret",
+      title: "Secret Guide",
+      description: "Secret handling",
+      body: "# Secret\n\nUse sk_test_12345 and ghp_abcdefghijklmnopqrstuvwxyz123456 to test redaction.",
+      headings: [{ level: 1, text: "Secret", slug: "secret" }],
+      frontmatter: {},
+    };
+
+    const artifact = await buildSearchIndex(manifest, {
+      search: {
+        enabled: true,
+        scopes: ["docs"],
+        bodyIndexing: "full",
+      },
+    });
+
+    const body = artifact.documents.find((document) => document.id === "docs:secret")?.body ?? "";
+    expect(body).toContain("[REDACTED]");
+    expect(body).not.toContain("sk_test_12345");
+    expect(body).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+  });
+
   it("reclassifies configured docs routes into api scope without changing paths", async () => {
     const manifest = createManifest();
     manifest.pages["docs:client"] = {

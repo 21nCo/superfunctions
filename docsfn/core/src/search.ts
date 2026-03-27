@@ -264,7 +264,7 @@ function resolveBodyField(input: {
   if (input.bodyIndexing === "summary") {
     return input.summary;
   }
-  return stripMarkdown(input.body);
+  return stripMarkdown(redactSensitiveText(input.body));
 }
 
 function collectSearchDocuments(input: {

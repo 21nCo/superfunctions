@@ -326,6 +326,7 @@ function parseTabsBlock(input: {
   startIndex: number;
   sourcePath?: string;
   resolvedComponents?: Set<string>;
+  idPrefix?: string;
 }): { block: CompiledTabsBlock; nextIndex: number } {
   const startLine = input.lines[input.startIndex].trim();
   const startMatch = startLine.match(TABS_START_REGEX);
@@ -379,7 +380,7 @@ function parseTabsBlock(input: {
           source,
           sourcePath: input.sourcePath,
           resolvedComponents: input.resolvedComponents,
-          idPrefix: `${normalizeRouteLikeId(input.sourcePath, "inline")}-tab-${tabs.length}`,
+          idPrefix: `${normalizeRouteLikeId(input.idPrefix ?? input.sourcePath, "inline")}-tab-${String(tabs.length + 1).padStart(2, "0")}`,
         }),
       });
       index += 1;
@@ -417,7 +418,7 @@ function parseTabsBlock(input: {
         source,
         sourcePath: input.sourcePath,
         resolvedComponents: input.resolvedComponents,
-        idPrefix: `${normalizeRouteLikeId(input.sourcePath, "inline")}-tab-${tabs.length}`,
+        idPrefix: `${normalizeRouteLikeId(input.idPrefix ?? input.sourcePath, "inline")}-tab-${String(tabs.length + 1).padStart(2, "0")}`,
       }),
     });
   }
@@ -452,6 +453,8 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
   const blocks: CompiledContentBlock[] = [];
   const createHeadingSlug = createSlugger();
   let mermaidCount = 0;
+  let tabsBlockCount = 0;
+  let componentBlockCount = 0;
   let index = 0;
 
   while (index < lines.length) {
@@ -525,11 +528,13 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
     }
 
     if (TABS_START_REGEX.test(trimmed)) {
+      tabsBlockCount += 1;
       const parsedTabs = parseTabsBlock({
         lines,
         startIndex: index,
         sourcePath: input.sourcePath,
         resolvedComponents: input.resolvedComponents,
+        idPrefix: `${normalizeRouteLikeId(input.idPrefix ?? input.sourcePath, "inline")}-tabs-${String(tabsBlockCount).padStart(2, "0")}`,
       });
       blocks.push(parsedTabs.block);
       index = parsedTabs.nextIndex;
@@ -601,6 +606,7 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
     const componentStartMatch = trimmed.match(COMPONENT_START_REGEX);
     if (componentStartMatch) {
       const componentName = componentStartMatch[1];
+      componentBlockCount += 1;
       if (
         input.resolvedComponents &&
         !input.resolvedComponents.has(componentName)
@@ -654,7 +660,7 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
           source,
           sourcePath: input.sourcePath,
           resolvedComponents: input.resolvedComponents,
-          idPrefix: `${normalizeRouteLikeId(input.sourcePath, "inline")}-component-${componentName}`,
+          idPrefix: `${normalizeRouteLikeId(input.idPrefix ?? input.sourcePath, "inline")}-component-${componentName}-${String(componentBlockCount).padStart(2, "0")}`,
         }),
       });
       continue;

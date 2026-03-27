@@ -6,10 +6,10 @@
 - agent_name: `unknown-agent`
 - model: `GPT-5 Codex`
 - launcher: `Codex Desktop`
-- workspace/project absolute path: `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn`
-- OS + shell: `Darwin ArBook.local 25.3.0 arm64`, `/bin/zsh`
+- workspace/project path: `docsfn`
+- OS + shell: `Darwin arm64`, `/bin/zsh`
 - repo metadata:
-  - repo root: `/Users/serro/.codex/worktrees/0909/superfunctions`
+  - repo root: `.`
   - branch: `HEAD` (detached)
   - commit: `ca86e25e6faf11da93e390c18dad8ae5f22b6f69`
   - dirty worktree: `yes`

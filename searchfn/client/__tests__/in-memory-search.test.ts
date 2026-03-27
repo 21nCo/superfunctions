@@ -59,4 +59,29 @@ describe("InMemorySearchFn", () => {
     search.clear();
     expect(search.search("alphabet")).toEqual([]);
   });
+
+  it("replaces prior postings when re-indexing an existing document id", () => {
+    const search = new InMemorySearchFn({
+      fields: ["title", "body"],
+    });
+
+    search.add({
+      id: "doc-1",
+      fields: {
+        title: "Alpha",
+        body: "alpha term only",
+      },
+    });
+
+    search.add({
+      id: "doc-1",
+      fields: {
+        title: "Beta",
+        body: "beta term only",
+      },
+    });
+
+    expect(search.search("alpha")).toEqual([]);
+    expect(search.search("beta")).toEqual(["doc-1"]);
+  });
 });

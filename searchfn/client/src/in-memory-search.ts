@@ -92,6 +92,9 @@ export class InMemorySearchFn {
   add(input: InMemoryAddDocumentInput): void {
     const docId = input.id;
     const docKey = docIdKey(docId);
+    if (this.documents.has(docKey)) {
+      this.remove(docId);
+    }
     const ingested = this.indexer.ingest({
       docId,
       fields: input.fields,

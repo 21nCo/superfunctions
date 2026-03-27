@@ -1,4 +1,4 @@
-import { createMemorySearchClient, type SearchClient } from "@searchfn/client";
+import { InMemorySearchFn, createMemorySearchClient, type SearchClient } from "@searchfn/client";
 import { createDiagnostic, createDocsError } from "./diagnostics";
 import type { DocsSearchArtifact, DocsSearchDocument, DocsSearchScope } from "./search";
 
@@ -33,7 +33,8 @@ export interface CreateDocsSearchRuntimeInput {
 
 interface ValidatedArtifact {
   artifact: DocsSearchArtifact;
-  client: SearchClient;
+  client: SearchClient | null;
+  engine: InMemorySearchFn | null;
   documents: Map<string, DocsSearchDocument>;
 }
 
@@ -79,6 +80,18 @@ function createSearchClientForArtifact(artifact: DocsSearchArtifact): SearchClie
       limitPerResource: 20,
     },
   });
+}
+
+function createSnapshotSearchEngine(artifact: DocsSearchArtifact): InMemorySearchFn {
+  const engine = new InMemorySearchFn({
+    fields: artifact.fields,
+    pipeline: {
+      enableEdgeNGrams: true,
+      edgeNGramMinLength: 2,
+    },
+  });
+  engine.importSnapshot(artifact.snapshot);
+  return engine;
 }
 
 function sortResults(
@@ -142,6 +155,22 @@ export function createDocsSearchRuntime(
       }
 
       assertValidArtifact(artifact);
+      const documents = new Map<string, DocsSearchDocument>();
+
+      for (const document of artifact.documents) {
+        documents.set(document.id, document);
+      }
+
+      if (artifact.schemaVersion === 1 && artifact.snapshot) {
+        validated = {
+          artifact,
+          client: null,
+          engine: createSnapshotSearchEngine(artifact),
+          documents,
+        };
+        return validated;
+      }
+
       const client = createSearchClientForArtifact(artifact);
       await client.initialize?.({
         resources: artifact.scopes.map((scope) => ({
@@ -149,15 +178,11 @@ export function createDocsSearchRuntime(
           searchFields: artifact.fields,
         })),
       });
-      const documents = new Map<string, DocsSearchDocument>();
 
       for (const scope of artifact.scopes) {
         const scopedDocuments = artifact.documents.filter((document) => document.scope === scope);
         if (scopedDocuments.length === 0) {
           continue;
-        }
-        for (const document of scopedDocuments) {
-          documents.set(document.id, document);
         }
         await client.index({
           resource: scope,
@@ -174,7 +199,7 @@ export function createDocsSearchRuntime(
         });
       }
 
-      validated = { artifact, client, documents };
+      validated = { artifact, client, engine: null, documents };
       return validated;
     })();
 
@@ -209,6 +234,47 @@ export function createDocsSearchRuntime(
             createDiagnostic({
               code: "DOCS_CONFIG_INVALID",
               message: `unknown search scope ${scope}`,
+            }),
+          ],
+        });
+      }
+
+      if (loaded.engine) {
+        const engineResults = loaded.engine.searchDetailed(normalizedQuery, {
+          fields: loaded.artifact.fields,
+          limit: loaded.artifact.documents.length || Math.max(queryInput.limit ?? 20, 20),
+        });
+        const mapped = engineResults
+          .map((hit) => {
+            const document = loaded.documents.get(String(hit.docId));
+            if (!document) {
+              return null;
+            }
+            return {
+              id: document.id,
+              score: hit.score,
+              scope: document.scope,
+              kind: document.kind,
+              path: document.path,
+              title: document.title,
+              summary: document.summary,
+            };
+          })
+          .filter((item): item is DocsSearchRuntimeResultItem => item !== null)
+          .filter((item) => item.path.length > 0 && item.title.length > 0)
+          .filter((item) => scope === "all" || item.scope === scope);
+
+        return sortResults(mapped, queryInput.limit ?? 20);
+      }
+
+      if (!loaded.client) {
+        throw createDocsError({
+          code: "DOCS_ARTIFACT_INVALID",
+          message: "search runtime backend is unavailable",
+          diagnostics: [
+            createDiagnostic({
+              code: "DOCS_ARTIFACT_INVALID",
+              message: "search runtime backend is unavailable",
             }),
           ],
         });

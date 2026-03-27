@@ -6,29 +6,29 @@
 - agent_name: `spec`
 - model: `GPT-5 Codex`
 - launcher: `Codex Desktop`
-- workspace/project absolute path: `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn`
-- OS + shell: `Darwin ArBook.local 25.3.0 arm64`, `/bin/zsh`
+- workspace/project path: `docsfn`
+- OS + shell: `Darwin arm64`, `/bin/zsh`
 - repo metadata:
-  - repo root: `/Users/serro/.codex/worktrees/0909/superfunctions`
+  - repo root: `.`
   - branch: `HEAD` (detached)
   - commit: `ca86e25e6faf11da93e390c18dad8ae5f22b6f69`
   - dirty worktree: `yes (8 entries)`
 - spec_folder: `2026-03-25-audit-fix-k6m3p9r2-spec`
-- spec_folder absolute path: `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/.conduct/specs/2026-03-25-audit-fix-k6m3p9r2-spec`
+- spec_folder path: `docsfn/.conduct/specs/2026-03-25-audit-fix-k6m3p9r2-spec`
 - spec_type: `audit-fix`
 - spec_id: `k6m3p9r2`
 - input paths read:
   - user thread request for a detailed production-readiness fix spec
-  - `/Users/serro/.codex/skills/spec/SKILL.md`
-  - `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/.conduct/audits/2026-03-25-r8m4p2q7-full-audit.md`
-  - `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/REQUIREMENTS.md`
-  - `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/REQUIREMENTS.md`
-  - `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/README.md`
-  - `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/next/README.md`
-  - `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/sveltekit/README.md`
-  - `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/.conduct/tracker.csv`
+  - `$CODEX_HOME/skills/spec/SKILL.md`
+  - `docsfn/.conduct/audits/2026-03-25-r8m4p2q7-full-audit.md`
+  - `docsfn/.conduct/specs/2026-03-20-audit-fix-a27uykdy-spec/REQUIREMENTS.md`
+  - `docsfn/.conduct/specs/2026-03-22-new-v7k2m9x4-spec/REQUIREMENTS.md`
+  - `docsfn/README.md`
+  - `docsfn/next/README.md`
+  - `docsfn/sveltekit/README.md`
+  - `docsfn/.conduct/tracker.csv`
 - audit reference:
-  - audit path: `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn/.conduct/audits/2026-03-25-r8m4p2q7-full-audit.md`
+  - audit path: `docsfn/.conduct/audits/2026-03-25-r8m4p2q7-full-audit.md`
   - related prior spec folders:
     - `2026-03-20-audit-fix-a27uykdy-spec`
     - `2026-03-22-new-v7k2m9x4-spec`

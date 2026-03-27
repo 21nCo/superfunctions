@@ -134,9 +134,54 @@ graph TD;
       children: [
         { type: "heading", level: 2, text: "Nested", slug: "nested" },
         { type: "paragraph", text: "Child body" },
-        { type: "mermaid", id: "mermaid-content/docs/demo-card-mdx-component-DemoCard-01", code: "graph TD;" },
+        { type: "mermaid", id: "mermaid-content/docs/demo-card-mdx-component-DemoCard-01-01", code: "graph TD;" },
       ],
     });
+  });
+
+  it("keeps mermaid ids unique across repeated tabs and component blocks", () => {
+    const compiled = compileMarkdown({
+      source: `import { DemoCard } from "./DemoCard";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+
+# Demo
+
+<Tabs items={["One"]}>
+  <Tab value="One">
+\`\`\`mermaid
+graph TD;
+\`\`\`
+  </Tab>
+</Tabs>
+
+<Tabs items={["Two"]}>
+  <Tab value="Two">
+\`\`\`mermaid
+graph TD;
+\`\`\`
+  </Tab>
+</Tabs>
+
+<DemoCard>
+\`\`\`mermaid
+graph TD;
+\`\`\`
+</DemoCard>
+
+<DemoCard>
+\`\`\`mermaid
+graph TD;
+\`\`\`
+</DemoCard>`,
+      sourcePath: "content/docs/unique-mermaid.mdx",
+      compatPreset: "fumadocs-v15",
+    });
+
+    const mermaidIds = JSON.stringify(compiled.blocks)
+      .match(/mermaid-[A-Za-z0-9/_-]+/g)
+      ?.sort() ?? [];
+    expect(mermaidIds.length).toBe(4);
+    expect(new Set(mermaidIds).size).toBe(4);
   });
 
   it("rejects unsafe html by default (TV-SEC-001)", () => {

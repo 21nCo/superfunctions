@@ -6,10 +6,10 @@
 - Agent name: `audit`
 - Model: `GPT-5 Codex`
 - Launcher: `Codex Desktop`
-- Workspace/project absolute path: `/Users/serro/.codex/worktrees/0909/superfunctions/docsfn`
+- Workspace/project path: `docsfn`
 - Comparison target paths: `docsfn/docs`, `docsfn/test-fixtures/repo/datafn-docs`, `docsfn/test-fixtures/repo/searchfn-docs`
-- OS + shell: `Darwin 25.3.0 arm64`, `/bin/zsh`
-- Repo metadata: git repo rooted at `/Users/serro/.codex/worktrees/0909/superfunctions`; branch `HEAD` (detached); commit `ca86e25e6faf11da93e390c18dad8ae5f22b6f69`; dirty worktree `yes (8 entries)`
+- OS + shell: `Darwin arm64`, `/bin/zsh`
+- Repo metadata: git repo rooted at `.`; branch `HEAD` (detached); commit `ca86e25e6faf11da93e390c18dad8ae5f22b6f69`; dirty worktree `yes (8 entries)`
 - Intent/notes paths audited:
   - User request in thread: production-readiness audit for replacing Fumadocs with docsfn across repo docs
   - `docsfn/README.md`
@@ -108,13 +108,13 @@ Historical materials informed trend analysis only; they were not treated as auth
    - But `docsfn/svelte/package.json:10-19` only exports `"."`, `"./theme.css"`, and `"./theme-base.css"`.
    - The customizing guide repeats the same unexported Svelte subpath pattern in `docsfn/docs/content/docs/guides/customizing-components.md:20-30` and `:60-68`.
 
-5. **The dogfood docs site’s `api` search scope is mostly nominal.**
+5. **The dogfood docs site’s `api` search scope depends on explicit route overrides for markdown API pages.**
    - The site config enables scopes `["docs", "api", "blog"]` in `docsfn/docs/docsfn.config.ts:40-44`.
-   - Search indexes `manifest.pages` as `scope: "docs"` and only `manifest.apis` as `scope: "api"` in `docsfn/core/src/search.ts:147-190`.
+   - By default, search indexes `manifest.pages` as `scope: "docs"` and only `manifest.apis` as `scope: "api"` in `docsfn/core/src/search.ts:147-190`.
    - The docs site stores one real OpenAPI spec under `content/api`, but 33 package API reference pages under `content/docs/api`:
      - `content/api files: 1`
      - `content/docs/api files: 33`
-   - Result: most API reference content is searchable only as docs, not api.
+   - Those markdown pages can be classified into the `api` scope via `search.routeScopeOverrides` such as `/docs/api` and `/docs/api/**`; without that explicit config, most API reference content is searchable only as docs.
 
 6. **The docs site and the specs are closer, but there are still important documentation/spec mismatches.**
    - Bundle 2 `SPEC.md` still defines API reference route shape as `/api/[...slug]`, while requirements/tests/implementation use `/docs/api` (`SPEC.md:82`, `TEST_VECTORS.md:88,118,287`).
@@ -377,7 +377,7 @@ Intent coverage summary:
 
 ### Environment details
 
-- `pwd` → `/Users/serro/.codex/worktrees/0909/superfunctions`
+- `pwd` → `.`
 - `git rev-parse HEAD` → `ca86e25e6faf11da93e390c18dad8ae5f22b6f69`
 - `git rev-parse --abbrev-ref HEAD` → `HEAD`
 - `git status --porcelain | wc -l` → `8`
