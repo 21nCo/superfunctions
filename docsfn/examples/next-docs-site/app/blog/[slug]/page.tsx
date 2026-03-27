@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getDocsBlogPostData } from "@docsfn/next";
+import { DocsContent } from "@docsfn/react/DocsContent";
 import { loadDocsSiteSource } from "@/source.config";
 
 type BlogPageParams = {
@@ -53,7 +54,11 @@ export default async function BlogPostPage(props: {
   }
 
   return (
-    <article className="docs-example-article" data-docsfn-blog-post="true">
+    <article
+      className="docs-example-article"
+      data-docsfn-blog-post="true"
+      data-docsfn-proof-surface="blog"
+    >
       <h1>{post.title}</h1>
       <p>{new Date(post.publishedAt ?? post.date).toUTCString()}</p>
       {post.author ? <p>By {post.author}</p> : null}
@@ -63,7 +68,11 @@ export default async function BlogPostPage(props: {
           Tags: {post.tags.join(", ")}
         </p>
       ) : null}
-      <pre className="docs-example-content">{post.body}</pre>
+      <DocsContent
+        content={post.body}
+        sourcePath={post.id}
+        compatPreset={source.compatPreset}
+      />
     </article>
   );
 }

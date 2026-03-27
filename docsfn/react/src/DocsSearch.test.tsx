@@ -1,0 +1,123 @@
+import React from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { vi } from "vitest";
+import { buildSearchIndex, type DocsManifest } from "@docsfn/core";
+import { DocsSearch } from "./DocsSearch";
+import { navigateTo } from "./navigation";
+
+vi.mock("./navigation", () => ({
+  navigateTo: vi.fn(),
+}));
+
+function createManifest(): DocsManifest {
+  return {
+    site: {
+      title: "Search Docs",
+    },
+    pages: {
+      "docs:guide": {
+        kind: "page",
+        id: "docs:guide",
+        slug: "guides/search",
+        path: "/docs/guides/search",
+        title: "Search Guide",
+        description: "Guide for search",
+        body: "# Search Guide\n\nGuide body",
+        headings: [{ level: 1, text: "Search Guide", slug: "search-guide" }],
+        frontmatter: {},
+      },
+    },
+    posts: {
+      "blog:release": {
+        kind: "post",
+        id: "blog:release",
+        slug: "release-1",
+        path: "/docs/blog/release-1",
+        title: "Search Release",
+        date: "2026-03-01",
+        excerpt: "Release highlights",
+        summary: "Release summary",
+        tags: ["release"],
+        body: "Search blog body",
+        frontmatter: {},
+      },
+    },
+    apis: {
+      "api:search": {
+        kind: "api",
+        id: "api:search",
+        slug: "search",
+        path: "/docs/api/search",
+        title: "Search API",
+        spec: {
+          info: {
+            title: "Search API",
+            description: "API for search",
+          },
+        },
+        frontmatter: {},
+      },
+    },
+    sidebars: {},
+    routes: {},
+  };
+}
+
+describe("DocsSearch", () => {
+  it("supports keyboard open, scope filtering, result display, and keyboard selection", async () => {
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: {
+        enabled: true,
+        scopes: ["docs", "api", "blog"],
+      },
+    });
+
+    render(<DocsSearch searchArtifact={artifact} />);
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          ctrlKey: true,
+          key: "k",
+        })
+      );
+    });
+
+    const input = await screen.findByRole("textbox", { name: "Search query" });
+    const scopeSelect = screen.getByRole("combobox", { name: "Search scope" });
+    fireEvent.change(input, { target: { value: "search" } });
+
+    await screen.findByText("Search API");
+    await screen.findByText("Search Guide");
+
+    const resultButtons = screen.getAllByRole("button").filter((element) =>
+      element.className.includes("docsfn-search-item")
+    );
+    expect(resultButtons.length).toBeGreaterThanOrEqual(2);
+    expect(resultButtons[0]?.textContent).toContain("/docs/");
+    expect(resultButtons[0]?.textContent).toContain("Search");
+
+    fireEvent.change(scopeSelect, { target: { value: "api" } });
+    await waitFor(() => {
+      expect(screen.getByText("Search API")).toBeTruthy();
+      expect(screen.queryByText("Search Guide")).toBeNull();
+    });
+
+    fireEvent.change(scopeSelect, { target: { value: "all" } });
+    await waitFor(() => {
+      expect(screen.getByText("Search API")).toBeTruthy();
+      expect(screen.getByText("Search Guide")).toBeTruthy();
+    });
+
+    fireEvent.keyDown(screen.getByLabelText("Search query"), { key: "ArrowDown" });
+    const selectedButtons = screen.getAllByRole("button").filter((element) =>
+      element.getAttribute("data-selected") === "true"
+    );
+    expect(selectedButtons).toHaveLength(1);
+
+    const selectedPath = selectedButtons[0]?.textContent?.match(/\/docs\/[^\s<]+/)?.[0];
+    fireEvent.keyDown(screen.getByLabelText("Search query"), { key: "Enter" });
+
+    expect(navigateTo).toHaveBeenCalledWith(selectedPath);
+  });
+});

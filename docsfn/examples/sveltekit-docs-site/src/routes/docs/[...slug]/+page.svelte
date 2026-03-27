@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ApiReferenceRenderer from "@docsfn/svelte/ApiReferenceRenderer.svelte";
+  import DocsContent from "@docsfn/svelte/DocsContent.svelte";
   import type { PageData } from "./$types";
 
   export let data: PageData;
@@ -40,6 +42,12 @@
       <p class="docs-example-search-status">
         Search ready: {data.searchDocumentCount} docs ({data.searchScopes})
       </p>
+      <p class="docs-example-search-status" data-docsfn-search-runtime="true">
+        Search probe: {data.searchProbe.resultCount} hits for "{data.searchProbe.query}"
+        {#if data.searchProbe.firstPath}
+          -> {data.searchProbe.firstPath}
+        {/if}
+      </p>
     </header>
 
     <nav aria-label="Breadcrumb">
@@ -62,7 +70,7 @@
     {/if}
 
     {#if data.routeEntry.kind === "page"}
-      <article class="docs-example-article">
+      <article class="docs-example-article" data-docsfn-proof-surface="docs">
         <h1>{data.routeEntry.page.title}</h1>
         {#if data.routeEntry.page.description}
           <p>{data.routeEntry.page.description}</p>
@@ -81,15 +89,17 @@
           </section>
         {/if}
 
-        <pre class="docs-example-content">{data.routeEntry.page.body}</pre>
+        <DocsContent
+          content={data.routeEntry.page.body}
+          sourcePath={data.routeEntry.page.id}
+          compatPreset={data.compatPreset}
+        />
       </article>
     {:else}
-      <article class="docs-example-article">
+      <article class="docs-example-article" data-docsfn-proof-surface="api">
         <h1>{data.routeEntry.api.title}</h1>
         <p>Route: {data.routeEntry.api.path}</p>
-        <pre class="docs-example-content">
-{JSON.stringify(data.routeEntry.api.spec, null, 2)}
-        </pre>
+        <ApiReferenceRenderer api={data.routeEntry.api} />
       </article>
     {/if}
 
@@ -154,6 +164,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 1rem;
     border-bottom: 1px solid #e5e7eb;
     padding-bottom: 0.75rem;
@@ -210,16 +221,6 @@
     margin: 0;
     padding-left: 1.25rem;
   }
-
-  .docs-example-content {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 0.5rem;
-    padding: 1rem;
-    overflow: auto;
-    white-space: pre-wrap;
-  }
-
   .docs-example-pagination {
     display: flex;
     justify-content: space-between;

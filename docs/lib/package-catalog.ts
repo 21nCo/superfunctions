@@ -309,6 +309,14 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     relatedPackages: ["oauth-core", "http", "oauth-flow"],
   }),
   createTypeScriptPackageEntry({
+    slug: "oauth-router",
+    title: "OAuth Router",
+    category: "authentication",
+    order: 35,
+    summary: "Compose install, callback, and account routes for OAuth-powered applications.",
+    relatedPackages: ["oauth-core", "oauth-http", "auth"],
+  }),
+  createTypeScriptPackageEntry({
     slug: "oauth-storage",
     title: "OAuth Storage",
     category: "authentication",
@@ -379,6 +387,14 @@ export const packageCatalog: readonly PackageDocEntry[] = [
     order: 50,
     summary: "Adapt the shared HTTP primitives to Next.js App Router handlers.",
     relatedPackages: ["http", "middleware", "oauth-http"],
+  }),
+  createTypeScriptPackageEntry({
+    slug: "http-openapi",
+    title: "HTTP OpenAPI",
+    category: "http",
+    order: 55,
+    summary: "Generate OpenAPI documents from the shared HTTP contract and route metadata.",
+    relatedPackages: ["http", "auth", "http-next"],
   }),
   createTypeScriptPackageEntry({
     slug: "http-sveltekit",

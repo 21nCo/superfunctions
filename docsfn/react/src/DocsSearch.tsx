@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   createDocsSearchRuntime,
@@ -15,6 +17,7 @@ import {
   DialogContent,
 } from "@uifn/react";
 import { ScrollArea } from "@uifn/react";
+import { navigateTo } from "./navigation";
 
 type SearchScopeFilter = DocsSearchScope | "all";
 
@@ -158,7 +161,7 @@ export function DocsSearch({
       },
       emit: (event) => analytics?.onEvent?.(event),
     });
-    window.location.href = result.path;
+    navigateTo(result.path);
     setIsOpen(false);
   };
 

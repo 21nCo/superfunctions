@@ -1,6 +1,6 @@
 ---
 title: core — Helpers
-description: High-level navigation helper exports from @docsfn/core/helpers.
+description: High-level navigation helper exports from @docsfn/core.
 ---
 
 # Helpers (`@docsfn/core`)

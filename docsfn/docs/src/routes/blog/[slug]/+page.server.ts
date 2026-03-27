@@ -1,6 +1,6 @@
 import { error } from "@sveltejs/kit";
-import { compileSvelteContent } from "@docsfn/core";
 import { getPostData } from "@docsfn/sveltekit";
+import { getCompiledDocsPost } from "$lib/server/docs-site-source";
 import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ params, parent }) => {
@@ -11,10 +11,7 @@ export const load: PageServerLoad = async ({ params, parent }) => {
     throw error(404, "Post not found");
   }
 
-  const compiled = compileSvelteContent({
-    source: post.body,
-    compatPreset: source.compatPreset,
-  });
+  const compiled = await getCompiledDocsPost(post.id);
 
   return {
     post,

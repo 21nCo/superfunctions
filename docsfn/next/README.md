@@ -117,6 +117,8 @@ export async function GET() {
 }
 ```
 
+Reserve the API collection for OpenAPI specs such as `content/api`. If you also keep markdown package docs under `content/docs/api`, route them through your normal docs catch-all and classify them into the `api` sidebar/search scope with `navigation.sidebars.api.include` plus `search.routeScopeOverrides`.
+
 ## Optional Security/Analytics Hooks
 
 `@docsfn/next` re-exports canonical security/analytics helpers from core:

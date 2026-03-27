@@ -50,6 +50,7 @@ Do not hand-edit copied fixture content except for explicit test-only fixture ad
 Run these from repository root after fixture refresh:
 
 ```bash
-node /Users/serro/Documents/dev/n/superfunctions/docsfn/scripts/migration-check.mjs
-node /Users/serro/Documents/dev/n/superfunctions/docsfn/scripts/release-gate.mjs
+npm ci
+node docsfn/scripts/migration-check.mjs
+node docsfn/scripts/release-gate.mjs
 ```

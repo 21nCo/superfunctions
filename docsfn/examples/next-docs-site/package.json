@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node ../../../node_modules/next/dist/bin/next dev -p 6051",
     "build": "node ../../../node_modules/next/dist/bin/next build",
-    "start": "node ../../../node_modules/next/dist/bin/next start -p 6051"
+    "start": "node ../../../node_modules/next/dist/bin/next start -p 6051",
+    "test": "vitest"
   },
   "dependencies": {
     "next": "^15.0.0",

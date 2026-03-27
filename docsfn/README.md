@@ -42,18 +42,22 @@ const config: DocsConfig = {
     preset: "fumadocs-v15",
   },
   content: {
-    root: process.cwd(),
+    root: ".",
     docsDir: "content/docs",
-    pagesDir: "pages",
-    blogDir: "blog",
-    apiDir: "api",
-    assetsDir: "public",
+    pagesDir: "content/pages",
+    blogDir: "content/blog",
+    apiDir: "content/api",
+    assetsDir: "static",
     metaFileName: "meta.json",
   },
   search: {
     enabled: true,
     scopes: ["docs", "api", "blog"],
     bodyIndexing: "summary",
+    routeScopeOverrides: [
+      { pattern: "/docs/api", scope: "api" },
+      { pattern: "/docs/api/**", scope: "api" },
+    ],
   },
   auth: {
     enabled: false,
@@ -73,13 +77,13 @@ export default config;
 
 ```bash
 # Validate config/content and fail non-zero on error diagnostics
-npm --prefix docsfn/cli run build -- validate --root /absolute/path/to/site
+npx docsfn validate --root .
 
 # Build canonical artifacts
-npm --prefix docsfn/cli run build -- build --root /absolute/path/to/site --out-dir .docsfn
+npx docsfn build --root . --out-dir .docsfn
 
 # Dev watcher with structured invalidation diagnostics
-npm --prefix docsfn/cli run build -- dev --root /absolute/path/to/site --out-dir .docsfn
+npx docsfn dev --root . --out-dir .docsfn
 ```
 
 Build outputs:
@@ -93,14 +97,18 @@ Build outputs:
 
 1. Copy canonical fixture (or your docs site) into a docsfn root with `content/docs`.
 2. Add `docsfn.config.ts` with `schemaVersion: 1` and `compat.preset: "fumadocs-v15"`.
-3. Run `docsfn validate` and fix blocking diagnostics.
-4. Run `docsfn build` and inspect `manifest.json`, `search.json`, `compat-report.json`.
-5. Wire your host app through `@docsfn/next` or `@docsfn/sveltekit` helpers.
-6. Run the release matrix before cutting versions:
+3. Reserve the API collection for OpenAPI specs such as `content/api`; if you want markdown package docs under `/docs/api`, keep them in the docs collection at `content/docs/api` and classify them with sidebar globs plus `search.routeScopeOverrides`.
+4. Run `docsfn validate` and fix blocking diagnostics.
+5. Run `docsfn build` and inspect `manifest.json`, `search.json`, `compat-report.json`.
+6. Wire your host app through `@docsfn/next` or `@docsfn/sveltekit` helpers.
+7. Run the release matrix before cutting versions:
 
 ```bash
-node /Users/serro/Documents/dev/n/superfunctions/docsfn/scripts/release-gate.mjs
-node /Users/serro/Documents/dev/n/superfunctions/docsfn/scripts/migration-check.mjs
+npm ci
+node docsfn/scripts/release-preflight.mjs
+node docsfn/scripts/docs-contract-check.mjs
+node docsfn/scripts/release-gate.mjs
+node docsfn/scripts/migration-check.mjs
 ```
 
 ## Reference Examples

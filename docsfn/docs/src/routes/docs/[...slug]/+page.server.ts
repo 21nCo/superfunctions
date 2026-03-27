@@ -1,11 +1,12 @@
 import { error } from "@sveltejs/kit";
-import { compileSvelteContent, getTopNavigation } from "@docsfn/core";
+import { getTopNavigation } from "@docsfn/core";
 import type { Sidebar } from "@docsfn/core";
 import {
   resolveDocsPageSurface,
   resolveDocsRouteDataOrThrow,
   type SvelteDocsPageSurface,
 } from "@docsfn/sveltekit";
+import { getCompiledDocsPage } from "$lib/server/docs-site-source";
 import type { PageServerLoad } from "./$types";
 
 function buildCanonicalUrl(canonicalBase: string | undefined, path: string): string {
@@ -93,10 +94,7 @@ export const load: PageServerLoad = async ({ params, parent }) => {
 
   const compiled =
     routeEntry.kind === "page"
-      ? compileSvelteContent({
-          source: routeEntry.page.body,
-          compatPreset: source.compatPreset,
-        })
+      ? await getCompiledDocsPage(routeEntry.page.id)
       : undefined;
 
   return {
