@@ -24,9 +24,11 @@ import type {
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
 import { createPrismaInternalCrud } from './internal.js';
+import type { PrismaProvider } from './internal.js';
 
 export interface PrismaAdapterConfig {
   prisma: any; // PrismaClient instance
+  provider?: PrismaProvider;
   modelMap: Record<string, string>; // model name -> Prisma model name (e.g., 'users' -> 'user')
   schemaVersionsTable?: string; // optional model name for schema versions
   namespace?: any;
@@ -332,6 +334,6 @@ export function prismaAdapter(config: PrismaAdapterConfig): Adapter {
   });
 
   const adapter = factory({});
-  const internalCrud = createPrismaInternalCrud(config.prisma);
+  const internalCrud = createPrismaInternalCrud(config.prisma, config.provider);
   return Object.assign(adapter, { internal: internalCrud });
 }

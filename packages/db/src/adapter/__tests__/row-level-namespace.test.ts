@@ -415,7 +415,7 @@ describe('wrapWithRowLevelNamespace', () => {
         conflictTarget: 'id',
       });
 
-      expect(capturedParams.conflictTarget).toEqual(['__ns', 'id']);
+      expect(capturedParams.conflictTarget).toEqual(['id', '__ns']);
     });
 
     it('transforms array conflictTarget to prepend __ns', async () => {
@@ -435,7 +435,27 @@ describe('wrapWithRowLevelNamespace', () => {
         conflictTarget: ['id', 'type'],
       });
 
-      expect(capturedParams.conflictTarget).toEqual(['__ns', 'id', 'type']);
+      expect(capturedParams.conflictTarget).toEqual(['id', 'type', '__ns']);
+    });
+
+    it('does not duplicate namespace columns in conflictTarget', async () => {
+      const originalUpsert = baseAdapter.upsert.bind(baseAdapter);
+      let capturedParams: any;
+      baseAdapter.upsert = async (params: any) => {
+        capturedParams = params;
+        return originalUpsert(params);
+      };
+
+      await db.upsert({
+        model: 'kv',
+        where: [{ field: 'id', operator: 'eq', value: 'kv:pref:theme' }],
+        create: { id: 'kv:pref:theme', value: 'light' },
+        update: { value: 'light' },
+        namespace: 'user:A',
+        conflictTarget: ['id', '__ns'],
+      });
+
+      expect(capturedParams.conflictTarget).toEqual(['id', '__ns']);
     });
 
     it('does not modify conflictTarget when not provided', async () => {
@@ -487,9 +507,33 @@ describe('wrapWithRowLevelNamespace', () => {
     });
 
     it('does not throw on missing namespace', async () => {
-      await expect(
-        disabledDb.findMany({ model: 'task', where: [] }),
-      ).resolves.not.toThrow();
+      await expect(disabledDb.findMany({ model: 'task', where: [] })).resolves.toEqual([]);
+    });
+  });
+
+  describe('optional namespace mode', () => {
+    let optionalDb: Adapter;
+
+    beforeEach(() => {
+      optionalDb = wrapWithRowLevelNamespace(memoryAdapter({ debug: false }), {
+        enabled: true,
+        mandatory: false,
+      });
+    });
+
+    it('does not stamp or filter when namespace is omitted', async () => {
+      const created = await optionalDb.create({
+        model: 'task',
+        data: { id: 'optional-1', title: 'Optional namespace' },
+      });
+
+      expect(created).toEqual({ id: 'optional-1', title: 'Optional namespace' });
+
+      const found = await optionalDb.findMany({
+        model: 'task',
+        where: [{ field: 'id', operator: 'eq', value: 'optional-1' }],
+      });
+      expect(found).toEqual([{ id: 'optional-1', title: 'Optional namespace' }]);
     });
   });
 

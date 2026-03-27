@@ -53,15 +53,34 @@ function assertNamespace(
   }
 }
 
+function resolveNamespace(
+  ns: string | undefined | null,
+  mandatory: boolean,
+): string | undefined {
+  assertNamespace(ns, mandatory);
+  return ns ?? undefined;
+}
+
 function namespaceWhereClause(col: string, ns: string): WhereClause {
   return { field: col, operator: 'eq', value: ns };
 }
 
-function prependWhere(
+function appendWhere(
   existing: WhereClause[] | undefined,
   clause: WhereClause,
 ): WhereClause[] {
-  return [clause, ...(existing ?? [])];
+  return [...(existing ?? []), clause];
+}
+
+function withNamespaceWhere(
+  where: WhereClause[] | undefined,
+  col: string,
+  namespace: string | undefined,
+): WhereClause[] | undefined {
+  if (!namespace) {
+    return where;
+  }
+  return appendWhere(where, namespaceWhereClause(col, namespace));
 }
 
 function stripColumn<T>(record: T, col: string): T {
@@ -78,8 +97,11 @@ function stripColumnFromArray<T>(records: T[], col: string): T[] {
 function stampData(
   data: Record<string, any>,
   col: string,
-  ns: string,
+  ns: string | undefined,
 ): Record<string, any> {
+  if (!ns) {
+    return data;
+  }
   return { ...data, [col]: ns };
 }
 
@@ -128,96 +150,76 @@ export function wrapWithRowLevelNamespace(
     // --- CRUD ---
 
     async create(params) {
-      assertNamespace(params.namespace, mandatory);
-      const data = stampData(params.data, col, params.namespace!);
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const data = stampData(params.data, col, namespace);
       const result = await adapter.create({ ...params, data });
       return stripColumn(result, col);
     },
 
     async createMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const data = params.data.map((d) => stampData(d, col, params.namespace!));
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const data = params.data.map((d) => stampData(d, col, namespace));
       const results = await adapter.createMany({ ...params, data });
       return stripColumnFromArray(results, col);
     },
 
     async findOne(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const result = await adapter.findOne({ ...params, where });
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
+      const result = await adapter.findOne({ ...params, where: where ?? [] });
       return result ? stripColumn(result, col) : null;
     },
 
     async findMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const results = await adapter.findMany({ ...params, where });
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
+      const results = await adapter.findMany({ ...params, where: where ?? [] });
       return stripColumnFromArray(results, col);
     },
 
     async update(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
       const data = removeColumnFromData(params.data, col);
-      const result = await adapter.update({ ...params, where, data });
+      const result = await adapter.update({ ...params, where: where ?? [], data });
       return stripColumn(result, col);
     },
 
     async updateMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
       const data = removeColumnFromData(params.data, col);
-      return adapter.updateMany({ ...params, where, data });
+      return adapter.updateMany({ ...params, where: where ?? [], data });
     },
 
     async delete(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      return adapter.delete({ ...params, where });
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
+      return adapter.delete({ ...params, where: where ?? [] });
     },
 
     async deleteMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      return adapter.deleteMany({ ...params, where });
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
+      return adapter.deleteMany({ ...params, where: where ?? [] });
     },
 
     async upsert(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const create = stampData(params.create, col, params.namespace!);
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
+      const create = stampData(params.create, col, namespace);
       const update = removeColumnFromData(params.update, col);
       // Augment conflict target to include namespace column for composite PK
       let conflictTarget = params.conflictTarget;
-      if (conflictTarget) {
-        conflictTarget = Array.isArray(conflictTarget)
-          ? [col, ...conflictTarget]
-          : [col, conflictTarget];
+      if (conflictTarget && namespace) {
+        const values = Array.isArray(conflictTarget)
+          ? [...conflictTarget, col]
+          : [conflictTarget, col];
+        conflictTarget = Array.from(new Set(values));
       }
       const result = await adapter.upsert({
         ...params,
-        where,
+        where: where ?? [],
         create,
         update,
         conflictTarget,
@@ -226,11 +228,8 @@ export function wrapWithRowLevelNamespace(
     },
 
     async count(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const where = withNamespaceWhere(params.where, col, namespace);
       return adapter.count({ ...params, where });
     },
 

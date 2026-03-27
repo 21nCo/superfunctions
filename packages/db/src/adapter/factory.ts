@@ -268,12 +268,12 @@ function wrapAdapter(
 
     // Internal CRUD placeholder — overridden by each adapter via Object.assign
     internal: {
-      ensureTable: () => { throw new Error('InternalCrud not implemented by this adapter'); },
-      create: () => { throw new Error('InternalCrud not implemented by this adapter'); },
-      findOne: () => { throw new Error('InternalCrud not implemented by this adapter'); },
-      findMany: () => { throw new Error('InternalCrud not implemented by this adapter'); },
-      update: () => { throw new Error('InternalCrud not implemented by this adapter'); },
-      delete: () => { throw new Error('InternalCrud not implemented by this adapter'); },
+      ensureTable: async () => { throw new Error('InternalCrud not implemented by this adapter'); },
+      create: async () => { throw new Error('InternalCrud not implemented by this adapter'); },
+      findOne: async () => { throw new Error('InternalCrud not implemented by this adapter'); },
+      findMany: async () => { throw new Error('InternalCrud not implemented by this adapter'); },
+      update: async () => { throw new Error('InternalCrud not implemented by this adapter'); },
+      delete: async () => { throw new Error('InternalCrud not implemented by this adapter'); },
     } as any,
   };
 }

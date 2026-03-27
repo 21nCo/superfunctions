@@ -1,48 +1,61 @@
-import type { InternalCrud, InternalColumnDef } from '../../adapter/types.js';
+import type {
+  InternalCrud,
+  InternalColumnDef,
+  InternalWhereClause,
+} from '../../adapter/types.js';
+import {
+  assertInternalColumnDefs,
+  assertInternalTableName,
+  assertInternalWhereClauses,
+  internalOperatorSql,
+  normalizeInternalResultCount,
+  parseInternalOrderBy,
+  quoteInternalIdentifier,
+} from '../internal-utils.js';
 
 export type DrizzleDialect = 'postgres' | 'mysql' | 'sqlite';
 
 let drizzleSql: any;
+let drizzleImportError: unknown;
 try {
   const mod = await import('drizzle-orm');
   drizzleSql = mod.sql;
-} catch {}
-
-const OP_MAP: Record<string, string> = {
-  eq: '=',
-  ne: '!=',
-  gt: '>',
-  gte: '>=',
-  lt: '<',
-  lte: '<=',
-};
-
-function mapOp(op: string): string {
-  const mapped = OP_MAP[op];
-  if (!mapped) throw new Error(`Unsupported internal CRUD operator: ${op}`);
-  return mapped;
+} catch (error) {
+  drizzleImportError = error;
 }
 
 function buildWhereClause(
-  where: Array<{ field: string; op: string; value: unknown }>,
+  where: InternalWhereClause[],
+  dialect: DrizzleDialect,
 ): { fragment: any; empty: boolean } {
   if (where.length === 0) {
     return { fragment: null, empty: true };
   }
 
-  let combined = drizzleSql`${drizzleSql.raw(where[0].field)} ${drizzleSql.raw(mapOp(where[0].op))} ${where[0].value}`;
+  assertInternalWhereClauses(where);
+  const sql = getDrizzleSql();
+
+  let combined = sql`${sql.raw(quoteInternalIdentifier(where[0].field, dialect))} ${sql.raw(internalOperatorSql(where[0].op))} ${where[0].value}`;
   for (let i = 1; i < where.length; i++) {
     const w = where[i];
-    combined = drizzleSql`${combined} AND ${drizzleSql.raw(w.field)} ${drizzleSql.raw(mapOp(w.op))} ${w.value}`;
+    combined = sql`${combined} AND ${sql.raw(quoteInternalIdentifier(w.field, dialect))} ${sql.raw(internalOperatorSql(w.op))} ${w.value}`;
   }
 
   return { fragment: combined, empty: false };
 }
 
+function getDrizzleSql(): any {
+  if (!drizzleSql) {
+    throw new Error(
+      `drizzle-orm is required as a peerDependency to use Drizzle internal CRUD helpers${drizzleImportError ? `: ${String(drizzleImportError)}` : ''}`,
+    );
+  }
+  return drizzleSql;
+}
+
 export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): InternalCrud {
   const ensurePromises = new Map<string, Promise<void>>();
-
-  const TABLE_NAME_RE = /^__datafn_[a-z0-9_]+$/;
+  const sql = getDrizzleSql();
 
   // Dialect-aware execution helpers
   const isSQLite = dialect === 'sqlite';
@@ -72,55 +85,69 @@ export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): Int
 
   return {
     async ensureTable(name: string, columns: InternalColumnDef[]): Promise<void> {
-      if (!TABLE_NAME_RE.test(name)) {
-        throw new Error(`ensureTable: table name must start with "__datafn_": "${name}"`);
-      }
+      assertInternalTableName(name);
+      assertInternalColumnDefs(columns);
 
       // Use a promise-based lock to prevent concurrent DDL for the same table.
       // Without this, concurrent calls pass the guard before any completes,
       // causing PostgreSQL pg_type duplicate key errors on CREATE TABLE IF NOT EXISTS.
-      if (ensurePromises.has(name)) return ensurePromises.get(name);
+      if (ensurePromises.has(name)) return ensurePromises.get(name)!;
 
       const promise = (async () => {
         const colDefs = columns.map((col) => {
           const sqlType = col.type === 'text' ? 'TEXT' : 'INTEGER';
           const pk = col.primaryKey ? ' PRIMARY KEY' : '';
-          return `${col.name} ${sqlType}${pk}`;
+          return `${quoteInternalIdentifier(col.name, dialect)} ${sqlType}${pk}`;
         });
 
-        const ddl = `CREATE TABLE IF NOT EXISTS ${name} (${colDefs.join(', ')})`;
-        await executeRaw(drizzleSql.raw(ddl));
+        const ddl = `CREATE TABLE IF NOT EXISTS ${quoteInternalIdentifier(name, dialect)} (${colDefs.join(', ')})`;
+        await executeRaw(sql.raw(ddl));
       })();
 
       ensurePromises.set(name, promise);
-      return promise;
+      try {
+        await promise;
+      } catch (error) {
+        ensurePromises.delete(name);
+        throw error;
+      }
     },
 
     async create(
       table: string,
       data: Record<string, unknown>,
     ): Promise<Record<string, unknown>> {
+      assertInternalTableName(table);
       const cols = Object.keys(data);
+      cols.forEach((col) => assertInternalColumnDefs([{ name: col, type: 'text' }]));
       const vals = cols.map((k) => data[k]);
+      const quotedColumns = cols.map((col) => quoteInternalIdentifier(col, dialect)).join(', ');
 
-      const query = drizzleSql`INSERT INTO ${drizzleSql.raw(table)} (${drizzleSql.raw(cols.join(', '))}) VALUES (${drizzleSql.join(
-        vals.map((v) => drizzleSql`${v}`),
-        drizzleSql`, `,
+      const query = sql`INSERT INTO ${sql.raw(quoteInternalIdentifier(table, dialect))} (${sql.raw(quotedColumns)}) VALUES (${sql.join(
+        vals.map((v) => sql`${v}`),
+        sql`, `,
       )})`;
 
       await executeRaw(query);
+      if (data.id !== undefined && data.id !== null) {
+        return (
+          (await this.findOne(table, [{ field: 'id', op: 'eq', value: data.id }])) ??
+          data
+        );
+      }
       return data;
     },
 
     async findOne(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
     ): Promise<Record<string, unknown> | null> {
-      const { fragment, empty } = buildWhereClause(where);
+      assertInternalTableName(table);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? drizzleSql`SELECT * FROM ${drizzleSql.raw(table)} LIMIT 1`
-        : drizzleSql`SELECT * FROM ${drizzleSql.raw(table)} WHERE ${fragment} LIMIT 1`;
+        ? sql`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} LIMIT 1`
+        : sql`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment} LIMIT 1`;
 
       const rows = await queryRaw(query);
       return rows[0] ?? null;
@@ -128,27 +155,26 @@ export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): Int
 
     async findMany(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
       opts?: { orderBy?: string; limit?: number },
     ): Promise<Record<string, unknown>[]> {
-      const { fragment, empty } = buildWhereClause(where);
+      assertInternalTableName(table);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       let query;
       if (empty) {
-        query = drizzleSql`SELECT * FROM ${drizzleSql.raw(table)}`;
+        query = sql`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))}`;
       } else {
-        query = drizzleSql`SELECT * FROM ${drizzleSql.raw(table)} WHERE ${fragment}`;
+        query = sql`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment}`;
       }
 
       if (opts?.orderBy) {
-        const desc = opts.orderBy.startsWith('-');
-        const field = desc ? opts.orderBy.slice(1) : opts.orderBy;
-        const dir = desc ? 'DESC' : 'ASC';
-        query = drizzleSql`${query} ORDER BY ${drizzleSql.raw(field)} ${drizzleSql.raw(dir)}`;
+        const order = parseInternalOrderBy(opts.orderBy);
+        query = sql`${query} ORDER BY ${sql.raw(quoteInternalIdentifier(order.field, dialect))} ${sql.raw(order.direction)}`;
       }
 
       if (typeof opts?.limit === 'number') {
-        query = drizzleSql`${query} LIMIT ${opts.limit}`;
+        query = sql`${query} LIMIT ${Math.trunc(opts.limit)}`;
       }
 
       return await queryRaw(query);
@@ -156,36 +182,42 @@ export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): Int
 
     async update(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
       data: Record<string, unknown>,
     ): Promise<number> {
+      assertInternalTableName(table);
       const cols = Object.keys(data);
+      cols.forEach((col) => assertInternalColumnDefs([{ name: col, type: 'text' }]));
+      if (cols.length === 0) {
+        return 0;
+      }
 
-      const setParts = cols.map((col) => drizzleSql`${drizzleSql.raw(col)} = ${data[col]}`);
-      const setClause = drizzleSql.join(setParts, drizzleSql`, `);
+      const setParts = cols.map((col) => sql`${sql.raw(quoteInternalIdentifier(col, dialect))} = ${data[col]}`);
+      const setClause = sql.join(setParts, sql`, `);
 
-      const { fragment, empty } = buildWhereClause(where);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? drizzleSql`UPDATE ${drizzleSql.raw(table)} SET ${setClause}`
-        : drizzleSql`UPDATE ${drizzleSql.raw(table)} SET ${setClause} WHERE ${fragment}`;
+        ? sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, dialect))} SET ${setClause}`
+        : sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, dialect))} SET ${setClause} WHERE ${fragment}`;
 
       const result = await executeRaw(query);
-      return (result as any)?.changes ?? (result as any)?.rowsAffected ?? (result as any)?.rowCount ?? 0;
+      return normalizeInternalResultCount(result);
     },
 
     async delete(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
     ): Promise<number> {
-      const { fragment, empty } = buildWhereClause(where);
+      assertInternalTableName(table);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? drizzleSql`DELETE FROM ${drizzleSql.raw(table)}`
-        : drizzleSql`DELETE FROM ${drizzleSql.raw(table)} WHERE ${fragment}`;
+        ? sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, dialect))}`
+        : sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment}`;
 
       const result = await executeRaw(query);
-      return (result as any)?.changes ?? (result as any)?.rowsAffected ?? (result as any)?.rowCount ?? 0;
+      return normalizeInternalResultCount(result);
     },
   };
 }

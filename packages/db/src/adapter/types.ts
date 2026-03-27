@@ -396,6 +396,14 @@ export interface InternalColumnDef {
   primaryKey?: boolean;
 }
 
+export type InternalCrudOperator = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte';
+
+export interface InternalWhereClause {
+  field: string;
+  op: InternalCrudOperator;
+  value: unknown;
+}
+
 export interface InternalCrud {
   /** Ensure an internal table exists (CREATE TABLE IF NOT EXISTS) */
   ensureTable(name: string, columns: InternalColumnDef[]): Promise<void>;
@@ -409,27 +417,27 @@ export interface InternalCrud {
   /** Find one record in an internal table */
   findOne(
     table: string,
-    where: Array<{ field: string; op: string; value: unknown }>,
+    where: InternalWhereClause[],
   ): Promise<Record<string, unknown> | null>;
 
   /** Find many records in an internal table */
   findMany(
     table: string,
-    where: Array<{ field: string; op: string; value: unknown }>,
+    where: InternalWhereClause[],
     opts?: { orderBy?: string; limit?: number },
   ): Promise<Record<string, unknown>[]>;
 
   /** Update records matching where clause */
   update(
     table: string,
-    where: Array<{ field: string; op: string; value: unknown }>,
+    where: InternalWhereClause[],
     data: Record<string, unknown>,
   ): Promise<number>;
 
   /** Delete records matching where clause */
   delete(
     table: string,
-    where: Array<{ field: string; op: string; value: unknown }>,
+    where: InternalWhereClause[],
   ): Promise<number>;
 
   /** EXE-018: Optional batch create for change-tracking performance */
