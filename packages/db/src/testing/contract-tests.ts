@@ -156,6 +156,27 @@ export function testAdapterContract(config: AdapterTestConfig) {
         },
       });
 
+      if (adapter.capabilities.operations.strictUpdateNotFound) {
+        tests.push({
+          name: 'should throw NotFoundError on update with zero matched rows',
+          test: async () => {
+            try {
+              await adapter.update({
+                model: 'users',
+                where: [{ field: 'id', operator: 'eq', value: 'missing-update-id' }],
+                data: { age: 42 },
+                namespace,
+              });
+              throw new Error('Expected NotFoundError for zero-row update');
+            } catch (error: any) {
+              if (error?.name !== 'NotFoundError') {
+                throw new Error(`Expected NotFoundError, received ${error?.name || 'unknown error'}`);
+              }
+            }
+          },
+        });
+      }
+
       return tests;
     },
 
