@@ -7,15 +7,20 @@ export function useEscapeKeydown(
 ) {
   const resolvedOwnerDocument =
     ownerDocument ?? (typeof document !== 'undefined' ? document : undefined);
+  const onEscapeRef = React.useRef(onEscape);
+
+  React.useEffect(() => {
+    onEscapeRef.current = onEscape;
+  }, [onEscape]);
 
   React.useEffect(() => {
     if (!resolvedOwnerDocument) {
       return;
     }
 
-    const escapeKeyListener = createEscapeKeyListener(onEscape, {
+    const escapeKeyListener = createEscapeKeyListener((event) => onEscapeRef.current(event), {
       ownerDocument: resolvedOwnerDocument,
     });
     return () => escapeKeyListener.destroy();
-  }, [onEscape, resolvedOwnerDocument]);
+  }, [resolvedOwnerDocument]);
 }

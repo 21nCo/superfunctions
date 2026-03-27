@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface ContextMenuContext {
+    setOpen: (value: boolean) => void;
+    setPoint: (point: { x: number; y: number }) => void;
+    setTriggerElement: (el: HTMLElement) => void;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -8,7 +15,18 @@
   }
 
   let { children, class: className, onContextMenu, ...rest }: Props = $props();
-  const context = getContext<any>('context-menu');
+  const context = getRequiredContext<ContextMenuContext>(
+    'context-menu',
+    'ContextMenuTrigger',
+    'ContextMenu components must be used within a ContextMenu'
+  );
+  let ref = $state<HTMLDivElement>();
+
+  onMount(() => {
+    if (ref) {
+      context.setTriggerElement(ref);
+    }
+  });
 
   function handleContextMenu(e: MouseEvent) {
     onContextMenu?.(e);
@@ -21,6 +39,7 @@
 </script>
 
 <div
+  bind:this={ref}
   oncontextmenu={handleContextMenu}
   class={className}
   style="display: contents;"

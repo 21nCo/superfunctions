@@ -3,7 +3,7 @@ import { render, fireEvent, screen } from '@testing-library/svelte';
 import PopoverTest from './testing/PopoverTest.svelte';
 
 describe('Popover (Svelte)', () => {
-  it('toggles open state', async () => {
+  it('dismisses from outside interaction and Escape', async () => {
     render(PopoverTest, {
       defaultOpen: false
     });
@@ -12,9 +12,14 @@ describe('Popover (Svelte)', () => {
     expect(screen.queryByText('Popover Content')).not.toBeInTheDocument();
 
     await fireEvent.click(trigger);
-    expect(screen.getByText('Popover Content')).toBeVisible();
+    const content = screen.getByText('Popover Content');
+    expect(content).toBeVisible();
+
+    await fireEvent.pointerDown(document.body);
+    expect(screen.queryByText('Popover Content')).not.toBeInTheDocument();
 
     await fireEvent.click(trigger);
+    await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.queryByText('Popover Content')).not.toBeInTheDocument();
   });
 });

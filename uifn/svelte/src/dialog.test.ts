@@ -3,7 +3,7 @@ import { render, fireEvent, screen } from '@testing-library/svelte';
 import DialogTest from './testing/DialogTest.svelte';
 
 describe('Dialog (Svelte)', () => {
-  it('opens and closes', async () => {
+  it('locks body scroll, focuses content, and restores the trigger on close', async () => {
     render(DialogTest, {
       defaultOpen: false
     });
@@ -12,15 +12,17 @@ describe('Dialog (Svelte)', () => {
     expect(screen.queryByText('Dialog Title')).not.toBeInTheDocument();
 
     await fireEvent.click(trigger);
-    
-    // Dialog content uses portals, so it might be attached to body
-    // Test primitives usually render portals or fallback.
-    // Let's see if we can find it.
-    expect(screen.getByText('Dialog Title')).toBeVisible();
 
-    const close = screen.getByText('Close');
-    await fireEvent.click(close);
+    const dialog = screen.getByRole('dialog');
+    expect(screen.getByText('Dialog Title')).toBeVisible();
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(dialog).toHaveFocus();
+
+    await fireEvent.keyDown(dialog, { key: 'Escape' });
+    await Promise.resolve();
 
     expect(screen.queryByText('Dialog Title')).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('');
+    expect(trigger).toHaveFocus();
   });
 });

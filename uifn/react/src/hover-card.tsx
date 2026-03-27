@@ -4,6 +4,7 @@ import { useComposedRefs } from './hooks/use-composed-refs';
 import { usePosition, Side, Align } from './hooks/use-position';
 import { Portal } from './portal';
 import { Slot } from './utils/slot';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * HoverCard Root
@@ -24,11 +25,11 @@ interface HoverCardContextValue {
 const HoverCardContext = createContext<HoverCardContextValue | undefined>(undefined);
 
 const useHoverCardContext = () => {
-  const context = useContext(HoverCardContext);
-  if (!context) {
-    throw new Error('HoverCard components must be used within a HoverCard');
-  }
-  return context;
+  return assertReactContext(
+    useContext(HoverCardContext),
+    'HoverCard',
+    'HoverCard components must be used within a HoverCard'
+  );
 };
 
 export interface HoverCardProps {

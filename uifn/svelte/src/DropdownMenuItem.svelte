@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface DropdownMenuContext {
+    setOpen: (value: boolean) => void;
+  }
 
   interface Props {
     disabled?: boolean;
@@ -10,7 +14,11 @@
   }
 
   let { disabled = false, onSelect, onClick, children, class: className, ...rest }: Props = $props();
-  const context = getContext<any>('dropdown-menu');
+  const context = getRequiredContext<DropdownMenuContext>(
+    'dropdown-menu',
+    'DropdownMenuItem',
+    'DropdownMenuItem must be used within a DropdownMenu-compatible menu context'
+  );
 
   function handleSelect(e: Event) {
     if (disabled) return;

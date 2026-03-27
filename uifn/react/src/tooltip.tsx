@@ -5,6 +5,7 @@ import { usePosition, Side, Align } from './hooks/use-position';
 import { useId } from './hooks/use-id';
 import { Portal } from './portal';
 import { Slot } from './utils/slot';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Tooltip Root
@@ -23,11 +24,11 @@ interface TooltipContextValue {
 const TooltipContext = createContext<TooltipContextValue | undefined>(undefined);
 
 const useTooltipContext = () => {
-  const context = useContext(TooltipContext);
-  if (!context) {
-    throw new Error('Tooltip components must be used within a Tooltip');
-  }
-  return context;
+  return assertReactContext(
+    useContext(TooltipContext),
+    'Tooltip',
+    'Tooltip components must be used within a Tooltip'
+  );
 };
 
 export interface TooltipProps {
@@ -53,7 +54,7 @@ export const Tooltip: React.FC<TooltipProps> = (props) => {
     onChange: onOpenChange,
   });
   
-  const contentId = useId();
+  const contentId = useId(undefined, { prefix: 'tooltip', slot: 'content' });
   const triggerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
   
@@ -92,7 +93,7 @@ export const Tooltip: React.FC<TooltipProps> = (props) => {
         contentRef,
         openWithDelay,
         close,
-        contentId: contentId || 'tooltip-content',
+        contentId,
       }}
     >
       {children}

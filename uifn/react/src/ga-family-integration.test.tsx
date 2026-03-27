@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { UIFnError } from '@uifn/core/errors';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { K } from '@uifn/core/aria/keys';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './collapsible';
+import { Dialog, DialogContent, DialogPortal, DialogTitle, DialogTrigger } from './dialog';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from './hover-card';
 import {
   MenuBar,
@@ -10,11 +12,12 @@ import {
   MenuBarMenu,
   MenuBarTrigger,
 } from './menu-bar';
+import { Toast, ToastProvider, ToastTitle, ToastViewport } from './toast';
 import { ToggleGroup, ToggleGroupItem } from './toggle-group';
 
 const selectionVector = ['left', 'right'] as const;
 
-describe('Missing GA family integration coverage (React)', () => {
+describe('React GA integration coverage', () => {
   it('collapsible toggles open/closed state via trigger', () => {
     render(
       <Collapsible defaultOpen={false}>
@@ -89,5 +92,65 @@ describe('Missing GA family integration coverage (React)', () => {
 
     fireEvent.keyDown(trigger, { key: K.ARROW_DOWN });
     expect(screen.getByText('New File')).toBeInTheDocument();
+  });
+
+  it('preserves documented DialogTrigger asChild refs and behavior', async () => {
+    const anchorRef = React.createRef<HTMLAnchorElement>();
+
+    render(
+      <Dialog>
+        <DialogTrigger asChild ref={anchorRef as unknown as React.Ref<HTMLButtonElement>}>
+          <a href="/docs">Open docs</a>
+        </DialogTrigger>
+        <DialogPortal>
+          <DialogContent>
+            <DialogTitle>AsChild Dialog</DialogTitle>
+          </DialogContent>
+        </DialogPortal>
+      </Dialog>
+    );
+
+    const trigger = screen.getByRole('link', { name: 'Open docs' });
+    expect(trigger.tagName).toBe('A');
+    expect(anchorRef.current).toBe(trigger);
+
+    fireEvent.click(trigger);
+    await waitFor(() => {
+      expect(trigger).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByText('AsChild Dialog')).toBeVisible();
+    });
+  });
+
+  it('throws canonical UIFN errors for adapter misuse', () => {
+    let thrown: unknown;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      render(<DialogTrigger>Broken trigger</DialogTrigger>);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UIFnError);
+    expect((thrown as UIFnError).code).toBe('UIFN_ERR_CONTEXT_MISSING');
+    expect((thrown as UIFnError).message).toBe('Dialog components must be used within a Dialog');
+    errorSpy.mockRestore();
+  });
+
+  it('preserves 25 queued toast items without dropping state', () => {
+    render(
+      <ToastProvider>
+        <ToastViewport />
+        {Array.from({ length: 25 }, (_, index) => (
+          <Toast key={index} defaultOpen duration={Infinity}>
+            <ToastTitle>{`Toast ${index + 1}`}</ToastTitle>
+          </Toast>
+        ))}
+      </ToastProvider>
+    );
+
+    expect(screen.getAllByText(/^Toast \d+$/)).toHaveLength(25);
+    expect(screen.getByText('Toast 1')).toBeVisible();
+    expect(screen.getByText('Toast 25')).toBeVisible();
   });
 });

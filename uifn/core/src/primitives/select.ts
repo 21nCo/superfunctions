@@ -1,4 +1,6 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
+import { composePublicId, generateId, registerPublicId } from '../utils/id';
 import { getNextRovingFocusIndex } from '../utils/roving-focus';
 import { type ChangeMeta, createStore } from './shared';
 
@@ -24,6 +26,7 @@ export interface SelectProps {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
+  idBase?: string;
   disabled?: boolean;
   required?: boolean;
   name?: string;
@@ -31,12 +34,24 @@ export interface SelectProps {
   groups?: Record<string, SelectOptionInput[]>;
 }
 
+export interface SelectIds {
+  baseId: string;
+  triggerId: string;
+  contentId: string;
+  labelId: string;
+  optionIds: Record<string, string>;
+  groupIds: Record<string, string>;
+}
+
 export interface SelectState {
   value: string;
   open: boolean;
+  valueControlled: boolean;
+  openControlled: boolean;
   disabled: boolean;
   required: boolean;
   name?: string;
+  ids: SelectIds;
   options: SelectOption[];
   groups: SelectGroup[];
   highlightedItem: string | null;
@@ -121,6 +136,54 @@ function dedupeOptions(options: SelectOption[]): SelectOption[] {
   return Array.from(dedupe.values());
 }
 
+function normalizeIdSegment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function createSelectIds(
+  props: SelectProps,
+  options: SelectOption[],
+  groups: SelectGroup[],
+  existingBaseId?: string
+): SelectIds {
+  const buildId = (prefix: string, slot: string) => {
+    const id = composePublicId({ prefix, slot });
+    return existingBaseId ? id : registerPublicId(id);
+  };
+  const baseId = existingBaseId
+    ? existingBaseId
+    : props.idBase
+    ? registerPublicId(props.idBase, {
+        package: '@uifn/core',
+        component: 'Select',
+      })
+    : generateId('select');
+
+  return {
+    baseId,
+    triggerId: buildId(baseId, 'trigger'),
+    contentId: buildId(baseId, 'content'),
+    labelId: buildId(baseId, 'label'),
+    optionIds: Object.fromEntries(
+      options.map((option) => [
+        option.value,
+        buildId(`${baseId}-option`, normalizeIdSegment(option.value)),
+      ])
+    ),
+    groupIds: Object.fromEntries(
+      groups.map((group) => [
+        group.label,
+        buildId(`${baseId}-group`, normalizeIdSegment(group.label)),
+      ])
+    ),
+  };
+}
+
 function getEnabledOptions(options: SelectOption[]): SelectOption[] {
   return options.filter((option) => !option.disabled);
 }
@@ -198,14 +261,28 @@ function assertKnownValue(value: string, options: SelectOption[]): void {
 export function createSelect(props: SelectProps): SelectMachine {
   const normalized = normalizeOptions(props.items, props.groups);
   const initialValue = props.value ?? props.defaultValue ?? '';
+  const valueController = createControllableStateController<string>({
+    value: props.value,
+    defaultValue: props.defaultValue ?? '',
+    onChange: props.onValueChange,
+  });
+  const openController = createControllableStateController<boolean>({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
+  const ids = createSelectIds(props, normalized.options, normalized.grouped);
   assertKnownValue(initialValue, normalized.options);
 
   const store = createStore<SelectState, string>({
-    value: initialValue,
-    open: props.open ?? props.defaultOpen ?? false,
+    value: valueController.getValue(),
+    open: openController.getValue(),
+    valueControlled: valueController.isControlled(),
+    openControlled: openController.isControlled(),
     disabled: props.disabled ?? false,
     required: props.required ?? false,
     name: props.name,
+    ids,
     options: normalized.options,
     groups: normalized.grouped,
     highlightedItem: initialValue || getEnabledOptions(normalized.options)[0]?.value || null,
@@ -223,6 +300,10 @@ export function createSelect(props: SelectProps): SelectMachine {
   ) => {
     const state = store.getState();
     assertKnownValue(nextValue, state.options);
+    const result =
+      source === 'controlled-sync'
+        ? valueController.syncValue(nextValue)
+        : valueController.requestValue(nextValue);
 
     const meta: ChangeMeta<string> = {
       source,
@@ -233,16 +314,15 @@ export function createSelect(props: SelectProps): SelectMachine {
     };
     store.patchState(
       {
-        value: nextValue,
-        selectedIndicator: nextValue || null,
-        hiddenInputValue: getHiddenInputValue(state.name, nextValue),
+        value: result.value,
+        selectedIndicator: result.value || null,
+        hiddenInputValue: getHiddenInputValue(state.name, result.value),
         highlightedItem: nextValue || state.highlightedItem,
         lastChangeMeta: meta,
         lastError: null,
       },
       meta
     );
-    props.onValueChange?.(nextValue);
   };
 
   const emitOpen = (
@@ -255,9 +335,13 @@ export function createSelect(props: SelectProps): SelectMachine {
     const enabled = getEnabledOptions(state.options);
     const highlighted =
       state.highlightedItem ?? state.value ?? enabled[0]?.value ?? null;
+    const result =
+      source === 'controlled-sync'
+        ? openController.syncValue(nextOpen)
+        : openController.requestValue(nextOpen);
 
     store.patchState({
-      open: nextOpen,
+      open: result.value,
       highlightedItem: nextOpen ? highlighted : state.highlightedItem,
       lastChangeMeta: {
         source,
@@ -267,7 +351,6 @@ export function createSelect(props: SelectProps): SelectMachine {
         inputModality,
       },
     });
-    props.onOpenChange?.(nextOpen);
   };
 
   const actions: SelectActions = {
@@ -283,6 +366,10 @@ export function createSelect(props: SelectProps): SelectMachine {
             recoverable: true,
           }),
         });
+        return;
+      }
+
+      if (state.value === nextValue) {
         return;
       }
 
@@ -303,6 +390,10 @@ export function createSelect(props: SelectProps): SelectMachine {
         return;
       }
 
+      if (state.open === nextOpen) {
+        return;
+      }
+
       emitOpen(nextOpen, 'set-open', 'programmatic');
     },
     syncValue(nextValue) {
@@ -318,8 +409,18 @@ export function createSelect(props: SelectProps): SelectMachine {
       }
 
       const nextOptions = [...state.options, toOption(option)];
+      const nextGroups = state.groups;
       store.patchState({
         options: nextOptions,
+        ids: createSelectIds(
+          {
+            ...props,
+            idBase: state.ids.baseId,
+          },
+          nextOptions,
+          nextGroups,
+          state.ids.baseId
+        ),
       });
     },
     setOptions(nextOptions) {
@@ -334,6 +435,15 @@ export function createSelect(props: SelectProps): SelectMachine {
 
       store.patchState({
         options: normalizedOptions,
+        ids: createSelectIds(
+          {
+            ...props,
+            idBase: state.ids.baseId,
+          },
+          normalizedOptions,
+          state.groups,
+          state.ids.baseId
+        ),
         highlightedItem: highlighted,
       });
     },

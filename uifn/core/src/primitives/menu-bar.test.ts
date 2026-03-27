@@ -21,4 +21,13 @@ describe('menu-bar primitive', () => {
     expect(restored).toBe('view');
     expect(menuBar.state.value).toBe('');
   });
+
+  it('supports Home and End focus shortcuts across enabled items', () => {
+    const menuBar = createMenuBar({
+      items: [{ id: 'file' }, { id: 'edit', disabled: true }, { id: 'view' }],
+    });
+
+    expect(menuBar.actions.handleKeyDown('End', 'file')).toBe('view');
+    expect(menuBar.actions.handleKeyDown('Home', 'view')).toBe('file');
+  });
 });

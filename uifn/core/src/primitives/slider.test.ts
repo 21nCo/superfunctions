@@ -29,4 +29,17 @@ describe('slider primitive', () => {
     expect(slider.state.value).toEqual([0, 100]);
     expect(slider.state.lastError?.code).toBe('UIFN_ERR_RANGE_OUT_OF_BOUNDS');
   });
+
+  it('supports Home and End keyboard stepping', () => {
+    const slider = createSlider({
+      defaultValue: [20, 80],
+      min: 0,
+      max: 100,
+      step: 10,
+    });
+
+    slider.actions.stepThumb(0, 'Home');
+    slider.actions.stepThumb(1, 'End');
+    expect(slider.state.value).toEqual([0, 100]);
+  });
 });

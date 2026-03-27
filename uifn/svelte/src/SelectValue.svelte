@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     placeholder?: string;
@@ -7,7 +7,11 @@
   }
 
   let { placeholder, ...rest }: Props = $props();
-  const ctx = getContext<any>('select');
+  const ctx = getRequiredContext<any>(
+    'select',
+    'SelectValue',
+    'Select components must be used within a Select'
+  );
 </script>
 
 <span style:pointer-events="none" {...rest}>

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useRef } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
 import { useRovingFocus } from './hooks/use-roving-focus';
 import { ToggleGroupType } from '@uifn/core/primitives/toggle-group';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * ToggleGroup
@@ -129,9 +130,11 @@ export interface ToggleGroupItemProps extends React.ButtonHTMLAttributes<HTMLBut
 export const ToggleGroupItem = React.forwardRef<HTMLButtonElement, ToggleGroupItemProps>(
   (props, ref) => {
     const { value, disabled, children, onClick, ...domProps } = props;
-    const context = useContext(ToggleGroupContext);
-
-    if (!context) throw new Error('ToggleGroupItem must be used within ToggleGroup');
+    const context = assertReactContext(
+      useContext(ToggleGroupContext),
+      'ToggleGroupItem',
+      'ToggleGroupItem must be used within ToggleGroup'
+    );
 
     const pressed =
       context.type === 'single'

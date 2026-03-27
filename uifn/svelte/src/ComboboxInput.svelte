@@ -1,5 +1,20 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface ComboboxContext {
+    open: boolean;
+    disabled: boolean;
+    contentId: string;
+    inputValue: string;
+    highlightedItem: string | null;
+    registerInput: (el: HTMLInputElement) => void;
+    setInputValue: (value: string) => void;
+    setOpen: (value: boolean) => void;
+    getItemId: (value: string) => string | undefined;
+    scrollItemIntoView: (value: string | null | undefined) => void;
+    handleKeyDown: (key: string, currentItem?: string | null) => string | null;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -7,7 +22,11 @@
   }
 
   let { children, ...rest }: Props = $props();
-  const ctx = getContext<any>('combobox');
+  const ctx = getRequiredContext<ComboboxContext>(
+    'combobox',
+    'ComboboxInput',
+    'Combobox components must be used within a Combobox'
+  );
   let el: HTMLInputElement;
 
   onMount(() => {
@@ -20,16 +39,17 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          if (!ctx.open) ctx.setOpen(true);
-          // Focus move logic would go here or be handled by roving focus in Content
-      } else if (e.key === 'Escape') {
-          if (ctx.open) {
-              e.preventDefault();
-              ctx.setOpen(false);
-          }
-      }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', 'Escape'].includes(e.key)) {
+      return;
+    }
+
+    e.preventDefault();
+    const nextItem = ctx.handleKeyDown(e.key, ctx.highlightedItem);
+    if (nextItem) {
+      queueMicrotask(() => {
+        ctx.scrollItemIntoView(nextItem);
+      });
+    }
   }
 
   function handleClick() {
@@ -43,7 +63,8 @@
   role="combobox"
   aria-autocomplete="list"
   aria-expanded={ctx.open}
-  aria-controls="combobox-content"
+  aria-controls={ctx.open ? ctx.contentId : undefined}
+  aria-activedescendant={ctx.open && ctx.highlightedItem ? ctx.getItemId(ctx.highlightedItem) : undefined}
   aria-disabled={ctx.disabled}
   data-state={ctx.open ? 'open' : 'closed'}
   disabled={ctx.disabled}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { UIFnError } from '../errors';
 import { createAccordion } from './accordion';
 
@@ -37,5 +37,23 @@ describe('accordion primitive', () => {
           items: ['item-1', 'item-2'],
         })
     ).toThrowError(UIFnError);
+  });
+
+  it('keeps controlled accordion value stable until syncValue runs', () => {
+    const onValueChange = vi.fn();
+    const accordion = createAccordion({
+      type: 'single',
+      value: 'item-1',
+      onValueChange,
+      collapsible: true,
+      items: ['item-1', 'item-2'],
+    });
+
+    accordion.actions.toggleItem('item-2');
+    expect(onValueChange).toHaveBeenCalledWith('item-2');
+    expect(accordion.state.value).toBe('item-1');
+
+    accordion.actions.syncValue('item-2');
+    expect(accordion.state.value).toBe('item-2');
   });
 });

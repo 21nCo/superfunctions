@@ -22,7 +22,7 @@ Out of scope:
 - `uifn/svelte/package.json`
 - `uifn/vue/package.json`
 - `uifn/files/package.json`
-- `uifn/SPEC.md`
+- `uifn/.conduct/SPEC.md`
 - `uifn/README.md` (new, if absent)
 - `uifn/core/README.md`
 - `uifn/react/README.md`

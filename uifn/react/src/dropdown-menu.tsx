@@ -5,6 +5,8 @@ import { usePosition, Side, Align } from './hooks/use-position';
 import { useOutsideClick } from './hooks/use-outside-click';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { Portal } from './portal';
+import { assertReactContext } from './utils/assert-context';
+import { useId } from './hooks/use-id';
 
 /* -------------------------------------------------------------------------------------------------
  * DropdownMenu Root
@@ -13,6 +15,7 @@ import { Portal } from './portal';
 interface DropdownMenuContextValue {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  contentId: string;
   triggerRef: React.RefObject<HTMLElement>;
   contentRef: React.RefObject<HTMLElement>;
 }
@@ -20,11 +23,11 @@ interface DropdownMenuContextValue {
 const DropdownMenuContext = createContext<DropdownMenuContextValue | undefined>(undefined);
 
 const useDropdownMenuContext = () => {
-  const context = useContext(DropdownMenuContext);
-  if (!context) {
-    throw new Error('DropdownMenu components must be used within a DropdownMenu');
-  }
-  return context;
+  return assertReactContext(
+    useContext(DropdownMenuContext),
+    'DropdownMenu',
+    'DropdownMenu components must be used within a DropdownMenu'
+  );
 };
 
 export interface DropdownMenuProps {
@@ -47,6 +50,7 @@ export const DropdownMenu: React.FC<DropdownMenuProps> = (props) => {
     defaultProp: defaultOpen,
     onChange: onOpenChange,
   });
+  const contentId = useId(undefined, { prefix: 'dropdown-menu', slot: 'content' });
 
   const triggerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
@@ -56,6 +60,7 @@ export const DropdownMenu: React.FC<DropdownMenuProps> = (props) => {
       value={{
         open: !!open,
         onOpenChange: setOpen,
+        contentId,
         triggerRef,
         contentRef,
       }}
@@ -98,7 +103,7 @@ export const DropdownMenuTrigger = React.forwardRef<HTMLButtonElement, DropdownM
         type="button"
         aria-haspopup="menu"
         aria-expanded={context.open}
-        aria-controls={context.open ? 'dropdown-menu-content' : undefined}
+        aria-controls={context.open ? context.contentId : undefined}
         data-state={context.open ? 'open' : 'closed'}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
@@ -149,8 +154,8 @@ export const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenu
     });
 
     // Click Outside
-    useOutsideClick(context.contentRef, (_: MouseEvent | TouchEvent) => {
-        if (context.triggerRef.current?.contains(_.target as Node)) return;
+    useOutsideClick(context.contentRef, (event) => {
+        if (context.triggerRef.current?.contains(event.target as Node)) return;
         context.onOpenChange(false);
     }, context.open);
 
@@ -169,7 +174,12 @@ export const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenu
         const content = context.contentRef.current;
         if (!content) return;
 
-        const items = Array.from(content.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]')) as HTMLElement[];
+        const items = Array.from(
+          content.querySelectorAll(
+            '[role="menuitem"]:not([aria-disabled="true"]), [role="menuitemcheckbox"]:not([aria-disabled="true"]), [role="menuitemradio"]:not([aria-disabled="true"])'
+          )
+        ) as HTMLElement[];
+        if (!items.length) return;
         const currentIndex = items.indexOf(document.activeElement as HTMLElement);
 
         if (e.key === 'ArrowDown') {
@@ -193,7 +203,9 @@ export const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenu
     const focusRef = React.useCallback((node: HTMLDivElement) => {
         if (node && context.open) {
              requestAnimationFrame(() => {
-                 const items = node.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]');
+                 const items = node.querySelectorAll(
+                   '[role="menuitem"]:not([aria-disabled="true"]), [role="menuitemcheckbox"]:not([aria-disabled="true"]), [role="menuitemradio"]:not([aria-disabled="true"])'
+                 );
                  if (items.length > 0) {
                      (items[0] as HTMLElement).focus();
                  } else {
@@ -212,7 +224,7 @@ export const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenu
         <div
           ref={composedRef}
           role="menu"
-          id="dropdown-menu-content"
+          id={context.contentId}
           tabIndex={-1} // Allow focus
           data-state={context.open ? 'open' : 'closed'}
           data-side={side}
@@ -266,7 +278,7 @@ export const DropdownMenuItem = React.forwardRef<HTMLDivElement, DropdownMenuIte
       <div
         ref={ref}
         role="menuitem"
-        aria-disabled={disabled}
+        aria-disabled={disabled ? 'true' : undefined}
         tabIndex={disabled ? -1 : 0} // Roving focus usually sets -1 on inactive, but 0 is easier for basic implementation
         data-disabled={disabled ? '' : undefined}
         onClick={handleSelect}

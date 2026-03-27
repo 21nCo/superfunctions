@@ -3,6 +3,7 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 export default defineConfig({
   plugins: [svelte({ hot: !process.env.VITEST })],
+  cacheDir: "./.vite-vitest",
   test: {
     environment: "jsdom",
     globals: true,

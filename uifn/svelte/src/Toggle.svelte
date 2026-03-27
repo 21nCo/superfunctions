@@ -19,12 +19,16 @@
     class: className,
     ...rest
   }: Props = $props();
+  const initialPressed = (() => pressedProp)();
+  const initialDefaultPressed = (() => defaultPressed)();
+  const initialDisabled = (() => disabled)();
+  const notifyPressedChange = (pressed: boolean) => onPressedChange?.(pressed);
 
   const machine = createToggle({
-    pressed: pressedProp,
-    defaultPressed,
-    disabled,
-    onPressedChange
+    pressed: initialPressed,
+    defaultPressed: initialDefaultPressed,
+    disabled: initialDisabled,
+    onPressedChange: notifyPressedChange
   });
 
   let state = $state(machine.state);
@@ -33,6 +37,12 @@
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (pressedProp !== undefined && pressedProp !== state.pressed) {
+      machine.actions.syncPressed(pressedProp);
+    }
   });
 
   function handleClick() {

@@ -35,7 +35,7 @@ Requirements delivered in this phase:
 - Acceptance criteria evidence:
   - Canonical package identities aligned in manifests: `@uifn/core`, `@uifn/react`, `@uifn/svelte`, `@uifn/vue`, `@uifn/files` (`jq -r '.name'` across package manifests).
   - Core export-map now includes `./aria/*`, `./state/*`, `./utils/*`, `./primitives/*` (`node -e "Object.keys(require('./uifn/core/package.json').exports)"`).
-  - Unsupported adapter GA claims removed; docs now explicitly state unsupported adapters are not supported (`uifn/README.md`, `uifn/SPEC.md`).
+  - Unsupported adapter GA claims removed; docs now explicitly state unsupported adapters are not supported (`uifn/README.md`, `uifn/.conduct/SPEC.md`).
 - Test status:
   - Contract verification command set passed: package identity scan, export map key scan, and docs claim scan.
 
@@ -79,7 +79,7 @@ Requirements delivered in this phase:
 
 - Status: `PASS`
 - Acceptance criteria evidence:
-  - Decision recorded: keep `@uifn/files` public as **Experimental** in support matrix (`uifn/README.md`, `uifn/SPEC.md`).
+  - Decision recorded: keep `@uifn/files` public as **Experimental** in support matrix (`uifn/README.md`, `uifn/.conduct/SPEC.md`).
   - Added package docs and changelog (`uifn/files/README.md`, `uifn/files/CHANGELOG.md`).
   - Pack output is clean and excludes compiled tests (`cd uifn/files && npm pack --dry-run`).
 - Test status:
@@ -89,7 +89,7 @@ Requirements delivered in this phase:
 
 - Status: `PASS`
 - Acceptance criteria evidence:
-  - Compatibility matrix documented in `uifn/README.md` and `uifn/SPEC.md` (Node 18/20/22, React 18.2+, Svelte 5.x, Vue experimental 3.5+).
+  - Compatibility matrix documented in `uifn/README.md` and `uifn/.conduct/SPEC.md` (Node 18/20/22, React 18.2+, Svelte 5.x, Vue experimental 3.5+).
   - Package manifests aligned with the matrix:
     - Node engine range added: `>=18 <23`.
     - Peer ranges aligned for React/Svelte/Vue.
@@ -103,7 +103,7 @@ Files changed/added:
 
 - `package.json`
 - `scripts/verify-uifn-release.mjs`
-- `uifn/SPEC.md`
+- `uifn/.conduct/SPEC.md`
 - `uifn/README.md`
 - `uifn/core/package.json`
 - `uifn/core/README.md`
@@ -143,7 +143,7 @@ Additional verification executed for phase requirements:
 
 - `cd /Users/serro/Documents/dev/n/superfunctions/uifn/files && npm pack --dry-run` -> `PASS` (no test artifacts)
 - Core export map key verification (`node -e` on `uifn/core/package.json`) -> `PASS`
-- Unsupported-claim scan (`rg`) on `uifn/README.md`, `uifn/SPEC.md`, `uifn/vue/README.md` -> `PASS`
+- Unsupported-claim scan (`rg`) on `uifn/README.md`, `uifn/.conduct/SPEC.md`, `uifn/vue/README.md` -> `PASS`
 
 Test execution results:
 

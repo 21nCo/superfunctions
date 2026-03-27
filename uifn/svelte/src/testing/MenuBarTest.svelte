@@ -5,14 +5,20 @@
   import MenuBarContent from '../MenuBarContent.svelte';
   import DropdownMenuItem from '../DropdownMenuItem.svelte';
 
-  let { value = '' } = $props();
+  let { value, defaultValue = '' } = $props();
 </script>
 
-<MenuBar {value}>
+<MenuBar {value} {defaultValue}>
   <MenuBarMenu value="file">
     <MenuBarTrigger>File</MenuBarTrigger>
     <MenuBarContent>
       <DropdownMenuItem>New File</DropdownMenuItem>
+    </MenuBarContent>
+  </MenuBarMenu>
+  <MenuBarMenu value="edit">
+    <MenuBarTrigger>Edit</MenuBarTrigger>
+    <MenuBarContent>
+      <DropdownMenuItem>Undo</DropdownMenuItem>
     </MenuBarContent>
   </MenuBarMenu>
 </MenuBar>

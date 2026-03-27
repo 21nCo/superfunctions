@@ -1,0 +1,58 @@
+{
+  "generatedAt": "2026-03-25T11:51:51.810Z",
+  "status": "pass",
+  "workspaceKind": "temporary-consumer-install",
+  "packages": [
+    "@uifn/core",
+    "@uifn/react",
+    "@uifn/svelte"
+  ],
+  "tarballs": [
+    {
+      "name": "@uifn/core",
+      "filename": "uifn-core-0.0.1.tgz",
+      "sourceDir": "uifn/core"
+    },
+    {
+      "name": "@uifn/react",
+      "filename": "uifn-react-0.0.1.tgz",
+      "sourceDir": "uifn/react"
+    },
+    {
+      "name": "@uifn/svelte",
+      "filename": "uifn-svelte-0.0.1.tgz",
+      "sourceDir": "uifn/svelte"
+    }
+  ],
+  "install": "pass",
+  "typecheck": "pass",
+  "bundle": "pass",
+  "steps": [
+    {
+      "command": "npm install",
+      "status": "pass",
+      "note": "Installed packed @uifn/core, @uifn/react, and @uifn/svelte tarballs with peer dependencies."
+    },
+    {
+      "command": "npm run typecheck",
+      "status": "pass",
+      "note": "Resolved documented core subpath imports and the React root entry point from tarballs."
+    },
+    {
+      "command": "npm run runtime:core",
+      "status": "pass",
+      "note": "Executed runtime imports for core subpaths from the packed artifact."
+    },
+    {
+      "command": "npm run runtime:react",
+      "status": "pass",
+      "note": "Rendered a React import from the packed adapter through react-dom/server."
+    },
+    {
+      "command": "npm run build:svelte",
+      "status": "pass",
+      "note": "Built a minimal Svelte consumer app that imports from the packed Svelte adapter."
+    }
+  ],
+  "artifactPath": "uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-consumer-smoke.md"
+}

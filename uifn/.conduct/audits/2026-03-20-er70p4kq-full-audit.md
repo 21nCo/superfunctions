@@ -16,7 +16,7 @@
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/svelte/README.md`
 - Spec bundle paths audited:
   - Bundle root: `/Users/serro/Documents/dev/n/superfunctions/uifn`
-  - Included files: `/Users/serro/Documents/dev/n/superfunctions/uifn/SPEC.md`
+  - Included files: `uifn/.conduct/SPEC.md`
   - Expected-but-absent bundle files: `REQUIREMENTS.md`, `TEST_VECTORS.md`, `PLAN.md`, `INTENT_AUDIT.md`
 - Codebase scope audited:
   - In scope: `/Users/serro/Documents/dev/n/superfunctions/uifn/core`, `/Users/serro/Documents/dev/n/superfunctions/uifn/react`, `/Users/serro/Documents/dev/n/superfunctions/uifn/vue`, `/Users/serro/Documents/dev/n/superfunctions/uifn/svelte`, `/Users/serro/Documents/dev/n/superfunctions/uifn/files`
@@ -30,7 +30,7 @@
 
 ## Audit scope
 
-This was a read-only audit of the `uifn` function area for production readiness against the user’s request, the repository guidance in `AGENTS.md`, the top-level `uifn/SPEC.md`, and the package READMEs that currently act as user-facing intent docs. No implementation code was changed.
+This was a read-only audit of the `uifn` function area for production readiness against the user’s request, the repository guidance in `AGENTS.md`, the top-level `uifn/.conduct/SPEC.md`, and the package READMEs that currently act as user-facing intent docs. No implementation code was changed.
 
 Dynamic verification was performed where possible. Static analysis was used for behavior not directly exercised by the existing test surface. Manual browser QA, screen-reader QA, and downstream consumer app smoke tests were not performed, so any statement that depends on those is called out as an inference or limitation.
 
@@ -42,7 +42,7 @@ Overall verdict: `uifn` is **not production ready**. The package set has publish
 | --- | --- | --- | --- |
 | Conversation request | Intent | Authoritative request for a full production-readiness audit and report location | Required audit/report output under `uifn/.conduct` |
 | `/Users/serro/Documents/dev/n/superfunctions/AGENTS.md` | Intent/constraints | Monorepo conventions, artifact location, naming/package expectations | Relevant for packaging, docs, and artifact placement |
-| `/Users/serro/Documents/dev/n/superfunctions/uifn/SPEC.md` | Spec bundle | Primary specification for `uifn` primitives | No accompanying requirements/test-vectors bundle found |
+| `uifn/.conduct/SPEC.md` | Spec bundle | Primary specification for `uifn` primitives | No accompanying requirements/test-vectors bundle found |
 | `/Users/serro/Documents/dev/n/superfunctions/uifn/core/README.md` | Intent/docs | Public contract for core package naming, install path, API, license | Conflicts with package metadata |
 | `/Users/serro/Documents/dev/n/superfunctions/uifn/react/README.md` | Intent/docs | Public contract for React adapter components, accessibility, types, license | Broadly aligns with exported surface, but overstates readiness |
 | `/Users/serro/Documents/dev/n/superfunctions/uifn/vue/README.md` | Intent/docs | Public contract for Vue adapter API and accessibility | Conflicts with implementation shape |
@@ -52,7 +52,7 @@ Overall verdict: `uifn` is **not production ready**. The package set has publish
 
 1. `uifn` is blocked at the publish surface. The core package is published as `uifn`, while the READMEs and adapter dependencies treat it as `@uifn/core`, and the core export map omits `./aria/*` even though React imports `@uifn/core/aria/keys` directly. This already breaks the React test suite and would break consumers following the documented import paths.
 2. The Svelte adapter is not releasable. `npm test -- --run` fails before tests start because `@sveltejs/vite-plugin-svelte@5.1.1` expects Vite 6 while the resolved tree contains Vite 5, the package advertises `dist/index.d.ts` but the build disables declaration output, and the pack dry-run publishes raw source and test files.
-3. The core layer does not implement the behavior promised by `uifn/SPEC.md`. Many “framework-agnostic primitives” are only thin state bags with a few setters, leaving keyboard navigation, collision detection, submenu behavior, focus management, typeahead, queueing, reduced-motion handling, and other specified features to partial adapter code or not implemented at all.
+3. The core layer does not implement the behavior promised by `uifn/.conduct/SPEC.md`. Many “framework-agnostic primitives” are only thin state bags with a few setters, leaving keyboard navigation, collision detection, submenu behavior, focus management, typeahead, queueing, reduced-motion handling, and other specified features to partial adapter code or not implemented at all.
 4. Quality gates are insufficient or broken. `uifn/core` has no tests, every package’s `lint` script fails because there is no ESLint 9 flat config, the only explicit React a11y test is both skipped and written with broken imports, and there is no verified screen-reader or reduced-motion coverage.
 5. Public docs and release metadata contradict one another. The Vue README promises composables that do not exist, README licenses say `Apache-2.0` while all package manifests say `MIT`, and public packages/components such as `Avatar`, `Badge`, `Menu Bar`, `Virtualized List`, and `@uifn/files` are outside the formal spec.
 
@@ -92,33 +92,33 @@ Package gate summary:
 
 | Intent # | Intent summary | Spec mapping | Coverage status | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | Framework-agnostic, accessible, unstyled primitives library | `uifn/SPEC.md:5-35` | COVERED | Core contract is stated explicitly |
-| 2 | Core + React/Vue/Svelte plus future Solid/web-components adapters | `uifn/SPEC.md:5`, `uifn/SPEC.md:12`, `uifn/SPEC.md:62-66` | COVERED | Spec explicitly names Solid and web-components, even though code does not implement them |
-| 3 | Core primitives/utils/aria/state with reusable logic | `uifn/SPEC.md:42-58`, `uifn/SPEC.md:71-74` | COVERED | Architecture is specified |
-| 4 | Controlled and uncontrolled modes | `uifn/SPEC.md:74`, `uifn/SPEC.md:783-788` | COVERED | Global pattern is specified |
-| 5 | Compound composition + styling hooks/data attributes | `uifn/SPEC.md:27-29`, `uifn/SPEC.md:789-822` | COVERED | Explicitly specified |
-| 6 | Accurate docs, installability, TypeScript-first DX | `uifn/SPEC.md:30-35` | PARTIAL | TypeScript/docs intent is present; package naming/docs accuracy is not specified in enough detail |
-| 7 | Accessibility baseline including reduced motion | `uifn/SPEC.md:18-22`, `uifn/SPEC.md:846-894` | COVERED | Accessibility baseline is strongly specified |
-| 8 | State machines, immutable/event-driven state, custom events, SSR-safe IDs | `uifn/SPEC.md:71-82`, `uifn/SPEC.md:858-873` | COVERED | All of these are explicitly promised |
-| 9 | Accordion behavior | Accordion section in `uifn/SPEC.md` | COVERED | Component contract present |
-| 10 | Dialog/Alert Dialog behavior | Alert Dialog + Dialog sections in `uifn/SPEC.md` | COVERED | Component contracts present |
+| 1 | Framework-agnostic, accessible, unstyled primitives library | `uifn/.conduct/SPEC.md:5-35` | COVERED | Core contract is stated explicitly |
+| 2 | Core + React/Vue/Svelte plus future Solid/web-components adapters | `uifn/.conduct/SPEC.md:5`, `uifn/.conduct/SPEC.md:12`, `uifn/.conduct/SPEC.md:62-66` | COVERED | Spec explicitly names Solid and web-components, even though code does not implement them |
+| 3 | Core primitives/utils/aria/state with reusable logic | `uifn/.conduct/SPEC.md:42-58`, `uifn/.conduct/SPEC.md:71-74` | COVERED | Architecture is specified |
+| 4 | Controlled and uncontrolled modes | `uifn/.conduct/SPEC.md:74`, `uifn/.conduct/SPEC.md:783-788` | COVERED | Global pattern is specified |
+| 5 | Compound composition + styling hooks/data attributes | `uifn/.conduct/SPEC.md:27-29`, `uifn/.conduct/SPEC.md:789-822` | COVERED | Explicitly specified |
+| 6 | Accurate docs, installability, TypeScript-first DX | `uifn/.conduct/SPEC.md:30-35` | PARTIAL | TypeScript/docs intent is present; package naming/docs accuracy is not specified in enough detail |
+| 7 | Accessibility baseline including reduced motion | `uifn/.conduct/SPEC.md:18-22`, `uifn/.conduct/SPEC.md:846-894` | COVERED | Accessibility baseline is strongly specified |
+| 8 | State machines, immutable/event-driven state, custom events, SSR-safe IDs | `uifn/.conduct/SPEC.md:71-82`, `uifn/.conduct/SPEC.md:858-873` | COVERED | All of these are explicitly promised |
+| 9 | Accordion behavior | Accordion section in `uifn/.conduct/SPEC.md` | COVERED | Component contract present |
+| 10 | Dialog/Alert Dialog behavior | Alert Dialog + Dialog sections in `uifn/.conduct/SPEC.md` | COVERED | Component contracts present |
 | 11 | Form-control primitives behavior | Checkbox, Switch, Toggle, Toggle Group, Radio Group sections | COVERED | Component contracts present |
 | 12 | Combobox and Select behavior | Combobox + Select sections | COVERED | Component contracts present |
-| 13 | Menus and toolbar behavior | Context Menu, Dropdown Menu, Toolbar sections | PARTIAL | `Menu Bar` is exported publicly but not specified in `uifn/SPEC.md` |
+| 13 | Menus and toolbar behavior | Context Menu, Dropdown Menu, Toolbar sections | PARTIAL | `Menu Bar` is exported publicly but not specified in `uifn/.conduct/SPEC.md` |
 | 14 | Hover Card, Popover, Tooltip behavior | Hover Card, Popover, Tooltip sections | COVERED | Component contracts present |
-| 15 | Progress/Slider/Scroll/Separator/Label plus Avatar/Badge/Virtualized List | Relevant component sections + README component lists | PARTIAL | `Avatar`, `Badge`, and `Virtualized List` are public, but not specified in `uifn/SPEC.md` |
-| 16 | Utility surfaces must be public and stable | `uifn/SPEC.md:828-873` | COVERED | Utilities are specified |
-| 17 | Unit/integration/a11y testing expectations | `uifn/SPEC.md:901-915` | COVERED | Testing expectations are explicit |
-| 18 | Release-readiness expectations for package names/licenses/export maps/scripts/pack output | No direct coverage in `uifn/SPEC.md` | SPEC MISSING | This matters to production readiness but is not formalized in the spec |
-| 19 | `@uifn/files` must be documented and spec-aligned if public | No direct coverage in `uifn/SPEC.md` | SPEC MISSING | Public package exists with no matching `uifn` spec/README coverage |
+| 15 | Progress/Slider/Scroll/Separator/Label plus Avatar/Badge/Virtualized List | Relevant component sections + README component lists | PARTIAL | `Avatar`, `Badge`, and `Virtualized List` are public, but not specified in `uifn/.conduct/SPEC.md` |
+| 16 | Utility surfaces must be public and stable | `uifn/.conduct/SPEC.md:828-873` | COVERED | Utilities are specified |
+| 17 | Unit/integration/a11y testing expectations | `uifn/.conduct/SPEC.md:901-915` | COVERED | Testing expectations are explicit |
+| 18 | Release-readiness expectations for package names/licenses/export maps/scripts/pack output | No direct coverage in `uifn/.conduct/SPEC.md` | SPEC MISSING | This matters to production readiness but is not formalized in the spec |
+| 19 | `@uifn/files` must be documented and spec-aligned if public | No direct coverage in `uifn/.conduct/SPEC.md` | SPEC MISSING | Public package exists with no matching `uifn` spec/README coverage |
 
 ## Requirement coverage summary
 
-The only formal spec bundle found for `uifn` was `uifn/SPEC.md`, so the requirement inventory below is derived from that document’s sections.
+The only formal spec bundle found for `uifn` was `uifn/.conduct/SPEC.md`, so the requirement inventory below is derived from that document’s sections.
 
 | Spec bundle | Derived requirements | PASS | PARTIAL | FAIL | UNVERIFIED |
 | --- | --- | --- | --- | --- | --- |
-| `uifn/SPEC.md` | 38 | 4 | 22 | 12 | 0 |
+| `uifn/.conduct/SPEC.md` | 38 | 4 | 22 | 12 | 0 |
 
 Verification summary by package:
 
@@ -142,7 +142,7 @@ Verification summary by package:
 
 | ID | Derived requirement | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- |
-| R01 | Overview contract: framework-agnostic, accessible, unstyled library | PARTIAL | `uifn/SPEC.md:5-35`; packages exist for core/react/vue/svelte | The package family exists, but accessibility and framework-agnostic claims are not met at spec depth |
+| R01 | Overview contract: framework-agnostic, accessible, unstyled library | PARTIAL | `uifn/.conduct/SPEC.md:5-35`; packages exist for core/react/vue/svelte | The package family exists, but accessibility and framework-agnostic claims are not met at spec depth |
 | R02 | Adapter coverage for React/Vue/Svelte/Solid/web-components | FAIL | Only `core`, `react`, `vue`, `svelte`, `files` directories exist under `uifn` | Solid and web-components are absent; public scope also includes an unspecced `files` package |
 | R03 | Minimal dependencies and reusable pure/state-machine logic | PARTIAL | Core is TypeScript-only, but many complex behaviors are reimplemented in adapters | Only `collapsible` uses the state-machine utility; core is not the behavioral source of truth |
 | R04 | Accessibility-first baseline (WCAG AA, keyboard, screen-reader, focus, reduced motion) | FAIL | Broken/skipped a11y test, no reduced-motion code found, sparse manual coverage | Spec-grade accessibility is not substantiated |
@@ -186,7 +186,7 @@ Verification summary by package:
 
 | ID | Derived requirement | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- |
-| R35 | Controlled/uncontrolled common pattern across stateful components | PARTIAL | `uifn/SPEC.md:783-788`; `/Users/serro/Documents/dev/n/superfunctions/uifn/svelte/src/Accordion.svelte:28-33` | React/Vue mostly implement it; Svelte explicitly documents that controlled props are not really synchronized |
+| R35 | Controlled/uncontrolled common pattern across stateful components | PARTIAL | `uifn/.conduct/SPEC.md:783-788`; `/Users/serro/Documents/dev/n/superfunctions/uifn/svelte/src/Accordion.svelte:28-33` | React/Vue mostly implement it; Svelte explicitly documents that controlled props are not really synchronized |
 | R36 | Data attributes and polymorphic/asChild support | FAIL | Data attributes are common; `/Users/serro/Documents/dev/n/superfunctions/uifn/react/src/dialog.tsx:74-84` | Data attributes exist, but spec-level polymorphism is not delivered; React still has `TODO` for `asChild` |
 | R37 | Utilities: focus, portal, presence, position, IDs, roving focus | FAIL | `/Users/serro/Documents/dev/n/superfunctions/uifn/core/src/utils/id.ts:1-5`, `/Users/serro/Documents/dev/n/superfunctions/uifn/react/src/hooks/use-roving-focus.ts:1-73`, `/Users/serro/Documents/dev/n/superfunctions/uifn/core/package.json:8-23`, `/Users/serro/Documents/dev/n/superfunctions/uifn/vue/src/hooks/use-id.ts:3-8` | ID generation violates SSR-safe/deterministic spec, public exports do not match consumer imports, and utility coverage is inconsistent across adapters |
 | R38 | Unit, integration, and accessibility testing strategy | FAIL | Dynamic verification results above; `/Users/serro/Documents/dev/n/superfunctions/uifn/react/src/accordion.a11y.test.tsx:1-23`; `/Users/serro/Documents/dev/n/superfunctions/uifn/svelte/src/test/setup.ts:1-10` | Core has no tests, React a11y test is broken/skipped, Svelte tests do not start, and manual screen-reader coverage is absent |
@@ -218,11 +218,11 @@ Per-requirement notes:
    - All package READMEs audited say `Apache-2.0` (`uifn/core/README.md:52`, `uifn/react/README.md:72`, `uifn/vue/README.md:52`, `uifn/svelte/README.md:70`).
 
 5. **Public surface exceeds the formal spec**
-   - `Avatar`, `Badge`, `Menu Bar`, `Virtualized List`, and the whole `@uifn/files` package are public, but they are not formalized in `uifn/SPEC.md`.
+   - `Avatar`, `Badge`, `Menu Bar`, `Virtualized List`, and the whole `@uifn/files` package are public, but they are not formalized in `uifn/.conduct/SPEC.md`.
    - This is a spec gap, not just an implementation gap.
 
 6. **Release-readiness concerns are largely unspec’d**
-   - `uifn/SPEC.md` says little about package names, export maps, pack contents, lint/tooling baselines, or compatibility matrices.
+   - `uifn/.conduct/SPEC.md` says little about package names, export maps, pack contents, lint/tooling baselines, or compatibility matrices.
    - Those omissions matter materially for production readiness.
 
 ## Cross-cutting audits
@@ -235,7 +235,7 @@ Per-requirement notes:
 
 ### Determinism invariants
 
-- The spec explicitly promises SSR-safe and deterministic IDs (`uifn/SPEC.md:862-863`), but the implementation does not satisfy that:
+- The spec explicitly promises SSR-safe and deterministic IDs (`uifn/.conduct/SPEC.md:862-863`), but the implementation does not satisfy that:
   - Core `generateId` is a process-global counter (`/Users/serro/Documents/dev/n/superfunctions/uifn/core/src/utils/id.ts:1-5`).
   - Vue `useId` uses `Math.random()` (`/Users/serro/Documents/dev/n/superfunctions/uifn/vue/src/hooks/use-id.ts:3-8`).
   - React `useId` falls back to client-only `useLayoutEffect` generation when `React.useId` is unavailable (`/Users/serro/Documents/dev/n/superfunctions/uifn/react/src/hooks/use-id.ts:4-17`).
@@ -306,7 +306,7 @@ Commands run during the audit:
 | Command | Purpose | Outcome |
 | --- | --- | --- |
 | `rg --files uifn` | Inventory source/test/manifests | Confirmed `core/react/vue/svelte/files` package layout |
-| `find uifn -maxdepth ...` | Inventory docs, hidden dirs, conduct state | Found `uifn/SPEC.md` and per-package READMEs; no `uifn/.conduct` before audit |
+| `find uifn -maxdepth ...` | Inventory docs, hidden dirs, conduct state | Found `uifn/.conduct/SPEC.md` and per-package READMEs; no `uifn/.conduct` before audit |
 | `sed -n ...`, `nl -ba ...`, `rg -n ...` | Read spec/docs/source/manifests with line references | Used throughout for evidence gathering |
 | `git status --short --branch` | Repo metadata | Branch `next`, dirty worktree |
 | `git rev-parse HEAD` | Repo metadata | Commit `6f9a47d6c5f8ac166932e0156efb910bf5e32652` |

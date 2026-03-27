@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     loop?: boolean;
@@ -9,7 +9,11 @@
 
   let { loop = true, children, class: className, ...rest }: Props = $props();
 
-  const context = getContext<any>('tabs');
+  const context = getRequiredContext<any>(
+    'tabs',
+    'TabsList',
+    'Tabs components must be used within Tabs'
+  );
 </script>
 
 <div

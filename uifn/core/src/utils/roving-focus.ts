@@ -15,6 +15,10 @@ export interface NextRovingFocusIndexOptions extends RovingFocusOptions {
   currentIndex: number;
 }
 
+export interface NextEnabledRovingFocusIndexOptions extends NextRovingFocusIndexOptions {
+  isItemEnabled?: (index: number) => boolean;
+}
+
 export function getNextRovingFocusIndex(options: NextRovingFocusIndexOptions): number {
   const { key, itemCount } = options;
   if (itemCount <= 0) {
@@ -70,6 +74,40 @@ export function getNextRovingFocusIndex(options: NextRovingFocusIndexOptions): n
   }
 
   return Math.max(0, Math.min(nextIndex, itemCount - 1));
+}
+
+export function getNextEnabledRovingFocusIndex(
+  options: NextEnabledRovingFocusIndexOptions
+): number {
+  const isItemEnabled = options.isItemEnabled ?? (() => true);
+  const safeCurrentIndex = Math.max(0, Math.min(options.currentIndex, options.itemCount - 1));
+  const initialIndex = getNextRovingFocusIndex(options);
+
+  if (initialIndex < 0 || initialIndex === safeCurrentIndex) {
+    return initialIndex;
+  }
+
+  if (isItemEnabled(initialIndex)) {
+    return initialIndex;
+  }
+
+  let nextIndex = initialIndex;
+  for (let visited = 0; visited < options.itemCount; visited += 1) {
+    nextIndex = getNextRovingFocusIndex({
+      ...options,
+      currentIndex: nextIndex,
+    });
+
+    if (nextIndex === safeCurrentIndex) {
+      return safeCurrentIndex;
+    }
+
+    if (nextIndex >= 0 && isItemEnabled(nextIndex)) {
+      return nextIndex;
+    }
+  }
+
+  return safeCurrentIndex;
 }
 
 export interface MoveRovingFocusOptions extends NextRovingFocusIndexOptions {

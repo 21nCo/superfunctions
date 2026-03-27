@@ -10,8 +10,10 @@
   }
 
   let { value: valueProp, max = 100, children, class: className, ...rest }: Props = $props();
+  const initialValue = (() => valueProp)();
+  const initialMax = (() => max)();
 
-  const machine = createProgress({ value: valueProp, max });
+  const machine = createProgress({ value: initialValue, max: initialMax });
   let state = $state(machine.state);
 
   $effect(() => {

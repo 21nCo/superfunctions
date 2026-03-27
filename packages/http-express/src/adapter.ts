@@ -88,8 +88,16 @@ async function convertToExpressResponse(
     expressResponse.statusMessage = webResponse.statusText;
   }
 
+  const setCookies = getSetCookieValues(webResponse.headers);
+  if (setCookies.length > 0) {
+    expressResponse.setHeader('set-cookie', setCookies);
+  }
+
   // Set headers
   webResponse.headers.forEach((value, key) => {
+    if (key.toLowerCase() === 'set-cookie' && setCookies.length > 0) {
+      return;
+    }
     expressResponse.setHeader(key, value);
   });
 
@@ -100,4 +108,14 @@ async function convertToExpressResponse(
   } else {
     expressResponse.end();
   }
+}
+
+function getSetCookieValues(headers: Headers): string[] {
+  const maybeHeaders = headers as Headers & {
+    getSetCookie?: () => string[];
+  };
+
+  return typeof maybeHeaders.getSetCookie === 'function'
+    ? maybeHeaders.getSetCookie()
+    : [];
 }

@@ -1,5 +1,13 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface PopoverContext {
+    open: boolean;
+    contentId: string;
+    setOpen: (value: boolean) => void;
+    setTriggerElement: (el: HTMLElement) => void;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -8,7 +16,11 @@
   }
 
   let { children, class: className, onClick, ...rest }: Props = $props();
-  const context = getContext<any>('popover');
+  const context = getRequiredContext<PopoverContext>(
+    'popover',
+    'PopoverTrigger',
+    'Popover components must be used within a Popover'
+  );
   let ref = $state<HTMLElement>();
 
   onMount(() => {
@@ -26,6 +38,7 @@
   type="button"
   aria-haspopup="dialog"
   aria-expanded={context.open}
+  aria-controls={context.open ? context.contentId : undefined}
   data-state={context.open ? 'open' : 'closed'}
   onclick={handleClick}
   class={className}

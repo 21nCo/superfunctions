@@ -5,6 +5,8 @@ import { usePosition, Side, Align } from './hooks/use-position';
 import { useOutsideClick } from './hooks/use-outside-click';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { Portal } from './portal';
+import { useId } from './hooks/use-id';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Select Root
@@ -15,6 +17,7 @@ interface SelectContextValue {
   onValueChange: (value: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  contentId: string;
   triggerRef: React.RefObject<HTMLElement>;
   contentRef: React.RefObject<HTMLElement>;
   disabled: boolean;
@@ -25,11 +28,11 @@ interface SelectContextValue {
 const SelectContext = createContext<SelectContextValue | undefined>(undefined);
 
 const useSelectContext = () => {
-  const context = useContext(SelectContext);
-  if (!context) {
-    throw new Error('Select components must be used within a Select');
-  }
-  return context;
+  return assertReactContext(
+    useContext(SelectContext),
+    'Select',
+    'Select components must be used within a Select'
+  );
 };
 
 export interface SelectProps {
@@ -70,28 +73,42 @@ export const Select: React.FC<SelectProps> = (props) => {
     defaultProp: defaultOpen ?? false,
     onChange: onOpenChange,
   });
+  const contentId = useId(undefined, { prefix: 'select', slot: 'content' });
 
   const triggerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
 
-  return (
-    <SelectContext.Provider
-      value={{
+    return (
+      <SelectContext.Provider
+        value={{
         value: value!,
         onValueChange: setValue,
         open: !!open,
         onOpenChange: setOpen,
+        contentId,
         triggerRef,
         contentRef,
         disabled,
         required,
         name,
-      }}
-    >
-      {children}
-    </SelectContext.Provider>
-  );
-};
+        }}
+      >
+        {children}
+        {name ? (
+          <input
+            type="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            name={name}
+            value={value ?? ''}
+            required={required}
+            disabled={disabled}
+            readOnly
+          />
+        ) : null}
+      </SelectContext.Provider>
+    );
+  };
 
 /* -------------------------------------------------------------------------------------------------
  * SelectTrigger
@@ -127,7 +144,7 @@ export const SelectTrigger = React.forwardRef<HTMLButtonElement, SelectTriggerPr
         ref={composedRef}
         type="button"
         role="combobox"
-        aria-controls={context.open ? 'select-content' : undefined}
+        aria-controls={context.open ? context.contentId : undefined}
         aria-expanded={context.open}
         aria-required={context.required}
         aria-disabled={context.disabled}
@@ -254,6 +271,7 @@ export const SelectContent = React.forwardRef<HTMLDivElement, SelectContentProps
         if (!content) return;
 
         const items = Array.from(content.querySelectorAll('[role="option"]:not([aria-disabled="true"])')) as HTMLElement[];
+        if (!items.length) return;
         const currentIndex = items.indexOf(document.activeElement as HTMLElement);
 
         if (e.key === 'ArrowDown') {
@@ -284,7 +302,7 @@ export const SelectContent = React.forwardRef<HTMLDivElement, SelectContentProps
         <div
           ref={composedRef}
           role="listbox"
-          id="select-content"
+          id={context.contentId}
           data-state={context.open ? 'open' : 'closed'}
           style={{
             ...positionStyle,
