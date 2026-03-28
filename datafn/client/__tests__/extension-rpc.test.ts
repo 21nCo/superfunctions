@@ -3,7 +3,7 @@
  * Tests TV-EXT-001, TV-EXT-001N from TEST_VECTORS.md
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createExtensionTransport,
   type MessageBus,
@@ -327,5 +327,86 @@ describe("Extension RPC Tests", () => {
 
     // Cleanup local listener
     unsubscribeLocal();
+  });
+
+  it("resolves timeouts as transport envelopes instead of rejecting", async () => {
+    vi.useFakeTimers();
+    try {
+      const bus = new InMemoryBus();
+      const transport = createExtensionTransport(bus, { timeout: 5 });
+      const promise = transport.query({ resource: "task" });
+
+      await vi.advanceTimersByTimeAsync(5);
+
+      await expect(promise).resolves.toMatchObject({
+        ok: false,
+        error: {
+          code: "TRANSPORT_ERROR",
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses unique RPC ids across transport instances on the same bus", () => {
+    const bus = new InMemoryBus();
+    const transportA = createExtensionTransport(bus);
+    const transportB = createExtensionTransport(bus);
+
+    void transportA.query({ resource: "task" });
+    void transportB.query({ resource: "task" });
+
+    const [first, second] = bus.sentMessages as DatafnRpcRequest[];
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it("cleans up a remote subscription when local unsubscribe happens before registration resolves", async () => {
+    const bus = new InMemoryBus();
+    const transport = createExtensionTransport(bus);
+
+    const client = createDatafnClient({
+      schema: {
+        resources: [
+          {
+            name: "node",
+            version: 1,
+            fields: [{ name: "label", type: "string", required: false }],
+          },
+        ],
+      },
+      sync: {
+        mode: "sync",
+        remoteAdapter: transport,
+      },
+      clientId: "client:test",
+    });
+
+    const unsub = client.subscribe(() => {});
+    const subReq = bus.sentMessages.find(
+      (msg: any) => msg.method === "subscribe",
+    ) as DatafnRpcRequest;
+
+    unsub();
+
+    bus.simulateIncoming({
+      id: subReq.id,
+      envelope: { ok: true, result: { subscriptionId: "sub-early" } },
+    } as DatafnRpcResponse);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const unsubscribeReq = bus.sentMessages.find(
+      (msg: any) => msg.method === "unsubscribe",
+    ) as DatafnRpcRequest | undefined;
+    expect(unsubscribeReq).toBeDefined();
+    expect(unsubscribeReq?.payload).toEqual({ subscriptionId: "sub-early" });
+
+    bus.simulateIncoming({
+      id: unsubscribeReq!.id,
+      envelope: { ok: true, result: {} },
+    } as DatafnRpcResponse);
+
+    await client.destroy();
   });
 });

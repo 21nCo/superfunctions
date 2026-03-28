@@ -10,8 +10,6 @@ import type {
   DatafnRpcResponse,
   DatafnRpcMethod,
 } from "./rpc.js";
-// createClientError is available for non-timeout errors
-// Timeout uses plain object rejection to avoid throw-in-setTimeout issues
 
 /**
  * Interface for the message bus (compatible with browser.runtime.sendMessage or similar)
@@ -41,10 +39,14 @@ export function createExtensionTransport(
   options: ExtensionTransportOptions = {},
 ): ExtensionRemoteAdapter {
   const requestTimeout = options.timeout ?? 30_000;
+  const instanceId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   // Promise map for pending requests: id -> { resolve, reject }
   const pending = new Map<
     string,
-    { resolve: (val: unknown) => void; reject: (err: unknown) => void }
+    { resolve: (val: unknown) => void }
   >();
 
   // Event handlers
@@ -54,8 +56,17 @@ export function createExtensionTransport(
   let idCounter = 0;
   const generateId = () => {
     idCounter += 1;
-    return `req-${idCounter}`;
+    return `req-${instanceId}-${idCounter}`;
   };
+
+  const timeoutEnvelope = (id: string) => ({
+    ok: false as const,
+    error: {
+      code: "TRANSPORT_ERROR" as const,
+      message: `RPC request timed out after ${requestTimeout}ms`,
+      details: { path: "$", requestId: id },
+    },
+  });
 
   // SCA-003: Send RPC request with per-request timeout
   const request = async (
@@ -65,12 +76,12 @@ export function createExtensionTransport(
     const id = generateId();
     const rpcRequest: DatafnRpcRequest = { id, method, payload };
 
-    return new Promise((resolve, reject) => {
-      // SCA-003: Set timeout that rejects and cleans up pending map
+    return new Promise((resolve) => {
+      // SCA-003: Set timeout that resolves a transport envelope and cleans up pending map
       const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
-          reject({ code: "TIMEOUT", message: `RPC request timed out after ${requestTimeout}ms` });
+          resolve(timeoutEnvelope(id));
         }
       }, requestTimeout);
 
@@ -78,10 +89,6 @@ export function createExtensionTransport(
         resolve: (val: unknown) => {
           clearTimeout(timer);
           resolve(val);
-        },
-        reject: (err: unknown) => {
-          clearTimeout(timer);
-          reject(err);
         },
       });
       bus.postMessage(rpcRequest);

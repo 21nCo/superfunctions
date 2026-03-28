@@ -528,6 +528,7 @@ function _buildRawClient<S extends DatafnSchema>(
   // Resolve remote adapter (CFG-001)
   let remote: DatafnRemoteAdapter;
   let extensionSubscriptionManager: ExtensionSubscriptionManager | undefined;
+  let extensionEventUnsubscribe: (() => void) | undefined;
 
   if (config.sync?.remoteAdapter) {
     // Precedence 1: Use provided remoteAdapter
@@ -539,7 +540,7 @@ function _buildRawClient<S extends DatafnSchema>(
       const extAdapter = remote as any; // Has onEvent, subscribeRemote, unsubscribeRemote methods
 
       // Wire inbound remote events into local event bus
-      extAdapter.onEvent((delivery: { subscriptionId: string; event: any }) => {
+      extensionEventUnsubscribe = extAdapter.onEvent((delivery: { subscriptionId: string; event: any }) => {
         // Emit the remote event into local event bus
         // The event is already in DatafnEvent format from background
         eventBus.emit(delivery.event);
@@ -689,6 +690,8 @@ function _buildRawClient<S extends DatafnSchema>(
 
   // Client lifecycle state (CLN-001)
   let destroyed = false;
+  let destroying = false;
+  const pendingRemoteRegistrations = new Set<Promise<void>>();
   
   /**
    * Guard method to ensure client is not destroyed
@@ -816,25 +819,37 @@ function _buildRawClient<S extends DatafnSchema>(
       // EXT-001: If using extension adapter with subscription manager, register with remote
       if (extensionSubscriptionManager) {
         let remoteUnsub: (() => Promise<void>) | undefined;
+        let released = false;
 
-        // Register with remote subscription manager (async)
-        extensionSubscriptionManager
+        const registration = extensionSubscriptionManager
           .registerSubscriber(filter)
           .then((unsub) => {
+            if (released || destroying || destroyed) {
+              return unsub().catch((err) => {
+                console.error("Failed to unsubscribe from remote:", err);
+              });
+            }
             remoteUnsub = unsub;
           })
           .catch((err) => {
             console.error("Failed to register remote subscription:", err);
+          })
+          .finally(() => {
+            pendingRemoteRegistrations.delete(registration);
           });
+        pendingRemoteRegistrations.add(registration);
 
         // Return combined unsubscribe that cleans up both local and remote
         return () => {
+          released = true;
           localUnsub();
-          if (remoteUnsub) {
-            remoteUnsub().catch((err) => {
+          const cleanupRemote =
+            remoteUnsub
+              ? remoteUnsub()
+              : registration.then(() => undefined);
+          cleanupRemote.catch((err) => {
               console.error("Failed to unsubscribe from remote:", err);
-            });
-          }
+          });
         };
       }
 
@@ -846,6 +861,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async destroy() {
       if (destroyed) return;
+      destroying = true;
       
       // 1. Flush all pending debounced mutations (DEB-001)
       await debouncerMap.flushAll();
@@ -862,16 +878,26 @@ function _buildRawClient<S extends DatafnSchema>(
       if (crossTabRelay) {
         crossTabRelay.close();
       }
+
+      // 5. Close extension remote subscriptions/listeners.
+      if (extensionEventUnsubscribe) {
+        extensionEventUnsubscribe();
+        extensionEventUnsubscribe = undefined;
+      }
+      await Promise.allSettled([...pendingRemoteRegistrations]);
+      if (extensionSubscriptionManager) {
+        await extensionSubscriptionManager.closeAll();
+      }
       
-      // 5. Clear event bus
+      // 6. Clear event bus
       eventBus.clear();
       
-      // 6. Close storage
+      // 7. Close storage
       if (resolvedStorage) {
         await resolvedStorage.close();
       }
 
-      // 7. Dispose search provider (best-effort)
+      // 8. Dispose search provider (best-effort)
       if (config.searchProvider?.dispose) {
         try {
           await config.searchProvider.dispose();
@@ -880,7 +906,7 @@ function _buildRawClient<S extends DatafnSchema>(
         }
       }
       
-      // 8. Set destroyed flag
+      // 9. Set destroyed flag
       destroyed = true;
     },
 
@@ -1338,7 +1364,12 @@ export function createDatafnClient<S extends DatafnSchema>(
   let currentConfig = config;
   let isDestroyed = false;
   let switchInProgress = false;
-  let switchQueue: Array<() => Promise<void>> = [];
+  type SwitchQueueEntry = {
+    overrides: SwitchContextOverride;
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  };
+  let switchQueue: SwitchQueueEntry[] = [];
   const subscribers = new Set<(c: DatafnClient<S>) => void>();
 
   const liveRegistry = new LiveSignalRegistry();
@@ -1418,8 +1449,6 @@ export function createDatafnClient<S extends DatafnSchema>(
   let outer: DatafnClient<S>;
 
   async function performSwitch(overrides: SwitchContextOverride): Promise<void> {
-    await realClient.destroy();
-
     // Build new config by applying overrides
     const newConfig: DatafnClientConfig<S> = {
       ...currentConfig,
@@ -1427,8 +1456,20 @@ export function createDatafnClient<S extends DatafnSchema>(
       ...(overrides.sync !== undefined ? { sync: overrides.sync } : {}),
       ...(overrides.storage !== undefined ? { storage: overrides.storage } : {}),
     };
+    const previousClient = realClient;
+    const nextClient = _buildRawClient(newConfig);
+
+    try {
+      if (newConfig.sync?.mode === "sync") {
+        await nextClient.sync.start();
+      }
+    } catch (error) {
+      await nextClient.destroy().catch(() => {});
+      throw error;
+    }
+
     currentConfig = newConfig;
-    realClient = _buildRawClient(newConfig);
+    realClient = nextClient;
 
     // Rebind all LiveSignals to the new realClient BEFORE notifying subscribers (PROXY-006).
     // Ordering is critical: factories use the updated realClient, and subscribers see rebound signals.
@@ -1439,10 +1480,7 @@ export function createDatafnClient<S extends DatafnSchema>(
       fn(outer);
     }
 
-    // Auto-start sync when switching into sync mode
-    if (newConfig.sync?.mode === "sync") {
-      await realClient.sync.start();
-    }
+    await previousClient.destroy();
   }
 
   async function switchContextFn(overrides: SwitchContextOverride): Promise<void> {
@@ -1452,10 +1490,7 @@ export function createDatafnClient<S extends DatafnSchema>(
 
     if (switchInProgress) {
       return new Promise<void>((resolve, reject) => {
-        switchQueue.push(async () => {
-          try { await performSwitch(overrides); resolve(); }
-          catch (err) { reject(err); }
-        });
+        switchQueue.push({ overrides, resolve, reject });
       });
     }
 
@@ -1464,8 +1499,20 @@ export function createDatafnClient<S extends DatafnSchema>(
       await performSwitch(overrides);
       while (switchQueue.length > 0) {
         const next = switchQueue.shift();
-        if (next) await next();
+        if (!next) continue;
+        try {
+          await performSwitch(next.overrides);
+          next.resolve();
+        } catch (err) {
+          next.reject(err);
+        }
       }
+    } catch (err) {
+      const pending = switchQueue.splice(0);
+      for (const queued of pending) {
+        queued.reject(err);
+      }
+      throw err;
     } finally {
       switchInProgress = false;
     }
