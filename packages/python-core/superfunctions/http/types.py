@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Protocol, Union
 
@@ -175,7 +175,14 @@ class Route(BaseModel):
 
 
 class CorsOptions(BaseModel):
-    """CORS configuration."""
+    """CORS configuration.
+
+    Adapters should not return ``Access-Control-Allow-Origin: *`` when
+    ``credentials`` is ``True``. Browsers reject wildcard origins on
+    credentialed requests, so adapters should echo the request's ``Origin``
+    header (or another explicit allowed origin) and include
+    ``Access-Control-Allow-Credentials: true`` instead.
+    """
 
     origins: Union[List[str], Literal["*"]] = ["*"]
     methods: List[str] = Field(
@@ -336,7 +343,8 @@ def serialize_set_cookie(cookie: SetCookie) -> str:
     if cookie.max_age is not None:
         parts.append(f"Max-Age={int(cookie.max_age)}")
     if cookie.expires is not None:
-        parts.append(f"Expires={cookie.expires.strftime('%a, %d %b %Y %H:%M:%S GMT')}")
+        expires = _normalize_cookie_expires(cookie.expires)
+        parts.append(f"Expires={expires.strftime('%a, %d %b %Y %H:%M:%S GMT')}")
     if cookie.secure:
         parts.append("Secure")
     if cookie.http_only:
@@ -349,6 +357,14 @@ def serialize_response_cookies(response: Response) -> List[str]:
     """Serialize all cookies for a response in deterministic order."""
 
     return [serialize_set_cookie(cookie) for cookie in response.cookies]
+
+
+def _normalize_cookie_expires(expires: datetime) -> datetime:
+    """Return a UTC datetime suitable for HTTP cookie serialization."""
+
+    if expires.tzinfo is None:
+        return expires.replace(tzinfo=timezone.utc)
+    return expires.astimezone(timezone.utc)
 
 
 def get_route_openapi_meta(route: Route) -> Optional[OpenApiRouteMeta]:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from pydantic import ValidationError
 
@@ -11,6 +13,7 @@ from superfunctions.http import (
     Route,
     SetCookie,
     generate_openapi_document,
+    serialize_set_cookie,
     serialize_response_cookies,
 )
 
@@ -237,3 +240,16 @@ def test_http_not_implemented_error_uses_http_specific_name() -> None:
 
     assert error.status == 501
     assert error.code == "NOT_IMPLEMENTED"
+
+
+def test_serialize_set_cookie_normalizes_expires_to_utc() -> None:
+    cookie = SetCookie(
+        name="session",
+        value="opaque",
+        expires=datetime(2026, 3, 28, 12, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+    )
+
+    assert serialize_set_cookie(cookie) == (
+        "session=opaque; Path=/; Expires=Sat, 28 Mar 2026 07:00:00 GMT; "
+        "Secure; HttpOnly; SameSite=Lax"
+    )

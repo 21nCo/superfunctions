@@ -1,25 +1,11 @@
 from __future__ import annotations
 
-import os
-import sys
-
 from fastapi import FastAPI, Request as FastAPIRequest
 from fastapi.testclient import TestClient
 
-
-TESTS_DIR = os.path.dirname(__file__)
-FASTAPI_ROOT = os.path.abspath(os.path.join(TESTS_DIR, ".."))
-PYTHON_CORE_ROOT = os.path.abspath(
-    os.path.join(TESTS_DIR, "..", "..", "python-core")
-)
-
-for path in (FASTAPI_ROOT, PYTHON_CORE_ROOT):
-    if path not in sys.path:
-        sys.path.insert(0, path)
-
-from superfunctions.http import HttpError, HttpMethod, Response, Route, SetCookie, generate_openapi_document  # noqa: E402
-from superfunctions_fastapi import create_router, to_fastapi_handler  # noqa: E402
-from superfunctions_fastapi.adapter import SUPERFUNCTIONS_ROUTE_ATTR  # noqa: E402
+from superfunctions.http import HttpError, HttpMethod, Response, Route, SetCookie, generate_openapi_document
+from superfunctions_fastapi import create_router, to_fastapi_handler
+from superfunctions_fastapi.adapter import SUPERFUNCTIONS_ROUTE_ATTR
 
 
 def test_fastapi_adapter_preserves_repeated_cookies_and_route_metadata() -> None:

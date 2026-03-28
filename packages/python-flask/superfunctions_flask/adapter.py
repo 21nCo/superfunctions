@@ -20,6 +20,7 @@ from superfunctions.http import (
 
 SUPERFUNCTIONS_ROUTE_ATTR = "__superfunctions_route__"
 SUPERFUNCTIONS_ROUTE_META_ATTR = "__superfunctions_route_meta__"
+DEFAULT_ASYNC_HANDLER_TIMEOUT = 30.0
 logger = logging.getLogger(__name__)
 
 
@@ -140,7 +141,12 @@ def _run_async_handler(factory: Callable[[], Awaitable[Response]]) -> Response:
 
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
-    thread.join()
+    thread.join(timeout=DEFAULT_ASYNC_HANDLER_TIMEOUT)
+
+    if thread.is_alive():
+        raise TimeoutError(
+            f"Flask adapter async handler timed out after {DEFAULT_ASYNC_HANDLER_TIMEOUT:g}s"
+        )
 
     if "value" in error:
         raise error["value"]
