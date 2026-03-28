@@ -156,9 +156,7 @@ export function createKyselyInternalCrud(db: any, dialect: KyselyDialect): Inter
         );
       }
 
-      throw new Error(
-        'create: unable to resolve persisted row without an "id" value or RETURNING support',
-      );
+      return data;
     },
 
     async findOne(

@@ -39,7 +39,7 @@ describe('createKyselyInternalCrud', () => {
     expect(executeCount).toBe(2);
   });
 
-  it('fails when it cannot resolve the persisted row after create', async () => {
+  it('falls back to the input payload when create cannot resolve the persisted row', async () => {
     const executor = {
       transformQuery(node: any) {
         return node;
@@ -67,9 +67,7 @@ describe('createKyselyInternalCrud', () => {
 
     await expect(
       internal.create('__datafn_meta', { value: 'persisted' }),
-    ).rejects.toThrow(
-      'create: unable to resolve persisted row without an "id" value or RETURNING support',
-    );
+    ).resolves.toEqual({ value: 'persisted' });
   });
 
   it('rejects empty create payloads before building SQL', async () => {
