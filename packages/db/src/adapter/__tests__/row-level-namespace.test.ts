@@ -513,9 +513,11 @@ describe('wrapWithRowLevelNamespace', () => {
 
   describe('optional namespace mode', () => {
     let optionalDb: Adapter;
+    let optionalBase: Adapter;
 
     beforeEach(() => {
-      optionalDb = wrapWithRowLevelNamespace(memoryAdapter({ debug: false }), {
+      optionalBase = memoryAdapter({ debug: false });
+      optionalDb = wrapWithRowLevelNamespace(optionalBase, {
         enabled: true,
         mandatory: false,
       });
@@ -534,6 +536,34 @@ describe('wrapWithRowLevelNamespace', () => {
         where: [{ field: 'id', operator: 'eq', value: 'optional-1' }],
       });
       expect(found).toEqual([{ id: 'optional-1', title: 'Optional namespace' }]);
+
+      const raw = await optionalBase.findMany({
+        model: 'task',
+        where: [{ field: 'id', operator: 'eq', value: 'optional-1' }],
+      });
+      expect(raw[0]).not.toHaveProperty('__ns');
+    });
+
+    it('strips caller-supplied namespace columns when namespace is omitted', async () => {
+      await optionalDb.create({
+        model: 'task',
+        data: { id: 'optional-hidden', title: 'Hidden namespace', __ns: 'user:manual' },
+      });
+
+      const raw = await optionalBase.findMany({
+        model: 'task',
+        where: [{ field: 'id', operator: 'eq', value: 'optional-hidden' }],
+      });
+      expect(raw[0]).not.toHaveProperty('__ns');
+
+      const found = await optionalDb.findMany({
+        model: 'task',
+        where: [
+          { field: 'id', operator: 'eq', value: 'optional-hidden' },
+          { field: '__ns', operator: 'eq', value: 'user:manual' },
+        ],
+      });
+      expect(found).toEqual([{ id: 'optional-hidden', title: 'Hidden namespace' }]);
     });
   });
 

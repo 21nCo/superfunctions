@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mysqlTable, varchar } from 'drizzle-orm/mysql-core';
 import { drizzleAdapter } from './index.js';
 
@@ -10,6 +10,13 @@ const users = mysqlTable('users', {
 
 describe('DrizzleAdapter - MySQL upsert follow-ups', () => {
   it('throws when MySQL upsert cannot reselect the inserted row', async () => {
+    const insertExecute = vi.fn(async () => ({ rowsAffected: 1 }));
+    const duplicateExecute = vi.fn(async () => ({ rowsAffected: 1 }));
+    const onDuplicateKeyUpdate = vi.fn(() => ({
+      execute: duplicateExecute,
+    }));
+    const reselectExecute = vi.fn(async () => []);
+
     const mockDb = {
       _: {
         fullSchema: {
@@ -20,16 +27,8 @@ describe('DrizzleAdapter - MySQL upsert follow-ups', () => {
         return {
           values() {
             return {
-              async execute() {
-                return { rowsAffected: 1 };
-              },
-              onDuplicateKeyUpdate() {
-                return {
-                  async execute() {
-                    return { rowsAffected: 1 };
-                  },
-                };
-              },
+              execute: insertExecute,
+              onDuplicateKeyUpdate,
             };
           },
         };
@@ -42,9 +41,7 @@ describe('DrizzleAdapter - MySQL upsert follow-ups', () => {
                 return {
                   limit() {
                     return {
-                      async execute() {
-                        return [];
-                      },
+                      execute: reselectExecute,
                     };
                   },
                 };
@@ -69,5 +66,10 @@ describe('DrizzleAdapter - MySQL upsert follow-ups', () => {
         update: {},
       }),
     ).rejects.toThrow('Upsert failed to return a row');
+
+    expect(insertExecute).toHaveBeenCalledTimes(1);
+    expect(onDuplicateKeyUpdate).not.toHaveBeenCalled();
+    expect(duplicateExecute).not.toHaveBeenCalled();
+    expect(reselectExecute).toHaveBeenCalledTimes(1);
   });
 });

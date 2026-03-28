@@ -35,10 +35,23 @@ function buildWhereClause(
   assertInternalWhereClauses(where);
   const sql = getDrizzleSql();
 
-  let combined = sql`${sql.raw(quoteInternalIdentifier(where[0].field, dialect))} ${sql.raw(internalOperatorSql(where[0].op))} ${where[0].value}`;
+  function buildCondition(clause: InternalWhereClause): any {
+    const fieldSql = sql.raw(quoteInternalIdentifier(clause.field, dialect));
+
+    if (clause.value === null && clause.op === 'eq') {
+      return sql`${fieldSql} IS NULL`;
+    }
+
+    if (clause.value === null && clause.op === 'ne') {
+      return sql`${fieldSql} IS NOT NULL`;
+    }
+
+    return sql`${fieldSql} ${sql.raw(internalOperatorSql(clause.op))} ${clause.value}`;
+  }
+
+  let combined = buildCondition(where[0]);
   for (let i = 1; i < where.length; i++) {
-    const w = where[i];
-    combined = sql`${combined} AND ${sql.raw(quoteInternalIdentifier(w.field, dialect))} ${sql.raw(internalOperatorSql(w.op))} ${w.value}`;
+    combined = sql`${combined} AND ${buildCondition(where[i])}`;
   }
 
   return { fragment: combined, empty: false };
