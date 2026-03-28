@@ -8,6 +8,7 @@
 import type {
   Adapter,
   RowLevelNamespaceConfig,
+  TransactionAdapter,
   WhereClause,
 } from './types.js';
 
@@ -122,29 +123,15 @@ function removeColumnFromData(
   return copy;
 }
 
-// ---------------------------------------------------------------------------
-// Wrapper
-// ---------------------------------------------------------------------------
+type NamespaceWrappedSource = Omit<Adapter, 'transaction' | 'close'>;
 
-/**
- * Wraps an Adapter with row-level namespace isolation.
- *
- * When enabled:
- * - Reads: `__ns` WHERE clause is prepended to every query.
- * - Writes: `__ns` is stamped into create data.
- * - Updates: `__ns` is stripped from update data (immutable).
- * - Outputs: `__ns` is stripped from all returned records.
- * - Internal CRUD (`adapter.internal`) is NOT affected.
- */
-export function wrapWithRowLevelNamespace(
-  adapter: Adapter,
+function createNamespaceWrappedBase(
+  adapter: NamespaceWrappedSource,
   config: RowLevelNamespaceConfig,
-): Adapter {
-  if (!config.enabled) return adapter;
-
+): NamespaceWrappedSource {
   const { columnName: col, mandatory } = resolveConfig(config);
 
-  const wrapped: Adapter = {
+  return {
     // --- Pass-through metadata ---
     id: adapter.id,
     name: adapter.name,
@@ -155,7 +142,6 @@ export function wrapWithRowLevelNamespace(
     internal: adapter.internal,
 
     // --- CRUD ---
-
     async create(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
       const data = stampData(removeColumnFromData(params.data, col), col, namespace);
@@ -246,7 +232,6 @@ export function wrapWithRowLevelNamespace(
       );
       const create = stampData(removeColumnFromData(params.create, col), col, namespace);
       const update = removeColumnFromData(params.update, col);
-      // Augment conflict target to include namespace column for composite PK
       let conflictTarget = params.conflictTarget;
       if (conflictTarget && namespace) {
         const values = Array.isArray(conflictTarget)
@@ -274,22 +259,9 @@ export function wrapWithRowLevelNamespace(
       return adapter.count({ ...params, where });
     },
 
-    // --- Transaction: wrap child adapter ---
-    async transaction(callback) {
-      return adapter.transaction(async (trx) => {
-        // Wrap the transaction adapter with the same namespace filtering
-        const wrappedTrx = wrapWithRowLevelNamespace(
-          trx as unknown as Adapter,
-          config,
-        ) as unknown as typeof trx;
-        return callback(wrappedTrx);
-      });
-    },
-
     // --- Lifecycle pass-through ---
     initialize: () => adapter.initialize(),
     isHealthy: () => adapter.isHealthy(),
-    close: () => adapter.close(),
 
     // --- Schema management pass-through ---
     getSchemaVersion: (ns) => adapter.getSchemaVersion(ns),
@@ -300,6 +272,55 @@ export function wrapWithRowLevelNamespace(
     createSchema: adapter.createSchema
       ? (params) => adapter.createSchema!(params)
       : undefined,
+  };
+}
+
+function wrapTransactionAdapter(
+  trx: TransactionAdapter,
+  config: RowLevelNamespaceConfig,
+): TransactionAdapter {
+  const wrapped = createNamespaceWrappedBase(trx, config);
+
+  return {
+    ...wrapped,
+    commit: () => trx.commit(),
+    rollback: () => trx.rollback(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps an Adapter with row-level namespace isolation.
+ *
+ * When enabled:
+ * - Reads: `__ns` WHERE clause is prepended to every query.
+ * - Writes: `__ns` is stamped into create data.
+ * - Updates: `__ns` is stripped from update data (immutable).
+ * - Outputs: `__ns` is stripped from all returned records.
+ * - Internal CRUD (`adapter.internal`) is NOT affected.
+ */
+export function wrapWithRowLevelNamespace(
+  adapter: Adapter,
+  config: RowLevelNamespaceConfig,
+): Adapter {
+  if (!config.enabled) return adapter;
+
+  const wrappedBase = createNamespaceWrappedBase(adapter, config);
+
+  const wrapped: Adapter = {
+    ...wrappedBase,
+
+    // --- Transaction: wrap child adapter ---
+    async transaction(callback) {
+      return adapter.transaction(async (trx) => {
+        return callback(wrapTransactionAdapter(trx, config));
+      });
+    },
+
+    close: () => adapter.close(),
   };
 
   return wrapped;

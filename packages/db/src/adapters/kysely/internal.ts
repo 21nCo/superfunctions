@@ -66,7 +66,7 @@ function getKyselySql(): any {
   return kyselySql;
 }
 
-export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): InternalCrud {
+export function createKyselyInternalCrud(db: any, dialect: KyselyDialect): InternalCrud {
   const sql = getKyselySql();
   const ensurePromises = new Map<string, Promise<void>>();
 
@@ -105,11 +105,14 @@ export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): Inte
     ): Promise<Record<string, unknown>> {
       assertInternalTableName(table);
       const cols = Object.keys(data);
+      if (cols.length === 0) {
+        throw new Error('create: data must not be empty');
+      }
       cols.forEach((col) => assertInternalColumnDefs([{ name: col, type: 'text' }]));
       const vals = cols.map((k) => data[k]);
-      const quotedColumns = cols.map((col) => quoteInternalIdentifier(col, _dialect)).join(', ');
+      const quotedColumns = cols.map((col) => quoteInternalIdentifier(col, dialect)).join(', ');
 
-      const query = sql`INSERT INTO ${sql.raw(quoteInternalIdentifier(table, _dialect))} (${sql.raw(quotedColumns)}) VALUES (${sql.join(
+      const query = sql`INSERT INTO ${sql.raw(quoteInternalIdentifier(table, dialect))} (${sql.raw(quotedColumns)}) VALUES (${sql.join(
         vals.map((v: unknown) => sql`${v}`),
         sql`, `,
       )})`;
@@ -129,11 +132,11 @@ export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): Inte
       where: InternalWhereClause[],
     ): Promise<Record<string, unknown> | null> {
       assertInternalTableName(table);
-      const { fragment, empty } = buildWhereClause(where, _dialect);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, _dialect))} LIMIT 1`
-        : sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, _dialect))} WHERE ${fragment} LIMIT 1`;
+        ? sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} LIMIT 1`
+        : sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment} LIMIT 1`;
 
       const result = await query.execute(db);
       return result.rows[0] ?? null;
@@ -145,18 +148,18 @@ export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): Inte
       opts?: { orderBy?: string; limit?: number },
     ): Promise<Record<string, unknown>[]> {
       assertInternalTableName(table);
-      const { fragment, empty } = buildWhereClause(where, _dialect);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       let query;
       if (empty) {
-        query = sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, _dialect))}`;
+        query = sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))}`;
       } else {
-        query = sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, _dialect))} WHERE ${fragment}`;
+        query = sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment}`;
       }
 
       if (opts?.orderBy) {
         const order = parseInternalOrderBy(opts.orderBy);
-        query = sql<Record<string, unknown>>`${query} ORDER BY ${sql.raw(quoteInternalIdentifier(order.field, _dialect))} ${sql.raw(order.direction)}`;
+        query = sql<Record<string, unknown>>`${query} ORDER BY ${sql.raw(quoteInternalIdentifier(order.field, dialect))} ${sql.raw(order.direction)}`;
       }
 
       if (typeof opts?.limit === 'number') {
@@ -179,14 +182,14 @@ export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): Inte
         return 0;
       }
 
-      const setParts = cols.map((col) => sql`${sql.raw(quoteInternalIdentifier(col, _dialect))} = ${data[col]}`);
+      const setParts = cols.map((col) => sql`${sql.raw(quoteInternalIdentifier(col, dialect))} = ${data[col]}`);
       const setClause = sql.join(setParts, sql`, `);
 
-      const { fragment, empty } = buildWhereClause(where, _dialect);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, _dialect))} SET ${setClause}`
-        : sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, _dialect))} SET ${setClause} WHERE ${fragment}`;
+        ? sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, dialect))} SET ${setClause}`
+        : sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, dialect))} SET ${setClause} WHERE ${fragment}`;
 
       const result = await query.execute(db);
       return normalizeInternalResultCount(result.numAffectedRows ?? 0);
@@ -197,11 +200,11 @@ export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): Inte
       where: InternalWhereClause[],
     ): Promise<number> {
       assertInternalTableName(table);
-      const { fragment, empty } = buildWhereClause(where, _dialect);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, _dialect))}`
-        : sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, _dialect))} WHERE ${fragment}`;
+        ? sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, dialect))}`
+        : sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment}`;
 
       const result = await query.execute(db);
       return normalizeInternalResultCount(result.numAffectedRows ?? 0);

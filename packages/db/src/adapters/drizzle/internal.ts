@@ -132,6 +132,9 @@ export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): Int
     ): Promise<Record<string, unknown>> {
       assertInternalTableName(table);
       const cols = Object.keys(data);
+      if (cols.length === 0) {
+        throw new Error('create: data must not be empty');
+      }
       cols.forEach((col) => assertInternalColumnDefs([{ name: col, type: 'text' }]));
       const vals = cols.map((k) => data[k]);
       const quotedColumns = cols.map((col) => quoteInternalIdentifier(col, dialect)).join(', ');

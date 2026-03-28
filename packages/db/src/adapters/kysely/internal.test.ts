@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { createKyselyInternalCrud } from './internal.js';
 
 describe('createKyselyInternalCrud', () => {
+  it('rejects empty create payloads before building SQL', async () => {
+    const db = {
+      schema: {
+        createTable() {
+          throw new Error('schema access not expected in this test');
+        },
+      },
+    };
+
+    const internal = createKyselyInternalCrud(db, 'postgres');
+
+    await expect(internal.create('__datafn_meta', {})).rejects.toThrow(
+      'create: data must not be empty',
+    );
+  });
+
   it('uses IS NULL and IS NOT NULL for null equality predicates', async () => {
     const compiledNodes: any[] = [];
     const executor = {

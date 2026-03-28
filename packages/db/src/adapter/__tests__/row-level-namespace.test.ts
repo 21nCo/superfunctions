@@ -4,7 +4,7 @@
  * Covers test vectors: TV-RLN-001 through TV-RLN-013
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { memoryAdapter } from '../../adapters/memory/index.js';
 import {
   wrapWithRowLevelNamespace,
@@ -624,6 +624,69 @@ describe('wrapWithRowLevelNamespace', () => {
 
       const countB = await db.count({ model: 'task', namespace: 'user:B' });
       expect(countB).toBe(1);
+    });
+  });
+
+  describe('transaction wrapper', () => {
+    it('wraps transaction adapters without exposing close or nested transaction methods', async () => {
+      const commit = vi.fn(async () => {});
+      const rollback = vi.fn(async () => {});
+      const closeTrap = vi.fn(async () => {
+        throw new Error('close should not be exposed');
+      });
+      const nestedTransactionTrap = vi.fn(async () => {
+        throw new Error('nested transaction should not be exposed');
+      });
+
+      const adapterWithTransaction: Adapter = {
+        ...baseAdapter,
+        async transaction(callback) {
+          const trx = {
+            ...baseAdapter,
+            commit,
+            rollback,
+            close: closeTrap,
+            transaction: nestedTransactionTrap,
+          } as any;
+          return callback(trx);
+        },
+      };
+
+      const transactionalDb = wrapWithRowLevelNamespace(adapterWithTransaction, {
+        enabled: true,
+      });
+
+      let seenTrx: Record<string, unknown> | undefined;
+      await transactionalDb.transaction(async (trx) => {
+        seenTrx = trx as unknown as Record<string, unknown>;
+
+        const created = await trx.create({
+          model: 'task',
+          data: { id: 'tx-1', title: 'Inside transaction' },
+          namespace: 'user:A',
+        });
+        expect(created).toEqual({ id: 'tx-1', title: 'Inside transaction' });
+
+        await trx.commit();
+      });
+
+      expect(seenTrx).toBeDefined();
+      expect('close' in (seenTrx ?? {})).toBe(false);
+      expect('transaction' in (seenTrx ?? {})).toBe(false);
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(rollback).not.toHaveBeenCalled();
+      expect(closeTrap).not.toHaveBeenCalled();
+      expect(nestedTransactionTrap).not.toHaveBeenCalled();
+
+      const raw = await baseAdapter.findMany({
+        model: 'task',
+        where: [{ field: 'id', operator: 'eq', value: 'tx-1' }],
+      });
+      expect(raw[0]).toMatchObject({
+        id: 'tx-1',
+        title: 'Inside transaction',
+        __ns: 'user:A',
+      });
     });
   });
 
