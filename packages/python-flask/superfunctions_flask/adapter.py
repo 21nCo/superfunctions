@@ -20,7 +20,6 @@ from superfunctions.http import (
 
 SUPERFUNCTIONS_ROUTE_ATTR = "__superfunctions_route__"
 SUPERFUNCTIONS_ROUTE_META_ATTR = "__superfunctions_route_meta__"
-DEFAULT_ASYNC_HANDLER_TIMEOUT = 30.0
 logger = logging.getLogger(__name__)
 
 
@@ -141,12 +140,7 @@ def _run_async_handler(factory: Callable[[], Awaitable[Response]]) -> Response:
 
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
-    thread.join(timeout=DEFAULT_ASYNC_HANDLER_TIMEOUT)
-
-    if thread.is_alive():
-        raise TimeoutError(
-            f"Flask adapter async handler timed out after {DEFAULT_ASYNC_HANDLER_TIMEOUT:g}s"
-        )
+    thread.join()
 
     if "value" in error:
         raise error["value"]
@@ -168,6 +162,23 @@ def _create_request_context(path_params: Dict[str, Any]) -> tuple[FlaskRequestAd
     return adapted_request, context
 
 
+def _invoke_flask_handler(
+    handler: Callable,
+    path_params: Dict[str, Any],
+    *,
+    log_label: str,
+) -> FlaskResponse:
+    try:
+        adapted_request, context = _create_request_context(path_params)
+        response = _run_async_handler(lambda: handler(adapted_request, context))
+        return to_flask_response(response)
+    except HttpError as error:
+        return to_flask_response(error.to_response())
+    except Exception:
+        logger.exception("Unhandled error while processing Flask %s", log_label)
+        return _internal_error_response()
+
+
 def create_handler(handler: Callable, route: Route):
     """
     Create a Flask handler from a superfunctions handler.
@@ -180,22 +191,7 @@ def create_handler(handler: Callable, route: Route):
     """
 
     def flask_handler(**path_params):
-        try:
-            adapted_request, context = _create_request_context(path_params)
-            
-            # Call handler (async)
-            response = _run_async_handler(lambda: handler(adapted_request, context))
-            
-            # Convert response
-            return to_flask_response(response)
-        
-        except HttpError as e:
-            # Convert HTTP errors to responses
-            return to_flask_response(e.to_response())
-        
-        except Exception:
-            logger.exception("Unhandled error while processing Flask route")
-            return _internal_error_response()
+        return _invoke_flask_handler(handler, path_params, log_label="route")
 
     setattr(flask_handler, SUPERFUNCTIONS_ROUTE_ATTR, route)
     setattr(flask_handler, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
@@ -291,15 +287,6 @@ def to_flask_handler(handler: Callable) -> Callable:
     """
 
     def wrapper(**kwargs):
-        adapted_request, context = _create_request_context(kwargs)
-        
-        try:
-            response = _run_async_handler(lambda: handler(adapted_request, context))
-            return to_flask_response(response)
-        except HttpError as e:
-            return to_flask_response(e.to_response())
-        except Exception:
-            logger.exception("Unhandled error while processing Flask handler")
-            return _internal_error_response()
+        return _invoke_flask_handler(handler, kwargs, log_label="handler")
 
     return wrapper

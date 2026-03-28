@@ -3,7 +3,6 @@ from __future__ import annotations
 from flask import Flask
 import pytest
 
-import superfunctions_flask.adapter as flask_adapter
 from superfunctions.http import HttpError, HttpMethod, Response, Route, SetCookie, generate_openapi_document
 from superfunctions_flask import create_blueprint, to_flask_handler
 from superfunctions_flask.adapter import SUPERFUNCTIONS_ROUTE_ATTR, _run_async_handler
@@ -218,29 +217,3 @@ async def test_flask_handler_captures_request_before_thread_fallback() -> None:
         "header": "trace-123",
         "query": "threaded",
     }
-
-
-@pytest.mark.asyncio
-async def test_flask_async_bridge_times_out_stuck_thread(monkeypatch: pytest.MonkeyPatch) -> None:
-    class StuckThread:
-        def __init__(self, target, daemon):
-            self._target = target
-            self._alive = True
-
-        def start(self) -> None:
-            return None
-
-        def join(self, timeout=None) -> None:
-            return None
-
-        def is_alive(self) -> bool:
-            return self._alive
-
-    async def resolve_response() -> Response:
-        return Response(status=200)
-
-    monkeypatch.setattr(flask_adapter, "DEFAULT_ASYNC_HANDLER_TIMEOUT", 0.001)
-    monkeypatch.setattr(flask_adapter.threading, "Thread", StuckThread)
-
-    with pytest.raises(TimeoutError, match="timed out"):
-        _run_async_handler(resolve_response)
