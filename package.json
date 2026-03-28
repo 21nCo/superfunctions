@@ -11,6 +11,7 @@
     "datafn/client",
     "datafn/core",
     "datafn/server",
+    "datafn/svelte",
     "packages/*"
   ],
   "scripts": {
