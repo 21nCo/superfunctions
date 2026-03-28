@@ -149,6 +149,19 @@ def _run_async_handler(factory: Callable[[], Awaitable[Response]]) -> Response:
     return result["value"]
 
 
+def _create_request_context(path_params: Dict[str, Any]) -> tuple[FlaskRequestAdapter, RouteContext]:
+    current_request = request._get_current_object()
+    adapted_request = FlaskRequestAdapter(current_request)
+    context = RouteContext(
+        params=path_params,
+        query=dict(current_request.args),
+        headers=dict(current_request.headers),
+        url=current_request.url,
+        method=current_request.method,
+    )
+    return adapted_request, context
+
+
 def create_handler(handler: Callable, route: Route):
     """
     Create a Flask handler from a superfunctions handler.
@@ -162,17 +175,7 @@ def create_handler(handler: Callable, route: Route):
 
     def flask_handler(**path_params):
         try:
-            # Create adapted request
-            adapted_request = FlaskRequestAdapter(request)
-            
-            # Create context
-            context = RouteContext(
-                params=path_params,
-                query=dict(request.args),
-                headers=dict(request.headers),
-                url=request.url,
-                method=request.method,
-            )
+            adapted_request, context = _create_request_context(path_params)
             
             # Call handler (async)
             response = _run_async_handler(lambda: handler(adapted_request, context))
@@ -282,14 +285,7 @@ def to_flask_handler(handler: Callable) -> Callable:
     """
 
     def wrapper(**kwargs):
-        adapted_request = FlaskRequestAdapter(request)
-        context = RouteContext(
-            params=kwargs,
-            query=dict(request.args),
-            headers=dict(request.headers),
-            url=request.url,
-            method=request.method,
-        )
+        adapted_request, context = _create_request_context(kwargs)
         
         try:
             response = _run_async_handler(lambda: handler(adapted_request, context))

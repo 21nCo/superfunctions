@@ -185,3 +185,35 @@ async def test_flask_async_bridge_supports_running_event_loop() -> None:
     response = _run_async_handler(resolve_response)
 
     assert response.status == 204
+
+
+@pytest.mark.asyncio
+async def test_flask_handler_captures_request_before_thread_fallback() -> None:
+    app = Flask(__name__)
+
+    async def echo_request(request, context):
+        return Response(
+            status=200,
+            body={
+                "json": await request.json(),
+                "header": request.headers["X-Trace-Id"],
+                "query": context.query["mode"],
+            },
+        )
+
+    handler = to_flask_handler(echo_request)
+
+    with app.test_request_context(
+        "/echo?mode=threaded",
+        method="POST",
+        json={"ok": True},
+        headers={"X-Trace-Id": "trace-123"},
+    ):
+        response = handler()
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "json": {"ok": True},
+        "header": "trace-123",
+        "query": "threaded",
+    }
