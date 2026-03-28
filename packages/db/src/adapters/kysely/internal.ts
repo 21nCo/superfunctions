@@ -163,6 +163,9 @@ export function createKyselyInternalCrud(db: any, dialect: KyselyDialect): Inter
       }
 
       if (typeof opts?.limit === 'number') {
+        if (!Number.isFinite(opts.limit) || opts.limit < 0) {
+          throw new TypeError('findMany: limit must be a non-negative finite number');
+        }
         query = sql<Record<string, unknown>>`${query} LIMIT ${Math.trunc(opts.limit)}`;
       }
 

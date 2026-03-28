@@ -91,6 +91,34 @@ function removeNamespaceWhere(
   return where?.filter((clause) => clause.field !== col);
 }
 
+function sanitizeConflictTarget(
+  conflictTarget: string | string[] | undefined,
+  col: string,
+  namespace: string | undefined,
+): string | string[] | undefined {
+  if (!conflictTarget) {
+    return undefined;
+  }
+
+  const visibleTargets = (
+    Array.isArray(conflictTarget) ? conflictTarget : [conflictTarget]
+  ).filter((field) => field !== col);
+
+  if (visibleTargets.length === 0) {
+    return undefined;
+  }
+
+  const deduped = Array.from(
+    new Set(namespace ? [...visibleTargets, col] : visibleTargets),
+  );
+
+  if (!Array.isArray(conflictTarget) && !namespace && deduped.length === 1) {
+    return deduped[0];
+  }
+
+  return deduped;
+}
+
 function stripColumn<T>(record: T, col: string): T {
   if (!record || typeof record !== 'object') return record;
   const copy = { ...record } as Record<string, unknown>;
@@ -232,13 +260,11 @@ function createNamespaceWrappedBase(
       );
       const create = stampData(removeColumnFromData(params.create, col), col, namespace);
       const update = removeColumnFromData(params.update, col);
-      let conflictTarget = params.conflictTarget;
-      if (conflictTarget && namespace) {
-        const values = Array.isArray(conflictTarget)
-          ? [...conflictTarget, col]
-          : [conflictTarget, col];
-        conflictTarget = Array.from(new Set(values));
-      }
+      const conflictTarget = sanitizeConflictTarget(
+        params.conflictTarget,
+        col,
+        namespace,
+      );
       const result = await adapter.upsert({
         ...params,
         where: where ?? [],

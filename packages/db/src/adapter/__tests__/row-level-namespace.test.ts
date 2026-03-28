@@ -458,6 +458,26 @@ describe('wrapWithRowLevelNamespace', () => {
       expect(capturedParams.conflictTarget).toEqual(['id', '__ns']);
     });
 
+    it('strips hidden namespace columns when callers target only __ns', async () => {
+      const originalUpsert = baseAdapter.upsert.bind(baseAdapter);
+      let capturedParams: any;
+      baseAdapter.upsert = async (params: any) => {
+        capturedParams = params;
+        return originalUpsert(params);
+      };
+
+      await db.upsert({
+        model: 'kv',
+        where: [{ field: 'id', operator: 'eq', value: 'kv:pref:theme' }],
+        create: { id: 'kv:pref:theme', value: 'light' },
+        update: { value: 'light' },
+        namespace: 'user:A',
+        conflictTarget: '__ns',
+      });
+
+      expect(capturedParams.conflictTarget).toBeUndefined();
+    });
+
     it('does not modify conflictTarget when not provided', async () => {
       const originalUpsert = baseAdapter.upsert.bind(baseAdapter);
       let capturedParams: any;

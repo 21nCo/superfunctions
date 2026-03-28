@@ -56,4 +56,41 @@ describe('createKyselyInternalCrud', () => {
     ]);
     expect(JSON.stringify(compiledNodes[1])).toContain('IS NOT NULL');
   });
+
+  it('rejects invalid findMany limits before composing SQL', async () => {
+    let executed = false;
+    const executor = {
+      transformQuery(node: any) {
+        return node;
+      },
+      compileQuery(node: any) {
+        return { sql: 'compiled', parameters: [node] };
+      },
+      async executeQuery() {
+        executed = true;
+        return { rows: [] };
+      },
+    };
+
+    const db = {
+      getExecutor() {
+        return executor;
+      },
+      schema: {
+        createTable() {
+          throw new Error('schema access not expected in this test');
+        },
+      },
+    };
+
+    const internal = createKyselyInternalCrud(db, 'postgres');
+
+    for (const limit of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      await expect(
+        internal.findMany('__datafn_meta', [], { limit }),
+      ).rejects.toThrow('findMany: limit must be a non-negative finite number');
+    }
+
+    expect(executed).toBe(false);
+  });
 });
