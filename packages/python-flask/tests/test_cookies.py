@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+
 from flask import Flask
 import pytest
 
+import superfunctions_flask.adapter as flask_adapter
 from superfunctions.http import HttpError, HttpMethod, Response, Route, SetCookie, generate_openapi_document
 from superfunctions_flask import create_blueprint, to_flask_handler
 from superfunctions_flask.adapter import SUPERFUNCTIONS_ROUTE_ATTR, _run_async_handler
@@ -217,3 +221,24 @@ async def test_flask_handler_captures_request_before_thread_fallback() -> None:
         "header": "trace-123",
         "query": "threaded",
     }
+
+
+@pytest.mark.asyncio
+async def test_flask_async_bridge_times_out_and_cancels_stalled_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled = threading.Event()
+
+    async def stalled_response() -> Response:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(flask_adapter, "DEFAULT_ASYNC_HANDLER_TIMEOUT", 0.001)
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        _run_async_handler(stalled_response)
+
+    assert cancelled.wait(timeout=1)
