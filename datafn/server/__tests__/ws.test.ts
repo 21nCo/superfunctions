@@ -16,9 +16,14 @@ describe("WebSocketManager", () => {
 
     manager.broadcastCursor("100", "default");
 
-    const expectedMsg = JSON.stringify({ type: "cursor", cursor: "100" });
-    expect(client1.send).toHaveBeenCalledWith(expectedMsg);
-    expect(client2.send).toHaveBeenCalledWith(expectedMsg);
+    const payload1 = JSON.parse((client1.send as any).mock.calls[0][0]);
+    const payload2 = JSON.parse((client2.send as any).mock.calls[0][0]);
+    expect(payload1).toMatchObject({
+      type: "cursor",
+      cursor: "100",
+      targeting: { mode: "namespace-broadcast", degraded: false },
+    });
+    expect(payload2).toMatchObject(payload1);
   });
 
   it("should remove client on send error", () => {
@@ -27,6 +32,7 @@ describe("WebSocketManager", () => {
       send: vi.fn().mockImplementation(() => {
         throw new Error("closed");
       }),
+      close: vi.fn(),
     };
     const client2: WebSocketClient = { send: vi.fn() };
 
@@ -37,18 +43,23 @@ describe("WebSocketManager", () => {
     manager.broadcastCursor("100", "default");
 
     expect(client1.send).toHaveBeenCalled();
+    expect(client1.close).toHaveBeenCalledWith(1001, "Broadcast send failed");
     expect(client2.send).toHaveBeenCalled();
 
-    // Reset mocks
-    vi.clearAllMocks();
+    // Reset send mocks only
+    (client1.send as any).mockClear();
+    (client2.send as any).mockClear();
 
     // Second broadcast should only go to client2
     manager.broadcastCursor("101", "default");
 
     expect(client1.send).not.toHaveBeenCalled();
-    expect(client2.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: "cursor", cursor: "101" }),
-    );
+    const payload = JSON.parse((client2.send as any).mock.calls[0][0]);
+    expect(payload).toMatchObject({
+      type: "cursor",
+      cursor: "101",
+      targeting: { mode: "namespace-broadcast", degraded: false },
+    });
   });
 
   it("should handle hello message (no-op for now but safe)", () => {
@@ -126,10 +137,14 @@ describe("WebSocketManager", () => {
 
     manager.broadcastCursor("42", "target-ns");
 
-    const expectedMsg = JSON.stringify({ type: "cursor", cursor: "42" });
     // All 10 target clients received the message
     for (const c of targetClients) {
-      expect(c.send).toHaveBeenCalledWith(expectedMsg);
+      const payload = JSON.parse((c.send as any).mock.calls[0][0]);
+      expect(payload).toMatchObject({
+        type: "cursor",
+        cursor: "42",
+        targeting: { mode: "namespace-broadcast", degraded: false },
+      });
     }
     // None of the other clients received it
     for (const c of otherClients) {

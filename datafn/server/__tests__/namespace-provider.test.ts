@@ -165,40 +165,34 @@ describe("Empty namespace validation (NS-022)", () => {
 describe("Rate limit key uses namespace (NS-006)", () => {
   // TV-NS-015: rate limit key = namespace when namespaceProvider is used
   it("TV-NS-015: rate limit default key extractor uses namespace", async () => {
-    let capturedKey: string | undefined;
     const db = memoryAdapter({ libraryNamespace: "datafn" });
     const server = await createDatafnServer({
       schema: testSchema, allowUnknownResources: true,
       db,
       namespaceProvider: {
-        getNamespace: () => "org:u1",
+        getNamespace: (ctx: { query: URLSearchParams }) =>
+          `org:${ctx.query.get("tenant") ?? "anonymous"}`,
       },
       rateLimit: {
         enabled: true,
-        maxRequests: 1000,
+        maxRequests: 1,
         windowSeconds: 60,
-        keyExtractor: async (ctx: any) => {
-          // We can't easily capture the default extractor, but we can test
-          // that the server starts without error with namespaceProvider + rateLimit
-          return "org:u1";
-        },
       },
     });
 
-    const res = await server.router.handle(
-      pushRequest([
-        {
-          operation: "insert",
-          resource: "task",
-          id: "task:1",
-          clientId: "client:1",
-          mutationId: "m-1",
-          record: { title: "Test" },
-        },
-      ]),
+    const first = await server.router.handle(
+      new Request("http://localhost/datafn/status?tenant=u1"),
     );
-    const body = await res.json();
-    expect(body.ok).toBe(true);
+    const second = await server.router.handle(
+      new Request("http://localhost/datafn/status?tenant=u1"),
+    );
+    const third = await server.router.handle(
+      new Request("http://localhost/datafn/status?tenant=u2"),
+    );
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(third.status).toBe(200);
     await server.close();
   });
 });

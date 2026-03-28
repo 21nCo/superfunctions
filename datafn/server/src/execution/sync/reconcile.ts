@@ -183,8 +183,15 @@ export async function executeReconcile(
       const joinStoreKey = getJoinStoreKey(fromResource, relation.relation!, toResource);
       // Actual DB table name (matches what relations.ts writes and what codegen generates)
       const joinTableName = getJoinTableName(fromResource, relation.relation!, relation.joinTable);
+      const relationTouchesPrivateResource =
+        isPrivateShareableResource(schema, fromResource) ||
+        isPrivateShareableResource(schema, toResource);
 
       try {
+        if (relationTouchesPrivateResource && !actorId) {
+          joinCounts[joinStoreKey] = 0;
+          continue;
+        }
         // SCA-001: Use db.count() for join rows too
         if (typeof db.count === "function") {
           joinCounts[joinStoreKey] = await db.count({

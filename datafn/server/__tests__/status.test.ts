@@ -40,7 +40,16 @@ describe("/datafn/status", () => {
     expect(body.ok).toBe(true);
     expect(body.result).toBeDefined();
     expect(body.result.schemaHash).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(body.result.capabilities).toContain("dfql.query");
+    expect(body.result.capabilities).toEqual([
+      "dfql.query",
+      "dfql.mutation",
+      "dfql.transact",
+      "sync.seed",
+      "sync.clone",
+      "sync.pull",
+      "sync.push",
+      "sync.reconcile",
+    ]);
     expect(body.result.limits).toEqual({
       maxLimit: 2,
       maxTransactSteps: 2,

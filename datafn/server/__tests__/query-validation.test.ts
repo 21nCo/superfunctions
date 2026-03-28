@@ -82,6 +82,32 @@ describe("/datafn/query validation", () => {
     expect(body.error.details.path).toBe("$");
   });
 
+  it("rejects invalid cursor.after payloads", async () => {
+    const server = await createDatafnServer({ allowUnknownResources: true,
+      schema: fixtureF1Schema,
+      limits: { maxLimit: 2 },
+    });
+
+    const req = new Request("http://localhost/datafn/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource: "task",
+        version: 1,
+        sort: ["id:asc"],
+        cursor: { after: "bad" },
+      }),
+    });
+
+    const res = await server.router.handle(req, {});
+    expect(res.status).toBe(400);
+
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("DFQL_INVALID");
+    expect(body.error.details.path).toBe("cursor.after");
+  });
+
   it("TV-QUERY-002: unknown resource returns DFQL_UNKNOWN_RESOURCE", async () => {
     const server = await createDatafnServer({ allowUnknownResources: true,
       schema: fixtureF1Schema,

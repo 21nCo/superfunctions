@@ -400,6 +400,7 @@ export class WebSocketManager {
       } catch (e) {
         this.logger?.error("Error sending to websocket client", { error: String(e), operation: "ws-broadcast" });
         this.removeClient(client);
+        client.close?.(1001, "Broadcast send failed");
       }
     }
 

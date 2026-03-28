@@ -70,8 +70,11 @@ export function createStatusHandler(
         "dfql.query",
         "dfql.mutation",
         "dfql.transact",
-        "dfql.sync",
-        "dfql.seed",
+        "sync.seed",
+        "sync.clone",
+        "sync.pull",
+        "sync.push",
+        "sync.reconcile",
       ],
       limits,
       // SRV-008: Round to nearest minute to avoid fingerprinting via exact timestamps

@@ -106,7 +106,7 @@ describe("DFQL Transactions", () => {
   });
 
   it("TV-TRX-002: Failed transaction (stop on error)", async () => {
-    // First succeed, second fail
+    // First succeed, second fail, third must not execute
     const res = await transact({
       steps: [
         {
@@ -121,21 +121,19 @@ describe("DFQL Transactions", () => {
         {
           resource: "txn",
           version: 1,
-          operation: "delete", // Valid op
+          operation: "invalid_op",
           clientId: "c1",
           mutationId: "m4",
           id: "t:non_existent",
         },
-        // Third one should NOT execute if second fails?
-        // Actually delete of non-existent is success in our adapter (idempotent, or ignores).
-        // Let's force an error with invalid operation
         {
           resource: "txn",
           version: 1,
-          operation: "invalid_op",
+          operation: "insert",
           clientId: "c1",
           mutationId: "m5",
           id: "t:3",
+          record: { amount: 300 },
         },
       ],
     });
@@ -147,12 +145,26 @@ describe("DFQL Transactions", () => {
     // Result is NOT OK (partial success)
     expect(result.ok).toBe(false);
 
-    expect(result.results).toHaveLength(3); // 1 success, 1 success (delete), 1 fail
-
+    expect(result.results).toHaveLength(2);
     expect(result.results[0].ok).toBe(true);
-    expect(result.results[1].ok).toBe(true);
-    expect(result.results[2].ok).toBe(false);
-    expect(result.results[2].error.code).toBe("DFQL_UNSUPPORTED");
+    expect(result.results[1].ok).toBe(false);
+    expect(result.results[1].error.code).toBe("DFQL_UNSUPPORTED");
+
+    const queryRes = await router.handle(
+      new Request("http://localhost/datafn/query", {
+        method: "POST",
+        body: JSON.stringify({
+          resource: "txn",
+          version: 1,
+        }),
+      }),
+      {},
+    );
+    const queryJson = await queryRes.json();
+    expect(queryJson.ok).toBe(true);
+    const ids = queryJson.result.data.map((row: { id: string }) => row.id);
+    expect(ids).toContain("t:2");
+    expect(ids).not.toContain("t:3");
   });
 
   it("TV-TRX-003: Validation error (no steps)", async () => {

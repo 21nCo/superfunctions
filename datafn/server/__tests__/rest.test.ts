@@ -170,4 +170,82 @@ describe("REST Wrappers", () => {
       },
     });
   });
+
+  it("keeps REST resource/version scoped to the URL and preserves namespace context", async () => {
+    const db = memoryAdapter();
+    const server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema: {
+        resources: [
+          {
+            name: "task",
+            version: 1,
+            fields: [{ name: "title", type: "string", required: true }],
+          },
+          {
+            name: "note",
+            version: 7,
+            fields: [{ name: "title", type: "string", required: true }],
+          },
+        ],
+      } as DatafnSchema,
+      db,
+      rest: true,
+      namespaceProvider: {
+        getNamespace: (ctx: { tenant: string }) => `ns:${ctx.tenant}`,
+      },
+    });
+
+    const postRes = await server.router.handle(
+      new Request("http://localhost/datafn/resources/task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "insert",
+          resource: "note",
+          version: 99,
+          clientId: "client:rest",
+          mutationId: "m-rest-scope",
+          id: "task:scoped",
+          record: { title: "Scoped task" },
+        }),
+      }),
+      { tenant: "alpha" },
+    );
+
+    expect(postRes.status).toBe(200);
+    expect(
+      await db.findOne({
+        model: "task",
+        where: [{ field: "id", operator: "eq", value: "task:scoped" }],
+        namespace: "ns:alpha",
+      }),
+    ).toBeTruthy();
+    expect(
+      await db.findOne({
+        model: "note",
+        where: [{ field: "id", operator: "eq", value: "task:scoped" }],
+        namespace: "ns:alpha",
+      }),
+    ).toBeNull();
+
+    const getRes = await server.router.handle(
+      new Request(
+        `http://localhost/datafn/resources/task?q=${encodeURIComponent(
+          JSON.stringify({
+            resource: "note",
+            version: 123,
+            filters: { id: "task:scoped" },
+            select: ["id", "title"],
+          }),
+        )}`,
+        { method: "GET" },
+      ),
+      { tenant: "alpha" },
+    );
+
+    const getJson = await getRes.json();
+    expect(getJson.ok).toBe(true);
+    expect(getJson.result.data).toEqual([{ id: "task:scoped", title: "Scoped task" }]);
+  });
 });

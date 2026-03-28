@@ -87,12 +87,12 @@ export function createQueryHandler(
     resource: string,
     namespace: string,
     actorId: string | undefined,
-  ): Promise<string[] | undefined> => {
+  ): Promise<{ shareableAccessIds: string[]; hasShareableScopeAccess?: boolean } | undefined> => {
     if (!db || !isPrivateShareableResource(validatedSchema, resource)) {
       return undefined;
     }
     if (!actorId) {
-      return [];
+      return { shareableAccessIds: [] };
     }
 
     const ids = new Set<string>();
@@ -159,20 +159,16 @@ export function createQueryHandler(
       }
 
       if (hasScopeGrant) {
-        const scopedRows = await db.findMany({
-          model: resource,
-          where: [],
-          namespace,
-        });
-        for (const row of scopedRows) {
-          if (typeof row.id === "string") {
-            ids.add(row.id);
-          }
-        }
+        return {
+          shareableAccessIds: [...ids].sort((a, b) => a.localeCompare(b)),
+          hasShareableScopeAccess: true,
+        };
       }
     }
 
-    return [...ids].sort((a, b) => a.localeCompare(b));
+    return {
+      shareableAccessIds: [...ids].sort((a, b) => a.localeCompare(b)),
+    };
   };
 
   const mergeFilters = (
@@ -719,12 +715,12 @@ export function createQueryHandler(
                 String(query.resource),
                 namespace,
                 actorId,
-              ).then((shareableAccessIds) => {
+              ).then((shareableAccess) => {
                 const queryWithMetadata = {
                   ...query,
                   metadata: {
                     ...(metadata ?? {}),
-                    ...(shareableAccessIds !== undefined ? { shareableAccessIds } : {}),
+                    ...(shareableAccess ?? {}),
                   } satisfies QueryEnvelopeMetadata,
                 };
                 const queryWithAutoFilters = injectCapabilityAutoFilters(

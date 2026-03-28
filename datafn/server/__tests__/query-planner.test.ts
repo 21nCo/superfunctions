@@ -569,6 +569,17 @@ describe("classifyQuery", () => {
     ).toBe("IN_MEMORY");
   });
 
+  it("$or filters → IN_MEMORY", () => {
+    expect(
+      classifyQuery({
+        resource: "task",
+        filters: {
+          $or: [{ status: "active" }, { status: "pending" }],
+        },
+      }),
+    ).toBe("IN_MEMORY");
+  });
+
   it("no select, no filters → FULL_PUSHDOWN", () => {
     expect(classifyQuery({ resource: "task" })).toBe("FULL_PUSHDOWN");
   });

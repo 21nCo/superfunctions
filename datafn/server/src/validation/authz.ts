@@ -715,9 +715,7 @@ export async function validateShareableOperationAccess(input: {
   }
 
   if (
-    input.operation === "insert" ||
-    input.operation === "share" ||
-    input.operation === "unshare"
+    input.operation === "insert"
   ) {
     return { ok: true };
   }

@@ -219,7 +219,7 @@ export async function executeTransaction(
       // Map to an error result
       results.push({
         ok: false,
-        error: { code: e.code || "INTERNAL", message: e.message }
+        error: { code: e.code || "INTERNAL", message: e?.message || String(e) }
       });
       if (isAtomic) return { ok: true, result: { ok: false, results } };
     }

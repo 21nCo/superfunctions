@@ -32,11 +32,11 @@ export function createDefaultLogger(debug: boolean): DatafnLogger {
 
   return {
     info: (msg, ctx) =>
-      console.log(JSON.stringify({ level: "info", msg, ...ctx, ts: Date.now() })),
+      console.log(JSON.stringify({ ...(ctx ?? {}), level: "info", msg, ts: Date.now() })),
     warn: (msg, ctx) =>
-      console.warn(JSON.stringify({ level: "warn", msg, ...ctx, ts: Date.now() })),
+      console.warn(JSON.stringify({ ...(ctx ?? {}), level: "warn", msg, ts: Date.now() })),
     error: (msg, ctx) =>
-      console.error(JSON.stringify({ level: "error", msg, ...ctx, ts: Date.now() })),
+      console.error(JSON.stringify({ ...(ctx ?? {}), level: "error", msg, ts: Date.now() })),
     debug: () => {},
   };
 }

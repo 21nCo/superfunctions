@@ -207,4 +207,35 @@ describe("executeSearchQuery", () => {
     expect(result.data[0].id).toBe("task-3");
     expect(result.data[1].id).toBe("task-1");
   });
+
+  it("retains matched ids when chunked search uses a projection without id", async () => {
+    const candidateIds = Array.from({ length: 1005 }, (_, i) => `task-${i + 1}`);
+    const provider = {
+      name: "chunked-search",
+      search: vi.fn().mockResolvedValue(candidateIds),
+    } as SearchProvider;
+    const chunkedStore: DataStore = {
+      getRecords: () => candidateIds.map((id) => ({ id, title: id })),
+      getRecord: (_resource, id) => ({ id, title: id }),
+      getJoinRows: () => [],
+      findRecords: (_resource, field, value) =>
+        field === "id" && Array.isArray(value)
+          ? value.map((id) => ({ id, title: String(id) }))
+          : [],
+    };
+
+    const result: any = await executeSearchQuery(
+      {
+        resource: "tasks",
+        version: 1,
+        search: { query: "all", type: "fullText" },
+        select: ["title"],
+      },
+      mockSchema,
+      chunkedStore,
+      provider,
+    );
+
+    expect(result.data).toHaveLength(1005);
+  });
 });

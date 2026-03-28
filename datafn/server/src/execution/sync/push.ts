@@ -314,15 +314,20 @@ export async function executePush(
       case "replace": {
         const coercedData = applyDateCoercion(schema, mut.resource, mut.record || {}, logger);
         const strippedRecord = stripReadonlyCapabilityFields(coercedData, resolvedCapabilities);
-        const replaceData = injectCapabilityFieldsOnUpdate(
+        const createData = injectCapabilityFieldsOnInsert(
           strippedRecord,
           resolvedCapabilities,
           actorId,
         );
-        await targetDb.upsert({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], create: { id: mut.id, ...replaceData }, update: replaceData, namespace, conflictTarget: "id" });
+        const updateData = injectCapabilityFieldsOnUpdate(
+          strippedRecord,
+          resolvedCapabilities,
+          actorId,
+        );
+        await targetDb.upsert({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], create: { id: mut.id, ...createData }, update: updateData, namespace, conflictTarget: "id" });
         return {
           ok: true,
-          changes: [{ resource: mut.resource, id: mut.id, op: "replace", record: { id: mut.id, ...replaceData } }],
+          changes: [{ resource: mut.resource, id: mut.id, op: "replace", record: { id: mut.id, ...updateData } }],
         };
       }
       case "delete":
