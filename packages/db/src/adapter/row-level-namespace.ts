@@ -35,8 +35,13 @@ interface ResolvedConfig {
 }
 
 function resolveConfig(config: RowLevelNamespaceConfig): ResolvedConfig {
+  const columnName = config.columnName?.trim() ?? '__ns';
+  if (!columnName) {
+    throw new Error('row-level namespace columnName cannot be blank');
+  }
+
   return {
-    columnName: config.columnName ?? '__ns',
+    columnName,
     mandatory: config.mandatory ?? true,
   };
 }
@@ -82,6 +87,14 @@ function withNamespaceWhere(
     return where;
   }
   return appendWhere(where, namespaceWhereClause(col, namespace));
+}
+
+function buildScopedWhere(
+  where: WhereClause[] | undefined,
+  col: string,
+  namespace: string | undefined,
+): WhereClause[] {
+  return withNamespaceWhere(removeNamespaceWhere(where, col), col, namespace) ?? [];
 }
 
 function removeNamespaceWhere(
@@ -188,76 +201,61 @@ function createNamespaceWrappedBase(
 
     async findOne(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
-      const result = await adapter.findOne({ ...params, where: where ?? [] });
+      const result = await adapter.findOne({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
       return result ? stripColumn(result, col) : null;
     },
 
     async findMany(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
-      const results = await adapter.findMany({ ...params, where: where ?? [] });
+      const results = await adapter.findMany({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
       return stripColumnFromArray(results, col);
     },
 
     async update(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
       const data = removeColumnFromData(params.data, col);
-      const result = await adapter.update({ ...params, where: where ?? [], data });
+      const result = await adapter.update({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+        data,
+      });
       return stripColumn(result, col);
     },
 
     async updateMany(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
       const data = removeColumnFromData(params.data, col);
-      return adapter.updateMany({ ...params, where: where ?? [], data });
+      return adapter.updateMany({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+        data,
+      });
     },
 
     async delete(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
-      return adapter.delete({ ...params, where: where ?? [] });
+      return adapter.delete({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
     },
 
     async deleteMany(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
-      return adapter.deleteMany({ ...params, where: where ?? [] });
+      return adapter.deleteMany({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
     },
 
     async upsert(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
       const create = stampData(removeColumnFromData(params.create, col), col, namespace);
       const update = removeColumnFromData(params.update, col);
       const conflictTarget = sanitizeConflictTarget(
@@ -267,7 +265,7 @@ function createNamespaceWrappedBase(
       );
       const result = await adapter.upsert({
         ...params,
-        where: where ?? [],
+        where: buildScopedWhere(params.where, col, namespace),
         create,
         update,
         conflictTarget,
@@ -277,12 +275,10 @@ function createNamespaceWrappedBase(
 
     async count(params) {
       const namespace = resolveNamespace(params.namespace, mandatory);
-      const where = withNamespaceWhere(
-        removeNamespaceWhere(params.where, col),
-        col,
-        namespace,
-      );
-      return adapter.count({ ...params, where });
+      return adapter.count({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
     },
 
     // --- Lifecycle pass-through ---

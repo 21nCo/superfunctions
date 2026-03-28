@@ -626,6 +626,15 @@ describe('wrapWithRowLevelNamespace', () => {
       expect(results).toHaveLength(1);
       expect(results[0]).not.toHaveProperty('tenant_id');
     });
+
+    it('rejects blank custom column names', () => {
+      expect(() =>
+        wrapWithRowLevelNamespace(customBase, {
+          enabled: true,
+          columnName: '   ',
+        }),
+      ).toThrow('row-level namespace columnName cannot be blank');
+    });
   });
 
   // -----------------------------------------------------------------------

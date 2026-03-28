@@ -2,6 +2,76 @@ import { describe, expect, it } from 'vitest';
 import { createKyselyInternalCrud } from './internal.js';
 
 describe('createKyselyInternalCrud', () => {
+  it('returns the persisted row using a generated insert id when create data omits id', async () => {
+    let executeCount = 0;
+    const executor = {
+      transformQuery(node: any) {
+        return node;
+      },
+      compileQuery(node: any) {
+        return { sql: 'compiled', parameters: [node] };
+      },
+      async executeQuery() {
+        executeCount += 1;
+        if (executeCount === 1) {
+          return { rows: [], insertId: 7 };
+        }
+        return { rows: [{ id: 7, value: 'persisted' }] };
+      },
+    };
+
+    const db = {
+      getExecutor() {
+        return executor;
+      },
+      schema: {
+        createTable() {
+          throw new Error('schema access not expected in this test');
+        },
+      },
+    };
+
+    const internal = createKyselyInternalCrud(db, 'mysql');
+
+    await expect(
+      internal.create('__datafn_meta', { value: 'persisted' }),
+    ).resolves.toEqual({ id: 7, value: 'persisted' });
+    expect(executeCount).toBe(2);
+  });
+
+  it('fails when it cannot resolve the persisted row after create', async () => {
+    const executor = {
+      transformQuery(node: any) {
+        return node;
+      },
+      compileQuery(node: any) {
+        return { sql: 'compiled', parameters: [node] };
+      },
+      async executeQuery() {
+        return { rows: [] };
+      },
+    };
+
+    const db = {
+      getExecutor() {
+        return executor;
+      },
+      schema: {
+        createTable() {
+          throw new Error('schema access not expected in this test');
+        },
+      },
+    };
+
+    const internal = createKyselyInternalCrud(db, 'mysql');
+
+    await expect(
+      internal.create('__datafn_meta', { value: 'persisted' }),
+    ).rejects.toThrow(
+      'create: unable to resolve persisted row without an "id" value or RETURNING support',
+    );
+  });
+
   it('rejects empty create payloads before building SQL', async () => {
     const db = {
       schema: {

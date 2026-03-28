@@ -66,6 +66,27 @@ function getKyselySql(): any {
   return kyselySql;
 }
 
+function extractInternalCreateRow(result: any): Record<string, unknown> | undefined {
+  if (Array.isArray(result?.rows) && result.rows[0] && typeof result.rows[0] === 'object') {
+    return result.rows[0] as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function extractInternalInsertId(result: any): unknown {
+  if (result?.insertId !== undefined && result.insertId !== null) {
+    return result.insertId;
+  }
+  if (result?.lastInsertRowid !== undefined && result.lastInsertRowid !== null) {
+    return result.lastInsertRowid;
+  }
+  const rowId = result?.rows?.[0]?.id;
+  if (rowId !== undefined && rowId !== null) {
+    return rowId;
+  }
+  return undefined;
+}
+
 export function createKyselyInternalCrud(db: any, dialect: KyselyDialect): InternalCrud {
   const sql = getKyselySql();
   const ensurePromises = new Map<string, Promise<void>>();
@@ -112,19 +133,32 @@ export function createKyselyInternalCrud(db: any, dialect: KyselyDialect): Inter
       const vals = cols.map((k) => data[k]);
       const quotedColumns = cols.map((col) => quoteInternalIdentifier(col, dialect)).join(', ');
 
-      const query = sql`INSERT INTO ${sql.raw(quoteInternalIdentifier(table, dialect))} (${sql.raw(quotedColumns)}) VALUES (${sql.join(
+      const insertQuery = sql`INSERT INTO ${sql.raw(quoteInternalIdentifier(table, dialect))} (${sql.raw(quotedColumns)}) VALUES (${sql.join(
         vals.map((v: unknown) => sql`${v}`),
         sql`, `,
       )})`;
 
-      await query.execute(db);
-      if (data.id !== undefined && data.id !== null) {
+      const executeResult = dialect === 'mysql'
+        ? await insertQuery.execute(db)
+        : await sql<Record<string, unknown>>`${insertQuery} RETURNING *`.execute(db);
+
+      const returnedRow = extractInternalCreateRow(executeResult);
+      if (returnedRow) {
+        return returnedRow;
+      }
+
+      const insertedId =
+        (data.id !== undefined && data.id !== null ? data.id : extractInternalInsertId(executeResult));
+      if (insertedId !== undefined && insertedId !== null) {
         return (
-          (await this.findOne(table, [{ field: 'id', op: 'eq', value: data.id }])) ??
+          (await this.findOne(table, [{ field: 'id', op: 'eq', value: insertedId }])) ??
           data
         );
       }
-      return data;
+
+      throw new Error(
+        'create: unable to resolve persisted row without an "id" value or RETURNING support',
+      );
     },
 
     async findOne(
