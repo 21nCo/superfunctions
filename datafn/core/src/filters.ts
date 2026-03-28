@@ -60,8 +60,8 @@ function dfqlError(code: DatafnError["code"], message: string): never {
  * Match a SQL-like LIKE pattern (% = any sequence, _ = single char) without regex backtracking.
  */
 function likeMatches(pattern: string, candidate: string, caseInsensitive: boolean): boolean {
-  const source = caseInsensitive ? pattern.toLocaleLowerCase() : pattern;
-  const target = caseInsensitive ? candidate.toLocaleLowerCase() : candidate;
+  const source = caseInsensitive ? pattern.toLowerCase() : pattern;
+  const target = caseInsensitive ? candidate.toLowerCase() : candidate;
 
   let patternIndex = 0;
   let targetIndex = 0;
