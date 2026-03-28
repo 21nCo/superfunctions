@@ -11,6 +11,7 @@ import {
   getRelationsFrom,
   getRelation,
   getRelationTarget,
+  findRelationBidirectional,
 } from "../src/schema-index.js";
 
 const multiResourceSchema = {
@@ -145,5 +146,24 @@ describe("TV-IDX-002: array from/to relations", () => {
 
   it("getRelationTarget returns first element of array to", () => {
     expect(getRelationTarget(schemaWithArrayFrom.relations[0])).toBe("c");
+  });
+
+  it("finds array-based relations in either direction", () => {
+    expect(findRelationBidirectional(schemaWithArrayFrom, "a", "linked")).toBeDefined();
+
+    const inverseSchema = {
+      ...schemaWithArrayFrom,
+      relations: [
+        {
+          from: ["a", "b"],
+          to: ["c"],
+          type: "many-many" as const,
+          relation: "linked",
+          inverse: "linkedBy",
+        },
+      ],
+    };
+
+    expect(findRelationBidirectional(inverseSchema, "c", "linkedBy")).toBeDefined();
   });
 });

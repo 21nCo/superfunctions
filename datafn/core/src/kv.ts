@@ -9,6 +9,11 @@ import type { DatafnSchema, DatafnResourceSchema } from "./types.js";
  */
 export const KV_RESOURCE_NAME = "kv";
 
+const REQUIRED_KV_FIELDS = new Map([
+  ["id", { type: "string", required: true }],
+  ["value", { type: "json", required: false }],
+]);
+
 /**
  * Generate the canonical KV id from a key.
  * Mapping: kvId(key) = "kv:" + key
@@ -29,13 +34,7 @@ export function ensureBuiltinKv(schema: DatafnSchema): DatafnSchema {
   const existingKv = schema.resources.find((r) => r.name === KV_RESOURCE_NAME);
 
   if (existingKv) {
-    // Validate schema shape
-    if (existingKv.version !== 1) {
-      throw new Error(
-        `KV resource version mismatch: expected 1, got ${existingKv.version}`,
-      );
-    }
-    // KV resource already exists and matches the expected shape
+    validateBuiltinKv(existingKv);
     return schema;
   }
 
@@ -67,4 +66,37 @@ export function ensureBuiltinKv(schema: DatafnSchema): DatafnSchema {
     ...schema,
     resources: [...schema.resources, kvResource],
   };
+}
+
+function validateBuiltinKv(resource: DatafnResourceSchema): void {
+  if (resource.version !== 1) {
+    throw new Error(
+      `KV resource version mismatch: expected 1, got ${resource.version}`,
+    );
+  }
+
+  for (const [fieldName, expected] of REQUIRED_KV_FIELDS) {
+    const field = resource.fields.find((candidate) => candidate.name === fieldName);
+    if (!field) {
+      throw new Error(`KV resource is missing required field "${fieldName}"`);
+    }
+    if (field.type !== expected.type || field.required !== expected.required) {
+      throw new Error(`KV resource field "${fieldName}" is incompatible with the built-in KV schema`);
+    }
+  }
+
+  const baseIndices = Array.isArray(resource.indices)
+    ? resource.indices
+    : resource.indices?.base ?? [];
+  if (!baseIndices.includes("id")) {
+    throw new Error(`KV resource must include an "id" base index`);
+  }
+
+  const readFields = resource.permissions?.read?.fields ?? [];
+  const writeFields = resource.permissions?.write?.fields ?? [];
+  for (const fieldName of ["id", "value"]) {
+    if (!readFields.includes(fieldName) || !writeFields.includes(fieldName)) {
+      throw new Error(`KV resource permissions must allow read/write access to "${fieldName}"`);
+    }
+  }
 }

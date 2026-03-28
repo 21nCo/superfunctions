@@ -4,23 +4,39 @@ import type { DatafnError } from "./errors.js";
 export const OP_REMAP: Record<string, string> = {
   eq: "$eq", ne: "$ne", gt: "$gt", gte: "$gte", lt: "$lt", lte: "$lte",
   in: "$in", not_in: "$nin",
+  contains: "$contains", startsWith: "$startsWith", endsWith: "$endsWith",
   like: "$like", ilike: "$ilike", not_like: "$not_like", not_ilike: "$not_ilike",
   is_null: "$is_null", is_not_null: "$is_not_null",
   is_empty: "$is_empty", is_not_empty: "$is_not_empty",
   before: "$before", after: "$after", between: "$between", not_between: "$not_between",
 };
 
+const DISALLOWED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function createSafeRecord(): Record<string, unknown> {
+  return Object.create(null) as Record<string, unknown>;
+}
+
+function assertSafeKey(key: string, context: string): void {
+  if (DISALLOWED_KEYS.has(key)) {
+    dfqlError("DFQL_INVALID", `Unsafe ${context}: ${key}`);
+  }
+}
+
 /** Recursively remap non-$-prefixed operator names to core's $-prefixed form. */
 export function normalizeFilterOps(filters: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
+  const out = createSafeRecord();
   for (const [key, value] of Object.entries(filters)) {
+    assertSafeKey(key, "filter key");
     if ((key === "$and" || key === "$or") && Array.isArray(value)) {
       out[key] = (value as Record<string, unknown>[]).map(normalizeFilterOps);
     } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
       const ops = value as Record<string, unknown>;
-      const normalized: Record<string, unknown> = {};
+      const normalized = createSafeRecord();
       for (const [op, opVal] of Object.entries(ops)) {
-        normalized[OP_REMAP[op] ?? op] = opVal;
+        const mappedOp = OP_REMAP[op] ?? op;
+        assertSafeKey(mappedOp, "filter operator");
+        normalized[mappedOp] = opVal;
       }
       out[key] = normalized;
     } else {
@@ -41,11 +57,44 @@ function dfqlError(code: DatafnError["code"], message: string): never {
 }
 
 /**
- * Convert a SQL-like LIKE pattern (% = any sequence, _ = single char) to a RegExp.
+ * Match a SQL-like LIKE pattern (% = any sequence, _ = single char) without regex backtracking.
  */
-function likeToRegExp(pattern: string, caseInsensitive: boolean): RegExp {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".");
-  return new RegExp(`^${escaped}$`, caseInsensitive ? "i" : "");
+function likeMatches(pattern: string, candidate: string, caseInsensitive: boolean): boolean {
+  const source = caseInsensitive ? pattern.toLocaleLowerCase() : pattern;
+  const target = caseInsensitive ? candidate.toLocaleLowerCase() : candidate;
+
+  let patternIndex = 0;
+  let targetIndex = 0;
+  let wildcardIndex = -1;
+  let matchIndex = 0;
+
+  while (targetIndex < target.length) {
+    const token = source[patternIndex];
+    if (token === "%") {
+      wildcardIndex = patternIndex;
+      patternIndex += 1;
+      matchIndex = targetIndex;
+      continue;
+    }
+    if (token === "_" || token === target[targetIndex]) {
+      patternIndex += 1;
+      targetIndex += 1;
+      continue;
+    }
+    if (wildcardIndex !== -1) {
+      patternIndex = wildcardIndex + 1;
+      matchIndex += 1;
+      targetIndex = matchIndex;
+      continue;
+    }
+    return false;
+  }
+
+  while (source[patternIndex] === "%") {
+    patternIndex += 1;
+  }
+
+  return patternIndex === source.length;
 }
 
 /**
@@ -112,19 +161,21 @@ function evaluateOperators(fieldValue: unknown, ops: Record<string, unknown>): b
         break;
       case "$like":
         if (typeof fieldValue !== "string" || typeof opVal !== "string") return false;
-        if (!likeToRegExp(opVal, false).test(fieldValue)) return false;
+        if (!likeMatches(opVal, fieldValue, false)) return false;
         break;
       case "$ilike":
         if (typeof fieldValue !== "string" || typeof opVal !== "string") return false;
-        if (!likeToRegExp(opVal, true).test(fieldValue)) return false;
+        if (!likeMatches(opVal, fieldValue, true)) return false;
         break;
       case "$not_like":
-        if (typeof fieldValue !== "string" || typeof opVal !== "string") return false;
-        if (likeToRegExp(opVal, false).test(fieldValue)) return false;
+        if (typeof opVal !== "string") return false;
+        if (typeof fieldValue !== "string") break;
+        if (likeMatches(opVal, fieldValue, false)) return false;
         break;
       case "$not_ilike":
-        if (typeof fieldValue !== "string" || typeof opVal !== "string") return false;
-        if (likeToRegExp(opVal, true).test(fieldValue)) return false;
+        if (typeof opVal !== "string") return false;
+        if (typeof fieldValue !== "string") break;
+        if (likeMatches(opVal, fieldValue, true)) return false;
         break;
       case "$is_null":
         if (opVal === true && fieldValue !== null && fieldValue !== undefined) return false;
@@ -239,9 +290,12 @@ export function evaluateFilter(
         const recordId = record.id as string;
         const related = opts.resolveRelation(resource, recordId, firstSeg);
         if (related.length === 0) return false;
-        const subFilter = { [parts.slice(1).join(".")]: value };
+        const subPath = parts.slice(1).join(".");
+        assertSafeKey(subPath, "relation filter path");
+        const subFilter = createSafeRecord();
+        subFilter[subPath] = value;
         const anyMatch = related.some((r) =>
-          evaluateFilter(r, subFilter, opts),
+          evaluateFilter(r, subFilter, opts, _depth + 1),
         );
         if (!anyMatch) return false;
       } else {

@@ -17,6 +17,7 @@ describe("parseSortTerms (TV-SRT-001)", () => {
   ]));
   it("undefined → []", () => expect(parseSortTerms(undefined)).toEqual([]));
   it("[] → []", () => expect(parseSortTerms([])).toEqual([]));
+  it("rejects invalid directions", () => expect(() => parseSortTerms(["name:sideways"])).toThrow());
 });
 
 describe("sortRecords (TV-SRT-002)", () => {

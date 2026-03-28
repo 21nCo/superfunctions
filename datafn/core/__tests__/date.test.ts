@@ -33,6 +33,11 @@ describe("toEpochMs (TV-DTE-001)", () => {
     try { toEpochMs(null); } catch (e) { caught = e; }
     expect(caught).toMatchObject({ code: "DFQL_INVALID" });
   });
+  it("invalid epoch number throws DFQL_INVALID", () => {
+    let caught: unknown;
+    try { toEpochMs(Number.NaN); } catch (e) { caught = e; }
+    expect(caught).toMatchObject({ code: "DFQL_INVALID" });
+  });
 });
 
 describe("fromEpochMs (TV-DTE-001)", () => {
@@ -50,6 +55,11 @@ describe("fromEpochMs (TV-DTE-001)", () => {
   it("invalid Date throws DFQL_INVALID", () => {
     let caught: unknown;
     try { fromEpochMs(new Date("bad")); } catch (e) { caught = e; }
+    expect(caught).toMatchObject({ code: "DFQL_INVALID" });
+  });
+  it("invalid number throws DFQL_INVALID", () => {
+    let caught: unknown;
+    try { fromEpochMs(Number.POSITIVE_INFINITY); } catch (e) { caught = e; }
     expect(caught).toMatchObject({ code: "DFQL_INVALID" });
   });
 });

@@ -149,6 +149,25 @@ describe("resolveCapabilities", () => {
     };
     expect(resolveCapabilities(undefined, [shareable])).toEqual([shareable]);
   });
+
+  it("lets resource-level shareable config override the global shareable entry", () => {
+    const globalShareable = {
+      shareable: {
+        levels: ["viewer", "editor", "owner"] as AccessLevel[],
+        default: "private" as const,
+      },
+    };
+    const resourceShareable = {
+      shareable: {
+        levels: ["viewer", "editor", "owner"] as AccessLevel[],
+        default: "shared" as const,
+      },
+    };
+
+    expect(resolveCapabilities([globalShareable], [resourceShareable])).toEqual([
+      resourceShareable,
+    ]);
+  });
 });
 
 describe("getCapabilityFields", () => {
