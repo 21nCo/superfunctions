@@ -324,10 +324,24 @@ export async function executePush(
           resolvedCapabilities,
           actorId,
         );
-        await targetDb.upsert({ model: mut.resource, where: [{ field: "id", operator: "eq", value: mut.id }], create: { id: mut.id, ...createData }, update: updateData, namespace, conflictTarget: "id" });
+        const persistedRecord = await targetDb.upsert({
+          model: mut.resource,
+          where: [{ field: "id", operator: "eq", value: mut.id }],
+          create: { id: mut.id, ...createData },
+          update: updateData,
+          namespace,
+          conflictTarget: "id",
+        });
         return {
           ok: true,
-          changes: [{ resource: mut.resource, id: mut.id, op: "replace", record: { id: mut.id, ...updateData } }],
+          changes: [
+            {
+              resource: mut.resource,
+              id: mut.id,
+              op: "replace",
+              record: { id: mut.id, ...(persistedRecord as Record<string, unknown>) },
+            },
+          ],
         };
       }
       case "delete":

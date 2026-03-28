@@ -135,6 +135,25 @@ export class WebSocketManager {
     return actorId.includes(":") ? actorId : `user:${actorId}`;
   }
 
+  private closeClientSafely(
+    client: WebSocketClient,
+    code: number,
+    reason: string,
+    operation: string,
+  ): void {
+    if (typeof client.close !== "function") {
+      return;
+    }
+    try {
+      client.close(code, reason);
+    } catch (error) {
+      this.logger?.warn("WebSocket close error", {
+        error: String(error),
+        operation,
+      });
+    }
+  }
+
   private resolveClientPrincipals(authContext: WsAuthContext): Set<string> {
     const principals = new Set<string>();
     if (Array.isArray(authContext.principalIds)) {
@@ -226,14 +245,14 @@ export class WebSocketManager {
         } catch (e) {
           this.logger?.warn("Heartbeat ping failed", { error: String(e), operation: "ws-heartbeat" });
           this.removeClient(client);
-          client.close?.(1001, "Heartbeat ping failed");
+          this.closeClientSafely(client, 1001, "Heartbeat ping failed", "ws-heartbeat-close");
           continue;
         }
         // Per-client pong deadline
         setTimeout(() => {
           if (this.pendingPong.has(client)) {
             this.removeClient(client);
-            client.close?.(1001, "Heartbeat timeout");
+            this.closeClientSafely(client, 1001, "Heartbeat timeout", "ws-heartbeat-timeout-close");
           }
         }, timeoutMs);
       }
@@ -256,13 +275,18 @@ export class WebSocketManager {
 
     // SCA-005: Global connection limit
     if (this.totalCount >= this.maxConnections) {
-      client.close?.(4503, "Connection limit reached");
+      this.closeClientSafely(client, 4503, "Connection limit reached", "ws-limit-close");
       return false;
     }
 
     // SCA-005: Per-namespace connection limit
     if (this.getNamespaceCount(namespace) >= this.maxConnectionsPerNamespace) {
-      client.close?.(4503, "Namespace connection limit reached");
+      this.closeClientSafely(
+        client,
+        4503,
+        "Namespace connection limit reached",
+        "ws-namespace-limit-close",
+      );
       return false;
     }
 
@@ -400,7 +424,7 @@ export class WebSocketManager {
       } catch (e) {
         this.logger?.error("Error sending to websocket client", { error: String(e), operation: "ws-broadcast" });
         this.removeClient(client);
-        client.close?.(1001, "Broadcast send failed");
+        this.closeClientSafely(client, 1001, "Broadcast send failed", "ws-broadcast-close");
       }
     }
 
@@ -418,11 +442,7 @@ export class WebSocketManager {
   close() {
     this.destroy();
     for (const [client] of this.clientNamespace) {
-      try {
-        client.close?.(1001, "Going Away");
-      } catch (e) {
-        this.logger?.warn("WebSocket close error", { error: String(e), operation: "ws-close" });
-      }
+      this.closeClientSafely(client, 1001, "Going Away", "ws-close");
     }
     this.namespaceClients.clear();
     this.namespacePrincipalClients.clear();

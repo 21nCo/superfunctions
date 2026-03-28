@@ -62,6 +62,25 @@ describe("WebSocketManager", () => {
     });
   });
 
+  it("broadcast continues when close throws during failed-send cleanup", () => {
+    const manager = new WebSocketManager();
+    const client1: WebSocketClient = {
+      send: vi.fn().mockImplementation(() => {
+        throw new Error("closed");
+      }),
+      close: vi.fn().mockImplementation(() => {
+        throw new Error("close failed");
+      }),
+    };
+    const client2: WebSocketClient = { send: vi.fn(), close: vi.fn() };
+
+    manager.addClient(client1, { namespace: "default" });
+    manager.addClient(client2, { namespace: "default" });
+
+    expect(() => manager.broadcastCursor("100", "default")).not.toThrow();
+    expect(client2.send).toHaveBeenCalled();
+  });
+
   it("should handle hello message (no-op for now but safe)", () => {
     const manager = new WebSocketManager();
     const client: WebSocketClient = { send: vi.fn() };

@@ -123,41 +123,49 @@ export class DatabaseSequenceStore implements SequenceStore {
       await ensureInternalTable(this.db, "__datafn_meta");
       this.ensured = true;
     }
+    const needed = minSeq + 1;
     try {
-      const meta = await this.db.internal.findOne("__datafn_meta", [
-        { field: "namespace", op: "eq", value: namespace },
-      ]);
-      const needed = minSeq + 1;
-      if (!meta) {
-        try {
-          await this.db.internal.create("__datafn_meta", {
-            id: `meta:${namespace}`,
-            namespace,
-            next_server_seq: needed,
-          });
-        } catch {
-          const currentMeta = await this.db.internal.findOne("__datafn_meta", [
-            { field: "namespace", op: "eq", value: namespace },
-          ]);
-          const current = (currentMeta?.next_server_seq as number) || 1;
+      await withAdapterNamespaceLock(this.db, namespace, async () => {
+        const meta = await this.db.internal.findOne("__datafn_meta", [
+          { field: "namespace", op: "eq", value: namespace },
+        ]);
+        if (!meta) {
+          try {
+            await this.db.internal.create("__datafn_meta", {
+              id: `meta:${namespace}`,
+              namespace,
+              next_server_seq: needed,
+            });
+          } catch {
+            const currentMeta = await this.db.internal.findOne("__datafn_meta", [
+              { field: "namespace", op: "eq", value: namespace },
+            ]);
+            const current = (currentMeta?.next_server_seq as number) || 1;
+            if (current < needed) {
+              await this.db.internal.update(
+                "__datafn_meta",
+                [
+                  { field: "namespace", op: "eq", value: namespace },
+                  { field: "next_server_seq", op: "eq", value: current },
+                ],
+                { next_server_seq: needed },
+              );
+            }
+          }
+        } else {
+          const current = (meta.next_server_seq as number) || 1;
           if (current < needed) {
             await this.db.internal.update(
               "__datafn_meta",
-              [{ field: "namespace", op: "eq", value: namespace }],
+              [
+                { field: "namespace", op: "eq", value: namespace },
+                { field: "next_server_seq", op: "eq", value: current },
+              ],
               { next_server_seq: needed },
             );
           }
         }
-      } else {
-        const current = (meta.next_server_seq as number) || 1;
-        if (current < needed) {
-          await this.db.internal.update(
-            "__datafn_meta",
-            [{ field: "namespace", op: "eq", value: namespace }],
-            { next_server_seq: needed },
-          );
-        }
-      }
+      });
     } catch (error) {
       this.logger?.warn("Failed to ensureMinSeq during failover", {
         error: String(error),
