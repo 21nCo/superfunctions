@@ -11,12 +11,15 @@ from .logger import create_logger
 class DatafnServerConfig:
     def __init__(self, schema: Any = None, db: Any = None, authorize: Any = None,
                  plugins: Any = None, logger: Any = None, limits: Any = None, **kwargs):
+        if kwargs:
+            unknown = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected config key(s): {unknown}")
         self.schema = schema
         self.db = db
         self.authorize = authorize
-        self.plugins = plugins or []
+        self.plugins = [] if plugins is None else plugins
         self.logger = create_logger(logger)
-        self.limits = limits or {}
+        self.limits = limits
 
 
 def _validate_config(config_obj: 'DatafnServerConfig') -> None:
@@ -32,7 +35,7 @@ def _validate_config(config_obj: 'DatafnServerConfig') -> None:
     if config_obj.authorize is not None and not callable(config_obj.authorize):
         raise ValueError("authorize must be callable")
 
-    if config_obj.limits:
+    if config_obj.limits is not None:
         if not isinstance(config_obj.limits, dict):
             raise ValueError("limits must be a dict")
         for key, val in config_obj.limits.items():
@@ -44,10 +47,12 @@ def _validate_config(config_obj: 'DatafnServerConfig') -> None:
 
 def create_datafn_server(config: Any) -> Dict[str, Any]:
     # Normalize config
-    if isinstance(config, dict):
+    if isinstance(config, DatafnServerConfig):
+        config_obj = config
+    elif isinstance(config, dict):
         config_obj = DatafnServerConfig(**config)
     else:
-        config_obj = config
+        config_obj = DatafnServerConfig(**vars(config))
 
     # Validate config parameters
     _validate_config(config_obj)

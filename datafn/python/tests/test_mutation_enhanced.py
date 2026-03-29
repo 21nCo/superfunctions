@@ -262,10 +262,15 @@ class TestPrototypePollution:
             "resource": "tasks", "version": 1,
             "operation": "insert",
             "id": "task_hack2",
-            "record": {"title": "ok", "description": "fine"},
+            "record": {
+                "title": "ok",
+                "description": {"nested": {"__proto__": {"polluted": True}}},
+            },
         })
-        # This one should pass since no poisoned keys
-        assert res["ok"] is True
+        assert res["ok"] is False
+        assert res["error"]["code"] == "DFQL_INVALID"
+        assert "Prototype pollution" in res["error"]["message"]
+        assert "__proto__" in res["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_constructor_key_rejected(self):

@@ -47,17 +47,23 @@ class MockAdapter:
                 
                 rv = r.get(field)
                 if op == "eq":
-                    if rv != val: match = False
+                    if rv != val:
+                        match = False
                 elif op == "gt":
-                    if not (rv > val): match = False
+                    if rv is None or val is None or not (rv > val):
+                        match = False
                 elif op == "gte":
-                    if not (rv >= val): match = False
+                    if rv is None or val is None or not (rv >= val):
+                        match = False
                 elif op == "lt":
-                    if not (rv < val): match = False
+                    if rv is None or val is None or not (rv < val):
+                        match = False
                 elif op == "lte":
-                    if not (rv <= val): match = False
+                    if rv is None or val is None or not (rv <= val):
+                        match = False
                 elif op == "in":
-                    if rv not in val: match = False
+                    if val is None or not isinstance(val, (list, tuple, set)) or rv not in val:
+                        match = False
             if match:
                 filtered.append(r)
         

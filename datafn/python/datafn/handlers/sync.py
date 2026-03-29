@@ -312,7 +312,13 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 continue
 
             # Idempotency
-            cached = await check_idempotency(config.db, namespace, m_client_id, m_id)
+            cached = await check_idempotency(
+                config.db,
+                namespace,
+                m_client_id,
+                m_id,
+                logger=logger,
+            )
             if cached:
                 applied.append(m_id)
                 continue

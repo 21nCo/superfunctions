@@ -24,12 +24,18 @@ async def run_before_hook(
             if result is not None:
                 current = result
         except Exception as e:
+            plugin_name = getattr(plugin, "name", "unknown")
+            if logger:
+                logger.error(
+                    f"Plugin '{plugin_name}' {hook_name} failed",
+                    {"plugin": plugin_name, "hook": hook_name, "error": str(e)},
+                )
             return {
                 "ok": False,
                 "error": {
                     "code": "PLUGIN_ERROR",
-                    "message": f"Plugin '{getattr(plugin, 'name', 'unknown')}' {hook_name} failed: {e}",
-                    "details": {"plugin": getattr(plugin, "name", "unknown"), "hook": hook_name},
+                    "message": f"Plugin '{plugin_name}' {hook_name} failed",
+                    "details": {"plugin": plugin_name, "hook": hook_name},
                 },
             }
 

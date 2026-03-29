@@ -381,7 +381,13 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
         mutation_id = payload.get("mutationId")
 
         if client_id and mutation_id:
-            cached = await check_idempotency(config.db, namespace, client_id, mutation_id)
+            cached = await check_idempotency(
+                config.db,
+                namespace,
+                client_id,
+                mutation_id,
+                logger=logger,
+            )
             if cached:
                 cached_result = dict(cached)
                 cached_result["deduped"] = True
@@ -428,8 +434,12 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
             for change in changes:
                 try:
                     await _write_change(config.db, change, namespace)
-                except Exception:
-                    pass  # Change tracking failure is non-fatal
+                except Exception as e:
+                    if logger:
+                        logger.warn(
+                            "Change tracking failed",
+                            {"namespace": namespace, "change": change, "error": str(e)},
+                        )
 
         # Store Idempotency
         if client_id and mutation_id:

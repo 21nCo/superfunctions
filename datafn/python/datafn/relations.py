@@ -28,6 +28,8 @@ async def execute_relate(db: Adapter, index: SchemaIndex, mutation: Dict[str, An
         
         for t in targets:
             target_id = t if isinstance(t, str) else t.get("$ref")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise ValueError("relation target must include a non-empty $ref")
             metadata = {k: v for k, v in t.items() if k != "$ref"} if isinstance(t, dict) else {}
             
             if rel_type == "many-many":
@@ -94,6 +96,8 @@ async def execute_modify_relation(db: Adapter, index: SchemaIndex, mutation: Dic
             if not isinstance(t, dict): continue # Must have metadata to modify
             
             target_id = t.get("$ref")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise ValueError("relation target must include a non-empty $ref")
             metadata = {k: v for k, v in t.items() if k != "$ref"}
             
             if not metadata: continue
@@ -126,6 +130,8 @@ async def execute_unrelate(db: Adapter, index: SchemaIndex, mutation: Dict[str, 
         
         for t in targets:
             target_id = t if isinstance(t, str) else t.get("$ref")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise ValueError("relation target must include a non-empty $ref")
             
             if rel_type == "many-many":
                 join_table = rel_def.get("joinTable")

@@ -29,7 +29,7 @@ def validate_field_value(schema_type: str, value: Any, nullable: bool = False) -
         "string": lambda v: isinstance(v, str),
         "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
         "boolean": lambda v: isinstance(v, bool),
-        "date": lambda v: isinstance(v, (int, float, str, datetime)),
+        "date": lambda v: isinstance(v, (int, float, str, datetime)) and not isinstance(v, bool),
         "object": lambda v: isinstance(v, dict),
         "array": lambda v: isinstance(v, list),
         "file": lambda v: isinstance(v, (str, dict)),

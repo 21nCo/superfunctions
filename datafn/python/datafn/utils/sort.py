@@ -9,7 +9,10 @@ def parse_sort_terms(sort_list: List[str]) -> List[Dict[str, str]]:
             terms.append({"field": term[1:], "direction": "desc"})
         elif ":" in term:
             field, direction = term.split(":", 1)
-            terms.append({"field": field, "direction": direction})
+            normalized = direction.strip().lower()
+            if normalized not in {"asc", "desc"}:
+                raise ValueError(f"Invalid sort direction for {field}: {direction}")
+            terms.append({"field": field, "direction": normalized})
         else:
             terms.append({"field": term, "direction": "asc"})
     return terms

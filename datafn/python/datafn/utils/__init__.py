@@ -8,12 +8,12 @@ from .ns import ns
 from .validate_fields import check_prototype_pollution, validate_field_value
 
 __all__ = [
-    "parse_sort_terms", "sort_records",
-    "parse_select_token", "apply_select", "apply_omit",
-    "to_epoch_ms", "from_epoch_ms", "coerce_date_fields_to_epoch",
+    "apply_omit", "apply_select",
     "calculate_aggregation",
-    "normalize_dfql", "dfql_key",
-    "get_join_table_name", "get_join_store_key", "enumerate_join_store_keys",
+    "check_prototype_pollution", "coerce_date_fields_to_epoch",
+    "dfql_key", "enumerate_join_store_keys",
+    "from_epoch_ms", "get_join_store_key", "get_join_table_name",
     "ns",
-    "check_prototype_pollution", "validate_field_value",
+    "normalize_dfql", "parse_select_token", "parse_sort_terms",
+    "sort_records", "to_epoch_ms", "validate_field_value",
 ]

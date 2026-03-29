@@ -213,7 +213,7 @@ class TestCursorPagination:
     @pytest.mark.asyncio
     async def test_paginate_with_limit_3(self):
         """QRY-001/003: Insert 10 records, paginate with limit 3."""
-        server, db = _make_server()
+        server, _db = _make_server()
         handler_q = server["routes"]["POST /datafn/query"]
         handler_m = server["routes"]["POST /datafn/mutation"]
 
@@ -435,6 +435,17 @@ class TestSync:
         })
         assert res["ok"] is True
         assert "m1" in res["result"]["applied"]
+
+        pull_res = await pull_handler({}, {
+            "clientId": "client1",
+            "cursors": {},
+        })
+        assert pull_res["ok"] is True
+        tasks = pull_res["result"]["records"].get("tasks", [])
+        assert any(
+            record.get("id") == "t1" and record.get("title") == "Pushed Task"
+            for record in tasks
+        )
 
 
 # ---------------------------------------------------------------------------
