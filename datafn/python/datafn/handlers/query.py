@@ -161,6 +161,12 @@ async def _handle_single_query(ctx: Any, payload: Any, config: Any) -> Dict[str,
         # Fetch all records from adapter
         data = await config.db.find_many(model=resource, where=[], namespace=namespace)
 
+        # In-memory filter
+        filters = payload.get("filters", {})
+        if filters:
+            normalized = normalize_filter_ops(filters)
+            data = [r for r in data if evaluate_filter(r, normalized)]
+
         resource_def = index.resources_by_name.get(resource)
         if resource_def and is_private_shareable_resource(resource_def):
             visible_rows = []
@@ -175,12 +181,6 @@ async def _handle_single_query(ctx: Any, payload: Any, config: Any) -> Dict[str,
                 ):
                     visible_rows.append(row)
             data = visible_rows
-
-        # In-memory filter
-        filters = payload.get("filters", {})
-        if filters:
-            normalized = normalize_filter_ops(filters)
-            data = [r for r in data if evaluate_filter(r, normalized)]
 
         # In-memory sort
         data = sort_records(data, sort_terms)

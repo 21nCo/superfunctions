@@ -2,6 +2,16 @@ from typing import Any, Dict, List, Optional
 from .db import Adapter
 from .validation import SchemaIndex
 
+def _resolve_one_many_inverse_fk(rel_def: Dict[str, Any]) -> str:
+    inverse_fk = rel_def.get("inverseForeignKey")
+    if inverse_fk:
+        return inverse_fk
+
+    inverse_name = rel_def.get("inverse")
+    if not inverse_name:
+        raise ValueError("one-many relation requires 'inverse' or 'inverseForeignKey'")
+    return f"{inverse_name}Id"
+
 async def execute_relate(db: Adapter, index: SchemaIndex, mutation: Dict[str, Any], namespace: str = "datafn") -> None:
     resource = mutation["resource"]
     record_id = mutation["id"]
@@ -56,12 +66,7 @@ async def execute_relate(db: Adapter, index: SchemaIndex, mutation: Dict[str, An
             elif rel_type == "one-many":
                 # We are 'projects', rel is 'tasks' (one-many to tasks).
                 # We update 'tasks' (target) to set project_id = us.
-                inverse_fk = rel_def.get("inverseForeignKey")
-                if not inverse_fk:
-                    inverse_name = rel_def.get("inverse")
-                    if not inverse_name:
-                        continue
-                    inverse_fk = f"{inverse_name}Id"
+                inverse_fk = _resolve_one_many_inverse_fk(rel_def)
                 await db.update(
                     rel_def["to"],
                     [{"field": "id", "operator": "eq", "value": target_id}],
@@ -149,12 +154,7 @@ async def execute_unrelate(db: Adapter, index: SchemaIndex, mutation: Dict[str, 
                 
             elif rel_type == "one-many":
                 # Clear FK on target
-                inverse_fk = rel_def.get("inverseForeignKey")
-                if not inverse_fk:
-                    inverse_name = rel_def.get("inverse")
-                    if not inverse_name:
-                        continue
-                    inverse_fk = f"{inverse_name}Id"
+                inverse_fk = _resolve_one_many_inverse_fk(rel_def)
                 await db.update(
                     rel_def["to"],
                     [{"field": "id", "operator": "eq", "value": target_id}],

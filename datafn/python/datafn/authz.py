@@ -381,7 +381,7 @@ def check_payload_size(body: Any, max_bytes: int) -> Optional[DatafnError]:
         try:
             size = len(json.dumps(body).encode("utf-8"))
         except TypeError:
-            return None
+            size = len(repr(body).encode("utf-8"))
     else:
         return None
 
