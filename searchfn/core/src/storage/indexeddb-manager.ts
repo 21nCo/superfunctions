@@ -45,7 +45,7 @@ interface CacheStateDbRecord {
 }
 
 function normaliseDocId(id: string | number): string {
-  return typeof id === "string" ? id : String(id);
+  return `${typeof id === "string" ? "s" : "n"}:${String(id)}`;
 }
 
 export class IndexedDbManager {
@@ -152,6 +152,8 @@ export class IndexedDbManager {
 
     const completionPromise = new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();
+      tx.onabort = () =>
+        reject(new StorageError("IndexedDB transaction aborted", { cause: tx.error ?? undefined }));
       tx.onerror = () =>
         reject(new StorageError("IndexedDB transaction failed", { cause: tx.error ?? undefined }));
     });
@@ -268,9 +270,25 @@ export class IndexedDbManager {
   async deleteTermChunksForTerm(field: string, term: string): Promise<void> {
     await this.withTransaction([STORE_NAMES.terms], "readwrite", async (tx) => {
       const store = tx.objectStore(STORE_NAMES.terms);
-      // TODO: Future enhancement - iterate through all chunk indices for complete cleanup
-      // Currently only chunk 0 is used, but multi-chunk support should delete all chunks
-      await this.requestToPromise(store.delete([field, term, 0]));
+      const range = IDBKeyRange.bound(
+        [field, term, Number.NEGATIVE_INFINITY],
+        [field, term, Number.POSITIVE_INFINITY],
+      );
+      await new Promise<void>((resolve, reject) => {
+        const request = store.openCursor(range);
+        request.onerror = () => {
+          reject(new StorageError("Failed to delete term chunks", { cause: request.error ?? undefined }));
+        };
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          cursor.delete();
+          cursor.continue();
+        };
+      });
     });
   }
 

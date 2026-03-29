@@ -71,7 +71,11 @@ export function fuzzyExpand(
   vocabulary: Set<string>
 ): string[] {
   // Cap maxDistance to practical limit (edit distance > 3 is rarely useful and very slow)
-  const normalizedDistance = Number.isFinite(maxDistance) ? maxDistance : 0;
+  const normalizedDistance = Number.isFinite(maxDistance)
+    ? maxDistance
+    : maxDistance > 0
+      ? 3
+      : 0;
   const cappedDistance = Math.min(Math.max(0, normalizedDistance), 3);
   
   const candidates: string[] = [];

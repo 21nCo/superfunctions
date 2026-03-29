@@ -329,8 +329,26 @@ describe("PipelineEngine", () => {
       const bodyTokens = pipeline.run("body", "quick", "doc-1");
       const titleTokens = pipeline.run("title", "quick", "doc-1");
 
-      expect(bodyTokens.map((token) => token.value)).toEqual(["qu", "qui", "quic"]);
+      expect(bodyTokens.map((token) => token.value)).toEqual(["quick"]);
       expect(titleTokens.map((token) => token.value)).toEqual(["quick"]);
+    });
+
+    it("normalizes invalid field n-gram ranges", () => {
+      const pipeline = new PipelineEngine({
+        enableEdgeNGrams: true,
+        edgeNGramMinLength: 2,
+        edgeNGramMaxLength: 4,
+        edgeNGramFieldConfig: {
+          body: {
+            enabled: true,
+            minLength: 5,
+            maxLength: 2,
+          },
+        },
+      });
+
+      const bodyTokens = pipeline.run("body", "quick", "doc-1");
+      expect(bodyTokens.map((token) => token.value)).toEqual(["quick"]);
     });
 
     it("disables edge n-grams by default", () => {

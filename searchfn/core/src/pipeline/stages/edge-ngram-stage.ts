@@ -36,8 +36,8 @@ export function createEdgeNGramStage(options: EdgeNGramOptions): PipelineStage {
       // Check if n-grams should be generated for this field
       if (fieldConfig) {
         const config = fieldConfig[context.field];
-        if (config?.enabled === false) {
-          // Field not configured or disabled, return original tokens
+        if (!config || config.enabled === false) {
+          // Unconfigured or disabled fields keep the original tokens.
           return tokens;
         }
         // Use field-specific min/max if provided
@@ -53,21 +53,22 @@ export function createEdgeNGramStage(options: EdgeNGramOptions): PipelineStage {
 }
 
 function generateNGrams(tokens: Token[], minGram: number, maxGram: number): Token[] {
+  const { min: normalizedMinGram, max: normalizedMaxGram } = normalizeGramRange(minGram, maxGram);
   const result: Token[] = [];
 
   for (const token of tokens) {
     const term = token.value;
 
     // Skip terms shorter than minGram
-    if (term.length < minGram) {
+    if (term.length < normalizedMinGram) {
       result.push(token);
       continue;
     }
 
     // Generate all prefixes from minGram to min(term.length, maxGram)
-    const maxLength = Math.min(term.length, maxGram);
+    const maxLength = Math.min(term.length, normalizedMaxGram);
 
-    for (let i = minGram; i <= maxLength; i++) {
+    for (let i = normalizedMinGram; i <= maxLength; i++) {
       const prefix = term.substring(0, i);
       const isPrefix = i < term.length;
 
@@ -86,4 +87,13 @@ function generateNGrams(tokens: Token[], minGram: number, maxGram: number): Toke
   }
 
   return result;
+}
+
+function normalizeGramRange(minGram: number, maxGram: number): { min: number; max: number } {
+  const normalizedMin = Number.isFinite(minGram) ? Math.max(1, Math.floor(minGram)) : 1;
+  const normalizedMaxBase = Number.isFinite(maxGram) ? Math.max(1, Math.floor(maxGram)) : normalizedMin;
+  return {
+    min: normalizedMin,
+    max: Math.max(normalizedMin, normalizedMaxBase),
+  };
 }
