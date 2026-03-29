@@ -103,7 +103,7 @@ export function buildSpv2RollbackSql(resourceTypes: string[]): string[] {
   ).sort((a, b) => a.localeCompare(b));
 
   const assertResourceIdentifier = (resource: string): string => {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(resource)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(resource)) {
       throw new Error(`Invalid resource identifier: ${resource}`);
     }
     return resource;
