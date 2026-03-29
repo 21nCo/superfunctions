@@ -178,7 +178,10 @@ import { schema as datafnSchema } from './schema.datafn';
 
 const server = await createDatafnServer({
   schema: datafnSchema,
-  db: drizzleAdapter(db),
+  db: drizzleAdapter({
+    db,
+    dialect: "postgres",
+  }),
 });
 ```
 

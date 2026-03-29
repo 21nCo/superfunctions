@@ -26,7 +26,9 @@ const CLI_CMD =
       ? TSX_PATH
       : "npx tsx";
 
-const runCliInDir = (cwd: string, args: string = "generate-types") =>
+const DEFAULT_GENERATE_ARGS = "generate --adapter drizzle --database postgres";
+
+const runCliInDir = (cwd: string, args: string = DEFAULT_GENERATE_ARGS) =>
   execSync(`${CLI_CMD} "${CLI_PATH}" ${args}`, {
     encoding: "utf-8",
     cwd,
@@ -185,12 +187,12 @@ export default {
 
     const result = runCliInDir(
       workDir,
-      "generate-types --schema ./config/my-schema.datafn.ts --output ./custom-types.ts"
+      "generate --adapter drizzle --database postgres --schema ./config/my-schema.datafn.ts --output ./generated"
     );
     expect(result).not.toContain("Found schema: ./schema.datafn.ts");
     expect(result).toContain("Types written to");
 
-    const output = readFileSync(join(workDir, "custom-types.ts"), "utf-8");
+    const output = readFileSync(join(workDir, "generated", "datafn-types.ts"), "utf-8");
     expect(output).toContain("Custom");
     expect(output).not.toContain("RootTs");
   });

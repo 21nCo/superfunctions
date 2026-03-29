@@ -33,7 +33,7 @@ describe("Phase 01: TypeScript Loading", () => {
 
   it("loads schema from .datafn.ts with default export", () => {
     const schemaPath = join(workDir, "test.datafn.ts");
-    const outputPath = join(workDir, "output.ts");
+    const outputDir = join(workDir, "output");
     writeFileSync(
       schemaPath,
       `
@@ -45,11 +45,11 @@ export default {
     );
 
     const result = runCli(
-      `generate-types --schema "${schemaPath}" --output "${outputPath}"`
+      `generate --adapter drizzle --database postgres --schema "${schemaPath}" --output "${outputDir}"`
     );
     expect(result).toContain("Types written to");
 
-    const output = readFileSync(outputPath, "utf-8");
+    const output = readFileSync(join(outputDir, "datafn-types.ts"), "utf-8");
     expect(output).toContain("export interface Test");
     expect(output).toContain("id: string;");
   });
@@ -59,7 +59,7 @@ export default {
     writeFileSync(schemaPath, "export default { resources: [], relations: [] };");
 
     expect(() => {
-      execSync(`node "${CLI_PATH}" generate-types --schema "${schemaPath}"`, {
+      execSync(`node "${CLI_PATH}" generate --adapter drizzle --database postgres --schema "${schemaPath}"`, {
         encoding: "utf-8",
         cwd: process.cwd(),
       });
@@ -72,7 +72,7 @@ export default {
 
   it("extracts schema from named 'schema' export", () => {
     const schemaPath = join(workDir, "named.datafn.ts");
-    const outputPath = join(workDir, "named-output.ts");
+    const outputDir = join(workDir, "named-output");
     writeFileSync(
       schemaPath,
       `
@@ -84,17 +84,17 @@ export const schema = {
     );
 
     const result = runCli(
-      `generate-types --schema "${schemaPath}" --output "${outputPath}"`
+      `generate --adapter drizzle --database postgres --schema "${schemaPath}" --output "${outputDir}"`
     );
     expect(result).toContain("Types written to");
 
-    const output = readFileSync(outputPath, "utf-8");
+    const output = readFileSync(join(outputDir, "datafn-types.ts"), "utf-8");
     expect(output).toContain("export interface Item");
   });
 
   it("JSON schema still works (backward compatibility)", () => {
     const schemaPath = join(workDir, "schema.json");
-    const outputPath = join(workDir, "json-output.ts");
+    const outputDir = join(workDir, "json-output");
     writeFileSync(
       schemaPath,
       JSON.stringify({
@@ -110,12 +110,12 @@ export const schema = {
     );
 
     const result = execSync(
-      `node "${CLI_PATH}" generate-types --schema "${schemaPath}" --output "${outputPath}"`,
+      `node "${CLI_PATH}" generate --adapter drizzle --database postgres --schema "${schemaPath}" --output "${outputDir}"`,
       { encoding: "utf-8", cwd: process.cwd() }
     );
     expect(result).toContain("Types written to");
 
-    const output = readFileSync(outputPath, "utf-8");
+    const output = readFileSync(join(outputDir, "datafn-types.ts"), "utf-8");
     expect(output).toContain("export interface Task");
   });
 });

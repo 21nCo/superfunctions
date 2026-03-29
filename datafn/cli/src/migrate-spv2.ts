@@ -102,12 +102,26 @@ export function buildSpv2RollbackSql(resourceTypes: string[]): string[] {
     new Set(resourceTypes.map((resource) => resource.trim()).filter(Boolean)),
   ).sort((a, b) => a.localeCompare(b));
 
+  const assertResourceIdentifier = (resource: string): string => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(resource)) {
+      throw new Error(`Invalid resource identifier: ${resource}`);
+    }
+    return resource;
+  };
+
+  const escapeSqlLiteral = (value: string): string =>
+    `'${value.replace(/'/g, "''")}'`;
+
   return uniqueResources.map(
-    (resource) =>
-      `INSERT INTO __datafn_permissions_${resource} (id, resourceId, userId, level, grantedBy, grantedAt, revokedAt)\n` +
+    (resource) => {
+      const safeResource = assertResourceIdentifier(resource);
+      return (
+      `INSERT INTO "__datafn_permissions_${safeResource}" (id, resourceId, userId, level, grantedBy, grantedAt, revokedAt)\n` +
       `SELECT resourceType || ':' || COALESCE(resourceId, '*') || ':' || principalId, resourceId, principalId, level, grantedBy, grantedAt, revokedAt\n` +
       `FROM __datafn_permissions_global\n` +
-      `WHERE resourceType = '${resource}';`,
+      `WHERE resourceType = ${escapeSqlLiteral(safeResource)};`
+      );
+    },
   );
 }
 

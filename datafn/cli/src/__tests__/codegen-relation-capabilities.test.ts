@@ -31,6 +31,7 @@ describe("JCG-002: type codegen join-table interface emission for relation capab
     // Capability fields are present as optional number (date → number)
     expect(output).toContain("createdAt?: number");
     expect(output).toContain("updatedAt?: number");
+    expect(output).toContain("__datafn_join_todos_tags: DatafnJoinTodosTags;");
   });
 
   it("timestamps + audit: join interface includes all four capability fields as optional", () => {
