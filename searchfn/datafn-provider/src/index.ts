@@ -15,6 +15,35 @@ export interface CreateSearchProviderOptions {
   resourceFields?: Record<string, string[]>;
 }
 
+interface SearchProviderSearchParams {
+  resource: string;
+  query: string;
+  fields?: string[];
+  limit?: number;
+  prefix?: boolean;
+  fuzzy?: boolean | number;
+  fieldBoosts?: Record<string, number>;
+  signal?: AbortSignal;
+}
+
+interface SearchProviderSearchAllParams {
+  query: string;
+  resources?: string[];
+  fields?: string[];
+  limit?: number;
+  limitPerResource?: number;
+  prefix?: boolean;
+  fuzzy?: boolean | number;
+  fieldBoosts?: Record<string, number>;
+  signal?: AbortSignal;
+}
+
+interface UpdateIndicesParams {
+  resource: string;
+  records: Record<string, unknown>[];
+  operation: "upsert" | "delete";
+}
+
 class SearchProviderError extends Error {
   readonly code: string;
 
@@ -42,30 +71,29 @@ export function createSearchProvider(
       return adapter.name;
     },
 
-    async search(params) {
-      const request = params as any;
+    async search(params: SearchProviderSearchParams) {
       const ids = await adapter.search({
-        resource: request.resource,
-        query: request.query,
-        fields: request.fields,
-        limit: request.limit ?? 50,
-        fuzzy: request.fuzzy,
-        prefix: request.prefix,
-        fieldBoosts: request.fieldBoosts,
-        signal: request.signal,
-      } as any);
-      return ids.map((id) => String(id));
+        resource: params.resource,
+        query: params.query,
+        fields: params.fields,
+        limit: params.limit ?? 50,
+        fuzzy: params.fuzzy,
+        prefix: params.prefix,
+        fieldBoosts: params.fieldBoosts,
+        signal: params.signal,
+      });
+      return ids.map((id: string | number) => String(id));
     },
 
-    async updateIndices({ resource, records, operation }) {
+    async updateIndices({ resource, records, operation }: UpdateIndicesParams) {
       if (operation === "delete") {
         await adapter.remove({
           resource,
-          ids: records.map((r) => String(r.id)),
+          ids: records.map((r: Record<string, unknown>) => String(r.id)),
         });
       } else {
         const searchFieldNames = resourceFields[resource];
-        const documents = records.map((r) => ({
+        const documents = records.map((r: Record<string, unknown>) => ({
           id: String(r.id),
           fields: extractFields(r, searchFieldNames),
         }));
@@ -73,28 +101,27 @@ export function createSearchProvider(
       }
     },
 
-    async searchAll(params) {
-      const request = params as any;
+    async searchAll(params: SearchProviderSearchAllParams) {
       if (adapter.searchAll) {
         const results = await adapter.searchAll({
-          query: request.query,
-          resources: request.resources,
-          fields: request.fields,
-          limit: request.limit,
-          limitPerResource: request.limitPerResource,
-          fuzzy: request.fuzzy,
-          prefix: request.prefix,
-          fieldBoosts: request.fieldBoosts,
-          signal: request.signal,
-        } as any);
-        return results.map((r) => ({
+          query: params.query,
+          resources: params.resources,
+          fields: params.fields,
+          limit: params.limit,
+          limitPerResource: params.limitPerResource,
+          fuzzy: params.fuzzy,
+          prefix: params.prefix,
+          fieldBoosts: params.fieldBoosts,
+          signal: params.signal,
+        });
+        return results.map((r: { resource: string; id: string | number; score: number }) => ({
           resource: r.resource,
           id: String(r.id),
           score: r.score,
         }));
       }
 
-      const resources = request.resources ?? Object.keys(resourceFields);
+      const resources = params.resources ?? Object.keys(resourceFields);
       if (resources.length === 0) {
         throw new SearchProviderError(
           "DFQL_INVALID",
@@ -102,33 +129,44 @@ export function createSearchProvider(
         );
       }
 
-      const limitPerResource = request.limitPerResource ?? 50;
+      const limitPerResource = params.limitPerResource ?? 50;
       const allResults: Array<{ resource: string; id: string; score: number }> = [];
+      let firstError: unknown;
 
       for (let i = 0; i < resources.length; i += FALLBACK_CONCURRENCY) {
         const batch = resources.slice(i, i + FALLBACK_CONCURRENCY);
-        const batchResults = await Promise.all(
+        const batchResults = await Promise.allSettled(
           batch.map(async (resource: string) => {
             const ids = await adapter.search({
               resource,
-              query: request.query,
-              fields: request.fields,
+              query: params.query,
+              fields: params.fields,
               limit: limitPerResource,
-              fuzzy: request.fuzzy,
-              prefix: request.prefix,
-              fieldBoosts: request.fieldBoosts,
-              signal: request.signal,
-            } as any);
-            return ids.map((id, index) => ({
+              fuzzy: params.fuzzy,
+              prefix: params.prefix,
+              fieldBoosts: params.fieldBoosts,
+              signal: params.signal,
+            });
+            return ids.map((id: string | number, index: number) => ({
               resource,
               id: String(id),
               score: limitPerResource - index,
             }));
           }),
         );
-        for (const results of batchResults) {
-          allResults.push(...results);
+        for (const result of batchResults) {
+          if (result.status === "fulfilled") {
+            allResults.push(...result.value);
+            continue;
+          }
+          if (firstError === undefined) {
+            firstError = result.reason;
+          }
         }
+      }
+
+      if (allResults.length === 0 && firstError !== undefined) {
+        throw firstError;
       }
 
       allResults.sort((a, b) => {
@@ -137,13 +175,13 @@ export function createSearchProvider(
         return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
       });
 
-      if (request.limit !== undefined) {
-        return allResults.slice(0, request.limit);
+      if (params.limit !== undefined) {
+        return allResults.slice(0, params.limit);
       }
       return allResults;
     },
 
-    async initialize(config) {
+    async initialize(config: { resources: Array<{ name: string; searchFields: string[] }> }) {
       if (adapter.initialize) {
         await adapter.initialize(config);
       }
@@ -173,8 +211,16 @@ function extractFields(
     } else if (typeof value === "number" || typeof value === "boolean") {
       result[key] = String(value);
     } else if (typeof value === "object") {
-      result[key] = JSON.stringify(value);
+      result[key] = safeStringify(value);
     }
   }
   return result;
+}
+
+function safeStringify(value: object): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
