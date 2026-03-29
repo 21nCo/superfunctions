@@ -46,7 +46,7 @@ function createMockSignal<T>(initialValue: T) {
 }
 
 describe("@datafn/svelte toSvelteStore — direct overload", () => {
-  it("TV-SVELTE-001: creates a store with { data, loading, error, refreshing } shape", () => {
+  it("TV-SVELTE-001a: creates a store with { data, loading, error, refreshing } shape", () => {
     const { signal } = createMockSignal(10);
     const store = toSvelteStore(signal);
 
@@ -59,7 +59,7 @@ describe("@datafn/svelte toSvelteStore — direct overload", () => {
     unsub();
   });
 
-  it("TV-SVELTE-001: updates store when signal emits new value", () => {
+  it("TV-SVELTE-001b: updates store when signal emits new value", () => {
     const { signal, controls } = createMockSignal(10);
     const store = toSvelteStore(signal);
 
@@ -77,7 +77,7 @@ describe("@datafn/svelte toSvelteStore — direct overload", () => {
     unsub();
   });
 
-  it("TV-SVELTE-001: reflects signal loading/error/refreshing state on update", () => {
+  it("TV-SVELTE-001c: reflects signal loading/error/refreshing state on update", () => {
     const { signal, controls } = createMockSignal("hello");
     const store = toSvelteStore(signal);
 
@@ -112,7 +112,7 @@ describe("@datafn/svelte toSvelteStore — direct overload", () => {
     unsub();
   });
 
-  it("TV-SVELTE-001: multiple subscribers work independently", () => {
+  it("TV-SVELTE-001d: multiple subscribers work independently", () => {
     const { signal, controls } = createMockSignal("initial");
     const store = toSvelteStore(signal);
 
@@ -139,7 +139,7 @@ describe("@datafn/svelte toSvelteStore — direct overload", () => {
     unsub2();
   });
 
-  it("TV-SVELTE-001: unsubscribe stops updates", () => {
+  it("TV-SVELTE-001e: unsubscribe stops updates", () => {
     const { signal, controls } = createMockSignal(100);
     const store = toSvelteStore(signal);
 
@@ -155,7 +155,7 @@ describe("@datafn/svelte toSvelteStore — direct overload", () => {
     expect(received).toHaveLength(2); // No 300
   });
 
-  it("TV-SVELTE-LOADING: store receives loading:false alongside data when signal notifies", () => {
+  it("TV-SVELTE-001f: store receives loading:false alongside data when signal notifies", () => {
     const { signal, controls } = createMockSignal(undefined as any);
 
     // Simulate the fixed behavior: loading is false at notification time
@@ -220,5 +220,28 @@ describe("@datafn/svelte toSvelteStore — factory overload (deprecated)", () =>
     });
 
     unsub();
+  });
+
+  it("TV-SVELTE-002b: factory overload does not dispose shared signals on switch or teardown", () => {
+    const first = createMockSignal([1]);
+    const second = createMockSignal([2]);
+
+    let emitClient!: (client: { getSignal: () => DatafnSignal<number[]> }) => void;
+    const clientRef = {
+      subscribe(fn: (client: { getSignal: () => DatafnSignal<number[]> }) => void) {
+        emitClient = fn;
+        fn({ getSignal: () => first.signal });
+        return () => {};
+      },
+    };
+
+    const store = toSvelteStore(clientRef, (client) => client.getSignal());
+    const unsub = store.subscribe(() => {});
+
+    emitClient({ getSignal: () => second.signal });
+    unsub();
+
+    expect(first.controls.isDisposed()).toBe(false);
+    expect(second.controls.isDisposed()).toBe(false);
   });
 });

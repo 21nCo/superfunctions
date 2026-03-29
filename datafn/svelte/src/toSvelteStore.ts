@@ -118,7 +118,6 @@ function toSvelteStoreFactory<T, C>(
       const unsubClient = clientRef.subscribe((client) => {
         // Tear down previous signal
         currentUnsubSignal?.();
-        currentSignal?.dispose();
 
         // Create a fresh signal from the new client
         currentSignal = signalFactory(client);
@@ -148,7 +147,6 @@ function toSvelteStoreFactory<T, C>(
       return () => {
         unsubClient();
         currentUnsubSignal?.();
-        currentSignal?.dispose();
         currentSignal = null;
       };
     },
