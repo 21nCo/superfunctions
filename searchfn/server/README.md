@@ -5,7 +5,7 @@
 ## Installation
 
 ```bash
-npm install @searchfn/server @searchfn/adapter-contracts @superfunctions/http
+npm install @searchfn/server @searchfn/adapter-memory @superfunctions/http
 ```
 
 Use a concrete adapter such as `@searchfn/adapter-memory`, `@searchfn/adapter-indexeddb`, `@searchfn/adapter-postgres`, `@searchfn/adapter-elasticsearch`, or `@searchfn/adapter-meilisearch`.
