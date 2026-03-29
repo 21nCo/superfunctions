@@ -32,8 +32,8 @@
     const next: AppMode = currentMode === "sync" ? "local-only" : "sync";
     isSwitching = true;
     try {
-      currentMode = next;
       await switchMode(next);
+      currentMode = next;
     } catch (e) {
       console.error("[DEBUG] Mode switch failed:", e);
     } finally {

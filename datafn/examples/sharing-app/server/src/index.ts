@@ -106,23 +106,20 @@ export async function createSharingDemoApp() {
     }
 
     if (c.req.method === "POST") {
-      const path = new URL(c.req.url).pathname;
-      if (path.endsWith("/mutation")) {
-        let payload: unknown = undefined;
-        try {
-          payload = await c.req.raw.clone().json();
-        } catch {
-          payload = undefined;
-        }
+      let payload: unknown = undefined;
+      try {
+        payload = await c.req.raw.clone().json();
+      } catch {
+        payload = undefined;
+      }
 
-        const shareValidation = validateDemoCrossWorkspaceSharing({
-          workspaceId: parsedIdentity.result.workspaceId,
-          payload,
-        });
+      const shareValidation = validateDemoCrossWorkspaceSharing({
+        workspaceId: parsedIdentity.result.workspaceId,
+        payload,
+      });
 
-        if (!shareValidation.ok) {
-          return c.json(shareValidation.error, 400);
-        }
+      if (!shareValidation.ok) {
+        return c.json(shareValidation.error, 400);
       }
     }
 

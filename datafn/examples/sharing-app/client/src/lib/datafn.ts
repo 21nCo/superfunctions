@@ -137,15 +137,20 @@ function assertMutationSuccess(result: unknown) {
     "ok" in result &&
     (result as { ok: unknown }).ok === false
   ) {
+    const singleError =
+      typeof (result as { error?: unknown }).error === "object" &&
+      (result as { error?: unknown }).error !== null
+        ? ((result as { error: { code?: string; message?: string; details?: { path?: string } } }).error)
+        : null;
     const firstError = Array.isArray((result as { errors?: unknown }).errors)
       ? ((result as { errors: Array<{ code?: string; message?: string; path?: string }> }).errors[0] ?? null)
       : null;
 
     throw {
-      code: firstError?.code ?? "MUTATION_FAILED",
-      message: firstError?.message ?? "Mutation failed",
+      code: firstError?.code ?? singleError?.code ?? "MUTATION_FAILED",
+      message: firstError?.message ?? singleError?.message ?? "Mutation failed",
       details: {
-        path: firstError?.path ?? "operation",
+        path: firstError?.path ?? singleError?.details?.path ?? "operation",
       },
     };
   }
@@ -461,7 +466,7 @@ async function refreshContext() {
 }
 
 function queueSessionSwitch(session: DemoSession): Promise<void> {
-  switchChain = switchChain.then(async () => {
+  switchChain = switchChain.catch(() => undefined).then(async () => {
     switchingSession.set(true);
     try {
       await client.switchContext({
