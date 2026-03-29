@@ -1,16 +1,21 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 
 export async function GET(
   _request: Request,
   context: { params: Promise<{ slug: string[] }> },
 ) {
   const { slug } = await context.params;
+  const docsRoot = resolve(process.cwd(), "content", "docs");
   if (!Array.isArray(slug) || slug.length === 0 || slug.some((segment) => segment === "..")) {
     return new Response("Not found", { status: 404 });
   }
 
-  const filePath = resolve(process.cwd(), "content", "docs", ...slug);
+  const filePath = resolve(docsRoot, ...slug);
+  const relativePath = relative(docsRoot, filePath);
+  if (relativePath.startsWith("..")) {
+    return new Response("Not found", { status: 404 });
+  }
 
   try {
     const markdown = await readFile(filePath, "utf-8");

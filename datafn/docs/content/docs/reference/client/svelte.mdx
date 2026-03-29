@@ -71,7 +71,7 @@ type DatafnSvelteStore<T> = Readable<{
 
 | Property | Type | Description |
 |---|---|---|
-| `data` | `T` | Current query result value. |
+| `data` | `T \| undefined` | Current query result value. |
 | `loading` | `boolean` | `true` during initial fetch. |
 | `error` | `DatafnError \| null` | Non-null if the last fetch failed. |
 | `refreshing` | `boolean` | `true` while refreshing after mutation/sync changes. |
