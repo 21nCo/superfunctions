@@ -164,6 +164,39 @@ describe("MeilisearchAdapter resilience", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     fetchSpy.mockRestore();
   });
+
+  it("normalizes searchAll scores across resources", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const pathname = new URL(String(url)).pathname;
+      if (pathname.includes("/indexes/searchfn_docs/search")) {
+        return new Response(
+          JSON.stringify({ hits: [{ id: "d1" }, { id: "d2" }, { id: "d3" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ hits: [{ id: "n1" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const adapter = new MeilisearchAdapter({ host: "http://localhost:7700" });
+    const results = await adapter.searchAll({
+      resources: ["docs", "notes"],
+      query: "incident",
+      limit: 10,
+    });
+
+    expect(results.slice(0, 4)).toEqual([
+      { resource: "docs", id: "d1", score: 1 },
+      { resource: "notes", id: "n1", score: 1 },
+      { resource: "docs", id: "d2", score: 2 / 3 },
+      { resource: "docs", id: "d3", score: 1 / 3 },
+    ]);
+
+    fetchSpy.mockRestore();
+  });
 });
 
 // ── TV-MS-001/002: prefix capability and defaults ────────────────────────────

@@ -177,6 +177,7 @@ export class IndexedDbAdapter implements SearchAdapter {
         await this.loadStats(engine);
         await this.loadDocTerms(engine);
         await this.loadFieldNames(engine);
+        await this.loadVocabulary(engine);
       })();
     }
     await engine.openPromise;
@@ -213,6 +214,20 @@ export class IndexedDbAdapter implements SearchAdapter {
     }
   }
 
+  private async loadVocabulary(engine: ResourceEngine): Promise<void> {
+    const buffer = await engine.storage.getCacheState("vocabulary");
+    if (!buffer) {
+      return;
+    }
+    const json = new TextDecoder().decode(buffer);
+    const terms = JSON.parse(json) as string[];
+    engine.vocabulary.clear();
+    for (const term of terms) {
+      engine.vocabulary.add(term);
+    }
+    engine.fuzzyCache.clear();
+  }
+
   private async persistStats(engine: ResourceEngine): Promise<void> {
     const encoded = new TextEncoder().encode(JSON.stringify(engine.statsManager.snapshot()));
     await engine.storage.putCacheState("document-stats", encoded.buffer);
@@ -230,6 +245,11 @@ export class IndexedDbAdapter implements SearchAdapter {
   private async persistFieldNames(engine: ResourceEngine): Promise<void> {
     const encoded = new TextEncoder().encode(JSON.stringify(Array.from(engine.fieldNames)));
     await engine.storage.putCacheState("field-names", encoded.buffer);
+  }
+
+  private async persistVocabulary(engine: ResourceEngine): Promise<void> {
+    const encoded = new TextEncoder().encode(JSON.stringify(Array.from(engine.vocabulary)));
+    await engine.storage.putCacheState("vocabulary", encoded.buffer);
   }
 
   private async loadTermFromDb(
@@ -381,6 +401,7 @@ export class IndexedDbAdapter implements SearchAdapter {
       this.persistStats(engine),
       this.persistDocTerms(engine),
       this.persistFieldNames(engine),
+      this.persistVocabulary(engine),
     ]);
   }
 
@@ -538,6 +559,8 @@ export class IndexedDbAdapter implements SearchAdapter {
     engine.statsManager.load([]);
     engine.docTerms.clear();
     engine.fieldNames.clear();
+    engine.vocabulary.clear();
+    engine.fuzzyCache.clear();
 
     await engine.storage.clearStore("terms");
     await engine.storage.clearStore("cacheState");

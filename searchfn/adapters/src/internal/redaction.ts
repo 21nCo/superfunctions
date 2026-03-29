@@ -1,25 +1,44 @@
-const SECRET = /apikey|password|secret|token|authorization|connectionstring/i;
+const SECRET = /apikey|password|secret|token|authorization|connection(?:[_-]?string)?/i;
 
-export function redactSensitive(value: unknown): unknown {
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function redactSensitiveInternal(value: unknown, seen: WeakSet<object>): unknown {
   if (value === null || value === undefined) {
     return value;
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitive(entry));
+    return value.map((entry) => redactSensitiveInternal(entry, seen));
   }
 
-  if (typeof value === 'object') {
+  if (typeof value === "object") {
+    if (!isPlainObject(value)) {
+      return value;
+    }
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
     const output: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      output[key] = SECRET.test(key) ? '[REDACTED]' : redactSensitive(entry);
+    for (const [key, entry] of Object.entries(value)) {
+      output[key] = SECRET.test(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
     }
     return output;
   }
 
-  if (typeof value === 'string') {
-    return value.replace(/\b(api[_-]?key|password|secret|token|authorization|connection[_-]?string)\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]');
+  if (typeof value === "string") {
+    return value.replace(
+      /\b(api[_-]?key|password|secret|token|authorization|connection[_-]?string)\s*[:=]\s*([^\s,;]+)/gi,
+      "$1=[REDACTED]",
+    );
   }
 
   return value;
+}
+
+export function redactSensitive(value: unknown): unknown {
+  return redactSensitiveInternal(value, new WeakSet<object>());
 }

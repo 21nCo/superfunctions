@@ -166,6 +166,64 @@ describe("ElasticsearchAdapter resilience and validation", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     fetchSpy.mockRestore();
   });
+
+  it("preserves digit-only ids as strings in search results", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      makeHitsResponse([{ _id: "00123" }, { _id: "9007199254740993" }]),
+    );
+
+    const adapter = new ElasticsearchAdapter({
+      node: "http://localhost:9200",
+      engine: "elasticsearch",
+    });
+
+    const results = await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
+    expect(results).toEqual(["00123", "9007199254740993"]);
+
+    fetchSpy.mockRestore();
+  });
+
+  it("requests filtered bulk error payloads for write operations", async () => {
+    const urls: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      urls.push(String(url));
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify({ errors: false, items: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const adapter = new ElasticsearchAdapter({
+      node: "http://localhost:9200",
+      engine: "elasticsearch",
+    });
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: "a", fields: { title: "incident" } }],
+    });
+    await adapter.remove({
+      resource: "tasks",
+      ids: ["a"],
+    });
+
+    expect(urls).toContain(
+      "http://localhost:9200/_bulk?refresh=wait_for&filter_path=errors,items.*._id,items.*._index,items.*.status,items.*.error",
+    );
+    expect(
+      urls.filter((url) =>
+        url === "http://localhost:9200/_bulk?refresh=wait_for&filter_path=errors,items.*._id,items.*._index,items.*.status,items.*.error",
+      ),
+    ).toHaveLength(2);
+
+    fetchSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------

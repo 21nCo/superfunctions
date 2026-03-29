@@ -52,6 +52,34 @@ function isRetryableError(err: unknown): boolean {
   );
 }
 
+function mergeSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (activeSignals.length === 0) {
+    return undefined;
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+  }
+  return controller.signal;
+}
+
+function parseResponseBody<T>(text: string): T | string | undefined {
+  if (text.length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text;
+  }
+}
+
 export class ElasticClient {
   private readonly requestTimeoutMs: number;
 
@@ -90,7 +118,7 @@ export class ElasticClient {
     if (response.status >= 400 && !ignoreStatuses.has(response.status)) {
       throw withRedactedErrorMessage(
         `Elastic backend request failed with status ${response.status}`,
-        response.body,
+        typeof response.body === "string" ? response.body : JSON.stringify(response.body),
       );
     }
 
@@ -107,7 +135,7 @@ export class ElasticClient {
   private async execute<T>(opts: ElasticRequestOptions): Promise<ElasticResponse<T>> {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), this.requestTimeoutMs);
-    const mergedSignal = AbortSignal.any([timeoutController.signal, opts.signal].filter(Boolean) as AbortSignal[]);
+    const mergedSignal = mergeSignals(timeoutController.signal, opts.signal);
 
     const headers: Record<string, string> = { accept: "application/json" };
     if (this.options.auth) {
@@ -141,11 +169,11 @@ export class ElasticClient {
       });
 
       const text = await response.text();
-      const parsed = text.length > 0 ? (JSON.parse(text) as T) : undefined;
+      const parsed = parseResponseBody<T>(text);
 
       return {
         status: response.status,
-        body: parsed,
+        body: parsed as T | undefined,
       };
     } catch (error) {
       if (opts.signal?.aborted) {

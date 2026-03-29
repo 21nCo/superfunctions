@@ -22,6 +22,7 @@ import { SearchAdapterError, SEARCH_ADAPTER_DISPOSED } from "@searchfn/adapter-c
 type DocId = string | number;
 
 interface PostingInfo {
+  docId: DocId;
   frequency: number;
   metadata?: Record<string, unknown>;
 }
@@ -31,6 +32,7 @@ interface ResourceEngine {
   indexer: Indexer;
   statsManager: DocumentStatsManager;
   postings: Map<string, Map<string, PostingInfo>>;
+  docIds: Map<string, DocId>;
   fieldNames: Set<string>;
   vocabulary: Set<string>;
   fuzzyCache: Map<string, string[]>;
@@ -71,6 +73,7 @@ export class MemoryAdapter implements SearchAdapter {
       indexer: new Indexer(pipeline),
       statsManager: new DocumentStatsManager(),
       postings: new Map(),
+      docIds: new Map(),
       fieldNames: new Set(),
       vocabulary: new Set(),
       fuzzyCache: new Map()
@@ -94,7 +97,9 @@ export class MemoryAdapter implements SearchAdapter {
     const ingest = engine.indexer.ingest({ docId, fields });
     if (ingest.totalLength === 0) return;
 
-    engine.statsManager.addDocument(docId, ingest.totalLength);
+    const docKey = this.toKey(docId);
+    engine.statsManager.addDocument(docKey, ingest.totalLength);
+    engine.docIds.set(docKey, docId);
 
     for (const [field, termFrequencies] of ingest.fieldFrequencies.entries()) {
       engine.fieldNames.add(field);
@@ -122,9 +127,13 @@ export class MemoryAdapter implements SearchAdapter {
       docMap.delete(docKey);
       if (docMap.size === 0) {
         engine.postings.delete(key);
+        const [, term] = key.split("::");
+        engine.vocabulary.delete(term);
+        engine.fuzzyCache.clear();
       }
     }
-    engine.statsManager.removeDocument(docId);
+    engine.statsManager.removeDocument(docKey);
+    engine.docIds.delete(docKey);
   }
 
   private upsertPosting(
@@ -138,7 +147,7 @@ export class MemoryAdapter implements SearchAdapter {
     const key = this.postingKey(field, term);
     const docKey = this.toKey(docId);
     const entry = engine.postings.get(key) ?? new Map<string, PostingInfo>();
-    entry.set(docKey, { frequency, metadata });
+    entry.set(docKey, { docId, frequency, metadata });
     engine.postings.set(key, entry);
   }
 
@@ -147,7 +156,7 @@ export class MemoryAdapter implements SearchAdapter {
   }
 
   private toKey(docId: DocId): string {
-    return typeof docId === "string" ? docId : String(docId);
+    return `${typeof docId === "string" ? "s" : "n"}:${String(docId)}`;
   }
 
   private getFuzzyDistance(fuzzy?: number | boolean): number | undefined {
@@ -302,7 +311,10 @@ export class MemoryAdapter implements SearchAdapter {
     });
 
     const limit = Math.max(1, params.limit ?? 10);
-    return scored.slice(0, limit);
+      return scored.slice(0, limit).map((entry) => ({
+        docId: engine.docIds.get(String(entry.docId)) ?? entry.docId,
+        score: entry.score,
+      }));
   }
 
   index({ resource, documents, signal }: IndexParams): Promise<void> {

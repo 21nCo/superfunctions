@@ -40,7 +40,27 @@ function sanitizeResourceName(resource: string): string {
 }
 
 function coerceId(value: string): string | number {
-  return /^\d+$/.test(value) ? Number(value) : value;
+  return value;
+}
+
+interface ElasticBulkResponseItem {
+  index?: { _id?: string; _index?: string; status?: number; error?: unknown };
+  delete?: { _id?: string; _index?: string; status?: number; error?: unknown };
+}
+
+interface ElasticBulkResponse {
+  errors?: boolean;
+  items?: ElasticBulkResponseItem[];
+}
+
+function getBulkFailureMessage(response: ElasticBulkResponse | undefined): string {
+  const failedItem = response?.items?.find((item) => item.index?.error ?? item.delete?.error);
+  const failure = failedItem?.index ?? failedItem?.delete;
+  if (!failure?.error) {
+    return "Bulk operation failed";
+  }
+
+  return `Bulk operation failed for ${failure._index ?? "unknown-index"}/${failure._id ?? "unknown-id"}: ${JSON.stringify(failure.error)}`;
 }
 
 export class ElasticsearchAdapter implements SearchAdapter {
@@ -207,13 +227,16 @@ export class ElasticsearchAdapter implements SearchAdapter {
       payload.push(JSON.stringify(document.fields));
     }
 
-    await this.client.request({
+    const response = await this.client.request<ElasticBulkResponse>({
       method: "POST",
-      path: "/_bulk?refresh=wait_for",
+      path: "/_bulk?refresh=wait_for&filter_path=errors,items.*._id,items.*._index,items.*.status,items.*.error",
       body: `${payload.join("\n")}\n`,
       contentType: "application/x-ndjson",
       signal,
     });
+    if (response.body?.errors) {
+      throw new SearchAdapterError("INTERNAL", getBulkFailureMessage(response.body));
+    }
   }
 
   async search(params: SearchParams): Promise<Array<string | number>> {
@@ -306,14 +329,17 @@ export class ElasticsearchAdapter implements SearchAdapter {
       payload.push(JSON.stringify({ delete: { _index: indexName, _id: String(id) } }));
     }
 
-    await this.client.request({
+    const response = await this.client.request<ElasticBulkResponse>({
       method: "POST",
-      path: "/_bulk?refresh=wait_for",
+      path: "/_bulk?refresh=wait_for&filter_path=errors,items.*._id,items.*._index,items.*.status,items.*.error",
       body: `${payload.join("\n")}\n`,
       contentType: "application/x-ndjson",
       signal,
       ignoreStatuses: [404],
     });
+    if (response.body?.errors) {
+      throw new SearchAdapterError("INTERNAL", getBulkFailureMessage(response.body));
+    }
   }
 
   async clear(resource: string, signal?: AbortSignal): Promise<void> {

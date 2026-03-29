@@ -34,8 +34,8 @@ try {
     try {
       for (const composeFile of composeFiles) {
         run(`docker compose -f ${composeFile} up -d`);
+        dockerStarted = true;
       }
-      dockerStarted = true;
     } catch {
       console.warn("Docker services could not be started; running matrix tests without managed services");
       dockerReady = false;
@@ -44,7 +44,7 @@ try {
     console.warn("Docker Compose not available; running integration matrix without managed services");
   }
 
-  run("npm test -- --config vitest.integration.config.ts --runInBand", {
+  run("npx vitest --config vitest.integration.config.ts", {
     env: {
       ...process.env,
       SEARCHFN_REQUIRE_MATRIX: dockerReady ? "1" : process.env.SEARCHFN_REQUIRE_MATRIX,

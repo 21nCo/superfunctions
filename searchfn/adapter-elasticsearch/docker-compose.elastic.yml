@@ -9,7 +9,7 @@ services:
       - xpack.ml.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
       interval: 10s
@@ -26,7 +26,7 @@ services:
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=unused-password
       - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
-      - "9201:9200"
+      - "127.0.0.1:9201:9200"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
       interval: 10s

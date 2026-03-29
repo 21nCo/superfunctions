@@ -142,6 +142,7 @@ export class PostgresAdapter implements SearchAdapter {
     }
 
     const pool = this.getPool();
+    this.knownResources.clear();
 
     await this.withRetry(async () => {
       await ensureMetaTable(pool, this.options.schema);

@@ -37,7 +37,13 @@ function sanitizeResourceName(resource: string): string {
 
 function coerceId(value: unknown): string | number {
   const asString = String(value);
-  return /^\d+$/.test(asString) ? Number(asString) : asString;
+  if (/^\d+$/.test(asString)) {
+    const asNumber = Number(asString);
+    if (Number.isSafeInteger(asNumber)) {
+      return asNumber;
+    }
+  }
+  return asString;
 }
 
 export class MeilisearchAdapter implements SearchAdapter {
@@ -116,7 +122,7 @@ export class MeilisearchAdapter implements SearchAdapter {
     if (documents.length === 0) return;
 
     const indexName = this.indexName(resource);
-    const payload = documents.map((doc) => ({ id: String(doc.id), ...doc.fields }));
+    const payload = documents.map((doc) => ({ ...doc.fields, id: String(doc.id) }));
     const add = await this.client.request<MeiliTaskResult>({
       method: "POST",
       path: `/indexes/${indexName}/documents`,
@@ -148,11 +154,7 @@ export class MeilisearchAdapter implements SearchAdapter {
 
     if (response.status === 404) return [];
 
-    const ids = (response.body?.hits ?? [])
-      .map((hit) => coerceId(hit.id))
-      .sort((a, b) => String(a).localeCompare(String(b)));
-
-    return ids;
+    return (response.body?.hits ?? []).map((hit) => coerceId(hit.id));
   }
 
   async searchAll(params: SearchAllParams): Promise<SearchAllResult[]> {
@@ -185,7 +187,7 @@ export class MeilisearchAdapter implements SearchAdapter {
         merged.push({
           resource,
           id: coerceId(hits[i].id),
-          score: hits.length - i,
+          score: hits.length > 1 ? (hits.length - i) / hits.length : 1,
         });
       }
     }

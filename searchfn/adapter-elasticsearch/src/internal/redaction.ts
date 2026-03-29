@@ -1,10 +1,15 @@
-const SENSITIVE_KEY = /apikey|password|secret|token|authorization|connectionstring/i;
+const SENSITIVE_KEY = /apikey|password|secret|token|authorization|connection(?:[_-]?string)?/i;
 
 const KEY_VALUE_SECRET = /\b(api[_-]?key|password|secret|token|authorization|connection[_-]?string)\s*[:=]\s*([^\s,;]+)/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
 
-export function redactSensitive(value: unknown): any {
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function redactSensitiveInternal(value: unknown, seen: WeakSet<object>): any {
   if (value === null || value === undefined) {
     return value;
   }
@@ -14,23 +19,33 @@ export function redactSensitive(value: unknown): any {
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitive(entry));
+    return value.map((entry) => redactSensitiveInternal(entry, seen));
   }
 
   if (typeof value === "object") {
-    const source = value as Record<string, unknown>;
+    if (!isPlainObject(value)) {
+      return value;
+    }
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
     const output: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(source)) {
+    for (const [key, entry] of Object.entries(value)) {
       if (SENSITIVE_KEY.test(key)) {
         output[key] = "[REDACTED]";
       } else {
-        output[key] = redactSensitive(entry);
+        output[key] = redactSensitiveInternal(entry, seen);
       }
     }
     return output;
   }
 
   return value;
+}
+
+export function redactSensitive(value: unknown): any {
+  return redactSensitiveInternal(value, new WeakSet<object>());
 }
 
 export function redactSensitiveString(input: string): string {
