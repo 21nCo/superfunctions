@@ -2,6 +2,21 @@ from typing import Any, Dict, Optional, List
 from .indexing import index_data
 from .search import search_index
 
+MAX_LIMIT = 10_000
+
+
+def _parse_limit(payload: Dict[str, Any]) -> int:
+    raw_limit = payload.get("limit", 20)
+    if isinstance(raw_limit, bool):
+        raise ValueError("Invalid limit")
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Invalid limit") from error
+    if limit <= 0 or limit > MAX_LIMIT:
+        raise ValueError("Invalid limit")
+    return limit
+
 def create_searchfn_server(config: Dict[str, Any]) -> Dict[str, Any]:
     schema = config.get("schema")
     db = config.get("db")
@@ -23,10 +38,13 @@ def create_searchfn_server(config: Dict[str, Any]) -> Dict[str, Any]:
             
         query = payload.get("query")
         model = payload.get("model")
-        limit = payload.get("limit", 20)
         
         if not query:
             return {"ok": False, "error": "Missing query"}
+        try:
+            limit = _parse_limit(payload)
+        except ValueError:
+            return {"ok": False, "error": "Invalid limit"}
 
         results = await search_index(schema, db, query, model, limit, table_prefix)
         return {"ok": True, "results": results}

@@ -22,7 +22,6 @@ classifiers = [
 
 dependencies = [
     "datafn>=0.1.0", # Assuming datafn is available
-    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
