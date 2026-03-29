@@ -159,7 +159,7 @@ class TestPlugins:
             async def before_mutation(self, ctx, mutation):
                 raise Exception("Rejected by policy")
 
-        server, db = _make_server(plugins=[RejectPlugin()])
+        server, _db = _make_server(plugins=[RejectPlugin()])
         handler = server["routes"]["POST /datafn/mutation"]
         res = await handler({}, {
             "resource": "tasks", "version": 1, "operation": "insert",
@@ -176,7 +176,7 @@ class TestLimits:
     @pytest.mark.asyncio
     async def test_max_select_tokens_exceeded(self):
         """VAL-008 / TV-VAL-009: Query with too many select tokens rejected."""
-        server, db = _make_server(limits={"maxSelectTokens": 2})
+        server, _db = _make_server(limits={"maxSelectTokens": 2})
         handler = server["routes"]["POST /datafn/query"]
         res = await handler({}, {
             "resource": "tasks", "version": 1,
@@ -213,7 +213,7 @@ class TestCursorPagination:
     @pytest.mark.asyncio
     async def test_paginate_with_limit_3(self):
         """QRY-001/003: Insert 10 records, paginate with limit 3."""
-        server, _db = _make_server()
+        server, db = _make_server()
         handler_q = server["routes"]["POST /datafn/query"]
         handler_m = server["routes"]["POST /datafn/mutation"]
 
@@ -249,7 +249,7 @@ class TestAggregation:
     @pytest.mark.asyncio
     async def test_group_by_count(self):
         """QRY-007 / TV-QRY-007: GroupBy + count aggregation."""
-        server, db = _make_server()
+        server, _db = _make_server()
         handler_m = server["routes"]["POST /datafn/mutation"]
         handler_q = server["routes"]["POST /datafn/query"]
 
@@ -270,8 +270,8 @@ class TestAggregation:
         })
         assert res["ok"] is True
         data = res["result"]["data"]
-        active = [r for r in data if r["status"] == "active"][0]
-        closed = [r for r in data if r["status"] == "closed"][0]
+        active = next(r for r in data if r["status"] == "active")
+        closed = next(r for r in data if r["status"] == "closed")
         assert active["total"] == 2
         assert active["avgPriority"] == 4.0
         assert closed["total"] == 1
@@ -357,7 +357,7 @@ class TestBatchInsert:
     @pytest.mark.asyncio
     async def test_batch_insert_5_records(self):
         """MUT-003 / TV-MUT-003: Insert 5 records via records[]."""
-        server, db = _make_server()
+        server, _db = _make_server()
         handler = server["routes"]["POST /datafn/mutation"]
 
         records = [{"id": f"t{i}", "title": f"Task {i}"} for i in range(5)]
@@ -411,7 +411,7 @@ class TestSync:
     @pytest.mark.asyncio
     async def test_push_and_pull(self):
         """SYN-001/003: Push with mutations, pull back."""
-        server, db = _make_server()
+        server, _db = _make_server()
         push_handler = server["routes"]["POST /datafn/push"]
         pull_handler = server["routes"]["POST /datafn/pull"]
         seed_handler = server["routes"]["POST /datafn/seed"]
@@ -455,7 +455,7 @@ class TestFullFlow:
     @pytest.mark.asyncio
     async def test_create_query_mutate_transact(self):
         """Full integration flow."""
-        server, db = _make_server()
+        server, _db = _make_server()
         q = server["routes"]["POST /datafn/query"]
         m = server["routes"]["POST /datafn/mutation"]
         t = server["routes"]["POST /datafn/transact"]

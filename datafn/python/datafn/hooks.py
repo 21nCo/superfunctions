@@ -1,5 +1,12 @@
 from typing import Any, Dict, List, Optional
 
+def _normalize_runs_on(plugin: Any) -> List[str]:
+    runs_on = getattr(plugin, "runs_on", [])
+    if isinstance(runs_on, list):
+        return runs_on
+    if isinstance(runs_on, tuple):
+        return list(runs_on)
+    return []
 
 async def run_before_hook(
     plugins: List[Any],
@@ -11,7 +18,7 @@ async def run_before_hook(
 ) -> Dict[str, Any]:
     current = payload
     for plugin in plugins:
-        runs_on = getattr(plugin, "runs_on", [])
+        runs_on = _normalize_runs_on(plugin)
         if env not in runs_on:
             continue
 
@@ -53,7 +60,7 @@ async def run_after_hook(
 ) -> Any:
     current_result = result
     for plugin in plugins:
-        runs_on = getattr(plugin, "runs_on", [])
+        runs_on = _normalize_runs_on(plugin)
         if env not in runs_on:
             continue
 

@@ -1,4 +1,5 @@
 import time
+import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 from ..envelope import ok_response, error_response, DatafnError, classify_error
 from ..validation import (
@@ -449,7 +450,15 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
 
         # Run after_mutation hooks
         if plugins:
-            await run_after_hook(plugins, "server", "after_mutation", ctx, payload, response, logger=logger)
+            response = await run_after_hook(
+                plugins,
+                "server",
+                "after_mutation",
+                ctx,
+                payload,
+                response,
+                logger=logger,
+            )
 
         if logger:
             logger.debug("Mutation completed", {"resource": resource})
@@ -462,10 +471,17 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
         return e.to_envelope()
     except Exception as e:
         if logger:
-            logger.error("Mutation failed", {"code": "INTERNAL", "message": str(e)})
+            logger.error(
+                "Mutation failed",
+                {
+                    "code": "INTERNAL",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
         return error_response({
             "code": "INTERNAL",
-            "message": str(e),
+            "message": "Internal server error",
             "details": {}
         })
 
@@ -537,6 +553,12 @@ async def execute_mutation_core(
         affected_ids = []
         changes = []
         for i, rec in enumerate(records_list):
+            if not isinstance(rec, dict):
+                raise DatafnError(
+                    code="DFQL_INVALID",
+                    message="Record must be an object",
+                    details={"path": f"records[{i}]"},
+                )
             # Prototype pollution check
             poisoned = check_prototype_pollution(rec)
             if poisoned:
@@ -580,6 +602,12 @@ async def execute_mutation_core(
 
     # Single record path
     record = payload.get("record", {})
+    if not isinstance(record, dict):
+        raise DatafnError(
+            code="DFQL_INVALID",
+            message="Record must be an object",
+            details={"path": "record"},
+        )
 
     # Prototype pollution check
     poisoned = check_prototype_pollution(record)

@@ -86,7 +86,8 @@ class MockAdapter:
         return res[0] if res else None
 
     async def create(self, model: str, data: Dict[str, Any], namespace: str = "datafn") -> None:
-        if model not in self.data: self.data[model] = []
+        if model not in self.data:
+            self.data[model] = []
         # Ensure ID?
         if "id" not in data:
             import uuid

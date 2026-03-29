@@ -13,7 +13,6 @@ __all__ = [
     "check_prototype_pollution", "coerce_date_fields_to_epoch",
     "dfql_key", "enumerate_join_store_keys",
     "from_epoch_ms", "get_join_store_key", "get_join_table_name",
-    "ns",
-    "normalize_dfql", "parse_select_token", "parse_sort_terms",
+    "normalize_dfql", "ns", "parse_select_token", "parse_sort_terms",
     "sort_records", "to_epoch_ms", "validate_field_value",
 ]

@@ -204,6 +204,8 @@ def evaluate_filter(
                 return False
             if len(value) == 0:
                 continue  # Empty $and is true
+            if not all(isinstance(f, dict) for f in value):
+                return False
             if not all(
                 evaluate_filter(record, f, max_depth, _current_depth + 1)
                 for f in value
@@ -215,6 +217,8 @@ def evaluate_filter(
                 return False
             if len(value) == 0:
                 return False  # Empty $or is false
+            if not all(isinstance(f, dict) for f in value):
+                return False
             if not any(
                 evaluate_filter(record, f, max_depth, _current_depth + 1)
                 for f in value

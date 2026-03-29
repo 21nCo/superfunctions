@@ -9,6 +9,7 @@ schema = {
             {"name": "status", "type": "string", "default": "pending"},
             {"name": "priority", "type": "number"},
             {"name": "description", "type": "string"},
+            {"name": "details", "type": "object"},
         ]}
     ],
     "relations": [],
@@ -120,7 +121,7 @@ class TestBatchInsert:
 
     @pytest.mark.asyncio
     async def test_batch_insert_respects_batch_size_limit(self):
-        handler, db = await _setup(limits={"maxBatchSize": 1})
+        handler, _db = await _setup(limits={"maxBatchSize": 1})
         res = await handler({}, {
             "resource": "tasks", "version": 1,
             "operation": "insert",
@@ -257,14 +258,14 @@ class TestPrototypePollution:
 
     @pytest.mark.asyncio
     async def test_nested_proto_key_rejected(self):
-        handler, db = await _setup()
+        handler, _db = await _setup()
         res = await handler({}, {
             "resource": "tasks", "version": 1,
             "operation": "insert",
             "id": "task_hack2",
             "record": {
                 "title": "ok",
-                "description": {"nested": {"__proto__": {"polluted": True}}},
+                "details": {"nested": {"__proto__": {"polluted": True}}},
             },
         })
         assert res["ok"] is False
