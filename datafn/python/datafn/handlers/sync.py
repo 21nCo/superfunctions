@@ -357,8 +357,8 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 )
 
                 # Change Tracking
-                server_seq = await get_next_server_seq(config.db, namespace)
                 for change in mutation_changes:
+                    server_seq = await get_next_server_seq(config.db, namespace)
                     await write_change(
                         config.db,
                         namespace,

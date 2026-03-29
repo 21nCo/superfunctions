@@ -6,7 +6,20 @@ from ..utils.sort import parse_sort_terms, sort_records
 from ..utils.select import apply_select, apply_omit
 from ..utils.aggregate import calculate_aggregation
 from ..hooks import run_before_hook, run_after_hook
-from ..authz import validate_query_authz
+from ..authz import (
+    get_actor_id_from_context,
+    is_private_shareable_resource,
+    is_record_visible,
+    validate_query_authz,
+)
+
+
+def _get_namespace(ctx: Any) -> str:
+    if isinstance(ctx, dict):
+        namespace = ctx.get("namespace")
+        if isinstance(namespace, str) and namespace.strip():
+            return namespace
+    return "datafn"
 
 
 async def handle_query(ctx: Any, payload: Any, config: Any) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
@@ -54,6 +67,8 @@ def _compare_cursor(record: Dict[str, Any], cursor: Dict[str, Any], sort_terms: 
 async def _handle_single_query(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
     logger = getattr(config, "logger", None)
     plugins = getattr(config, "plugins", []) or []
+    namespace = _get_namespace(ctx)
+    actor_id = get_actor_id_from_context(ctx)
 
     try:
         if not isinstance(payload, dict):
@@ -144,7 +159,22 @@ async def _handle_single_query(ctx: Any, payload: Any, config: Any) -> Dict[str,
             limit = min(req_limit, max_limit)
 
         # Fetch all records from adapter
-        data = await config.db.find_many(model=resource, where=[])
+        data = await config.db.find_many(model=resource, where=[], namespace=namespace)
+
+        resource_def = index.resources_by_name.get(resource)
+        if resource_def and is_private_shareable_resource(resource_def):
+            visible_rows = []
+            for row in data:
+                if await is_record_visible(
+                    config.db,
+                    index,
+                    resource,
+                    row,
+                    actor_id,
+                    namespace=namespace,
+                ):
+                    visible_rows.append(row)
+            data = visible_rows
 
         # In-memory filter
         filters = payload.get("filters", {})
@@ -255,6 +285,11 @@ def _handle_aggregation(
                             if not _evaluate_operator(row.get(field), actual_op, val):
                                 passes = False
                                 break
+                    else:
+                        if row.get(field) != condition:
+                            passes = False
+                    if not passes:
+                        break
                 if not passes:
                     continue
 

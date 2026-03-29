@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, TypedDict
 from .db import Adapter
+from .envelope import CONFLICT, classify_error
 
 class MutationResult(TypedDict):
     ok: bool
@@ -47,6 +48,7 @@ async def store_idempotency(db: Adapter, namespace: str, client_id: str, mutatio
             },
             namespace=namespace
         )
-    except Exception:
+    except Exception as exc:
         # Ignore duplicate key errors if race condition
-        pass
+        if classify_error(exc) != CONFLICT:
+            raise

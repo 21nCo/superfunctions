@@ -121,7 +121,7 @@ async def test_tv_py_001_n_private_shareable_missing_permissions_denied_by_defau
 
     assert res["ok"] is False
     assert res["error"]["code"] == "FORBIDDEN"
-    assert res["error"]["message"] == "Python parity violation"
+    assert res["error"]["message"] == "Access denied: resource requires explicit permissions"
     assert res["error"]["details"]["path"] == "python.authz"
 
 

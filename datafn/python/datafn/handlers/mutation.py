@@ -649,8 +649,9 @@ async def execute_mutation_core(
             raise DatafnError(code=code, message=str(e), details={"path": "record"})
 
         rid = record.get("id")
-        affected_ids.append(rid)
-        changes.append({"table": resource, "operation": "insert", "recordId": rid})
+        if rid:
+            affected_ids.append(rid)
+            changes.append({"table": resource, "operation": "insert", "recordId": rid})
 
     elif operation == "merge":
         if not record_id:
@@ -730,6 +731,11 @@ async def execute_mutation_core(
             if key in readonly or key in RESERVED_FIELDS:
                 continue
             replace_record[key] = value
+
+        if existing:
+            for field in ("createdAt", "createdBy", "version"):
+                if field in existing:
+                    replace_record[field] = existing[field]
 
         # Type validation on the final replacement
         type_errors = validate_record_types(replace_record, resource, index)
@@ -817,19 +823,19 @@ async def execute_mutation_core(
     elif operation == "relate":
         if not record_id:
             raise DatafnError(code="DFQL_INVALID", message="Missing id", details={"path": "id"})
-        await execute_relate(db, index, payload)
+        await execute_relate(db, index, payload, namespace=namespace)
         affected_ids.append(record_id)
 
     elif operation == "modifyRelation":
         if not record_id:
             raise DatafnError(code="DFQL_INVALID", message="Missing id", details={"path": "id"})
-        await execute_modify_relation(db, index, payload)
+        await execute_modify_relation(db, index, payload, namespace=namespace)
         affected_ids.append(record_id)
 
     elif operation == "unrelate":
         if not record_id:
             raise DatafnError(code="DFQL_INVALID", message="Missing id", details={"path": "id"})
-        await execute_unrelate(db, index, payload)
+        await execute_unrelate(db, index, payload, namespace=namespace)
         affected_ids.append(record_id)
 
     else:

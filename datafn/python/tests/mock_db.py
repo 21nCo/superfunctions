@@ -65,11 +65,11 @@ class MockAdapter:
         # Only simple sort for now if needed by tests
         if sort:
             # Sort by first field
-            field = sort[0].split(":")[0]
-            desc = "desc" in sort[0]
+            field, _, direction = sort[0].partition(":")
+            desc = direction == "desc"
             filtered.sort(key=lambda x: x.get(field, ""), reverse=desc)
             
-        if limit:
+        if limit is not None:
             filtered = filtered[:limit]
             
         return filtered

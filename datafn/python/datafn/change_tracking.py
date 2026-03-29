@@ -1,3 +1,4 @@
+import uuid
 from typing import Any, Dict, List, Optional
 from .db import Adapter
 from .transaction import with_transaction
@@ -67,7 +68,6 @@ async def write_change(
     }
     
     # We might need an ID for the change record itself for DBs that require PK
-    import uuid
     change_record["id"] = str(uuid.uuid4())
     
     await db.create(CHANGES_TABLE, change_record, namespace=namespace)

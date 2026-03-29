@@ -145,8 +145,8 @@ def _evaluate_operator(value: Any, op: str, operand: Any) -> bool:
     if op == "$not_between":
         return not (operand[0] <= value <= operand[1])
 
-    # Unknown operator - pass through
-    return True
+    # Unknown operator - reject instead of silently matching everything
+    return False
 
 
 def evaluate_filter(
