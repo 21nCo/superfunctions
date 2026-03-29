@@ -36,13 +36,13 @@ export function createEdgeNGramStage(options: EdgeNGramOptions): PipelineStage {
       // Check if n-grams should be generated for this field
       if (fieldConfig) {
         const config = fieldConfig[context.field];
-        if (!config || !config.enabled) {
+        if (config?.enabled === false) {
           // Field not configured or disabled, return original tokens
           return tokens;
         }
         // Use field-specific min/max if provided
-        const fieldMinGram = config.minLength ?? minGram;
-        const fieldMaxGram = config.maxLength ?? maxGram;
+        const fieldMinGram = config?.minLength ?? minGram;
+        const fieldMaxGram = config?.maxLength ?? maxGram;
         return generateNGrams(tokens, fieldMinGram, fieldMaxGram);
       }
       

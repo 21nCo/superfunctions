@@ -22,12 +22,22 @@ export class EnglishStemmer implements Stemmer {
         const lastChar = stemmed[stemmed.length - 1];
         
         // Only deduplicate common doubling consonants
-        if ('bdfglmnprst'.includes(lastChar)) {
+        if ('bdfgmnprst'.includes(lastChar)) {
           stemmed = stemmed.slice(0, -1);
         }
       }
     } else if (stemmed.length > 3 && stemmed.endsWith("ed")) {
       stemmed = stemmed.slice(0, -2);
+      if (
+        stemmed.length <= 4 &&
+        stemmed.length >= 3 &&
+        stemmed[stemmed.length - 1] === stemmed[stemmed.length - 2]
+      ) {
+        const lastChar = stemmed[stemmed.length - 1];
+        if ('bdfgmnprst'.includes(lastChar)) {
+          stemmed = stemmed.slice(0, -1);
+        }
+      }
     } else if (stemmed.length > 2 && stemmed.endsWith("s")) {
       stemmed = stemmed.slice(0, -1);
     }

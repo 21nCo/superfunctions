@@ -157,18 +157,23 @@ export class IndexedDbManager {
     });
 
     let result: T;
+    let callbackFailed = false;
     try {
       result = await fn(tx);
     } catch (error) {
+      callbackFailed = true;
       try {
         tx.abort();
       } catch (abortError) {
         this.logger.warn("Failed to abort transaction", { abortError });
       }
+      await completionPromise.catch(() => undefined);
       throw new StorageError("Transaction callback rejected", { cause: error });
     }
 
-    await completionPromise;
+    if (!callbackFailed) {
+      await completionPromise;
+    }
     return result;
   }
 

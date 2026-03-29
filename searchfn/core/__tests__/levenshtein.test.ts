@@ -90,4 +90,10 @@ describe("fuzzyExpand", () => {
     const results = fuzzyExpand("HELLO", 0, vocabulary);
     expect(results).toContain("hello");
   });
+
+  it("keeps exact-only matching when max distance is zero", () => {
+    const vocabulary = new Set(["hello", "hullo"]);
+    const results = fuzzyExpand("hello", 0, vocabulary);
+    expect(results).toEqual(["hello"]);
+  });
 });

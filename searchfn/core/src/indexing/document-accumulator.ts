@@ -23,9 +23,12 @@ export class DocumentAccumulator {
     const current = fieldEntry.termFrequencies.get(token.value) ?? 0;
     fieldEntry.termFrequencies.set(token.value, current + 1);
     fieldEntry.length += 1;
-    
-    // Store metadata for the term (only if present and not already stored)
-    if (token.metadata && !fieldEntry.termMetadata.has(token.value)) {
+
+    const existingMetadata = fieldEntry.termMetadata.get(token.value);
+    const incomingIsPrefix = token.metadata?.["isPrefix"] === true;
+    const existingIsPrefix = existingMetadata?.["isPrefix"] === true;
+
+    if (token.metadata && (!existingMetadata || (existingIsPrefix && !incomingIsPrefix))) {
       fieldEntry.termMetadata.set(token.value, token.metadata);
     }
   }
