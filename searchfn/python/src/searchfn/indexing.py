@@ -12,6 +12,49 @@ def _is_duplicate_error(error: Exception) -> bool:
     )
 
 
+async def _delete_existing_index_rows(
+    db: Any,
+    index_table: str,
+    model_name: str,
+    record_id: Any,
+) -> None:
+    while True:
+        existing_rows = await db.find_many(
+            index_table,
+            [
+                {"field": "model", "operator": "eq", "value": model_name},
+                {"field": "recordId", "operator": "eq", "value": str(record_id)},
+            ],
+            limit=200,
+        )
+        if not existing_rows:
+            return
+
+        for row in existing_rows:
+            if not isinstance(row, dict):
+                continue
+
+            row_id = row.get("id")
+            if row_id is not None:
+                await db.delete(
+                    index_table,
+                    [{"field": "id", "operator": "eq", "value": row_id}],
+                )
+                continue
+
+            delete_where = [
+                {"field": "model", "operator": "eq", "value": model_name},
+                {"field": "recordId", "operator": "eq", "value": str(record_id)},
+            ]
+            term = row.get("term")
+            field = row.get("field")
+            if term is not None:
+                delete_where.append({"field": "term", "operator": "eq", "value": term})
+            if field is not None:
+                delete_where.append({"field": "field", "operator": "eq", "value": field})
+            await db.delete(index_table, delete_where)
+
+
 async def index_data(
     schema: Any,
     db: Any,
@@ -52,10 +95,7 @@ async def index_data(
                 continue
 
             indexed_terms_for_record = 0
-            await db.delete(index_table, [
-                {"field": "model", "operator": "eq", "value": model_name},
-                {"field": "recordId", "operator": "eq", "value": str(record_id)},
-            ])
+            await _delete_existing_index_rows(db, index_table, model_name, record_id)
 
             for field in string_fields:
                 value = record.get(field)
