@@ -172,15 +172,35 @@ describe("ElasticsearchAdapter resilience and validation", () => {
       makeHitsResponse([{ _id: "00123" }, { _id: "9007199254740993" }]),
     );
 
-    const adapter = new ElasticsearchAdapter({
-      node: "http://localhost:9200",
-      engine: "elasticsearch",
-    });
+    try {
+      const adapter = new ElasticsearchAdapter({
+        node: "http://localhost:9200",
+        engine: "elasticsearch",
+      });
 
-    const results = await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
-    expect(results).toEqual(["00123", "9007199254740993"]);
+      const results = await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
+      expect(results).toEqual(["00123", "9007199254740993"]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 
-    fetchSpy.mockRestore();
+  it("preserves canonical safe integers as numbers in search results", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      makeHitsResponse([{ _id: "123" }, { _id: "0" }]),
+    );
+
+    try {
+      const adapter = new ElasticsearchAdapter({
+        node: "http://localhost:9200",
+        engine: "elasticsearch",
+      });
+
+      const results = await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
+      expect(results).toEqual([123, 0]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("requests filtered bulk error payloads for write operations", async () => {

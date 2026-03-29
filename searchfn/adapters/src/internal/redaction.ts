@@ -10,23 +10,27 @@ function redactSensitiveInternal(value: unknown, seen: WeakSet<object>): unknown
     return value;
   }
 
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitiveInternal(entry, seen));
-  }
-
   if (typeof value === "object") {
-    if (!isPlainObject(value)) {
-      return value;
-    }
     if (seen.has(value)) {
       return "[Circular]";
     }
     seen.add(value);
-    const output: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      output[key] = SECRET.test(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
+    try {
+      if (Array.isArray(value)) {
+        return value.map((entry) => redactSensitiveInternal(entry, seen));
+      }
+      const entries = Object.entries(value);
+      if (!isPlainObject(value) && entries.length === 0) {
+        return value;
+      }
+      const output: Record<string, unknown> = {};
+      for (const [key, entry] of entries) {
+        output[key] = SECRET.test(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
+      }
+      return output;
+    } finally {
+      seen.delete(value);
     }
-    return output;
   }
 
   if (typeof value === "string") {

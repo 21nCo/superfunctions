@@ -128,12 +128,28 @@ export class MemoryAdapter implements SearchAdapter {
       if (docMap.size === 0) {
         engine.postings.delete(key);
         const [, term] = key.split("::");
-        engine.vocabulary.delete(term);
-        engine.fuzzyCache.clear();
+        if (!this.hasRemainingVocabularyEntry(engine, term)) {
+          engine.vocabulary.delete(term);
+          engine.fuzzyCache.clear();
+        }
       }
     }
     engine.statsManager.removeDocument(docKey);
     engine.docIds.delete(docKey);
+  }
+
+  private hasRemainingVocabularyEntry(engine: ResourceEngine, term: string): boolean {
+    for (const [postingKey, docMap] of engine.postings.entries()) {
+      if (!postingKey.endsWith(`::${term}`) || docMap.size === 0) {
+        continue;
+      }
+      for (const posting of docMap.values()) {
+        if (posting.metadata?.["isPrefix"] !== true) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private upsertPosting(

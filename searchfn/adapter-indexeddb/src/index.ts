@@ -248,8 +248,31 @@ export class IndexedDbAdapter implements SearchAdapter {
   }
 
   private async persistVocabulary(engine: ResourceEngine): Promise<void> {
+    this.refreshVocabulary(engine);
     const encoded = new TextEncoder().encode(JSON.stringify(Array.from(engine.vocabulary)));
     await engine.storage.putCacheState("vocabulary", encoded.buffer);
+  }
+
+  private refreshVocabulary(engine: ResourceEngine): void {
+    const nextVocabulary = new Set<string>();
+    for (const fieldMap of engine.postings.values()) {
+      for (const [term, termMap] of fieldMap.entries()) {
+        for (const posting of termMap.values()) {
+          if (posting.metadata?.isPrefix !== true) {
+            nextVocabulary.add(term);
+            break;
+          }
+        }
+      }
+    }
+    const previousSize = engine.vocabulary.size;
+    engine.vocabulary.clear();
+    for (const term of nextVocabulary) {
+      engine.vocabulary.add(term);
+    }
+    if (engine.vocabulary.size !== previousSize || engine.fuzzyCache.size > 0) {
+      engine.fuzzyCache.clear();
+    }
   }
 
   private async loadTermFromDb(

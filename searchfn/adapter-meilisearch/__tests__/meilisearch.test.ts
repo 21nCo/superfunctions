@@ -181,21 +181,23 @@ describe("MeilisearchAdapter resilience", () => {
       );
     });
 
-    const adapter = new MeilisearchAdapter({ host: "http://localhost:7700" });
-    const results = await adapter.searchAll({
-      resources: ["docs", "notes"],
-      query: "incident",
-      limit: 10,
-    });
+    try {
+      const adapter = new MeilisearchAdapter({ host: "http://localhost:7700" });
+      const results = await adapter.searchAll({
+        resources: ["docs", "notes"],
+        query: "incident",
+        limit: 10,
+      });
 
-    expect(results.slice(0, 4)).toEqual([
-      { resource: "docs", id: "d1", score: 1 },
-      { resource: "notes", id: "n1", score: 1 },
-      { resource: "docs", id: "d2", score: 2 / 3 },
-      { resource: "docs", id: "d3", score: 1 / 3 },
-    ]);
-
-    fetchSpy.mockRestore();
+      expect(results.slice(0, 4)).toEqual([
+        { resource: "docs", id: "d1", score: 1 },
+        { resource: "notes", id: "n1", score: 1 },
+        { resource: "docs", id: "d2", score: 2 / 3 },
+        { resource: "docs", id: "d3", score: 1 / 3 },
+      ]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

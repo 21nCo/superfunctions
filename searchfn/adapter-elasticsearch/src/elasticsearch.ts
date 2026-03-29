@@ -40,6 +40,12 @@ function sanitizeResourceName(resource: string): string {
 }
 
 function coerceId(value: string): string | number {
+  if (/^(0|[1-9]\d*)$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && String(parsed) === value) {
+      return parsed;
+    }
+  }
   return value;
 }
 

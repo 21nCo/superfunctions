@@ -52,30 +52,55 @@ function isRetryableError(err: unknown): boolean {
   );
 }
 
-function mergeSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+function mergeSignals(
+  ...signals: Array<AbortSignal | undefined>
+): { signal?: AbortSignal; cleanup(): void } {
   const activeSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
   if (activeSignals.length === 0) {
-    return undefined;
+    return {
+      signal: undefined,
+      cleanup() {},
+    };
   }
   const controller = new AbortController();
-  const abort = () => controller.abort();
+  const listeners: Array<{ signal: AbortSignal; listener: () => void }> = [];
+  const cleanup = () => {
+    for (const { signal, listener } of listeners) {
+      signal.removeEventListener("abort", listener);
+    }
+    listeners.length = 0;
+  };
   for (const signal of activeSignals) {
     if (signal.aborted) {
       controller.abort();
-      break;
+      cleanup();
+      return { signal: controller.signal, cleanup };
     }
-    signal.addEventListener("abort", abort, { once: true });
+    const listener = () => {
+      cleanup();
+      controller.abort();
+    };
+    signal.addEventListener("abort", listener, { once: true });
+    listeners.push({ signal, listener });
   }
-  return controller.signal;
+  return { signal: controller.signal, cleanup };
 }
 
-function parseResponseBody<T>(text: string): T | string | undefined {
+function parseResponseBody<T>(
+  text: string,
+  options: { strictJson: boolean },
+): T | string | undefined {
   if (text.length === 0) {
     return undefined;
   }
   try {
     return JSON.parse(text) as T;
-  } catch {
+  } catch (error) {
+    if (options.strictJson) {
+      throw new Error("Elastic backend returned invalid JSON", {
+        cause: error,
+      });
+    }
     return text;
   }
 }
@@ -135,7 +160,7 @@ export class ElasticClient {
   private async execute<T>(opts: ElasticRequestOptions): Promise<ElasticResponse<T>> {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), this.requestTimeoutMs);
-    const mergedSignal = mergeSignals(timeoutController.signal, opts.signal);
+    const merged = mergeSignals(timeoutController.signal, opts.signal);
 
     const headers: Record<string, string> = { accept: "application/json" };
     if (this.options.auth) {
@@ -165,11 +190,13 @@ export class ElasticClient {
         method: opts.method,
         headers,
         body,
-        signal: mergedSignal,
+        signal: merged.signal,
       });
 
       const text = await response.text();
-      const parsed = parseResponseBody<T>(text);
+      const parsed = parseResponseBody<T>(text, {
+        strictJson: response.ok,
+      });
 
       return {
         status: response.status,
@@ -182,6 +209,7 @@ export class ElasticClient {
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      merged.cleanup();
     }
   }
 }
