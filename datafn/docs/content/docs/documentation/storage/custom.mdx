@@ -14,9 +14,36 @@ Implement the `DatafnStorageAdapter` interface:
 ```typescript
 import type { DatafnStorageAdapter, DatafnHydrationState, DatafnChangelogEntry } from "@datafn/client";
 
+const TABLE_MAP: Record<string, string> = {
+  todos: "todos",
+  projects: "projects",
+};
+
+const ALLOWED_COLUMNS: Record<string, string[]> = {
+  todos: ["id", "title", "completed"],
+  projects: ["id", "name"],
+};
+
+function resolveTable(resource: string): string {
+  const table = TABLE_MAP[resource];
+  if (!table) throw new Error(`Unknown resource: ${resource}`);
+  return table;
+}
+
+function resolveColumns(resource: string, columns: string[]): string {
+  const allowed = new Set(ALLOWED_COLUMNS[resource] ?? []);
+  if (!columns.every((column) => allowed.has(column))) {
+    throw new Error(`Unknown column requested for ${resource}`);
+  }
+  return columns.join(", ");
+}
+
 class CustomStorageAdapter implements DatafnStorageAdapter {
   // Records
-  async getRecord(resource: string, id: string): Promise<Record<string, unknown> | null> { /* ... */ }
+  async getRecord(resource: string, id: string): Promise<Record<string, unknown> | null> {
+    const table = resolveTable(resource);
+    return this.db.get(`SELECT * FROM ${table} WHERE id = ?`, [id]) ?? null;
+  }
   async listRecords(resource: string): Promise<Record<string, unknown>[]> { /* ... */ }
   async upsertRecord(resource: string, record: Record<string, unknown>): Promise<void> { /* ... */ }
   async deleteRecord(resource: string, id: string): Promise<void> { /* ... */ }
@@ -117,21 +144,25 @@ class SQLiteStorageAdapter implements DatafnStorageAdapter {
   constructor(private db: SQLiteDatabase) {}
 
   async getRecord(resource: string, id: string) {
-    return this.db.get(`SELECT * FROM ${resource} WHERE id = ?`, [id]) ?? null;
+    const table = resolveTable(resource);
+    return this.db.get(`SELECT * FROM ${table} WHERE id = ?`, [id]) ?? null;
   }
 
   async listRecords(resource: string) {
-    return this.db.all(`SELECT * FROM ${resource} ORDER BY id ASC`);
+    const table = resolveTable(resource);
+    return this.db.all(`SELECT * FROM ${table} ORDER BY id ASC`);
   }
 
   async upsertRecord(resource: string, record: Record<string, unknown>) {
+    const table = resolveTable(resource);
     const keys = Object.keys(record);
+    const columnList = resolveColumns(resource, keys);
     const values = Object.values(record);
     const placeholders = keys.map(() => "?").join(", ");
     const updates = keys.map((k) => `${k} = excluded.${k}`).join(", ");
 
     this.db.run(
-      `INSERT INTO ${resource} (${keys.join(", ")}) VALUES (${placeholders})
+      `INSERT INTO ${table} (${columnList}) VALUES (${placeholders})
        ON CONFLICT(id) DO UPDATE SET ${updates}`,
       values,
     );

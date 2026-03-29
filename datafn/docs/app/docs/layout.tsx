@@ -12,6 +12,7 @@ export default function Layout({ children }: { children: DocsLayoutProps["childr
       tree={pageTree}
       {...baseOptions()}
       sidebar={{
+        tabs: false,
         footer: (
           <a
             href="https://21n.co"

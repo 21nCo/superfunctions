@@ -119,8 +119,8 @@ On the server, queries are classified into one of three execution strategies:
 
 | Strategy | Description |
 |---|---|
-| **Full pushdown** | The entire query (filters, sort, limit) is pushed to the database adapter. Used when the query has no relation expansion or aggregation. |
-| **Partial pushdown** | Filters, sort, and pagination for the primary resource are pushed to the adapter. Related records are loaded on demand and projected in memory. Used when the query includes relation expansion tokens in `select`. |
-| **In-memory** | All records are loaded into memory, then filtered, sorted, paginated, and projected. Used for queries with aggregation, groupBy, or server-side search. |
+| **Full pushdown** | The adapter handles the primary-resource query path directly. This is used only for query shapes that stay within adapter-supported filters, sorting, and pagination. |
+| **Partial pushdown** | The primary resource can be fetched efficiently, but relation expansion or projection work still happens in memory after the adapter returns rows. |
+| **In-memory** | DataFn loads candidate rows and completes filtering, sorting, pagination, grouping, or projection in memory. This is required for aggregation, `groupBy`, server-side search, and query shapes the adapter cannot safely push down. |
 
 The classification is automatic and transparent. The server always selects the most efficient strategy for a given query shape.

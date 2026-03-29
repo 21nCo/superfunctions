@@ -37,7 +37,7 @@ if c == 1 then redis.call('expire', KEYS[1], ARGV[1]) end
 return c
 ```
 
-Falls back to non-atomic `INCR` + `SET` for clients that do not support `eval`.
+Falls back to non-atomic `INCR` + `EXPIRE` for clients that do not support `eval`.
 
 ### MemoryRateLimiter
 
