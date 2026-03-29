@@ -14,10 +14,15 @@ const DATABASE_URL =
   process.env.DATABASE_URL ||
   "postgres://postgres:postgres@localhost:5432/todo_app";
 
+const ssl =
+  DATABASE_URL.includes("ondigitalocean.com")
+    ? { rejectUnauthorized: true }
+    : false;
 
 // Initialize Postgres Pool
 export const pool = new Pool({
   connectionString: DATABASE_URL,
+  ssl,
 });
 
 // Initialize Drizzle

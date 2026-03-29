@@ -1,4 +1,4 @@
-import { createDatafnClient, IndexedDbStorageAdapter, ns } from "@datafn/client";
+import { createDatafnClient, IndexedDbStorageAdapter } from "@datafn/client";
 import type { DatafnPlugin } from "@datafn/core";
 import { IndexedDbAdapter } from "@searchfn/adapter-indexeddb";
 import { createSearchProvider } from "@searchfn/datafn-provider";
@@ -94,7 +94,7 @@ function makeSyncConfig(mode: AppMode) {
 // ---------------------------------------------------------------------------
 
 const clientId = getOrCreateClientId();
-const namespace = ns("user", clientId);
+const namespace = "multiclienttest";
 const SEARCH_RESOURCE_FIELDS: Record<string, string[]> = {
   todos: ["text"],
   categories: ["name"],

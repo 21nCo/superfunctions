@@ -1,5 +1,5 @@
 export const DEMO_SERVER_ORIGIN =
-  import.meta.env.VITE_DEMO_SERVER_ORIGIN ?? "http://localhost:3001";
+  import.meta.env.VITE_DEMO_SERVER_ORIGIN ?? "http://127.0.0.1:3001";
 
 export type DemoUserId = "user:alice" | "user:bob" | "user:charlie";
 export type DemoWorkspaceId = "acme" | "globex";
