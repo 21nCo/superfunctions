@@ -12,11 +12,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@superfunctions/http": "*",
-    "@searchfn/adapter-contracts": "file:../adapter-contracts",
-    "@searchfn/adapter-memory": "file:../adapter-memory"
+    "@superfunctions/http": "^0.1.2",
+    "@searchfn/adapter-contracts": "^0.1.0"
   },
   "devDependencies": {
+    "@searchfn/adapter-memory": "^0.1.0",
     "typescript": "^5.0.0",
     "tsup": "^8.0.0",
     "vitest": "^1.0.0"
