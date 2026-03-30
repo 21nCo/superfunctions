@@ -1,4 +1,5 @@
-const SENSITIVE_KEY = /apikey|password|secret|token|authorization|connection(?:string|[_-]string)/i;
+const SENSITIVE_KEY =
+  /(?:api[_-]?key|password|secret|token|authorization|connection(?:string|[_-]string)?)(?=$|[^a-z])/i;
 
 const KEY_VALUE_SECRET = /\b(api[_-]?key|password|secret|token|authorization|connection[_-]?string)\s*[:=]\s*([^\s,;]+)/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;

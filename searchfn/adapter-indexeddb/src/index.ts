@@ -256,11 +256,21 @@ export class IndexedDbAdapter implements SearchAdapter {
 
   private refreshVocabulary(engine: ResourceEngine): void {
     const nextVocabulary = new Set<string>();
+    let hasLegacyDocTerms = false;
     for (const terms of engine.docTerms.values()) {
       for (const entry of terms) {
+        if (entry.isPrefix === undefined) {
+          hasLegacyDocTerms = true;
+          continue;
+        }
         if (!entry.isPrefix) {
           nextVocabulary.add(entry.term);
         }
+      }
+    }
+    if (hasLegacyDocTerms) {
+      for (const term of engine.vocabulary) {
+        nextVocabulary.add(term);
       }
     }
     const previousSize = engine.vocabulary.size;

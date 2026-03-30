@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { MeilisearchAdapter } from "../src/index";
 import { SearchAdapterError } from "@searchfn/adapter-contracts";
+import { redactSensitive as redactMeiliSensitive } from "../src/internal/redaction";
 
 const MEILI_URL = process.env.SEARCHFN_MEILI_URL ?? "http://localhost:7700";
 const MEILI_API_KEY = process.env.SEARCHFN_MEILI_API_KEY;
@@ -125,6 +126,18 @@ describe("MeilisearchAdapter integration", () => {
 });
 
 describe("MeilisearchAdapter resilience", () => {
+  it("redacts plain connection keys without over-redacting connectionTimeout", () => {
+    expect(
+      redactMeiliSensitive({
+        connection: "http://user:pass@example.test",
+        connectionTimeout: 5000,
+      }),
+    ).toEqual({
+      connection: "[REDACTED]",
+      connectionTimeout: 5000,
+    });
+  });
+
   it("maps auth failures to FORBIDDEN", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       return new Response("{}", { status: 401, headers: { "content-type": "application/json" } });

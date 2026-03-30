@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { Pool } from "pg";
 import { PostgresAdapter } from "../src/index";
 import { SEARCH_ADAPTER_DISPOSED } from "@searchfn/adapter-contracts";
+import { redactSensitive as redactPostgresSensitive } from "../src/internal/redaction";
 
 const PG_URL =
   process.env.SEARCHFN_PG_URL ?? "postgres://searchfn:searchfn_test@localhost:5433/searchfn_test";
@@ -338,6 +339,20 @@ describe("PostgresAdapter integration", () => {
       const msg = (err as Error).message;
       expect(msg).not.toContain("invalid-host:9999");
     }
+  });
+});
+
+describe("PostgresAdapter redaction", () => {
+  it("redacts plain connection keys without over-redacting connectionTimeout", () => {
+    expect(
+      redactPostgresSensitive({
+        connection: "postgres://user:pass@example.test/db",
+        connectionTimeout: 5000,
+      }),
+    ).toEqual({
+      connection: "[REDACTED]",
+      connectionTimeout: 5000,
+    });
   });
 });
 

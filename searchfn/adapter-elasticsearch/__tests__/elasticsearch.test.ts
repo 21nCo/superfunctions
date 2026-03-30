@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { ElasticsearchAdapter } from "../src/index";
 import { SearchAdapterError } from "@searchfn/adapter-contracts";
+import { redactSensitive as redactElasticSensitive } from "../src/internal/redaction";
 
 const ES_URL = process.env.SEARCHFN_ES_URL ?? "http://localhost:9200";
 
@@ -123,6 +124,18 @@ describe("ElasticsearchAdapter integration", () => {
 });
 
 describe("ElasticsearchAdapter resilience and validation", () => {
+  it("redacts plain connection keys without over-redacting connectionTimeout", () => {
+    expect(
+      redactElasticSensitive({
+        connection: "http://user:pass@example.test",
+        connectionTimeout: 5000,
+      }),
+    ).toEqual({
+      connection: "[REDACTED]",
+      connectionTimeout: 5000,
+    });
+  });
+
   it("fails unsupported dialect with DFQL_UNSUPPORTED", () => {
     expect(
       () => new ElasticsearchAdapter({ node: "http://localhost:9200", engine: "invalid" as never }),
