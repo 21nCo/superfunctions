@@ -209,6 +209,49 @@ describe("IndexedDbAdapter — IDB-specific tests", () => {
     }
   });
 
+  it("removes stale legacy vocabulary entries after deleting the last legacy document", async () => {
+    const dbName = freshDbName();
+
+    const adapter1 = new IndexedDbAdapter({ dbName });
+    await adapter1.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "testing" } }],
+    });
+
+    const engine1 = (adapter1 as any).getOrCreateEngine("tasks");
+    await (adapter1 as any).ensureOpen(engine1);
+    const docTermsBuffer = await engine1.storage.getCacheState("doc-terms");
+    expect(docTermsBuffer).toBeTruthy();
+
+    const legacySnapshot = JSON.parse(
+      new TextDecoder().decode(docTermsBuffer),
+    ) as Record<string, Array<{ field: string; term: string; isPrefix?: boolean }>>;
+
+    for (const entries of Object.values(legacySnapshot)) {
+      for (const entry of entries) {
+        delete entry.isPrefix;
+      }
+    }
+
+    await engine1.storage.putCacheState(
+      "doc-terms",
+      new TextEncoder().encode(JSON.stringify(legacySnapshot)).buffer,
+    );
+    await adapter1.dispose();
+
+    const adapter2 = new IndexedDbAdapter({ dbName });
+    try {
+      await adapter2.remove({ resource: "tasks", ids: ["1"] });
+
+      const engine2 = (adapter2 as any).getOrCreateEngine("tasks");
+      await (adapter2 as any).ensureOpen(engine2);
+
+      expect(Array.from(engine2.vocabulary)).not.toContain("testing");
+    } finally {
+      await adapter2.dispose();
+    }
+  });
+
   it("supports fieldBoosts for ranking", async () => {
     const dbName = freshDbName();
     const adapter = new IndexedDbAdapter({ dbName });
