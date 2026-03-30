@@ -100,34 +100,46 @@ private final class DatafnNativeSearchLifecycleCoordinator: @unchecked Sendable 
 
             var upserts: [DatafnSearchDocument] = []
             var deletions: [DatafnSearchDocument] = []
-            for id in ids {
-                if let record = try? store.getRecord(resource: resource, id: id),
-                   let document = makeSearchDocument(record: record, fields: searchFields)
-                {
-                    upserts.append(document)
-                } else {
-                    deletions.append(DatafnSearchDocument(id: id, fields: [:]))
+            do {
+                for id in ids {
+                    let record = try store.getRecord(resource: resource, id: id)
+                    if let record {
+                        if let document = makeSearchDocument(record: record, fields: searchFields) {
+                            upserts.append(document)
+                        } else {
+                            deletions.append(DatafnSearchDocument(id: id, fields: [:]))
+                        }
+                    } else {
+                        deletions.append(DatafnSearchDocument(id: id, fields: [:]))
+                    }
                 }
-            }
 
-            if !upserts.isEmpty {
-                try? await searchBackend.applyUpdate(
-                    DatafnSearchUpdateRequest(
-                        resource: resource,
-                        operation: .upsert,
-                        documents: upserts
+                if !upserts.isEmpty {
+                    try await searchBackend.applyUpdate(
+                        DatafnSearchUpdateRequest(
+                            resource: resource,
+                            operation: .upsert,
+                            documents: upserts
+                        )
                     )
-                )
-            }
+                }
 
-            if !deletions.isEmpty {
-                try? await searchBackend.applyUpdate(
-                    DatafnSearchUpdateRequest(
-                        resource: resource,
-                        operation: .delete,
-                        documents: deletions
+                if !deletions.isEmpty {
+                    try await searchBackend.applyUpdate(
+                        DatafnSearchUpdateRequest(
+                            resource: resource,
+                            operation: .delete,
+                            documents: deletions
+                        )
                     )
-                )
+                }
+            } catch {
+                store.publishHealthChanged([
+                    "code": .string("SEARCH_INDEX_UPDATE_FAILED"),
+                    "message": .string(String(describing: error)),
+                    "resource": .string(resource),
+                    "path": .string("search.index"),
+                ])
             }
         }
     }
@@ -264,52 +276,19 @@ public actor DatafnAppleRuntime {
     private var started = false
 
     public init(configuration: DatafnAppleRuntimeConfiguration) async throws {
-        let bootstrap = try await Self.bootstrap(
-            configuration: configuration,
-            cloudKitHealthMonitor: nil
-        )
-        self.configuration = bootstrap.configuration
-        self.schema = bootstrap.schema
-        self.storeLocation = bootstrap.storeLocation
-        self.managedObjectModel = bootstrap.managedObjectModel
-        self.store = bootstrap.store
-        self.searchBackend = bootstrap.searchBackend
-        self.searchBackendKind = bootstrap.searchBackendKind
-        self.searchResources = bootstrap.searchResources
-        self.searchRootURL = bootstrap.searchRootURL
-        self.searchConfigDigest = bootstrap.searchConfigDigest
-        self.searchStatus = bootstrap.searchStatus
-        self.searchStatusTransitions = bootstrap.searchStatusTransitions
-        self.searchLifecycleCoordinator = bootstrap.searchBackend.flatMap {
-            let coordinator = DatafnNativeSearchLifecycleCoordinator(
-                store: bootstrap.store,
-                searchBackend: $0,
-                searchFieldsByResource: Dictionary(
-                    uniqueKeysWithValues: bootstrap.searchResources.map { ($0.name, $0.searchFields) }
-                )
-            )
-            return coordinator
-        }
-        if let searchLifecycleCoordinator {
-            self.searchObserverToken = bootstrap.store.subscribe { [weak searchLifecycleCoordinator] event in
-                searchLifecycleCoordinator?.handle(event)
-            }
-        } else {
-            self.searchObserverToken = nil
-        }
-        self.serverRemoteExecutor = bootstrap.serverRemoteExecutor
-        self.serverSyncEngine = bootstrap.serverSyncEngine
-        self.cloudKitSyncEngine = bootstrap.cloudKitSyncEngine
+        let bootstrap = try await Self.bootstrap(configuration: configuration, cloudKitHealthMonitor: nil)
+        self.init(bootstrap: bootstrap)
     }
 
     init(
         configuration: DatafnAppleRuntimeConfiguration,
         cloudKitHealthMonitor: DatafnCloudKitHealthMonitor?
     ) async throws {
-        let bootstrap = try await Self.bootstrap(
-            configuration: configuration,
-            cloudKitHealthMonitor: cloudKitHealthMonitor
-        )
+        let bootstrap = try await Self.bootstrap(configuration: configuration, cloudKitHealthMonitor: cloudKitHealthMonitor)
+        self.init(bootstrap: bootstrap)
+    }
+
+    private init(bootstrap: DatafnAppleRuntimeBootstrap) {
         self.configuration = bootstrap.configuration
         self.schema = bootstrap.schema
         self.storeLocation = bootstrap.storeLocation
@@ -345,6 +324,7 @@ public actor DatafnAppleRuntime {
     }
 
     public func start() async throws {
+        guard !started else { return }
         if let serverSyncEngine {
             try await serverSyncEngine.start()
         }
@@ -355,6 +335,7 @@ public actor DatafnAppleRuntime {
     }
 
     public func stop() async {
+        guard started else { return }
         if let serverSyncEngine {
             await serverSyncEngine.stop()
         }
@@ -631,7 +612,9 @@ extension DatafnAppleRuntime {
                 }
                 return DatafnCoreDataStoreCloudKitConfiguration(
                     containerIdentifier: cloudKit.containerIdentifier,
-                    databaseScope: .privateDatabase
+                    databaseScope: DatafnCoreDataStoreCloudKitDatabaseScope(
+                        rawValue: cloudKit.databaseScope.rawValue
+                    ) ?? .privateDatabase
                 )
             }()
         )

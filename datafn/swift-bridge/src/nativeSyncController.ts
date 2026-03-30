@@ -3,8 +3,8 @@ import type {
   DatafnNativeHandshakeRequest,
   DatafnNativeHandshakeResult,
   DatafnNativeSyncController,
-} from "../../client/src/client.js";
-import type { DatafnEnvelope } from "../../core/src/errors.js";
+} from "@datafn/client";
+import type { DatafnEnvelope } from "@datafn/core";
 import {
   DATAFN_BRIDGE_PROTOCOL,
   createBridgeError,

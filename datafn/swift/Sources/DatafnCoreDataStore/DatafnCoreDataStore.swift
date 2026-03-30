@@ -943,7 +943,7 @@ public final class DatafnCoreDataStore: @unchecked Sendable {
     }
 
     public func setSearchMetadata(_ metadata: DatafnSearchMetadataSnapshot) throws {
-        _ = try performMutatingOperation { context in
+        let event = try performMutatingOperation { context in
             let object = try self.fetchNamespaceMetadata(in: context)
             object.setValue(metadata.backendKind, forKey: "searchBackendKind")
             object.setValue(metadata.schemaHash, forKey: "searchSchemaHash")
@@ -956,6 +956,7 @@ public final class DatafnCoreDataStore: @unchecked Sendable {
                 ]
             )
         }
+        emit(event)
     }
 
     private func bootstrapStore() throws {

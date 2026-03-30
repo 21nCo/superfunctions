@@ -107,7 +107,7 @@ public final class DatafnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
         Task { [weak self] in
             guard let self else { return }
             let response = await self.dispatcher.dispatch(rawMessage: message.body)
-            self.deliver(response, preferredWebView: message.webView)
+            await self.deliver(response, preferredWebView: message.webView)
         }
     }
 
@@ -121,6 +121,7 @@ public final class DatafnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
         deliveryLock.unlock()
     }
 
+    @MainActor
     private func deliver(_ response: DatafnBridgeResponseEnvelope, preferredWebView: WKWebView? = nil) {
         do {
             let outbound = try Self.foundationObject(from: response)

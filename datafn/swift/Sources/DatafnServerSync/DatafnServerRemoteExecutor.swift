@@ -178,16 +178,6 @@ public final class DatafnServerRemoteExecutor: @unchecked Sendable {
 
         do {
             let (data, response) = try await httpSender(request)
-            let jsonValue = try Self.decodeJSON(data)
-
-            if (200 ..< 300).contains(response.statusCode) {
-                return jsonValue
-            }
-
-            if let object = jsonValue.objectValue {
-                return .object(object)
-            }
-
             switch response.statusCode {
             case 403:
                 return .object(Self.errorEnvelope(
@@ -202,8 +192,19 @@ public final class DatafnServerRemoteExecutor: @unchecked Sendable {
                     path: "sync.native.remoteProfile"
                 ))
             default:
-                throw Self.transportError(for: method)
+                break
             }
+
+            let jsonValue = try Self.decodeJSON(data)
+
+            if (200 ..< 300).contains(response.statusCode) {
+                return jsonValue
+            }
+
+            if let object = jsonValue.objectValue {
+                return .object(object)
+            }
+            throw Self.transportError(for: method)
         } catch let error as DatafnBridgeError {
             throw error
         } catch {

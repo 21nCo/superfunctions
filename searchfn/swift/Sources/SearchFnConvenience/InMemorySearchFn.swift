@@ -3,7 +3,7 @@ import SearchFnAdapterContracts
 import SearchFnClient
 import SearchFnMemoryAdapter
 
-public final class InMemorySearchFn: @unchecked Sendable {
+public final class InMemorySearchFn: Sendable {
     private let clientInstance: any SearchFnClientProtocol
 
     public init(

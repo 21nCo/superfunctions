@@ -172,7 +172,7 @@ struct DatafnExampleEmbeddedTopology: Codable, Equatable {
     let webAppURL: String?
 }
 
-struct DatafnExampleRuntimePlan: Equatable {
+struct DatafnExampleRuntimePlan: Codable, Equatable {
     let remoteMode: String
     let schemaHash: String
     let namespace: String
@@ -241,9 +241,11 @@ enum DatafnExampleBridgeBootstrapScript {
 
         let payload = topology.makeEmbeddedTopology(options: options)
         let payloadJSON = String(decoding: try encoder.encode(payload), as: UTF8.self)
-        let nativePayload = topology.makeRuntimePlan(options: options) == nil
-            ? "undefined"
-            : payloadJSON
+        let nativePayload = if let plan = topology.makeRuntimePlan(options: options) {
+            String(decoding: try encoder.encode(plan), as: UTF8.self)
+        } else {
+            "undefined"
+        }
 
         return """
         window.__DATAFN_EXAMPLE_TOPOLOGY__ = \(payloadJSON);

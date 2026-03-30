@@ -139,6 +139,21 @@ export function buildPrincipalUnshareMutation(
   return payload;
 }
 
+async function schedulePushFailSoft(
+  schedulePush: MutationPushScheduler | undefined,
+): Promise<void> {
+  if (!schedulePush) return;
+
+  try {
+    await schedulePush();
+  } catch (error) {
+    console.warn("Mutation push scheduling failed (non-fatal)", {
+      operation: "mutation-push-schedule",
+      error: String(error),
+    });
+  }
+}
+
 /**
  * Generate a unique mutation ID
  */
@@ -417,10 +432,8 @@ export async function executeMutation(
                   { ok: true, mutationId: debouncedMutation.mutationId },
                 );
 
-                // Schedule push if native or JavaScript sync ownership is available.
-                if (schedulePush) {
-                  await schedulePush();
-                }
+                // Scheduling push is best-effort once the durable local write succeeded.
+                await schedulePushFailSoft(schedulePush);
               } catch (err) {
                 // If changelog append fails, emit rejection event
                 const errorContext = {
@@ -486,7 +499,7 @@ export async function executeMutation(
   // Local-first path (SYNC-MUT-001)
   // Only use local-first when hydration is ready to avoid data integrity issues
   // (e.g., editing a record that exists on remote but not yet synced locally)
-  if (offlinability && storage && schedulePush) {
+  if (offlinability && storage) {
     const mutations = Array.isArray(capabilitySanitizedMutation)
       ? capabilitySanitizedMutation
       : [capabilitySanitizedMutation];
@@ -538,8 +551,8 @@ export async function executeMutation(
         emitMutationEvents(eventBus, getTimestamp, mut, result);
       }
 
-      // Schedule push through the active sync owner.
-      await schedulePush();
+      // Scheduling push is best-effort once the durable local write succeeded.
+      await schedulePushFailSoft(schedulePush);
 
       return Array.isArray(m) ? results : results[0];
     }

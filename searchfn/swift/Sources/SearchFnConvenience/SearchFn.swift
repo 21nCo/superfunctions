@@ -3,7 +3,7 @@ import SearchFnAdapterContracts
 import SearchFnClient
 import SearchFnSQLiteAdapter
 
-public final class SearchFn: @unchecked Sendable {
+public final class SearchFn: Sendable {
     private let clientInstance: any SearchFnClientProtocol
 
     public init(sqlite configuration: SearchFnSQLiteAdapterConfiguration) throws {

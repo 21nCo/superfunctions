@@ -15,9 +15,17 @@ final class DatafnExampleHostSession: ObservableObject {
     @Published private(set) var webViewReloadToken = UUID()
 
     private var runtime: DatafnAppleRuntime?
+    private var activationTask: Task<Void, Never>?
 
     var activeWebAppURL: URL? {
         sanitizedURL(from: embeddedAppURLString)
+    }
+
+    func requestActivation(topology: DatafnExampleTopology) {
+        activationTask?.cancel()
+        activationTask = Task { [weak self] in
+            await self?.activate(topology: topology)
+        }
     }
 
     func activate(topology: DatafnExampleTopology) async {
@@ -42,6 +50,7 @@ final class DatafnExampleHostSession: ObservableObject {
             webViewReloadToken = UUID()
             return
         }
+        guard !Task.isCancelled else { return }
 
         guard let configuration = DatafnExampleRuntimeFactory.makeConfiguration(
             topology: topology,
@@ -55,7 +64,15 @@ final class DatafnExampleHostSession: ObservableObject {
         do {
             let runtime = try await DatafnAppleRuntime(configuration: configuration)
             try await runtime.start()
+            guard !Task.isCancelled else {
+                await runtime.stop()
+                return
+            }
             let bridgeHost = await runtime.makeBridgeHost(handlerName: "datafn")
+            guard !Task.isCancelled else {
+                await runtime.stop()
+                return
+            }
             self.runtime = runtime
             self.bridgeHost = bridgeHost
             statusMessage = "\(topology.displayName) is active. Swift owns storage and sync."
@@ -121,9 +138,7 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: session.topology) { newValue in
-                    Task {
-                        await session.activate(topology: newValue)
-                    }
+                    session.requestActivation(topology: newValue)
                 }
 
                 Group {
@@ -149,9 +164,7 @@ struct ContentView: View {
                 .textFieldStyle(.roundedBorder)
 
                 Button("Reload Embedded App") {
-                    Task {
-                        await session.activate(topology: session.topology)
-                    }
+                    session.requestActivation(topology: session.topology)
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -185,7 +198,7 @@ struct ContentView: View {
             }
             .padding()
             .task {
-                await session.activate(topology: session.topology)
+                session.requestActivation(topology: session.topology)
             }
         }
     }

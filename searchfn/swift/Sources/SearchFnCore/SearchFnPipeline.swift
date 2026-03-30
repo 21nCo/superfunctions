@@ -100,7 +100,7 @@ public struct SearchFnPipelineEngine: Sendable {
         var tokens: [SearchFnToken] = []
         var currentValue = ""
         var currentStart: Int?
-        var previousLocation: Int?
+        var previousEnd: Int?
 
         func flushToken() {
             guard let start = currentStart, !currentValue.isEmpty else { return }
@@ -114,7 +114,7 @@ public struct SearchFnPipelineEngine: Sendable {
             )
             currentValue = ""
             currentStart = nil
-            previousLocation = nil
+            previousEnd = nil
         }
 
         for match in matches {
@@ -125,7 +125,7 @@ public struct SearchFnPipelineEngine: Sendable {
             let tokenPart = String(text[stringRange])
             let location = match.range.location
 
-            if let previousLocation, location != previousLocation + 1 {
+            if let previousEnd, location != previousEnd + 1 {
                 flushToken()
             }
 
@@ -134,7 +134,7 @@ public struct SearchFnPipelineEngine: Sendable {
             }
 
             currentValue.append(tokenPart)
-            previousLocation = location
+            previousEnd = match.range.location + match.range.length - 1
         }
 
         flushToken()

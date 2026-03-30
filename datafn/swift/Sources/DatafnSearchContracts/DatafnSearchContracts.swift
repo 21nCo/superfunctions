@@ -143,6 +143,15 @@ public struct DatafnSearchInitializeRequest: Sendable, Equatable, Codable {
                 throw DatafnSearchError.invalid("resource name is required", path: "resources[\(index)].name")
             }
 
+            let normalizedKey = name.lowercased()
+            if seen.contains(normalizedKey) {
+                throw DatafnSearchError.invalid(
+                    "Duplicate search resource definitions are not allowed",
+                    path: "resources"
+                )
+            }
+            seen.insert(normalizedKey)
+
             let fields = resource.searchFields
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -152,14 +161,6 @@ public struct DatafnSearchInitializeRequest: Sendable, Equatable, Codable {
             }
 
             let dedupedFields = Array(NSOrderedSet(array: fields)) as? [String] ?? fields
-            let normalizedKey = name.lowercased()
-            if seen.contains(normalizedKey) {
-                throw DatafnSearchError.invalid(
-                    "Duplicate search resource definitions are not allowed",
-                    path: "resources"
-                )
-            }
-            seen.insert(normalizedKey)
             normalizedResources.append(
                 DatafnSearchResourceConfiguration(
                     name: name,

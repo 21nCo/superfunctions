@@ -58,9 +58,10 @@ struct DatafnChangelogStore {
         limit: Int,
         in context: NSManagedObjectContext
     ) throws -> [DatafnChangelogEntry] {
+        guard limit > 0 else { return [] }
         let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
         request.sortDescriptors = [NSSortDescriptor(key: "sequence", ascending: true)]
-        request.fetchLimit = max(1, limit)
+        request.fetchLimit = limit
         return try context.fetch(request).map(decodeEntry)
     }
 
@@ -77,13 +78,28 @@ struct DatafnChangelogStore {
         guard let mutationData = object.value(forKey: "mutationData") as? Data else {
             throw DatafnCoreDataStoreError.recordDecodingFailed
         }
+        guard
+            let clientId = object.value(forKey: "clientID") as? String,
+            !clientId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw DatafnCoreDataStoreError.recordDecodingFailed
+        }
+        guard
+            let mutationId = object.value(forKey: "mutationID") as? String,
+            !mutationId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw DatafnCoreDataStoreError.recordDecodingFailed
+        }
+        guard let timestampMs = object.value(forKey: "timestampMS") as? Int64 else {
+            throw DatafnCoreDataStoreError.recordDecodingFailed
+        }
 
         return DatafnChangelogEntry(
             seq: object.value(forKey: "sequence") as? Int64 ?? 0,
-            clientId: object.value(forKey: "clientID") as? String ?? "",
-            mutationId: object.value(forKey: "mutationID") as? String ?? "",
+            clientId: clientId,
+            mutationId: mutationId,
             mutation: try decodeJSONObject(from: mutationData),
-            timestampMs: object.value(forKey: "timestampMS") as? Int64 ?? 0,
+            timestampMs: timestampMs,
             actorId: object.value(forKey: "actorID") as? String,
             timestamp: object.value(forKey: "timestampISO8601") as? String
         )

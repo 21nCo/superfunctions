@@ -27,15 +27,16 @@ public final class DatafnObservedQuery<Value: Sendable> {
     public private(set) var lastError: DatafnObservedError?
 
     @ObservationIgnored private let source: DatafnRuntimeObservationSource
-    @ObservationIgnored private let loader: @Sendable (DatafnRuntimeObservationSource) throws -> Value
+    @ObservationIgnored private let loader: @Sendable (DatafnRuntimeObservationSource) async throws -> Value
     @ObservationIgnored private let shouldRefresh: @Sendable (DatafnStoreEvent) -> Bool
     @ObservationIgnored private var observerToken: UUID?
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
     public init(
         initialValue: Value,
         source: DatafnRuntimeObservationSource,
         refreshOn: @escaping @Sendable (DatafnStoreEvent) -> Bool = { _ in true },
-        loader: @escaping @Sendable (DatafnRuntimeObservationSource) throws -> Value
+        loader: @escaping @Sendable (DatafnRuntimeObservationSource) async throws -> Value
     ) {
         self.value = initialValue
         self.isLoading = false
@@ -55,20 +56,24 @@ public final class DatafnObservedQuery<Value: Sendable> {
     }
 
     deinit {
+        refreshTask?.cancel()
         if let observerToken {
             source.unsubscribe(observerToken)
         }
     }
 
     public func refresh() {
+        refreshTask?.cancel()
         isLoading = true
-        defer { isLoading = false }
-
-        do {
-            value = try loader(source)
-            lastError = nil
-        } catch {
-            lastError = Self.normalize(error)
+        let source = self.source
+        let loader = self.loader
+        refreshTask = Task.detached { [weak self] in
+            do {
+                let loadedValue = try await loader(source)
+                await self?.applyLoadedValue(loadedValue)
+            } catch {
+                await self?.applyLoadError(error)
+            }
         }
     }
 
@@ -113,6 +118,17 @@ public final class DatafnObservedQuery<Value: Sendable> {
             message: String(describing: error),
             details: ["path": "DatafnObservedQuery"]
         )
+    }
+
+    private func applyLoadedValue(_ loadedValue: Value) {
+        value = loadedValue
+        lastError = nil
+        isLoading = false
+    }
+
+    private func applyLoadError(_ error: Error) {
+        lastError = Self.normalize(error)
+        isLoading = false
     }
 }
 

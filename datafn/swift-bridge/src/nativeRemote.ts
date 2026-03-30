@@ -1,4 +1,4 @@
-import type { DatafnRemoteAdapter } from "../../client/src/client.js";
+import type { DatafnRemoteAdapter } from "@datafn/client";
 import {
   requestBridgeMethod,
   type DatafnBridgeBus,

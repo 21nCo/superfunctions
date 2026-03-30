@@ -7,6 +7,7 @@ Official bridge package for running `@datafn/client` inside `WKWebView` while a 
 - `createWKWebViewBridgeBus(...)`
 - `createNativeBackedStorageAdapter(...)`
 - `createNativeBackedRemoteAdapter(...)`
+- `createNativeBackedSearchProvider(...)`
 - `createNativeSyncController(...)`
 - `DATAFN_BRIDGE_PROTOCOL`
 

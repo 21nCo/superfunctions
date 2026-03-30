@@ -135,6 +135,26 @@ export async function executeQuery<T = unknown>(
 
   // For batch queries, always use remote execution.
   if (Array.isArray(normalizedQuery)) {
+    if (nativeRemoteMode === "icloud" && schema) {
+      const remoteOnlyResource = normalizedQuery
+        .map((entry) => entry.resource as string | undefined)
+        .find((name) =>
+          name &&
+          schema.resources.some(
+            (resourceDef) =>
+              resourceDef.name === name && resourceDef.isRemoteOnly,
+          ),
+        );
+
+      if (remoteOnlyResource) {
+        throw createClientError(
+          "DFQL_UNSUPPORTED",
+          "Remote-only resource is unsupported in icloud mode",
+          { path: "query.resource", resource: remoteOnlyResource },
+        );
+      }
+    }
+
     const response = await remote.query(normalizedQuery);
     let result = unwrapRemoteSuccess<T | T[]>(response);
 

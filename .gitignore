@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+**/node_modules
 .pnp
 .pnp.js
 
@@ -7,6 +8,15 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+
+# TypeScript compiled outputs in src/tests
+**/*.js
+**/*.d.ts
+**/*.d.ts.map
+# But allow config files
+!*.config.js
+!**/vitest.config.js
+!**/tsup.config.js
 
 # Logs
 logs
@@ -22,9 +32,16 @@ lerna-debug.log*
 .env.*
 !.env.example
 
+# Security
+*.pem
+*.p12
+*.key
+*-key.pem
+
 # Testing
 coverage/
 .nyc_output
+test-results/
 
 # Editors
 .vscode/
@@ -40,12 +57,37 @@ coverage/
 # Misc
 *.tgz
 .cache/
+*.bundled_*.mjs
 
 
 _conduct/.meta
 
-21n
 .agent
+.venv
+
+__pycache__
+venv
+
+
+# AI tool configs
+.claude/
+.entire/
+.cursor/
+.gemini/
+
+# Python build artifacts
+*.egg-info/
+
+# Sub-package lock files (keep root only)
+**/package-lock.json
+!/package-lock.json
+.vercel
+
+.next/
+.source/
+.svelte-kit/
+**/*.js.map
+.docsfn/
 
 # Apple / Xcode user artifacts
 DerivedData/

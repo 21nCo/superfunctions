@@ -150,7 +150,7 @@ public final class SearchFnResourceEngine {
             documentLengths: documentLengths,
             averageDocumentLength: averageLength
         )
-        let limit = max(1, request.limit ?? 10)
+        let limit = max(0, request.limit ?? 10)
         return Array(scored.prefix(limit))
     }
 
@@ -192,11 +192,11 @@ public final class SearchFnResourceEngine {
                     metadata: termMetadata[term] ?? nil
                 )
                 allPostingKeys.insert(key)
+            }
 
-                if termMetadata[term]??.isPrefix != true {
-                    vocabularyCounts[term, default: 0] += 1
-                    allVocabularyTerms.insert(term)
-                }
+            for term in Set(termFrequencies.keys).sorted() where termMetadata[term]??.isPrefix != true {
+                vocabularyCounts[term, default: 0] += 1
+                allVocabularyTerms.insert(term)
             }
         }
 

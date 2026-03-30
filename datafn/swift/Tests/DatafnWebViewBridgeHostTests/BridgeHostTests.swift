@@ -40,8 +40,12 @@ struct BridgeHostTests {
             remoteMode: "datafn-server",
             remoteProfile: "default"
         )
-        var outbound: [Any] = []
-        host.setTestingSink { outbound.append($0) }
+        let outbound = LockedBox<[Any]>([])
+        host.setTestingSink { event in
+            outbound.withValue { storage in
+                storage.append(event)
+            }
+        }
 
         let response = await host.handleMessageForTesting([
             "protocol": DATAFN_BRIDGE_PROTOCOL,
@@ -66,7 +70,7 @@ struct BridgeHostTests {
         #expect(result["remoteMode"] == "datafn-server")
         #expect(result["indexedDbDisabled"] == true)
         #expect(result["capabilities"] == ["storage", "remote", "sync", "events", "health"])
-        #expect(extractEventNames(from: outbound) == ["bridge.ready"])
+        #expect(extractEventNames(from: outbound.get()) == ["bridge.ready"])
     }
 
     @Test("TV-BRG-002: Unsupported bridge method is rejected")
@@ -157,8 +161,12 @@ struct BridgeHostTests {
             remoteMode: "datafn-server",
             remoteHandlers: remoteHandlers
         )
-        var outbound: [Any] = []
-        host.setTestingSink { outbound.append($0) }
+        let outbound = LockedBox<[Any]>([])
+        host.setTestingSink { event in
+            outbound.withValue { storage in
+                storage.append(event)
+            }
+        }
 
         let remoteResponse = await host.handleMessageForTesting([
             "protocol": DATAFN_BRIDGE_PROTOCOL,
@@ -177,16 +185,20 @@ struct BridgeHostTests {
         #expect(remoteResponse.ok)
         #expect(remoteResponse.result == ["source": "native-remote-adapter"])
         #expect(syncResponse.ok)
-        #expect(extractEventNames(from: outbound).contains("sync.status"))
+        #expect(extractEventNames(from: outbound.get()).contains("sync.status"))
     }
 
     @Test("TV-EVT-001: Native storage changes propagate to JS and Swift-side observers")
     func nativeStorageChangesPropagateToJSAndSwiftSideObservers() async throws {
         let store = try makeStore(namespace: "org-1:user-4")
         let host = makeHost(store: store)
-        var outbound: [Any] = []
+        let outbound = LockedBox<[Any]>([])
         let swiftObserverInvalidated = LockedBox(false)
-        host.setTestingSink { outbound.append($0) }
+        host.setTestingSink { event in
+            outbound.withValue { storage in
+                storage.append(event)
+            }
+        }
         let token = store.subscribe { event in
             if event.name == DatafnCoreDataStore.storageChangedEvent {
                 swiftObserverInvalidated.set(true)
@@ -209,7 +221,7 @@ struct BridgeHostTests {
 
         #expect(response.ok)
         #expect(swiftObserverInvalidated.get())
-        let storageChanged = try #require(extractEvent(named: "storage.changed", from: outbound))
+        let storageChanged = try #require(extractEvent(named: "storage.changed", from: outbound.get()))
         #expect(storageChanged["resource"] == "tasks")
         #expect(storageChanged["ids"] == ["task:1"])
     }

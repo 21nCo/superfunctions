@@ -1,5 +1,4 @@
-import type { SearchProvider } from "../../core/src/search-provider.js";
-import type { DatafnError } from "../../core/src/errors.js";
+import type { DatafnError, SearchProvider } from "@datafn/core";
 import {
   requestBridgeMethod,
   type DatafnBridgeBus,
@@ -102,7 +101,7 @@ function normalizeResourceConfig(
   assertNonEmptyString(resource.name, `resources[${index}].name`, "resource name is required");
   assertOptionalStringArray(resource.searchFields, `resources[${index}].searchFields`);
 
-  const searchFields = resource.searchFields
+  const searchFields = (resource.searchFields ?? [])
     .map((field) => field.trim())
     .filter((field, fieldIndex, fields) => field.length > 0 && fields.indexOf(field) === fieldIndex);
 

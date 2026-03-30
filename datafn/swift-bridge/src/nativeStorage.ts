@@ -2,7 +2,7 @@ import type {
   DatafnChangelogEntry,
   DatafnHydrationState,
   DatafnStorageAdapter,
-} from "../../client/src/storage.js";
+} from "@datafn/client";
 import {
   requestBridgeMethod,
   type DatafnBridgeBus,

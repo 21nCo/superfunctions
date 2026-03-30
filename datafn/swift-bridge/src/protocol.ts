@@ -1,7 +1,7 @@
 import type {
   DatafnBridgeEventEnvelope as DatafnBridgeEventPayload,
-} from "../../client/src/client.js";
-import type { DatafnError, DatafnErrorCode } from "../../core/src/errors.js";
+} from "@datafn/client";
+import type { DatafnError, DatafnErrorCode } from "@datafn/core";
 
 export const DATAFN_BRIDGE_PROTOCOL = "datafn-bridge/v1" as const;
 

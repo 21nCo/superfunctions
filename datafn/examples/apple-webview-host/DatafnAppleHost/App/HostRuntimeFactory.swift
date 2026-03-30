@@ -1,4 +1,5 @@
 import DatafnAppleRuntime
+import DatafnSearchContracts
 import Foundation
 
 enum DatafnExampleRuntimeFactory {

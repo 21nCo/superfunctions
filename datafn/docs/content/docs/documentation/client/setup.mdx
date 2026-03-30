@@ -108,6 +108,8 @@ In native-backed mode:
 
 When `remoteMode` is `"icloud"`, CloudKit syncs the Core Data records only. The SearchFn index stays derived local state under the native support directory and is rebuilt or updated locally on each device.
 
+Also note that `remoteMode: "icloud"` is incompatible with `isRemoteOnly: true` resources. In CloudKit mode, the native-backed client rejects remote-only resources because CloudKit syncs the local Core Data store rather than a server-only dataset.
+
 ## Configuration Reference
 
 ### Top-Level Options

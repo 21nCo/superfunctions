@@ -188,7 +188,19 @@ extension DatafnRuntimeSchema {
                 throw DatafnRuntimeSchemaError.invalidResourceName
             }
 
-            if !names.insert(trimmedName).inserted {
+            let normalizedName = trimmedName
+                .unicodeScalars
+                .map { scalar -> Character in
+                    if CharacterSet.alphanumerics.contains(scalar) {
+                        return Character(String(scalar).lowercased())
+                    }
+                    return "_"
+                }
+            let dedupedName = String(normalizedName)
+                .replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+
+            if !names.insert(dedupedName).inserted {
                 throw DatafnRuntimeSchemaError.duplicateResource(trimmedName)
             }
         }
@@ -297,6 +309,7 @@ public struct CoreDataModelBuilder {
                 defaultValue: options.cloudKitCompatible ? Data() : nil
             ),
         ]
+        addIndexes(to: entity, propertyNames: ["id"])
         if !options.cloudKitCompatible {
             entity.uniquenessConstraints = [["id"]]
         }
@@ -326,6 +339,7 @@ public struct CoreDataModelBuilder {
                 ),
                 makeBinaryAttribute(name: "relationData", optional: true),
             ]
+            addIndexes(to: entity, propertyNames: ["fromID", "toID"])
             if !options.cloudKitCompatible {
                 entity.uniquenessConstraints = [["fromID", "toID"]]
             }
@@ -356,6 +370,7 @@ public struct CoreDataModelBuilder {
             ),
             makeBinaryAttribute(name: "valueData", optional: true),
         ]
+        addIndexes(to: entity, propertyNames: ["key"])
         if !options.cloudKitCompatible {
             entity.uniquenessConstraints = [["key"]]
         }
@@ -382,6 +397,7 @@ public struct CoreDataModelBuilder {
                     : nil
             ),
         ]
+        addIndexes(to: entity, propertyNames: ["resourceName"])
         if !options.cloudKitCompatible {
             entity.uniquenessConstraints = [["resourceName"]]
         }
@@ -414,6 +430,7 @@ public struct CoreDataModelBuilder {
                     : nil
             ),
         ]
+        addIndexes(to: entity, propertyNames: ["resourceName"])
         if !options.cloudKitCompatible {
             entity.uniquenessConstraints = [["resourceName"]]
         }
@@ -465,6 +482,7 @@ public struct CoreDataModelBuilder {
             ),
             makeIntegerAttribute(name: "lastChangelogSequence", optional: false, defaultValue: 0),
         ]
+        addIndexes(to: entity, propertyNames: ["namespace"])
         if !options.cloudKitCompatible {
             entity.uniquenessConstraints = [["namespace"]]
         }
@@ -506,6 +524,7 @@ public struct CoreDataModelBuilder {
             makeStringAttribute(name: "timestampISO8601", optional: true),
             makeStringAttribute(name: "actorID", optional: true),
         ]
+        addIndexes(to: entity, propertyNames: ["clientID", "mutationID"])
         if !options.cloudKitCompatible {
             entity.uniquenessConstraints = [["clientID", "mutationID"]]
         }
@@ -524,6 +543,23 @@ public struct CoreDataModelBuilder {
         attribute.isOptional = optional
         attribute.defaultValue = defaultValue
         return attribute
+    }
+
+    private func addIndexes(to entity: NSEntityDescription, propertyNames: [String]) {
+        let indexDescriptions = propertyNames.compactMap { propertyName -> NSFetchIndexDescription? in
+            guard let property = entity.propertiesByName[propertyName] else {
+                return nil
+            }
+            let element = NSFetchIndexElementDescription(
+                property: property,
+                collationType: .binary
+            )
+            return NSFetchIndexDescription(
+                name: "\(entity.name ?? "entity")_\(propertyName)_idx",
+                elements: [element]
+            )
+        }
+        entity.indexes = indexDescriptions
     }
 
     private func makeIntegerAttribute(

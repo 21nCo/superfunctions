@@ -14,11 +14,15 @@ private struct DatafnServerEnvelope<Result: Decodable>: Decodable {
     let error: DatafnServerErrorEnvelope?
 }
 
-private struct DatafnServerBooleanResult: Codable {
+private protocol DatafnServerOperationResult: Decodable {
+    var ok: Bool { get }
+}
+
+private struct DatafnServerBooleanResult: Codable, DatafnServerOperationResult {
     let ok: Bool
 }
 
-private struct DatafnServerCloneResult: Codable {
+private struct DatafnServerCloneResult: Codable, DatafnServerOperationResult {
     let ok: Bool
     let data: [String: [DatafnJSONObject]]
     let cursors: [String: String]
@@ -36,7 +40,7 @@ private struct DatafnJoinDelete: Codable {
     let to: String
 }
 
-private struct DatafnServerPullResult: Codable {
+private struct DatafnServerPullResult: Codable, DatafnServerOperationResult {
     let ok: Bool
     let records: [String: [DatafnJSONObject]]
     let merged: [String: [DatafnJSONObject]]?
@@ -46,7 +50,7 @@ private struct DatafnServerPullResult: Codable {
     let hasMore: Bool?
 }
 
-private struct DatafnServerReconcileResult: Codable {
+private struct DatafnServerReconcileResult: Codable, DatafnServerOperationResult {
     let ok: Bool
     let counts: [String: Int]
     let joinCounts: [String: Int]?
@@ -61,6 +65,10 @@ public actor DatafnServerSyncEngine {
     private var started = false
     private var pushInFlight = false
     private var pullInFlight = false
+    private var cloneInFlight = false
+    private var reconcileInFlight = false
+    private var pushRequested = false
+    private var pullRequested = false
     private var websocketConnection: DatafnServerWebSocketConnection?
     private var websocketReceiveTask: Task<Void, Never>?
     private var lastFailure: DatafnBridgeError?
@@ -82,17 +90,26 @@ public actor DatafnServerSyncEngine {
         started = true
         lastFailure = nil
 
-        try await connectWebSocketIfNeeded()
-        publishStatus([
-            "state": .string("running"),
-            "action": .string("start"),
-            "backend": .string("datafn-server"),
-        ])
+        do {
+            try await connectWebSocketIfNeeded()
+            publishStatus([
+                "state": .string("running"),
+                "action": .string("start"),
+                "backend": .string("datafn-server"),
+            ])
 
-        if try needsClone() {
-            try await cloneNow()
-        } else {
-            try await pullNow()
+            if try needsClone() {
+                try await cloneNow()
+            } else {
+                try await pullNow()
+            }
+        } catch {
+            started = false
+            websocketReceiveTask?.cancel()
+            websocketReceiveTask = nil
+            websocketConnection?.cancel()
+            websocketConnection = nil
+            throw error
         }
     }
 
@@ -111,37 +128,42 @@ public actor DatafnServerSyncEngine {
     }
 
     public func pullNow() async throws {
+        pullRequested = true
         if pullInFlight { return }
         pullInFlight = true
         defer { pullInFlight = false }
 
         do {
-            var cursors = try buildPullCursors()
             var lastResult: DatafnServerPullResult?
-            var hasMore = true
-            var iteration = 0
+            repeat {
+                pullRequested = false
 
-            while hasMore && iteration < 50 {
-                iteration += 1
-                let payload: DatafnJSONObject = [
-                    "clientId": .string(clientID),
-                    "cursors": .object(cursors.mapValues(DatafnJSONValue.string)),
-                    "limit": .number(200),
-                    "includeJoins": .bool(true),
-                ]
-                let envelope = try await remoteExecutor.pull(.object(payload))
-                let result: DatafnServerPullResult = try Self.requireResult(
-                    from: envelope,
-                    as: DatafnServerPullResult.self,
-                    fallbackPath: "sync.pull"
-                )
-                try applyPullResult(result)
-                lastResult = result
-                hasMore = result.hasMore == true
-                for (resource, cursor) in result.cursors {
-                    cursors[resource] = cursor
+                var cursors = try buildPullCursors()
+                var hasMore = true
+                var iteration = 0
+
+                while hasMore && iteration < 50 {
+                    iteration += 1
+                    let payload: DatafnJSONObject = [
+                        "clientId": .string(clientID),
+                        "cursors": .object(cursors.mapValues(DatafnJSONValue.string)),
+                        "limit": .number(200),
+                        "includeJoins": .bool(true),
+                    ]
+                    let envelope = try await remoteExecutor.pull(.object(payload))
+                    let result: DatafnServerPullResult = try Self.requireResult(
+                        from: envelope,
+                        as: DatafnServerPullResult.self,
+                        fallbackPath: "sync.pull"
+                    )
+                    try applyPullResult(result)
+                    lastResult = result
+                    hasMore = result.hasMore == true
+                    for (resource, cursor) in result.cursors {
+                        cursors[resource] = cursor
+                    }
                 }
-            }
+            } while pullRequested
 
             if let lastResult {
                 publishStatus([
@@ -166,6 +188,9 @@ public actor DatafnServerSyncEngine {
     }
 
     public func cloneNow() async throws {
+        if cloneInFlight { return }
+        cloneInFlight = true
+        defer { cloneInFlight = false }
         do {
             let tables = localResourceNames()
             try await cloneResources(tables)
@@ -184,6 +209,9 @@ public actor DatafnServerSyncEngine {
     }
 
     public func reconcileNow() async throws {
+        if reconcileInFlight { return }
+        reconcileInFlight = true
+        defer { reconcileInFlight = false }
         do {
             let payload: DatafnJSONObject = [
                 "clientId": .string(clientID),
@@ -223,38 +251,47 @@ public actor DatafnServerSyncEngine {
     }
 
     public func schedulePush() async throws {
+        pushRequested = true
         if pushInFlight { return }
         pushInFlight = true
         defer { pushInFlight = false }
 
         do {
-            let pending = try store.changelogList(limit: 100)
-            guard let throughSeq = pending.last?.seq else {
-                publishStatus([
-                    "state": .string("running"),
-                    "action": .string("schedulePush"),
-                    "backend": .string("datafn-server"),
-                    "pendingMutations": .number(0),
-                ])
-                lastFailure = nil
-                return
-            }
+            var lastThroughSeq: Int64?
+            var lastPendingCount = 0
 
-            let payload = DatafnJSONValue.array(pending.map { .object($0.mutation) })
-            let envelope = try await remoteExecutor.push(payload)
-            _ = try Self.requireResult(
-                from: envelope,
-                as: DatafnServerBooleanResult.self,
-                fallbackPath: "sync.push"
-            )
-            try store.changelogAck(throughSeq: throughSeq)
-            publishStatus([
+            repeat {
+                pushRequested = false
+
+                while true {
+                    let pending = try store.changelogList(limit: 100)
+                    guard let throughSeq = pending.last?.seq else {
+                        break
+                    }
+
+                    let payload = DatafnJSONValue.array(pending.map { .object($0.mutation) })
+                    let envelope = try await remoteExecutor.push(payload)
+                    _ = try Self.requireResult(
+                        from: envelope,
+                        as: DatafnServerBooleanResult.self,
+                        fallbackPath: "sync.push"
+                    )
+                    try store.changelogAck(throughSeq: throughSeq)
+                    lastThroughSeq = throughSeq
+                    lastPendingCount = pending.count
+                }
+            } while pushRequested
+
+            var statusPayload: DatafnJSONObject = [
                 "state": .string("running"),
                 "action": .string("schedulePush"),
                 "backend": .string("datafn-server"),
-                "throughSeq": .number(Double(throughSeq)),
-                "pendingMutations": .number(Double(pending.count)),
-            ])
+                "pendingMutations": .number(Double(lastPendingCount))
+            ]
+            if let lastThroughSeq {
+                statusPayload["throughSeq"] = .number(Double(lastThroughSeq))
+            }
+            publishStatus(statusPayload)
             lastFailure = nil
         } catch {
             let mapped = Self.bridgeError(from: error, fallbackPath: "sync.push")
@@ -385,6 +422,15 @@ public actor DatafnServerSyncEngine {
             .sorted()
     }
 
+    private func localJoinRelationKeys() -> [String] {
+        schema.relations
+            .filter { $0.type == .manyMany }
+            .flatMap { relation in
+                relation.to.values.map { "join_\(relation.from)_\(relation.name)_\($0)" }
+            }
+            .sorted()
+    }
+
     private func cloneResources(_ tables: [String]) async throws {
         if tables.isEmpty {
             publishStatus([
@@ -424,6 +470,15 @@ public actor DatafnServerSyncEngine {
         _ result: DatafnServerCloneResult,
         expectedTables: [String]
     ) throws {
+        for resource in expectedTables {
+            let remoteRecords = result.data[resource] ?? []
+            let remoteIDs = Set(remoteRecords.compactMap { $0["id"]?.stringValue })
+            let localIDs = try Set(store.listRecords(resource: resource).compactMap { $0["id"]?.stringValue })
+            for staleID in localIDs.subtracting(remoteIDs) {
+                try store.deleteRecord(resource: resource, id: staleID)
+            }
+        }
+
         for (resource, records) in result.data {
             for record in records {
                 try store.upsertRecord(resource: resource, record: record)
@@ -433,6 +488,33 @@ public actor DatafnServerSyncEngine {
             }
             if try store.getHydrationState(resource: resource) != .ready {
                 try store.setHydrationState(resource: resource, state: .ready)
+            }
+        }
+
+        for relationKey in localJoinRelationKeys() {
+            let remoteRows = result.joins?[relationKey] ?? []
+            let remoteEdges = Set(remoteRows.compactMap { row -> String? in
+                guard
+                    let from = row["from"]?.stringValue,
+                    let to = row["to"]?.stringValue
+                else {
+                    return nil
+                }
+                return "\(from)->\(to)"
+            })
+            let localEdges = try Set(store.listJoinRows(relationKey: relationKey).compactMap { row -> String? in
+                guard
+                    let from = row["from"]?.stringValue,
+                    let to = row["to"]?.stringValue
+                else {
+                    return nil
+                }
+                return "\(from)->\(to)"
+            })
+            for staleEdge in localEdges.subtracting(remoteEdges) {
+                let parts = staleEdge.split(separator: "->", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { continue }
+                try store.deleteJoinRow(relationKey: relationKey, from: parts[0], to: parts[1])
             }
         }
 
@@ -448,8 +530,17 @@ public actor DatafnServerSyncEngine {
         }
 
         for table in expectedTables where !result.data.keys.contains(table) {
+            if let cursor = result.cursors[table] {
+                try setCursorMonotonically(resource: table, cursor: cursor)
+            }
             if try store.getHydrationState(resource: table) != .ready {
                 try store.setHydrationState(resource: table, state: .ready)
+            }
+        }
+
+        for relationKey in localJoinRelationKeys() {
+            if let cursor = result.cursors[relationKey] {
+                try setCursorMonotonically(resource: relationKey, cursor: cursor)
             }
         }
 
@@ -554,13 +645,13 @@ public actor DatafnServerSyncEngine {
         store.publishSyncFailure(payload)
     }
 
-    private static func requireResult<Result: Decodable>(
+    private static func requireResult<Result: DatafnServerOperationResult>(
         from envelopeValue: DatafnJSONValue,
         as type: Result.Type,
         fallbackPath: String
     ) throws -> Result {
         let envelope = try decode(envelopeValue, as: DatafnServerEnvelope<Result>.self)
-        if envelope.ok, let result = envelope.result {
+        if envelope.ok, let result = envelope.result, result.ok {
             return result
         }
 
@@ -569,6 +660,14 @@ public actor DatafnServerSyncEngine {
                 code: error.code,
                 message: error.message,
                 details: error.details
+            )
+        }
+
+        if envelope.ok, let result = envelope.result, !result.ok {
+            throw DatafnBridgeError(
+                code: "TRANSPORT_ERROR",
+                message: "DataFn server sync failed",
+                details: ["path": .string(fallbackPath)]
             )
         }
 

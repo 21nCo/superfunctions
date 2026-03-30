@@ -66,6 +66,13 @@ public actor SearchFnSQLiteAdapter: SearchFnAdapter {
 
     public func initialize(_ params: SearchFnInitializeParams) async throws {
         let store = try ensureStore(operation: "Initialize operation")
+        let nextKeys = Set(params.resources.map { normalizedResource($0.name) })
+
+        for existingKey in Set(resourceConfigurations.keys).subtracting(nextKeys) {
+            try store.clearResource(resource: existingKey)
+            resourceConfigurations.removeValue(forKey: existingKey)
+            resources.removeValue(forKey: existingKey)
+        }
 
         for resource in params.resources {
             let key = normalizedResource(resource.name)

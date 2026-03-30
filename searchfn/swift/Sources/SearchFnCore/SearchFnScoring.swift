@@ -68,6 +68,9 @@ public func searchFnScorePostings(
         let idf = chunk.inverseDocumentFrequency ?? log(1.0 + 1.0 / max(Double(chunk.documentFrequency), 1.0))
 
         for posting in chunk.postings {
+            guard posting.termFrequency > 0 else {
+                continue
+            }
             let documentLength = Double(documentLengths[posting.documentID] ?? Int(normalizedAverage))
             let normalizedLength = 1.0 - b + (b * documentLength) / normalizedAverage
             let denominator = (k1 * normalizedLength) + posting.termFrequency

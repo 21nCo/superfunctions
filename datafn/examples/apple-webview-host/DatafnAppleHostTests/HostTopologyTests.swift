@@ -48,6 +48,7 @@ final class HostTopologyTests: XCTestCase {
         )
         XCTAssertTrue(nativeScript.contains("\"remoteMode\":\"datafn-server\""))
         XCTAssertTrue(nativeScript.contains("\"indexedDbDisabled\":true"))
+        XCTAssertTrue(nativeScript.contains("\"storeRootURL\""))
     }
 
     func testRuntimePlansSeparateServerAndCloudKitModes() throws {

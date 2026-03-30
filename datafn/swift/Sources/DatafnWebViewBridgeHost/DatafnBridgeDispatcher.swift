@@ -210,6 +210,7 @@ public struct DatafnBridgeHealthReport: Codable, Equatable, Sendable {
 public struct DatafnBridgeRemoteHandlers: @unchecked Sendable {
     public typealias Handler = @Sendable (DatafnJSONValue?) async throws -> DatafnJSONValue
 
+    public let isAvailable: Bool
     public let query: Handler
     public let mutation: Handler
     public let transact: Handler
@@ -220,6 +221,7 @@ public struct DatafnBridgeRemoteHandlers: @unchecked Sendable {
     public let reconcile: Handler
 
     public init(
+        isAvailable: Bool = true,
         query: @escaping Handler,
         mutation: @escaping Handler,
         transact: @escaping Handler,
@@ -229,6 +231,7 @@ public struct DatafnBridgeRemoteHandlers: @unchecked Sendable {
         push: @escaping Handler,
         reconcile: @escaping Handler
     ) {
+        self.isAvailable = isAvailable
         self.query = query
         self.mutation = mutation
         self.transact = transact
@@ -251,6 +254,7 @@ public struct DatafnBridgeRemoteHandlers: @unchecked Sendable {
         }
 
         return Self(
+            isAvailable: false,
             query: handler,
             mutation: handler,
             transact: handler,
@@ -266,6 +270,7 @@ public struct DatafnBridgeRemoteHandlers: @unchecked Sendable {
 public struct DatafnBridgeSyncHandlers: @unchecked Sendable {
     public typealias VoidHandler = @Sendable () async throws -> Void
 
+    public let isAvailable: Bool
     public let start: VoidHandler
     public let stop: VoidHandler
     public let pullNow: VoidHandler
@@ -274,6 +279,7 @@ public struct DatafnBridgeSyncHandlers: @unchecked Sendable {
     public let schedulePush: VoidHandler
 
     public init(
+        isAvailable: Bool = true,
         start: @escaping VoidHandler,
         stop: @escaping VoidHandler,
         pullNow: @escaping VoidHandler,
@@ -281,6 +287,7 @@ public struct DatafnBridgeSyncHandlers: @unchecked Sendable {
         reconcileNow: @escaping VoidHandler,
         schedulePush: @escaping VoidHandler
     ) {
+        self.isAvailable = isAvailable
         self.start = start
         self.stop = stop
         self.pullNow = pullNow
@@ -292,6 +299,7 @@ public struct DatafnBridgeSyncHandlers: @unchecked Sendable {
     public static func noOp() -> Self {
         let handler: VoidHandler = {}
         return Self(
+            isAvailable: false,
             start: handler,
             stop: handler,
             pullNow: handler,
@@ -750,23 +758,21 @@ public final class DatafnBridgeDispatcher: @unchecked Sendable {
             )
         }
 
-        if
-            let expectedProfile = configuration.remoteProfile,
-            let remoteProfile,
-            expectedProfile != remoteProfile
-        {
-            throw DatafnBridgeError(
-                code: "BRIDGE_PROTOCOL_MISMATCH",
-                message: "Remote profile mismatch",
-                details: ["path": "payload.remoteProfile"]
-            )
+        if let expectedProfile = configuration.remoteProfile {
+            guard remoteProfile == expectedProfile else {
+                throw DatafnBridgeError(
+                    code: "BRIDGE_PROTOCOL_MISMATCH",
+                    message: "Remote profile mismatch",
+                    details: ["path": "payload.remoteProfile"]
+                )
+            }
         }
 
         let capabilities = [
             searchHandlers == nil ? nil : "search",
             "storage",
-            "remote",
-            "sync",
+            remoteHandlers.isAvailable ? "remote" : nil,
+            syncHandlers.isAvailable ? "sync" : nil,
             "events",
             "health",
         ].compactMap { $0 }

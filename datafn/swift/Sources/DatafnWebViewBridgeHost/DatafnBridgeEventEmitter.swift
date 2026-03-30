@@ -77,12 +77,16 @@ public final class DatafnBridgeEventEmitter: @unchecked Sendable {
 
     private static func shouldRedact(key: String) -> Bool {
         let normalized = key.lowercased()
+        let collapsed = normalized
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
         return normalized.contains("authorization")
             || normalized.contains("token")
             || normalized.contains("secret")
             || normalized.contains("cookie")
             || normalized.contains("apikey")
             || normalized.contains("api_key")
+            || collapsed.contains("apikey")
             || normalized.contains("bearer")
             || normalized == "auth"
     }

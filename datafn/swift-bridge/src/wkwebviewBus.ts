@@ -96,7 +96,22 @@ export function createWKWebViewBridgeBus(
         }, timeoutMs);
 
         pendingRequests.set(message.id, { resolve, timer });
-        postMessage(message);
+        try {
+          postMessage(message);
+        } catch (error) {
+          clearTimeout(timer);
+          pendingRequests.delete(message.id);
+          resolve(
+            createBridgeErrorResponse(
+              message.id,
+              "BRIDGE_UNAVAILABLE",
+              error instanceof Error
+                ? error.message
+                : "Native bridge request failed to post",
+              { path: `window.webkit.messageHandlers.${handlerName}` },
+            ),
+          );
+        }
       });
     },
     subscribe(handler) {

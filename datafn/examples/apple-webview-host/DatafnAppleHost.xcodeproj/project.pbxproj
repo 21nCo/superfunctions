@@ -16,6 +16,7 @@
 		A10000000000000000000036 /* HostTopologyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* HostTopologyTests.swift */; };
 		A10000000000000000000037 /* DatafnAppleRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000061 /* DatafnAppleRuntime */; };
 		A10000000000000000000038 /* DatafnWebViewBridgeHost in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000062 /* DatafnWebViewBridgeHost */; };
+		A10000000000000000000039 /* DatafnSearchContracts in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000063 /* DatafnSearchContracts */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -47,6 +48,7 @@
 			files = (
 				A10000000000000000000037 /* DatafnAppleRuntime in Frameworks */,
 				A10000000000000000000038 /* DatafnWebViewBridgeHost in Frameworks */,
+				A10000000000000000000039 /* DatafnSearchContracts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,6 +136,7 @@
 			packageProductDependencies = (
 				A10000000000000000000061 /* DatafnAppleRuntime */,
 				A10000000000000000000062 /* DatafnWebViewBridgeHost */,
+				A10000000000000000000063 /* DatafnSearchContracts */,
 			);
 			productName = DatafnAppleHost;
 			productReference = A10000000000000000000017 /* DatafnAppleHost.app */;
@@ -255,6 +258,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -297,6 +301,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = org.21n.datafn.applehost;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
@@ -339,6 +344,7 @@
 					"@loader_path/Frameworks",
 					"@executable_path/Frameworks",
 				);
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = org.21n.datafn.applehost.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
@@ -418,6 +424,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000060 /* XCLocalSwiftPackageReference "../../swift" */;
 			productName = DatafnWebViewBridgeHost;
+		};
+		A10000000000000000000063 /* DatafnSearchContracts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000060 /* XCLocalSwiftPackageReference "../../swift" */;
+			productName = DatafnSearchContracts;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

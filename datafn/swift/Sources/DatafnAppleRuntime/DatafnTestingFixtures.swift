@@ -48,12 +48,11 @@ func makeSearchSchemaForTesting() -> DatafnRuntimeSchema {
 }
 
 func makeStoreRootURLForTesting() -> URL {
-    FileManager.default.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    testingRootURL
 }
 
 func makeSupportDirectoryURLForTesting() -> URL {
-    makeStoreRootURLForTesting()
+    testingRootURL
         .appendingPathComponent("Support", isDirectory: true)
 }
 
@@ -65,6 +64,12 @@ func makeDatafnServerSyncBackendForTesting() -> DatafnSyncBackendConfiguration {
         )
     )
 }
+
+private let testingRootURL: URL = FileManager.default.temporaryDirectory
+    .appendingPathComponent(
+        "datafn-apple-runtime-tests-\(UUID().uuidString)",
+        isDirectory: true
+    )
 
 func makeBlockingSearchRootURLForTesting() throws -> URL {
     let rootURL = makeStoreRootURLForTesting()

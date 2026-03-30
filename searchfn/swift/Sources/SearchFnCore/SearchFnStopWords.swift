@@ -22,7 +22,7 @@ let searchFnStopWordsSpanish: Set<String> = [
     "entender", "pedir", "recibir", "recordar", "terminar", "permitir", "aparecer",
     "conseguir", "comenzar", "servir", "sacar", "necesitar", "mantener", "resultar",
     "leer", "caer", "cambiar", "presentar", "crear", "abrir", "considerar", "oír",
-    "acabar", "mil", "against", "durante",
+    "acabar", "mil", "durante",
 ]
 
 let searchFnStopWordsFrench: Set<String> = [

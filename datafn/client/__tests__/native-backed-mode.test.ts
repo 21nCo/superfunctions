@@ -423,14 +423,18 @@ describe("native-backed mode", () => {
       },
     });
 
-    await expect(
-      client.query({ resource: "tasks", version: 1 }),
-    ).rejects.toMatchObject({
-      code: "BRIDGE_UNAVAILABLE",
-      message: "Native-backed mode requires an available bridge",
-      details: { path: "sync.native" },
-    });
-    expect(getRecordSpy).not.toHaveBeenCalled();
-    expect(await listIndexedDbNames()).toEqual([]);
+    try {
+      await expect(
+        client.query({ resource: "tasks", version: 1 }),
+      ).rejects.toMatchObject({
+        code: "BRIDGE_UNAVAILABLE",
+        message: "Native-backed mode requires an available bridge",
+        details: { path: "sync.native" },
+      });
+      expect(getRecordSpy).not.toHaveBeenCalled();
+      expect(await listIndexedDbNames()).toEqual([]);
+    } finally {
+      await client.destroy();
+    }
   });
 });
