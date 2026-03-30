@@ -77,6 +77,7 @@ curl -X POST http://localhost:8000/searchfn/search \
 
 **Programmatically:**
 ```python
+import asyncio
 from searchfn import search_index
 
 async def do_search():
