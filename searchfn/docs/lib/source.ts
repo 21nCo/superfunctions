@@ -4,9 +4,17 @@ import type { SourceConfig, VirtualFile } from "fumadocs-core/source";
 
 const fumadocsSource = docs.toFumadocsSource();
 
+type FumadocsSourceLike = {
+  files: VirtualFile<SourceConfig>[] | (() => VirtualFile<SourceConfig>[]);
+};
+
+function getSourceFiles(source: FumadocsSourceLike): VirtualFile<SourceConfig>[] {
+  return typeof source.files === "function" ? source.files() : source.files;
+}
+
 export const source = loader({
   baseUrl: "/docs",
   source: {
-    files: (fumadocsSource as unknown as { files: () => VirtualFile<SourceConfig>[] }).files(),
+    files: getSourceFiles(fumadocsSource as FumadocsSourceLike),
   },
 });

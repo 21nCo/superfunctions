@@ -10,7 +10,8 @@ const source = join(rootNodeModules, 'styled-jsx');
 const target = join(searchfnNodeModules, 'styled-jsx');
 
 if (!existsSync(source)) {
-  process.exit(0);
+  console.error("[ensure-styled-jsx] Missing source package at root node_modules/styled-jsx");
+  process.exit(1);
 }
 
 rmSync(target, { recursive: true, force: true });
