@@ -30,7 +30,7 @@ async def search_index(
         return []
 
     matches: List[Dict[str, Any]] = []
-    for token in tokens:
+    for token in dict.fromkeys(tokens):
         where_clause = [{"field": "term", "operator": "eq", "value": token}]
         if model:
             where_clause.append({"field": "model", "operator": "eq", "value": model})
