@@ -44,6 +44,7 @@ interface PostingInfo {
 interface DocTermEntry {
   field: string;
   term: string;
+  isPrefix?: boolean;
 }
 
 interface ResourceEngine {
@@ -255,13 +256,10 @@ export class IndexedDbAdapter implements SearchAdapter {
 
   private refreshVocabulary(engine: ResourceEngine): void {
     const nextVocabulary = new Set<string>();
-    for (const fieldMap of engine.postings.values()) {
-      for (const [term, termMap] of fieldMap.entries()) {
-        for (const posting of termMap.values()) {
-          if (posting.metadata?.isPrefix !== true) {
-            nextVocabulary.add(term);
-            break;
-          }
+    for (const terms of engine.docTerms.values()) {
+      for (const entry of terms) {
+        if (!entry.isPrefix) {
+          nextVocabulary.add(entry.term);
         }
       }
     }
@@ -513,7 +511,7 @@ export class IndexedDbAdapter implements SearchAdapter {
               engine.vocabulary.add(term);
               engine.fuzzyCache.clear();
             }
-            docTermEntries.push({ field, term });
+            docTermEntries.push({ field, term, isPrefix });
           }
         }
 

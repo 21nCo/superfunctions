@@ -35,6 +35,7 @@ interface ResourceEngine {
   docIds: Map<string, DocId>;
   fieldNames: Set<string>;
   vocabulary: Set<string>;
+  vocabularyRefs: Map<string, number>;
   fuzzyCache: Map<string, string[]>;
 }
 
@@ -76,6 +77,7 @@ export class MemoryAdapter implements SearchAdapter {
       docIds: new Map(),
       fieldNames: new Set(),
       vocabulary: new Set(),
+      vocabularyRefs: new Map(),
       fuzzyCache: new Map()
     };
   }
@@ -114,8 +116,7 @@ export class MemoryAdapter implements SearchAdapter {
         const isPrefix =
           termMetadata !== undefined && termMetadata["isPrefix"] === true;
         if (!isPrefix) {
-          engine.vocabulary.add(term);
-          engine.fuzzyCache.clear();
+          this.incrementVocabularyRef(engine, term);
         }
       }
     }
@@ -124,32 +125,44 @@ export class MemoryAdapter implements SearchAdapter {
   private removeDocFromEngine(engine: ResourceEngine, docId: DocId): void {
     const docKey = this.toKey(docId);
     for (const [key, docMap] of engine.postings.entries()) {
+      const posting = docMap.get(docKey);
       docMap.delete(docKey);
+      if (posting?.metadata?.["isPrefix"] !== true) {
+        this.decrementVocabularyRef(engine, posting ? key.split("::")[1] ?? "" : "");
+      }
       if (docMap.size === 0) {
         engine.postings.delete(key);
-        const [, term] = key.split("::");
-        if (!this.hasRemainingVocabularyEntry(engine, term)) {
-          engine.vocabulary.delete(term);
-          engine.fuzzyCache.clear();
-        }
       }
     }
     engine.statsManager.removeDocument(docKey);
     engine.docIds.delete(docKey);
   }
 
-  private hasRemainingVocabularyEntry(engine: ResourceEngine, term: string): boolean {
-    for (const [postingKey, docMap] of engine.postings.entries()) {
-      if (!postingKey.endsWith(`::${term}`) || docMap.size === 0) {
-        continue;
-      }
-      for (const posting of docMap.values()) {
-        if (posting.metadata?.["isPrefix"] !== true) {
-          return true;
-        }
-      }
+  private incrementVocabularyRef(engine: ResourceEngine, term: string): void {
+    const next = (engine.vocabularyRefs.get(term) ?? 0) + 1;
+    engine.vocabularyRefs.set(term, next);
+    if (next === 1) {
+      engine.vocabulary.add(term);
+      engine.fuzzyCache.clear();
     }
-    return false;
+  }
+
+  private decrementVocabularyRef(engine: ResourceEngine, term: string): void {
+    if (!term) {
+      return;
+    }
+    const current = engine.vocabularyRefs.get(term);
+    if (current === undefined) {
+      return;
+    }
+    if (current <= 1) {
+      engine.vocabularyRefs.delete(term);
+      if (engine.vocabulary.delete(term)) {
+        engine.fuzzyCache.clear();
+      }
+      return;
+    }
+    engine.vocabularyRefs.set(term, current - 1);
   }
 
   private upsertPosting(
@@ -177,7 +190,7 @@ export class MemoryAdapter implements SearchAdapter {
 
   private getFuzzyDistance(fuzzy?: number | boolean): number | undefined {
     if (fuzzy === true) return 2;
-    if (typeof fuzzy === "number" && fuzzy > 0) return fuzzy;
+    if (typeof fuzzy === "number" && fuzzy > 0) return Math.min(fuzzy, 3);
     return undefined;
   }
 

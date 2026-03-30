@@ -1,4 +1,4 @@
-const SECRET = /apikey|password|secret|token|authorization|connection(?:[_-]?string)?/i;
+const SECRET = /apikey|password|secret|token|authorization|connection(?:string|[_-]string)/i;
 
 function isPlainObject(value: object): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
