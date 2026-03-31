@@ -89,6 +89,10 @@ function normalizeJsonValue(value: unknown, seen = new WeakSet<object>()): unkno
 
     seen.add(value);
     try {
+      if (typeof (value as { toJSON?: () => unknown }).toJSON === "function") {
+        return normalizeJsonValue((value as { toJSON: () => unknown }).toJSON(), seen);
+      }
+
       return Object.fromEntries(
         Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
           key,

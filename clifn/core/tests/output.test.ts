@@ -112,6 +112,20 @@ describe("createOutput", () => {
     expect(stdout.join("")).toBe('[i] info {"count":"7","self":"[Circular]"}\n');
   });
 
+  it("preserves native toJSON semantics for values like Date", () => {
+    const stdout: string[] = [];
+    const output = createOutput({
+      mode: "json",
+      stdout: (text) => stdout.push(text),
+    });
+
+    output.json({
+      createdAt: new Date("2026-03-31T11:38:11.000Z"),
+    });
+
+    expect(stdout.join("")).toBe('{"createdAt":"2026-03-31T11:38:11.000Z"}\n');
+  });
+
   it("renders tables using declared column order", () => {
     const stdout: string[] = [];
     const output = createOutput({
