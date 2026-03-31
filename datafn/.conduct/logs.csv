@@ -168,3 +168,5 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-14T12:58:00Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-14-new-s7h4r2p9-spec
 2026-03-15T12:43:27Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-15-new-ug0uwash-spec
 2026-03-21T17:45:00Z,claude-4.6-opus-high-thinking,Cursor,document-issue,unknown-agent,,datafn/.conduct/issues/2026-03-21-n4k8r2m7-issue.md
+2026-03-27T07:12:06Z,GPT-5 Codex,Codex desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-27-new-t8vzvg1r-spec
+2026-03-28T05:19:25Z,gpt-5-codex,Codex Desktop,spec,unknown-agent,,datafn/.conduct/specs/2026-03-28-new-d8k4m2p7-spec

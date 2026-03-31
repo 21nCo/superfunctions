@@ -1,0 +1,30 @@
+- Phase goal: Introduce native search contracts and bridge protocol scaffolding without changing runtime behavior yet.
+- In scope:
+  - Swift search contract target
+  - bridge protocol type additions
+  - TS provider factory scaffolding
+- Out of scope:
+  - client routing changes
+  - runtime indexing behavior
+  - docs/examples
+- Deliverables:
+  - `datafn/swift/Sources/DatafnSearchContracts/*`
+  - `datafn/swift/Tests/DatafnSearchContractsTests/*`
+  - `datafn/swift-bridge/src/protocol.ts`
+  - `datafn/swift-bridge/src/nativeSearchProvider.ts`
+  - `datafn/swift-bridge/__tests__/*`
+- Requirements covered:
+  - `DARCH-001`
+  - `DAPI-001`
+  - `DERR-001`
+- Implementation tasks:
+  - Define DataFn-native search request/result/update/factory contracts in Swift.
+  - Extend the bridge method enum and payload types for search operations.
+  - Add `createNativeBackedSearchProvider(bus)` scaffolding and marker typing.
+  - Add contract-level tests for request envelopes and error mapping.
+- Verification steps:
+  - Run `npm --prefix datafn/swift-bridge test`
+  - Run `swift test --package-path datafn/swift --filter DatafnSearchContractsTests`
+  - Expected outcome: both suites pass with bridge/search contract coverage.
+- Stop condition:
+  - Report the new contract files and passing command results before beginning Phase 01.

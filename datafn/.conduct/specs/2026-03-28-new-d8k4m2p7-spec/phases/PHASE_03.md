@@ -1,0 +1,28 @@
+- Phase goal: Implement deterministic native search placement, metadata digest comparison, and rebuild orchestration from Core Data.
+- In scope:
+  - default search root path
+  - search metadata fields
+  - digest comparison
+  - clear-and-rebuild flow
+- Out of scope:
+  - server-sync/CloudKit event propagation
+  - docs/examples
+- Deliverables:
+  - updates to `datafn/swift/Sources/DatafnAppleRuntime/*`
+  - updates to `datafn/swift/Sources/DatafnCoreDataStore/*`
+  - `datafn/swift/Tests/DatafnSearchRebuildTests/*`
+- Requirements covered:
+  - `DREB-001`
+  - `DPST-001`
+  - `DERR-001`
+- Implementation tasks:
+  - Derive the default search root as `<namespace support directory>/SearchFn`.
+  - Persist `searchBackendKind`, `searchSchemaHash`, `searchConfigDigest`, and `searchStatus`.
+  - Compare stored and current metadata on startup.
+  - Clear and rebuild the backend from Core Data records on mismatch.
+  - Honor `failIfUnavailable` on rebuild failure.
+- Verification steps:
+  - Run `swift test --package-path datafn/swift --filter DatafnSearchRebuildTests`
+  - Expected outcome: rebuild-trigger and failure-mode tests pass.
+- Stop condition:
+  - Report rebuild status transitions and verification output before beginning Phase 04.
