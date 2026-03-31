@@ -68,6 +68,34 @@ describe('loadConfigModule', () => {
     });
   });
 
+  it('supports callers that need named exports to win over default exports', async () => {
+    const configPath = path.join(testDir, 'tool.config.ts');
+    fs.writeFileSync(
+      configPath,
+      `
+      export const config = {
+        source: 'named',
+      };
+
+      export default {
+        source: 'default',
+      };
+      `,
+      'utf8'
+    );
+
+    const loaded = await loadConfigModule(configPath, {
+      exportNames: ['config'],
+      exportPriority: 'named-first',
+      fallbackToModule: false,
+    });
+
+    expect(loaded.exportName).toBe('config');
+    expect(loaded.value).toEqual({
+      source: 'named',
+    });
+  });
+
   it('supports JSON configs', async () => {
     const configPath = path.join(testDir, 'tool.config.json');
     fs.writeFileSync(
@@ -131,6 +159,22 @@ describe('loadConfigModule', () => {
     expect(loaded.value).toEqual({
       source: 'function',
       count: 3,
+    });
+  });
+
+  it('throws for unsupported config file extensions', async () => {
+    const configPath = path.join(testDir, 'tool.config.txt');
+
+    await expect(loadConfigModule(configPath)).rejects.toThrow(
+      'Unsupported config module extension: .txt'
+    );
+  });
+
+  it('propagates missing-file errors for supported extensions', async () => {
+    const configPath = path.join(testDir, 'missing.config.js');
+
+    await expect(loadConfigModule(configPath)).rejects.toMatchObject({
+      code: 'ENOENT',
     });
   });
 });

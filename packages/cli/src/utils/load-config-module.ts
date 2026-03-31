@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 export interface LoadConfigModuleOptions<TValue = unknown> {
   exportNames?: readonly string[];
+  exportPriority?: 'default-first' | 'named-first';
   fallbackToModule?: boolean;
   resolveFunctions?: boolean;
   transform?: (
@@ -98,20 +99,41 @@ function selectExport(
   module: Record<string, unknown>,
   options: LoadConfigModuleOptions<unknown>
 ): { exportName: string | null; value: unknown } {
-  if ('default' in module) {
-    return {
-      exportName: 'default',
-      value: module.default,
-    };
-  }
+  const exportNames = options.exportNames ?? [];
+  const exportPriority = options.exportPriority ?? 'default-first';
 
-  for (const exportName of options.exportNames ?? []) {
-    if (exportName in module) {
+  const selectNamedExport = (): { exportName: string | null; value: unknown } | null => {
+    for (const exportName of exportNames) {
+      if (exportName in module) {
+        return {
+          exportName,
+          value: module[exportName],
+        };
+      }
+    }
+
+    return null;
+  };
+
+  const selectDefaultExport = (): { exportName: string | null; value: unknown } | null => {
+    if ('default' in module) {
       return {
-        exportName,
-        value: module[exportName],
+        exportName: 'default',
+        value: module.default,
       };
     }
+
+    return null;
+  };
+
+  const preferred = exportPriority === 'named-first' ? selectNamedExport() : selectDefaultExport();
+  if (preferred) {
+    return preferred;
+  }
+
+  const secondary = exportPriority === 'named-first' ? selectDefaultExport() : selectNamedExport();
+  if (secondary) {
+    return secondary;
   }
 
   if (options.fallbackToModule !== false) {
