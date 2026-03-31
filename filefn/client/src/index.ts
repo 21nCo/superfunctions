@@ -1,0 +1,351 @@
+import { createHttpClient, FileFnHttpError } from './client.js';
+import { UploadManager, generateFileId, prepareUploadInput } from './upload-manager.js';
+import type {
+  ArtifactDescriptor,
+  FileFnClientConfig,
+  PendingLocalDescriptor,
+  RenderDescriptor,
+  RenderIntent,
+  RenderPlaceholderKind,
+  UploadInput,
+  UploadHandle,
+  UploadResult,
+} from './types.js';
+import type { UploadPreprocessor } from './preprocessing/types.js';
+import { createHeicPreprocessor } from './preprocessing/heic.js';
+
+import {
+  OPFSStore,
+  type PendingUpload,
+} from './offline/opfs-store.js';
+
+import {
+  OfflineSync,
+  shouldUseOfflineMode,
+  generateOfflineSessionId,
+} from './offline/sync.js';
+
+export type {
+  ArtifactDescriptor,
+  FileFnClientConfig,
+  PendingLocalDescriptor,
+  RenderDescriptor,
+  RenderIntent,
+  RenderPlaceholderKind,
+  UploadInput,
+  UploadHandle,
+  UploadProgress,
+  UploadResult,
+  RetryOptions,
+  InitUploadResponse,
+  UploadStatusResponse,
+  SignPartResponse,
+  CompletePartResponse,
+  CompleteUploadResponse,
+  AbortUploadResponse,
+} from './types.js';
+export type {
+  HeicConversionFunction,
+  HeicConversionInput,
+  HeicConversionResult,
+  HeicPreprocessorOptions,
+  PendingLocalPreviewBehavior,
+  PendingLocalSourceKind,
+  PendingLocalSourceMetadata,
+  UploadPreprocessor,
+  UploadPreprocessorContext,
+  UploadPreprocessorResult,
+} from './preprocessing/types.js';
+
+export { FileFnHttpError } from './client.js';
+export { resolveRetryOptions, computeDelay, isRetryableError, withRetry } from './retry.js';
+export { createHeicPreprocessor, FILEFN_HEIC_CONVERSION_FAILED } from './preprocessing/heic.js';
+export { generateFileId } from './upload-manager.js';
+
+export type {
+  PendingUpload,
+  OPFSStoreConfig,
+} from './offline/opfs-store.js';
+
+export {
+  OPFSStore,
+} from './offline/opfs-store.js';
+
+export type {
+  UploadClient,
+  SyncConfig,
+  SyncProgress,
+  SyncResult,
+  ConnectivityChecker,
+} from './offline/sync.js';
+
+export {
+  OfflineSync,
+  shouldUseOfflineMode,
+  generateOfflineSessionId,
+} from './offline/sync.js';
+
+export interface FileFnClient {
+  uploadFile(input: UploadInput): UploadHandle;
+  resumeUpload(
+    uploadSessionId: string,
+    file: Blob,
+    options?: { uploadSessionToken?: string }
+  ): UploadHandle;
+  getFile(fileId: string): Promise<Record<string, unknown>>;
+  listArtifacts(fileId: string): Promise<ArtifactDescriptor[]>;
+  downloadUrl(fileId: string, options?: { versionId?: string }): Promise<string>;
+  downloadArtifact(fileId: string, artifactId: string): Promise<string>;
+  resolveRenderable(input: {
+    fileId: string;
+    intent: RenderIntent;
+    versionId?: string;
+    preferLocal?: boolean;
+  }): Promise<RenderDescriptor>;
+  deleteFile(fileId: string): Promise<void>;
+  getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null>;
+}
+
+function createPlaceholderDescriptor(input: {
+  fileId: string;
+  versionId: string;
+  intent: RenderIntent;
+  state: 'processing' | 'unsupported' | 'pending-local';
+  mimeType: string;
+  name: string;
+  size: number;
+  placeholderKind: RenderPlaceholderKind;
+  warnings?: string[];
+}): RenderDescriptor {
+  return {
+    fileId: input.fileId,
+    versionId: input.versionId,
+    intent: input.intent,
+    state: input.state,
+    mimeType: input.mimeType,
+    name: input.name,
+    size: input.size,
+    source: {
+      mode: 'placeholder',
+      placeholderKind: input.placeholderKind,
+    },
+    warnings: input.warnings,
+  };
+}
+
+function resolvePendingLocalRenderable(
+  input: { intent: RenderIntent },
+  pending: PendingLocalDescriptor,
+): RenderDescriptor {
+  const base = {
+    fileId: pending.fileId,
+    versionId: pending.uploadSessionId,
+    intent: input.intent,
+    mimeType: pending.source.mimeType,
+    name: pending.source.fileName,
+    size: pending.source.size,
+  } as const;
+
+  if (input.intent === 'full' || input.intent === 'download') {
+    return {
+      ...base,
+      state: 'pending-local',
+      source: {
+        mode: 'original',
+        url: pending.source.url,
+      },
+    };
+  }
+
+  if (pending.source.kind === 'image') {
+    return {
+      ...base,
+      state: 'pending-local',
+      source: {
+        mode: 'original',
+        url: pending.source.url,
+      },
+    };
+  }
+
+  if (pending.source.kind === 'pdf') {
+    return createPlaceholderDescriptor({
+      ...base,
+      state: 'pending-local',
+      placeholderKind: 'pdf-processing',
+      warnings: ['Pending local PDF preview artifact is not available yet.'],
+    });
+  }
+
+  if (pending.source.mimeType.startsWith('audio/') || pending.source.mimeType.startsWith('video/')) {
+    if (input.intent === 'preview') {
+      return {
+        ...base,
+        state: 'pending-local',
+        source: {
+          mode: 'original',
+          url: pending.source.url,
+        },
+      };
+    }
+  }
+
+  return createPlaceholderDescriptor({
+    ...base,
+    state: 'unsupported',
+    placeholderKind: input.intent === 'thumbnail' ? 'generic-file' : 'unsupported-preview',
+  });
+}
+
+function buildPreprocessors(config: FileFnClientConfig): UploadPreprocessor[] {
+  const preprocessors: UploadPreprocessor[] = [];
+  const heicEnabled = config.preprocessing?.heic?.enabled ?? true;
+  if (heicEnabled) {
+    preprocessors.push(createHeicPreprocessor(config.preprocessing?.heic));
+  }
+  if (config.preprocessing?.preprocessors?.length) {
+    preprocessors.push(...config.preprocessing.preprocessors);
+  }
+  return preprocessors;
+}
+
+export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
+  const httpClient = createHttpClient(config);
+  const preprocessors = buildPreprocessors(config);
+  
+  let offlineSync: OfflineSync | undefined;
+  let offlineStore: OPFSStore | undefined;
+
+  if (config.offline?.enabled) {
+    if (!OPFSStore.isSupported()) {
+      const error = new Error('OPFS unavailable') as any;
+      error.code = 'FILEFN_OFFLINE_UNSUPPORTED';
+      throw error;
+    }
+
+    const store = new OPFSStore({ rootDir: config.offline.opfsDir });
+    // Initialize lazily but ensure it's started
+    store.init().catch(() => {});
+    offlineStore = store;
+
+    offlineSync = new OfflineSync({
+      store,
+      client: {
+        uploadFile: async (input) => {
+          const manager = new UploadManager(httpClient, preprocessors);
+          // startUpload returns UploadResult which matches what we need
+          return manager.startUpload(input);
+        }
+      }
+    });
+
+    offlineSync.startAutoSync();
+  }
+
+  return {
+    uploadFile(input: UploadInput): UploadHandle {
+      const normalizedInput: UploadInput = {
+        ...input,
+        fileId: input.fileId ?? generateFileId(),
+      };
+
+      if (offlineSync && offlineStore && shouldUseOfflineMode(config.offline?.enabled ?? false)) {
+        const uploadSessionId = generateOfflineSessionId();
+        const stagePromise = (async () => {
+          const prepared = await prepareUploadInput(normalizedInput, [
+            ...preprocessors,
+            ...(normalizedInput.preprocessors || []),
+          ]);
+          const fileData = await prepared.file.arrayBuffer();
+          const pending: PendingUpload = {
+            uploadSessionId,
+            fileId: prepared.fileId,
+            policy: prepared.policy,
+            fileName: prepared.fileName,
+            size: prepared.size,
+            mimeType: prepared.mimeType,
+            fileData,
+            localSource: prepared.localSource,
+            metadata: prepared.metadata,
+            createdAt: new Date().toISOString(),
+            retryCount: 0
+          };
+          await offlineStore!.stagePendingUpload(pending);
+        })();
+        
+        const handle: UploadHandle = {
+          uploadSessionId,
+          fileId: normalizedInput.fileId!,
+          abort: () => {
+            // Staging abort not implemented
+          },
+          onProgress: (_cb) => {
+            // Staging progress not implemented
+          },
+          done: async () => {
+            await stagePromise;
+            // Wait for sync to complete when online
+            return offlineSync!.waitForUpload(uploadSessionId);
+          }
+        };
+        
+        return handle;
+      }
+
+      const manager = new UploadManager(httpClient, preprocessors);
+      return manager.createHandle(normalizedInput, () => manager.startUpload(normalizedInput));
+    },
+
+    resumeUpload(uploadSessionId: string, file: Blob, options?: { uploadSessionToken?: string }): UploadHandle {
+      const manager = new UploadManager(httpClient);
+      const dummyInput: UploadInput = { policy: '', file };
+      return manager.createHandle(
+        dummyInput,
+        () => manager.resumeUpload(uploadSessionId, file, options?.uploadSessionToken)
+      );
+    },
+
+    async getFile(fileId: string): Promise<Record<string, unknown>> {
+      return httpClient.getFile(fileId);
+    },
+
+    async listArtifacts(fileId: string): Promise<ArtifactDescriptor[]> {
+      return httpClient.listArtifacts(fileId);
+    },
+
+    async downloadUrl(fileId: string, options?: { versionId?: string }): Promise<string> {
+      const response = await httpClient.downloadUrl(fileId, options);
+      return response.url;
+    },
+
+    async downloadArtifact(fileId: string, artifactId: string): Promise<string> {
+      const response = await httpClient.downloadArtifact(fileId, artifactId);
+      return response.url;
+    },
+
+    async resolveRenderable(input): Promise<RenderDescriptor> {
+      if (input.preferLocal && offlineStore) {
+        const pending = await offlineStore.getPendingLocalDescriptor(input.fileId);
+        if (pending) {
+          return resolvePendingLocalRenderable({ intent: input.intent }, pending);
+        }
+      }
+
+      return httpClient.getRenderDescriptor(input.fileId, {
+        intent: input.intent,
+        versionId: input.versionId,
+      });
+    },
+
+    async deleteFile(fileId: string): Promise<void> {
+      await httpClient.deleteFile(fileId);
+    },
+
+    async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
+      if (!offlineStore) {
+        return null;
+      }
+      return offlineStore.getPendingLocalDescriptor(fileId);
+    },
+  };
+}
