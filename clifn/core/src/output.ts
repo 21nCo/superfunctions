@@ -64,9 +64,58 @@ const LEVEL_COLOR: Record<OutputLevel, keyof typeof COLOR | null> = {
   error: "red",
 };
 
+function normalizeJsonValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+
+    seen.add(value);
+    try {
+      return value.map((item) => normalizeJsonValue(item, seen));
+    } finally {
+      seen.delete(value);
+    }
+  }
+
+  if (value && typeof value === "object") {
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+
+    seen.add(value);
+    try {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+          key,
+          normalizeJsonValue(nested, seen),
+        ])
+      );
+    } finally {
+      seen.delete(value);
+    }
+  }
+
+  return value;
+}
+
+function serializeJson(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(normalizeJsonValue(value));
+    return serialized ?? "null";
+  } catch {
+    return JSON.stringify({
+      error: "Unable to serialize value",
+    });
+  }
+}
+
 function stringifyJson(value: unknown): string {
-  const serialized = JSON.stringify(value);
-  return `${serialized ?? "null"}\n`;
+  return `${serializeJson(value)}\n`;
 }
 
 function colorize(enabled: boolean, level: OutputLevel, message: string): string {
@@ -78,7 +127,7 @@ function colorize(enabled: boolean, level: OutputLevel, message: string): string
 }
 
 function formatTextMessage(enabledColor: boolean, level: OutputLevel, message: string, details?: unknown): string {
-  const suffix = details === undefined ? "" : ` ${JSON.stringify(details)}`;
+  const suffix = details === undefined ? "" : ` ${serializeJson(details)}`;
   return `${colorize(enabledColor, level, `${LEVEL_PREFIX[level]} ${message}`)}${suffix}\n`;
 }
 

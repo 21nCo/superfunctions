@@ -80,6 +80,38 @@ describe("createOutput", () => {
     expect(stdout.join("")).toBe("null\n");
   });
 
+  it("serializes circular values and bigint safely in json mode", () => {
+    const stdout: string[] = [];
+    const output = createOutput({
+      mode: "json",
+      stdout: (text) => stdout.push(text),
+    });
+    const value: Record<string, unknown> = {
+      count: 7n,
+    };
+    value.self = value;
+
+    output.json(value);
+
+    expect(stdout.join("")).toBe('{"count":"7","self":"[Circular]"}\n');
+  });
+
+  it("serializes circular values and bigint safely in text details", () => {
+    const stdout: string[] = [];
+    const output = createOutput({
+      color: false,
+      stdout: (text) => stdout.push(text),
+    });
+    const details: Record<string, unknown> = {
+      count: 7n,
+    };
+    details.self = details;
+
+    output.info("info", details);
+
+    expect(stdout.join("")).toBe('[i] info {"count":"7","self":"[Circular]"}\n');
+  });
+
   it("renders tables using declared column order", () => {
     const stdout: string[] = [];
     const output = createOutput({

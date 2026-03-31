@@ -72,6 +72,12 @@ async function resolveConfigValue(value: unknown): Promise<unknown> {
 function resolveExportValue(moduleValue: unknown, exportNames: readonly string[]): unknown {
   if (moduleValue && typeof moduleValue === "object") {
     const record = moduleValue as Record<string, unknown>;
+    const prototype = Object.getPrototypeOf(record);
+    const looksLikeModuleWrapper = record.__esModule === true || prototype === null || prototype !== Object.prototype;
+
+    if (!looksLikeModuleWrapper) {
+      return moduleValue;
+    }
 
     if (record.default !== undefined) {
       return record.default;
@@ -140,17 +146,19 @@ export async function loadConfig<T>(options: ConfigLoaderOptions<T> = {}): Promi
       continue;
     }
 
-    const loadedModule = await loadModuleConfig(resolvedPath);
-    const configValue = await resolveConfigValue(resolveExportValue(loadedModule, exportNames));
-
     try {
+      const loadedModule = await loadModuleConfig(resolvedPath);
+      const configValue = await resolveConfigValue(resolveExportValue(loadedModule, exportNames));
       const validated = options.validate ? options.validate(configValue, resolvedPath) : (configValue as T);
       return {
         config: validated,
         path: resolvedPath,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Config validation failed";
+      if (error instanceof ConfigLoaderError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : `Config loading failed for ${resolvedPath}`;
       throw new ConfigLoaderError("CLIFN_CONFIG_INVALID", message);
     }
   }

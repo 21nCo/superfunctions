@@ -63,6 +63,24 @@ describe("loadConfig", () => {
     }
   });
 
+  it("preserves plain json objects that happen to contain a default key", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "clifn-config-loader-"));
+
+    try {
+      const configPath = path.join(cwd, "tool.config.json");
+      await writeFile(configPath, JSON.stringify({ default: "kept", ok: true }), "utf8");
+
+      const loaded = await loadConfig({
+        cwd,
+        configPath,
+      });
+
+      expect(loaded.config).toEqual({ default: "kept", ok: true });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("fails deterministically for remote explicit config paths", async () => {
     await expect(
       loadConfig({
@@ -86,6 +104,27 @@ describe("loadConfig", () => {
       ).rejects.toMatchObject({
         code: "CLIFN_CONFIG_NOT_FOUND",
         message: "Config file not found: missing.config.ts",
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes runtime loader failures into typed config errors", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "clifn-config-loader-"));
+
+    try {
+      const configPath = path.join(cwd, "tool.config.js");
+      await writeFile(configPath, 'throw new Error("boom");\n', "utf8");
+
+      await expect(
+        loadConfig({
+          cwd,
+          configPath,
+        })
+      ).rejects.toMatchObject({
+        code: "CLIFN_CONFIG_INVALID",
+        message: "boom",
       });
     } finally {
       await rm(cwd, { recursive: true, force: true });

@@ -66,4 +66,18 @@ describe("createExec", () => {
       }),
     });
   });
+
+  it("does not split utf-8 characters when truncating buffered output", async () => {
+    const exec = createExec();
+
+    const result = await exec.command(
+      process.execPath,
+      ["-e", "process.stdout.write('😀😀😀')"],
+      {
+        maxBufferBytes: 10,
+      }
+    );
+
+    expect(result.stdout).toBe("😀😀");
+  });
 });

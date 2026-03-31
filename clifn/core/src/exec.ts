@@ -62,8 +62,14 @@ function appendChunk(current: string, chunk: string, maxBufferBytes: number): st
     return next;
   }
 
-  const allowedBytes = Math.max(maxBufferBytes - Buffer.byteLength(current), 0);
-  return current + Buffer.from(chunk).subarray(0, allowedBytes).toString("utf8");
+  let allowedBytes = Math.max(maxBufferBytes - Buffer.byteLength(current), 0);
+  const buffer = Buffer.from(chunk);
+
+  while (allowedBytes > 0 && allowedBytes < buffer.length && (buffer[allowedBytes] & 0b1100_0000) === 0b1000_0000) {
+    allowedBytes -= 1;
+  }
+
+  return current + buffer.subarray(0, allowedBytes).toString("utf8");
 }
 
 export function createExec(): ExecService {

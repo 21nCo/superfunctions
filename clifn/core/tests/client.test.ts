@@ -110,4 +110,71 @@ describe("client", () => {
       data: { ok: true },
     });
   });
+
+  it("treats header names case-insensitively when deciding whether to add content-type", async () => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("content-type")).toBe("text/plain");
+
+      return new Response("", {
+        status: 200,
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://api.conduct.sh",
+      apiKey: "sk_live_abc",
+      retries: 0,
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+    });
+
+    await expect(
+      client.request({
+        method: "POST",
+        path: "/plain",
+        body: "plain text payload",
+        headers: {
+          "CONTENT-TYPE": "text/plain",
+        },
+      })
+    ).resolves.toMatchObject({
+      data: null,
+    });
+  });
+
+  it("does not retry one-shot readable stream bodies", async () => {
+    let attempts = 0;
+    const fetchSpy = vi.fn(async () => {
+      attempts += 1;
+      throw new Error("network down");
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://api.conduct.sh",
+      apiKey: "sk_live_abc",
+      retries: 2,
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+    });
+
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("payload"));
+        controller.close();
+      },
+    });
+
+    await expect(client.post("/stream", body)).rejects.toBeInstanceOf(HttpRequestError);
+    expect(attempts).toBe(1);
+  });
+
+  it("wraps malformed base urls in a typed request error", async () => {
+    const client = createApiClient({
+      baseUrl: "not a url",
+      apiKey: "sk_live_abc",
+      retries: 0,
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+    });
+
+    await expect(client.get("/health")).rejects.toBeInstanceOf(HttpRequestError);
+  });
 });
