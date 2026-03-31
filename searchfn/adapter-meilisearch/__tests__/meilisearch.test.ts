@@ -155,16 +155,16 @@ describe("MeilisearchAdapter resilience", () => {
       return new Response("{}", { status: 401, headers: { "content-type": "application/json" } });
     });
 
-    const adapter = new MeilisearchAdapter({ host: "http://localhost:7700", apiKey: "bad-key" });
     try {
+      const adapter = new MeilisearchAdapter({ host: "http://localhost:7700", apiKey: "bad-key" });
       await adapter.search({ resource: "docs", query: "hello", limit: 5 });
       expect.fail("expected auth failure");
     } catch (err) {
       expect((err as SearchAdapterError).code).toBe("FORBIDDEN");
       expect((err as Error).message).toContain("Meilisearch authorization failed");
+    } finally {
+      fetchSpy.mockRestore();
     }
-
-    fetchSpy.mockRestore();
   });
 
   it("enforces bounded retry budget on retryable failures", async () => {
@@ -172,22 +172,21 @@ describe("MeilisearchAdapter resilience", () => {
       return new Response("{}", { status: 503, headers: { "content-type": "application/json" } });
     });
 
-    const adapter = new MeilisearchAdapter({
-      host: "http://localhost:7700",
-      retry: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 2 },
-      requestTimeoutMs: 100,
-    });
-
     try {
+      const adapter = new MeilisearchAdapter({
+        host: "http://localhost:7700",
+        retry: { maxRetries: 2, baseDelayMs: 1, maxDelayMs: 2 },
+        requestTimeoutMs: 100,
+      });
       await adapter.search({ resource: "docs", query: "hello", limit: 5 });
       expect.fail("expected retry exhaustion");
     } catch (err) {
       expect((err as SearchAdapterError).code).toBe("INTERNAL");
       expect((err as Error).message).toContain("Retry budget exhausted");
+    } finally {
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      fetchSpy.mockRestore();
     }
-
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    fetchSpy.mockRestore();
   });
 
   it("normalizes searchAll scores across resources", async () => {
@@ -279,6 +278,28 @@ describe("MeilisearchAdapter resilience", () => {
 
       expect(urls.some((url) => url.includes("/indexes/searchfn_docs_"))).toBe(false);
       expect(urls.some((url) => url.includes("/indexes/searchfn_notes_"))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("returns no results for explicit empty field or resource allow-lists", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    try {
+      const adapter = new MeilisearchAdapter({ host: "http://localhost:7700" });
+
+      await expect(
+        adapter.search({ resource: "docs", query: "hello", fields: [], limit: 10 }),
+      ).resolves.toEqual([]);
+      await expect(
+        adapter.searchAll({ query: "hello", fields: [], limit: 10 }),
+      ).resolves.toEqual([]);
+      await expect(
+        adapter.searchAll({ query: "hello", resources: [], limit: 10 }),
+      ).resolves.toEqual([]);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
     }

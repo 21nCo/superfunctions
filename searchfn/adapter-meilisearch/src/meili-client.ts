@@ -99,6 +99,9 @@ function parseResponseBody<T>(text: string): T | string | undefined {
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(abortedError());
+  }
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);

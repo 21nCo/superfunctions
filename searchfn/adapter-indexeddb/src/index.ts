@@ -58,6 +58,7 @@ interface ResourceEngine {
   postings: Map<string, Map<string, Map<string, PostingInfo>>>;
   dirtyPostings: Map<string, Set<string>>;
   fieldNames: Set<string>;
+  searchFields: string[] | null;
   docTerms: Map<string, DocTermEntry[]>;
   openPromise: Promise<void> | null;
   mutationQueue: Promise<void>;
@@ -130,6 +131,7 @@ export class IndexedDbAdapter implements SearchAdapter {
         postings: new Map(),
         dirtyPostings: new Map(),
         fieldNames: new Set(),
+        searchFields: null,
         docTerms: new Map(),
         openPromise: null,
         mutationQueue: Promise.resolve(),
@@ -561,7 +563,7 @@ export class IndexedDbAdapter implements SearchAdapter {
     const engine = this.getOrCreateEngine(params.resource);
     await this.ensureOpen(engine);
 
-    const fields = params.fields ?? Array.from(engine.fieldNames);
+    const fields = params.fields ?? engine.searchFields ?? Array.from(engine.fieldNames);
     if (fields.length === 0) return [];
 
     const effectivePrefix = params.prefix ?? this.defaults.prefix;
@@ -636,7 +638,7 @@ export class IndexedDbAdapter implements SearchAdapter {
       if (!engine) continue;
       await this.ensureOpen(engine);
 
-      const fields = params.fields ?? Array.from(engine.fieldNames);
+      const fields = params.fields ?? engine.searchFields ?? Array.from(engine.fieldNames);
       if (fields.length === 0) continue;
 
       const effectivePrefix = params.prefix ?? this.defaults.prefix;
@@ -674,7 +676,22 @@ export class IndexedDbAdapter implements SearchAdapter {
     if (this.disposed) {
       this.disposed = false;
     }
+    const requested = new Set(resources.map((resource) => resource.name));
+    for (const [name, engine] of this.engines.entries()) {
+      if (requested.has(name)) {
+        continue;
+      }
+      await engine.mutationQueue.catch(() => undefined);
+      await engine.storage.close();
+      this.engines.delete(name);
+    }
     const engines = resources.map(({ name }) => this.getOrCreateEngine(name));
+    for (const resource of resources) {
+      const engine = this.engines.get(resource.name);
+      if (engine) {
+        engine.searchFields = [...resource.searchFields];
+      }
+    }
     await Promise.all(engines.map((engine) => this.ensureOpen(engine)));
   }
 

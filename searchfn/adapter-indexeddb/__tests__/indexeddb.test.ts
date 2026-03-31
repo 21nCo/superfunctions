@@ -303,6 +303,61 @@ describe("IndexedDbAdapter — IDB-specific tests", () => {
     }
   });
 
+  it("honors configured searchFields when params.fields is omitted", async () => {
+    const adapter = new IndexedDbAdapter({ dbName: freshDbName() });
+    try {
+      await adapter.initialize({
+        resources: [{ name: "tasks", searchFields: ["title"] }],
+      });
+      await adapter.index({
+        resource: "tasks",
+        documents: [{ id: "1", fields: { title: "visible", body: "hidden-body-term" } }],
+      });
+
+      const result = await adapter.search({
+        resource: "tasks",
+        query: "hidden-body-term",
+      });
+
+      expect(result).toEqual([]);
+    } finally {
+      await adapter.dispose();
+    }
+  });
+
+  it("drops removed resources from implicit searchAll after reinitialize", async () => {
+    const adapter = new IndexedDbAdapter({ dbName: freshDbName() });
+    try {
+      await adapter.initialize({
+        resources: [
+          { name: "tasks", searchFields: ["title"] },
+          { name: "notes", searchFields: ["title"] },
+        ],
+      });
+      await adapter.index({
+        resource: "tasks",
+        documents: [{ id: "1", fields: { title: "task alpha" } }],
+      });
+      await adapter.index({
+        resource: "notes",
+        documents: [{ id: "n1", fields: { title: "note beta" } }],
+      });
+
+      await adapter.initialize({
+        resources: [{ name: "tasks", searchFields: ["title"] }],
+      });
+
+      const result = await adapter.searchAll({
+        query: "note",
+        limit: 10,
+      });
+
+      expect(result).toEqual([]);
+    } finally {
+      await adapter.dispose();
+    }
+  });
+
   it("supports fieldBoosts for ranking", async () => {
     const dbName = freshDbName();
     const adapter = new IndexedDbAdapter({ dbName });

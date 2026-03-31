@@ -1,8 +1,19 @@
-const SENSITIVE_KEY =
-  /(?:api[_-]?key|password|secret|token|authorization|connection(?:string|[_-]string)?)(?=$|[^a-z])/i;
 const KEY_VALUE_SECRET = /\b(api[_-]?key|password|secret|token|authorization|connection(?:string|[_-]?string)?)\s*[:=]\s*([^\s,;]+)/gi;
 const URL_CREDENTIALS = /(https?:\/\/)([^\s/@]+)@/gi;
 const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  if (/(api[_-]?key|password|secret|token|authorization)/.test(lower)) {
+    return true;
+  }
+  return (
+    lower.endsWith("connection") ||
+    lower.endsWith("connectionstring") ||
+    lower.endsWith("connection_string") ||
+    lower.endsWith("connection-string")
+  );
+}
 
 function isPlainObject(value: object): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
@@ -31,7 +42,10 @@ function redactError(error: Error, seen: WeakSet<object>): Record<string, unknow
     );
   }
   for (const [key, entry] of Object.entries(error)) {
-    output[key] = SENSITIVE_KEY.test(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
+    if (key === "cause") {
+      continue;
+    }
+    output[key] = isSensitiveKey(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
   }
   return output;
 }
@@ -59,7 +73,7 @@ function redactSensitiveInternal(value: unknown, seen: WeakSet<object>): unknown
       }
       const output: Record<string, unknown> = {};
       for (const [key, entry] of entries) {
-        output[key] = SENSITIVE_KEY.test(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
+        output[key] = isSensitiveKey(key) ? "[REDACTED]" : redactSensitiveInternal(entry, seen);
       }
       return output;
     } finally {

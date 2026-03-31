@@ -142,6 +142,9 @@ export class MeilisearchAdapter implements SearchAdapter {
 
   async search(params: SearchParams): Promise<Array<string | number>> {
     this.assertNotDisposed();
+    if (params.fields !== undefined && params.fields.length === 0) {
+      return [];
+    }
 
     const effectiveFuzzy = params.fuzzy ?? this.defaults.fuzzy;
     const indexName = this.indexName(params.resource);
@@ -151,7 +154,7 @@ export class MeilisearchAdapter implements SearchAdapter {
       body: {
         q: params.query,
         limit: Math.max(1, params.limit ?? 10),
-        attributesToSearchOn: params.fields?.length ? params.fields : undefined,
+        attributesToSearchOn: params.fields !== undefined ? params.fields : undefined,
         typoTolerance: effectiveFuzzy ? undefined : "min",
       },
       signal: params.signal,
@@ -165,9 +168,15 @@ export class MeilisearchAdapter implements SearchAdapter {
 
   async searchAll(params: SearchAllParams): Promise<SearchAllResult[]> {
     this.assertNotDisposed();
+    if (params.fields !== undefined && params.fields.length === 0) {
+      return [];
+    }
 
     const effectiveFuzzy = params.fuzzy ?? this.defaults.fuzzy;
-    const resources = params.resources?.length ? params.resources : Array.from(this.resources.keys());
+    const resources = params.resources ?? Array.from(this.resources.keys());
+    if (resources.length === 0) {
+      return [];
+    }
     const limit = Math.max(1, params.limit ?? 10);
     const limitPerResource = Math.max(1, params.limitPerResource ?? limit);
     const merged: SearchAllResult[] = [];
@@ -180,7 +189,7 @@ export class MeilisearchAdapter implements SearchAdapter {
         body: {
           q: params.query,
           limit: limitPerResource,
-          attributesToSearchOn: params.fields?.length ? params.fields : undefined,
+          attributesToSearchOn: params.fields !== undefined ? params.fields : undefined,
           typoTolerance: effectiveFuzzy ? undefined : "min",
         },
         signal: params.signal,
