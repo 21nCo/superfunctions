@@ -60,6 +60,7 @@ interface ResourceEngine {
   fieldNames: Set<string>;
   docTerms: Map<string, DocTermEntry[]>;
   openPromise: Promise<void> | null;
+  mutationQueue: Promise<void>;
   vocabulary: Set<string>;
   fuzzyCache: Map<string, string[]>;
 }
@@ -131,6 +132,7 @@ export class IndexedDbAdapter implements SearchAdapter {
         fieldNames: new Set(),
         docTerms: new Map(),
         openPromise: null,
+        mutationQueue: Promise.resolve(),
         vocabulary: new Set(),
         fuzzyCache: new Map(),
       };
@@ -157,7 +159,7 @@ export class IndexedDbAdapter implements SearchAdapter {
     distance: number,
   ): string[] {
     const cacheKey = `${term}:${distance}`;
-    let expansion = engine.fuzzyCache.get(cacheKey);
+    let expansion: string[] | undefined = engine.fuzzyCache.get(cacheKey);
     if (!expansion) {
       expansion = fuzzyExpand(term, distance, engine.vocabulary);
       engine.fuzzyCache.set(cacheKey, expansion);
@@ -168,7 +170,7 @@ export class IndexedDbAdapter implements SearchAdapter {
         }
       }
     }
-    return expansion;
+    return expansion ?? [];
   }
 
   private async ensureOpen(engine: ResourceEngine): Promise<void> {
@@ -255,28 +257,47 @@ export class IndexedDbAdapter implements SearchAdapter {
   }
 
   private refreshVocabulary(engine: ResourceEngine): void {
-    const nextVocabulary = new Set(engine.vocabulary);
+    const previousVocabulary = new Set(engine.vocabulary);
+    const nextVocabulary = new Set<string>();
     for (const terms of engine.docTerms.values()) {
       for (const entry of terms) {
         if (entry.isPrefix === false) {
           nextVocabulary.add(entry.term);
+          continue;
+        }
+        // Legacy snapshots omitted `isPrefix`; only keep terms that were
+        // already known as searchable vocabulary before this refresh.
+        if (entry.isPrefix === undefined && previousVocabulary.has(entry.term)) {
+          nextVocabulary.add(entry.term);
         }
       }
     }
-    for (const fieldMap of engine.postings.values()) {
-      for (const [term, termMap] of fieldMap.entries()) {
-        if (termMap.size === 0) {
-          nextVocabulary.delete(term);
-        }
-      }
-    }
-    const previousSize = engine.vocabulary.size;
+    const changed =
+      nextVocabulary.size !== previousVocabulary.size ||
+      Array.from(nextVocabulary).some((term) => !previousVocabulary.has(term));
     engine.vocabulary.clear();
     for (const term of nextVocabulary) {
       engine.vocabulary.add(term);
     }
-    if (engine.vocabulary.size !== previousSize || engine.fuzzyCache.size > 0) {
+    if (changed || engine.fuzzyCache.size > 0) {
       engine.fuzzyCache.clear();
+    }
+  }
+
+  private async withMutationLock<T>(
+    engine: ResourceEngine,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const previous = engine.mutationQueue;
+    let release!: () => void;
+    engine.mutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
     }
   }
 
@@ -445,7 +466,9 @@ export class IndexedDbAdapter implements SearchAdapter {
     for (const field of fields) {
       const rawTokens = engine.pipeline.run(field, query);
       // Always filter out isPrefix-flagged pipeline tokens (edge-ngram artefacts at index time)
-      const filtered = rawTokens.filter((t) => !t.metadata?.isPrefix);
+      const filtered = rawTokens.filter(
+        (t: { metadata?: Record<string, unknown>; value: string }) => !t.metadata?.isPrefix,
+      );
       const fieldBoost = fieldBoosts?.[field] ?? 1.0;
       for (const token of filtered) {
         if (prefix) {
@@ -480,54 +503,56 @@ export class IndexedDbAdapter implements SearchAdapter {
     this.assertNotDisposed();
     this.assertNotAborted(signal, "Index operation");
     const engine = this.getOrCreateEngine(resource);
-    await this.ensureOpen(engine);
+    await this.withMutationLock(engine, async () => {
+      await this.ensureOpen(engine);
 
-    for (
-      let offset = 0;
-      offset < documents.length;
-      offset += IndexedDbAdapter.MAX_INDEX_BATCH_SIZE
-    ) {
-      this.assertNotAborted(signal, "Index operation");
-      const chunk = documents.slice(
-        offset,
-        offset + IndexedDbAdapter.MAX_INDEX_BATCH_SIZE,
-      );
-      for (const doc of chunk) {
+      for (
+        let offset = 0;
+        offset < documents.length;
+        offset += IndexedDbAdapter.MAX_INDEX_BATCH_SIZE
+      ) {
         this.assertNotAborted(signal, "Index operation");
-        const docId = String(doc.id);
-        if (engine.docTerms.has(docId)) {
-          await this.removeDocById(engine, docId);
-        }
-
-        const ingest = engine.indexer.ingest({ docId: doc.id, fields: doc.fields });
-        if (ingest.totalLength === 0) continue;
-
-        engine.statsManager.addDocument(doc.id, ingest.totalLength);
-
-        const docTermEntries: DocTermEntry[] = [];
-        for (const [field, termFrequencies] of ingest.fieldFrequencies.entries()) {
-          engine.fieldNames.add(field);
-          const metadata =
-            ingest.fieldMetadata.get(field) ?? new Map<string, Record<string, unknown>>();
-          for (const [term, frequency] of termFrequencies.entries()) {
-            const termMetadata = metadata.get(term);
-            this.upsertPosting(engine, field, term, docId, frequency, termMetadata);
-            const isPrefix =
-              termMetadata !== undefined && termMetadata["isPrefix"] === true;
-            if (!isPrefix) {
-              engine.vocabulary.add(term);
-              engine.fuzzyCache.clear();
-            }
-            docTermEntries.push({ field, term, isPrefix });
+        const chunk = documents.slice(
+          offset,
+          offset + IndexedDbAdapter.MAX_INDEX_BATCH_SIZE,
+        );
+        for (const doc of chunk) {
+          this.assertNotAborted(signal, "Index operation");
+          const docId = String(doc.id);
+          if (engine.docTerms.has(docId)) {
+            await this.removeDocById(engine, docId);
           }
+
+          const ingest = engine.indexer.ingest({ docId, fields: doc.fields });
+          if (ingest.totalLength === 0) continue;
+
+          engine.statsManager.addDocument(docId, ingest.totalLength);
+
+          const docTermEntries: DocTermEntry[] = [];
+          for (const [field, termFrequencies] of ingest.fieldFrequencies.entries()) {
+            engine.fieldNames.add(field);
+            const metadata =
+              ingest.fieldMetadata.get(field) ?? new Map<string, Record<string, unknown>>();
+            for (const [term, frequency] of termFrequencies.entries()) {
+              const termMetadata = metadata.get(term);
+              this.upsertPosting(engine, field, term, docId, frequency, termMetadata);
+              const isPrefix =
+                termMetadata !== undefined && termMetadata["isPrefix"] === true;
+              if (!isPrefix) {
+                engine.vocabulary.add(term);
+                engine.fuzzyCache.clear();
+              }
+              docTermEntries.push({ field, term, isPrefix });
+            }
+          }
+
+          engine.docTerms.set(docId, docTermEntries);
         }
-
-        engine.docTerms.set(docId, docTermEntries);
       }
-    }
 
-    this.updateTermCache(engine);
-    await this.persistAll(engine);
+      this.updateTermCache(engine);
+      await this.persistAll(engine);
+    });
   }
 
   async search(params: SearchParams): Promise<DocId[]> {
@@ -555,43 +580,45 @@ export class IndexedDbAdapter implements SearchAdapter {
 
     const limit = Math.max(1, params.limit ?? 10);
     const result = await engine.queryEngine.execute(tokens, { limit });
-    return result.documents.map((d) => d.docId);
+    return result.documents.map((d: { docId: DocId }) => d.docId);
   }
 
   async remove({ resource, ids, signal }: RemoveParams): Promise<void> {
     this.assertNotDisposed();
     this.assertNotAborted(signal, "Remove operation");
-    const engine = this.engines.get(resource);
-    if (!engine) return;
-    await this.ensureOpen(engine);
+    const engine = this.getOrCreateEngine(resource);
+    await this.withMutationLock(engine, async () => {
+      await this.ensureOpen(engine);
 
-    for (const id of ids) {
-      this.assertNotAborted(signal, "Remove operation");
-      await this.removeDocById(engine, String(id));
-    }
+      for (const id of ids) {
+        this.assertNotAborted(signal, "Remove operation");
+        await this.removeDocById(engine, String(id));
+      }
 
-    engine.termCache.clear();
-    await this.persistAll(engine);
+      engine.termCache.clear();
+      await this.persistAll(engine);
+    });
   }
 
   async clear(resource: string, signal?: AbortSignal): Promise<void> {
     this.assertNotDisposed();
     this.assertNotAborted(signal, "Clear operation");
-    const engine = this.engines.get(resource);
-    if (!engine) return;
-    await this.ensureOpen(engine);
+    const engine = this.getOrCreateEngine(resource);
+    await this.withMutationLock(engine, async () => {
+      await this.ensureOpen(engine);
 
-    engine.postings.clear();
-    engine.dirtyPostings.clear();
-    engine.termCache.clear();
-    engine.statsManager.load([]);
-    engine.docTerms.clear();
-    engine.fieldNames.clear();
-    engine.vocabulary.clear();
-    engine.fuzzyCache.clear();
+      engine.postings.clear();
+      engine.dirtyPostings.clear();
+      engine.termCache.clear();
+      engine.statsManager.load([]);
+      engine.docTerms.clear();
+      engine.fieldNames.clear();
+      engine.vocabulary.clear();
+      engine.fuzzyCache.clear();
 
-    await engine.storage.clearStore("terms");
-    await engine.storage.clearStore("cacheState");
+      await engine.storage.clearStore("terms");
+      await engine.storage.clearStore("cacheState");
+    });
   }
 
   async searchAll(params: SearchAllParams): Promise<SearchAllResult[]> {
@@ -605,7 +632,7 @@ export class IndexedDbAdapter implements SearchAdapter {
 
     for (const resourceName of resourceNames) {
       this.assertNotAborted(params.signal, "SearchAll operation");
-      const engine = this.engines.get(resourceName);
+      const engine = params.resources ? this.getOrCreateEngine(resourceName) : this.engines.get(resourceName);
       if (!engine) continue;
       await this.ensureOpen(engine);
 

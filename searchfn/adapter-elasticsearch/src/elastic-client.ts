@@ -97,12 +97,18 @@ function parseResponseBody<T>(
     return JSON.parse(text) as T;
   } catch (error) {
     if (options.strictJson) {
-      throw new Error("Elastic backend returned invalid JSON", {
-        cause: error,
-      });
+      const invalidJsonError = new Error("Elastic backend returned invalid JSON");
+      (invalidJsonError as Error & { cause?: unknown }).cause = error;
+      throw invalidJsonError;
     }
     return text;
   }
+}
+
+function buildRequestUrl(base: string, path: string): URL {
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  const normalizedPath = path.replace(/^\/+/, "");
+  return new URL(normalizedPath, normalizedBase);
 }
 
 export class ElasticClient {
@@ -185,7 +191,7 @@ export class ElasticClient {
     }
 
     try {
-      const url = new URL(opts.path, this.options.node.endsWith("/") ? this.options.node : `${this.options.node}/`);
+      const url = buildRequestUrl(this.options.node, opts.path);
       const response = await fetch(url, {
         method: opts.method,
         headers,

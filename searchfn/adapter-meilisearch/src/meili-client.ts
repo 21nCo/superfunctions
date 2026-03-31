@@ -19,6 +19,7 @@ export interface MeiliClientOptions {
   host: string;
   apiKey?: string;
   requestTimeoutMs?: number;
+  taskTimeoutMs?: number;
   retry?: MeiliRetryPolicy;
   logger?: AdapterLogger;
 }
@@ -97,11 +98,28 @@ function parseResponseBody<T>(text: string): T | string | undefined {
   }
 }
 
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+      reject(abortedError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export class MeiliClient {
   private readonly requestTimeoutMs: number;
+  private readonly taskTimeoutMs: number;
 
   constructor(private readonly options: MeiliClientOptions) {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.taskTimeoutMs = options.taskTimeoutMs ?? Math.max(this.requestTimeoutMs * 10, 120_000);
   }
 
   async request<T = unknown>(opts: MeiliRequestOptions): Promise<MeiliResponse<T>> {
@@ -151,7 +169,7 @@ export class MeiliClient {
 
   async waitForTask(taskUid: number, signal?: AbortSignal): Promise<void> {
     const started = Date.now();
-    while (Date.now() - started < this.requestTimeoutMs) {
+    while (Date.now() - started < this.taskTimeoutMs) {
       if (signal?.aborted) {
         throw abortedError();
       }
@@ -169,7 +187,7 @@ export class MeiliClient {
       if (signal?.aborted) {
         throw abortedError();
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await delay(50, signal);
     }
     throw retryBudgetExhaustedError();
   }

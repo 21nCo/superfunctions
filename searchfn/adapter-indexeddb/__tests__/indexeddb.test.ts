@@ -252,6 +252,57 @@ describe("IndexedDbAdapter — IDB-specific tests", () => {
     }
   });
 
+  it("supports remove after cold restart without explicit initialize", async () => {
+    const dbName = freshDbName();
+
+    const adapter1 = new IndexedDbAdapter({ dbName });
+    await adapter1.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "cold restart removal" } }],
+    });
+    await adapter1.dispose();
+
+    const adapter2 = new IndexedDbAdapter({ dbName });
+    try {
+      await adapter2.remove({ resource: "tasks", ids: ["1"] });
+
+      const result = await adapter2.search({
+        resource: "tasks",
+        query: "cold",
+        fields: ["title"],
+      });
+      expect(result).toEqual([]);
+    } finally {
+      await adapter2.dispose();
+    }
+  });
+
+  it("supports explicit-resource searchAll after cold restart", async () => {
+    const dbName = freshDbName();
+
+    const adapter1 = new IndexedDbAdapter({ dbName });
+    await adapter1.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "cold restart search all" } }],
+    });
+    await adapter1.dispose();
+
+    const adapter2 = new IndexedDbAdapter({ dbName });
+    try {
+      const result = await adapter2.searchAll({
+        resources: ["tasks"],
+        query: "cold",
+        limit: 10,
+      });
+
+      expect(result).toEqual([
+        expect.objectContaining({ resource: "tasks", id: "1" }),
+      ]);
+    } finally {
+      await adapter2.dispose();
+    }
+  });
+
   it("supports fieldBoosts for ranking", async () => {
     const dbName = freshDbName();
     const adapter = new IndexedDbAdapter({ dbName });

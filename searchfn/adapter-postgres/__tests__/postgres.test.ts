@@ -214,6 +214,35 @@ describe("PostgresAdapter integration", () => {
     expect(notesResults).toContain("n1");
   });
 
+  it("removes stale rows when a document is reindexed with zero searchable fields", async () => {
+    if (!available) return;
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "vanishing document" } }],
+    });
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: {} }],
+    });
+
+    const results = await adapter.search({ resource: "tasks", query: "vanishing", limit: 10 });
+    expect(results).toEqual([]);
+  });
+
+  it("round-trips canonical numeric ids as numbers", async () => {
+    if (!available) return;
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: 123, fields: { title: "numeric id" } }],
+    });
+
+    const results = await adapter.search({ resource: "tasks", query: "numeric", limit: 10 });
+    expect(results).toEqual([123]);
+  });
+
   // ── Lifecycle ──────────────────────────────────────────────────
 
   it("blocks operations after dispose", async () => {
@@ -352,6 +381,18 @@ describe("PostgresAdapter redaction", () => {
     ).toEqual({
       connection: "[REDACTED]",
       connectionTimeout: 5000,
+    });
+  });
+
+  it("redacts Error instances before returning them", () => {
+    const error = Object.assign(new Error("password=secret"), {
+      connection: "postgres://user:pass@example.test/db",
+    });
+
+    expect(redactPostgresSensitive(error)).toMatchObject({
+      name: "Error",
+      message: "password=[REDACTED]",
+      connection: "[REDACTED]",
     });
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 import { ElasticsearchAdapter } from "../src/index";
 import { SearchAdapterError } from "@searchfn/adapter-contracts";
 import { redactSensitive as redactElasticSensitive } from "../src/internal/redaction";
@@ -44,6 +44,11 @@ describe("ElasticsearchAdapter integration", () => {
         { name: "notes", searchFields: ["content"] },
       ],
     });
+  });
+
+  afterEach(async () => {
+    await adapter?.dispose();
+    vi.restoreAllMocks();
   });
 
   afterAll(async () => {
@@ -177,7 +182,6 @@ describe("ElasticsearchAdapter resilience and validation", () => {
     }
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
-    fetchSpy.mockRestore();
   });
 
   it("preserves digit-only ids as strings in search results", async () => {
@@ -256,6 +260,26 @@ describe("ElasticsearchAdapter resilience and validation", () => {
     ).toHaveLength(2);
 
     fetchSpy.mockRestore();
+  });
+
+  it("preserves configured base paths when building backend URLs", async () => {
+    const urls: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      urls.push(String(url));
+      return makeHitsResponse([{ _id: "123" }]);
+    });
+
+    try {
+      const adapter = new ElasticsearchAdapter({
+        node: "http://localhost:9200/custom-base",
+        engine: "elasticsearch",
+      });
+
+      await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
+      expect(urls[0]).toBe("http://localhost:9200/custom-base/searchfn_tasks/_search");
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

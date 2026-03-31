@@ -11,12 +11,14 @@ import type {
 } from "@searchfn/adapter-contracts";
 import { SearchAdapterError, SEARCH_ADAPTER_DISPOSED } from "@searchfn/adapter-contracts";
 import { MeiliClient, type MeiliRetryPolicy, type AdapterLogger } from "./meili-client";
+import { createHash } from "node:crypto";
 
 export interface MeilisearchAdapterOptions {
   host: string;
   apiKey?: string;
   indexPrefix?: string;
   requestTimeoutMs?: number;
+  taskTimeoutMs?: number;
   retry?: MeiliRetryPolicy;
   logger?: AdapterLogger;
   /** Construct-time defaults applied when query params are omitted. */
@@ -32,14 +34,16 @@ interface MeiliSearchResponse {
 }
 
 function sanitizeResourceName(resource: string): string {
-  return resource.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+  const base = resource.replace(/[^a-z0-9_]/gi, "_").toLowerCase() || "resource";
+  const hash = createHash("sha1").update(resource).digest("hex").slice(0, 8);
+  return `${base}_${hash}`;
 }
 
 function coerceId(value: unknown): string | number {
   const asString = String(value);
-  if (/^\d+$/.test(asString)) {
+  if (/^(0|[1-9]\d*)$/.test(asString)) {
     const asNumber = Number(asString);
-    if (Number.isSafeInteger(asNumber)) {
+    if (Number.isSafeInteger(asNumber) && String(asNumber) === asString) {
       return asNumber;
     }
   }
@@ -53,7 +57,7 @@ export class MeilisearchAdapter implements SearchAdapter {
     searchAll: true,
     fuzzy: true,
     fieldBoosts: false,
-    prefix: true,
+    prefix: false,
   };
 
   private readonly client: MeiliClient;
@@ -67,6 +71,7 @@ export class MeilisearchAdapter implements SearchAdapter {
       host: options.host,
       apiKey: options.apiKey,
       requestTimeoutMs: options.requestTimeoutMs,
+      taskTimeoutMs: options.taskTimeoutMs,
       retry: options.retry,
       logger: options.logger,
     });
@@ -91,6 +96,7 @@ export class MeilisearchAdapter implements SearchAdapter {
     if (this.disposed) {
       this.disposed = false;
     }
+    this.resources.clear();
 
     for (const resource of params.resources) {
       const indexName = this.indexName(resource.name);
