@@ -4,14 +4,9 @@ const POSTGRES_CREDENTIALS = /(postgres(?:ql)?:\/\/)([^\s/@]+)@/gi;
 
 function isSensitiveKey(key: string): boolean {
   const lower = key.toLowerCase();
-  if (/(api[_-]?key|password|secret|token|authorization)/.test(lower)) {
-    return true;
-  }
   return (
-    lower.endsWith("connection") ||
-    lower.endsWith("connectionstring") ||
-    lower.endsWith("connection_string") ||
-    lower.endsWith("connection-string")
+    /(api[_-]?key|password|secret|token|authorization)/.test(lower) ||
+    /connection(?:string|[_-]?string)?$/.test(lower)
   );
 }
 
