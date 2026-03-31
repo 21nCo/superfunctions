@@ -75,52 +75,56 @@ export function createRpcClient(
     pluginOrder
   );
 
+  const dispatch = async (
+    envelope: RuntimeRequestEnvelope
+  ): Promise<RuntimeResponseEnvelope> => {
+    try {
+      assertValidRequestEnvelope(envelope);
+    } catch (error) {
+      const extfnError = normalizeToExtfnError(error);
+      return createErrorResponseEnvelope(envelope.requestId, extfnError);
+    }
+
+    try {
+      assertPayloadWithinLimit(envelope.payload);
+      const routeKey = `${envelope.namespace}/${envelope.method}`;
+      const handler = resolvedHandlers.find(
+        (candidate) =>
+          candidate.namespace === envelope.namespace &&
+          candidate.method === envelope.method
+      );
+
+      if (!handler) {
+        return createErrorResponseEnvelope(
+          envelope.requestId,
+          createHandlerNotFoundError(routeKey)
+        );
+      }
+
+      const timeoutMs = envelope.timeoutMs ?? options.defaultTimeoutMs ?? 30000;
+      const result = await withTimeout(
+        Promise.resolve(
+          handler.handle(
+            options.runtimeProvider?.(),
+            envelope.payload,
+            envelope
+          )
+        ),
+        timeoutMs
+      );
+
+      return createSuccessResponseEnvelope(envelope.requestId, result);
+    } catch (error) {
+      const extfnError = normalizeToExtfnError(error);
+      return createErrorResponseEnvelope(envelope.requestId, extfnError);
+    }
+  };
+
   return {
     handlers: resolvedHandlers,
     pluginOrder,
     mergedPermissions: mergedContribution.permissions,
-    async dispatch(envelope: RuntimeRequestEnvelope): Promise<RuntimeResponseEnvelope> {
-      try {
-        assertValidRequestEnvelope(envelope);
-      } catch (error) {
-        const extfnError = normalizeToExtfnError(error);
-        return createErrorResponseEnvelope(envelope.requestId, extfnError);
-      }
-
-      try {
-        assertPayloadWithinLimit(envelope.payload);
-        const routeKey = `${envelope.namespace}/${envelope.method}`;
-        const handler = resolvedHandlers.find(
-          (candidate) =>
-            candidate.namespace === envelope.namespace &&
-            candidate.method === envelope.method
-        );
-
-        if (!handler) {
-          return createErrorResponseEnvelope(
-            envelope.requestId,
-            createHandlerNotFoundError(routeKey)
-          );
-        }
-
-        const timeoutMs = envelope.timeoutMs ?? options.defaultTimeoutMs ?? 30000;
-        const result = await withTimeout(
-          Promise.resolve(
-            handler.handle(
-              options.runtimeProvider?.(),
-              envelope.payload,
-              envelope
-            )
-          ),
-          timeoutMs
-        );
-
-        return createSuccessResponseEnvelope(envelope.requestId, result);
-      } catch (error) {
-        const extfnError = normalizeToExtfnError(error);
-        return createErrorResponseEnvelope(envelope.requestId, extfnError);
-      }
-    },
+    dispatch,
     async call<T>(
       namespace: string,
       method: string,
@@ -141,7 +145,7 @@ export function createRpcClient(
         timeoutMs: optionsOverrides?.timeoutMs,
       });
 
-      const response = await this.dispatch(envelope);
+      const response = await dispatch(envelope);
       if (!response.ok) {
         throw response.error;
       }

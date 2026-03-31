@@ -112,4 +112,35 @@ describe("@datafn/extfn subscriptions", () => {
         "Duplicate DataFn subscription registration detected after reconnect.",
     });
   });
+
+  it("routes delivery rejections through onFailure", async () => {
+    const eventBus = new EventBus();
+    const subscriptions = new DatafnExtfnSubscriptions({
+      subscribe: (handler, filter) => eventBus.subscribe(handler, filter),
+    });
+    const failures: Array<{ code: string; subscriptionId: string }> = [];
+
+    const registration = await subscriptions.subscribe({
+      deliver: async () => {
+        throw new Error("delivery failed");
+      },
+      onFailure: async (error, subscriptionId) => {
+        failures.push({
+          code: error.code,
+          subscriptionId,
+        });
+      },
+    });
+
+    eventBus.emit(createMutationEvent(4));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(failures).toEqual([
+      {
+        code: "E_RUNTIME_PROTOCOL",
+        subscriptionId: registration.subscriptionId,
+      },
+    ]);
+  });
 });

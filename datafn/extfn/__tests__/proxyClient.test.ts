@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createBrowserDatafnExtfnBridge,
   createDatafnExtfnAuthority,
   createDatafnExtfnProxyClient,
 } from "../src/index.js";
@@ -107,5 +108,52 @@ describe("@datafn/extfn proxy client", () => {
     }
 
     throw new Error("Expected authContext validation to fail.");
+  });
+
+  it("sends callback-runtime bridge requests exactly once", async () => {
+    let sendCount = 0;
+    const bridge = createBrowserDatafnExtfnBridge({
+      address: {
+        context: "popup",
+        surfaceId: "main",
+      },
+      browserRuntime: {
+        sendMessage(message, callback) {
+          sendCount += 1;
+          const envelope = message as { requestId: string };
+          callback?.({
+            v: 1,
+            kind: "response",
+            requestId: envelope.requestId,
+            ok: true,
+            result: { ok: true },
+          });
+        },
+      },
+    });
+
+    const response = await bridge.request({
+      v: 1,
+      kind: "request",
+      requestId: "req_1",
+      namespace: "datafn",
+      method: "query",
+      source: {
+        context: "popup",
+        surfaceId: "main",
+      },
+      target: {
+        context: "background",
+      },
+      payload: {},
+    });
+
+    expect(sendCount).toBe(1);
+    expect(response).toMatchObject({
+      kind: "response",
+      requestId: "req_1",
+      ok: true,
+      result: { ok: true },
+    });
   });
 });

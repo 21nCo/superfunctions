@@ -86,7 +86,14 @@ export class DatafnExtfnSubscriptions {
           subscriptionId,
           event,
         }),
-      );
+      ).catch(async (error) => {
+        if (options.onFailure) {
+          await options.onFailure(
+            normalizeDeliveryError(error, subscriptionId),
+            subscriptionId,
+          );
+        }
+      });
     }, filter);
 
     this.active.set(subscriptionId, {
@@ -157,4 +164,19 @@ export class DatafnExtfnSubscriptions {
   getRecoverableSubscriptionCount(): number {
     return this.recoverable.size;
   }
+}
+
+function normalizeDeliveryError(
+  error: unknown,
+  subscriptionId: string,
+): ExtfnLikeError {
+  return error && typeof error === "object" && "code" in error && "message" in error
+    ? (error as ExtfnLikeError)
+    : createExtfnLikeError(
+        "E_RUNTIME_PROTOCOL",
+        error instanceof Error
+          ? error.message
+          : "DataFn subscription delivery failed.",
+        { subscriptionId },
+      );
 }

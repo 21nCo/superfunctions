@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import {
@@ -66,6 +67,7 @@ export interface SerializedCommandError {
 }
 
 const SUPPORTED_TARGET_SET = new Set<string>(SUPPORTED_BROWSER_TARGETS);
+const require = createRequire(import.meta.url);
 
 export async function executeBuildCommand(
   options: BuildCommandOptions,
@@ -432,7 +434,7 @@ async function runViteCliBuild(
   const result = await ctx.exec.command(
     process.execPath,
     [
-      path.resolve(ctx.cwd, 'node_modules/vite/bin/vite.js'),
+      resolveViteCliEntrypoint(),
       'build',
       '--config',
       viteConfigPath,
@@ -450,6 +452,11 @@ async function runViteCliBuild(
   if (result.exitCode !== 0) {
     throw new Error(result.stderr || result.stdout || 'vite build failed');
   }
+}
+
+export function resolveViteCliEntrypoint(): string {
+  const viteEntrypoint = require.resolve('vite');
+  return path.resolve(path.dirname(viteEntrypoint), 'bin/vite.js');
 }
 
 function sanitizeBuildEnv(

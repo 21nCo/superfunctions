@@ -79,4 +79,79 @@ describe("@datafn/extfn authority", () => {
       });
     }
   });
+
+  it("emits subscription events through callback runtimes without double dispatch", async () => {
+    const authority = createDatafnExtfnAuthority({
+      schema,
+      clientId: "authority:demo",
+      namespace: "tenant:demo",
+    });
+    let listener:
+      | ((message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void)
+      | undefined;
+    const sentEvents: unknown[] = [];
+
+    authority.attachBrowserRuntimeBridge({
+      sendMessage(message, callback) {
+        sentEvents.push(message);
+        callback?.(undefined);
+      },
+      onMessage: {
+        addListener(handler) {
+          listener = handler;
+        },
+        removeListener() {},
+      },
+    });
+
+    const request = {
+      v: 1 as const,
+      kind: "request" as const,
+      requestId: "req_subscribe",
+      namespace: "datafn",
+      method: "subscribe",
+      source: {
+        context: "popup" as const,
+        surfaceId: "main",
+      },
+      target: {
+        context: "background" as const,
+      },
+      payload: {},
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      const handled = listener?.(request, undefined, (response) => {
+        try {
+          expect(response).toMatchObject({
+            ok: true,
+            requestId: "req_subscribe",
+          });
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      expect(handled).toBe(true);
+    });
+
+    await authority.requestMethod("mutation", {
+      resource: "clip",
+      version: 1,
+      operation: "insert",
+      id: "clip:2",
+      record: {
+        id: "clip:2",
+        title: "Second clip",
+      },
+    });
+
+    expect(sentEvents).toHaveLength(1);
+    expect(sentEvents[0]).toMatchObject({
+      kind: "event",
+      namespace: "datafn",
+      event: "subscription",
+    });
+  });
 });

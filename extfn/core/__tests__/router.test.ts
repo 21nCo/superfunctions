@@ -29,6 +29,27 @@ describe('router', () => {
     expect(response).toEqual({ value: 'hello' });
   });
 
+  it('keeps call usable after destructuring', async () => {
+    const router = createRpcClient({
+      address: {
+        context: 'popup',
+        surfaceId: 'popup',
+      },
+      handlers: [
+        {
+          namespace: 'demo',
+          method: 'ping',
+          async handle() {
+            return { ok: true };
+          },
+        },
+      ],
+    });
+
+    const { call } = router;
+    await expect(call('demo', 'ping', {})).resolves.toEqual({ ok: true });
+  });
+
   it('rejects invalid envelopes, unknown handlers, timeouts, and oversized payloads', async () => {
     const router = createRpcClient({
       address: {

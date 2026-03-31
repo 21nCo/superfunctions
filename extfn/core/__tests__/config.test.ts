@@ -233,4 +233,56 @@ describe('resolveExtensionConfig', () => {
       await fs.rm(cwd, { recursive: true, force: true });
     }
   });
+
+  it('ignores declaration files when discovering handler modules', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'extfn-config-'));
+    const configPath = path.join(cwd, 'extfn.config.ts');
+    const sourceDir = path.join(cwd, 'src');
+    const messageDir = path.join(sourceDir, 'background', 'messages');
+
+    await fs.mkdir(messageDir, { recursive: true });
+    await fs.writeFile(configPath, '// fixture\n', 'utf8');
+    await fs.writeFile(path.join(sourceDir, 'background.ts'), 'export {}\n', 'utf8');
+    await fs.writeFile(
+      path.join(messageDir, 'upload.mjs'),
+      `
+      export default {
+        namespace: 'upload',
+        method: 'start',
+        handle: async () => ({ ok: true }),
+      };
+      `,
+      'utf8'
+    );
+    await fs.writeFile(
+      path.join(messageDir, 'upload.d.ts'),
+      'export interface Upload {}\n',
+      'utf8'
+    );
+
+    try {
+      const resolved = await resolveExtensionConfig(
+        defineExtension({
+          name: 'Declarations',
+          version: '0.1.0',
+          targets: ['chromium-mv3'],
+          background: {
+            serviceWorker: './src/background.ts',
+            messageHandlersDir: './src/background/messages',
+          },
+        }),
+        {
+          configPath,
+        }
+      );
+
+      expect(resolved.background.messageHandlers).toHaveLength(1);
+      expect(resolved.background.messageHandlers[0]).toMatchObject({
+        namespace: 'upload',
+        method: 'start',
+      });
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
 });

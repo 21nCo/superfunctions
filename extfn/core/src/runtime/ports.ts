@@ -100,6 +100,9 @@ export function createPortBroker(options: CreatePortBrokerOptions): {
         });
 
         sessions.set(session.id, session);
+        session.clientPort.onClose(() => {
+          sessions.delete(session.id);
+        });
         await session.connect();
         return session.clientPort as RuntimePort<Inbound, Outbound>;
       },

@@ -1,7 +1,7 @@
 import { createScanFinding, type ScanRule } from '../report.js';
 
 const REMOTE_HOSTED_CODE_PATTERN =
-  /\b(?:importScripts|import)\s*\(\s*['"]https?:\/\/|<script[^>]+src=['"]https?:\/\/|<link[^>]+href=['"]https?:\/\/[^'"]+\.(?:css|js)/i;
+  /\b(?:importScripts|import)\s*\(\s*['"]https?:\/\/[^'")\s]+(?:[?#][^'")\s]*)?['"]|<script\b[^>]*\bsrc\s*=\s*['"]https?:\/\/[^'"]+(?:[?#][^'"]*)?['"][^>]*>|<link\b[^>]*\bhref\s*=\s*['"]https?:\/\/[^'"]+\.(?:css|js)(?:[?#][^'"]*)?['"][^>]*>/i;
 
 export const remoteHostedCodeRule: ScanRule = {
   id: 'SCAN-RHC-001',

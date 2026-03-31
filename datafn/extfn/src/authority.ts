@@ -389,27 +389,51 @@ function sendBrowserRuntimeMessage(
   runtime: BrowserRuntimeLike,
   message: unknown,
 ): Promise<unknown> {
-  if (typeof runtime.sendMessage !== "function") {
+  const sendMessage = runtime.sendMessage;
+  if (typeof sendMessage !== "function") {
     throw createExtfnLikeError(
       "E_CONTEXT_UNAVAILABLE",
       "Browser runtime messaging is unavailable.",
     );
   }
 
-  try {
-    const maybePromise = runtime.sendMessage(message);
-    if (maybePromise && typeof (maybePromise as Promise<unknown>).then === "function") {
-      return maybePromise as Promise<unknown>;
-    }
-  } catch (error) {
-    return Promise.reject(normalizeExtfnLikeError(error));
-  }
-
   return new Promise((resolve, reject) => {
-    try {
-      runtime.sendMessage?.(message, (response) => resolve(response));
-    } catch (error) {
+    let settled = false;
+    const resolveOnce = (value: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+    const rejectOnce = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       reject(normalizeExtfnLikeError(error));
+    };
+
+    try {
+      if (sendMessage.length >= 2) {
+        const maybePromise = sendMessage(message, (response) => {
+          resolveOnce(response);
+        });
+        if (maybePromise && typeof (maybePromise as Promise<unknown>).then === "function") {
+          void (maybePromise as Promise<unknown>).then(resolveOnce, rejectOnce);
+        }
+        return;
+      }
+
+      const maybePromise = sendMessage(message);
+      if (maybePromise && typeof (maybePromise as Promise<unknown>).then === "function") {
+        void (maybePromise as Promise<unknown>).then(resolveOnce, rejectOnce);
+        return;
+      }
+
+      resolveOnce(undefined);
+    } catch (error) {
+      rejectOnce(error);
     }
   });
 }

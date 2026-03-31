@@ -80,7 +80,8 @@ export async function resolveExtensionConfig(
   const surfaces = await resolveSurfaces(config, configDir, targets);
   const contentScripts = await validateContentScripts(
     config.contentScripts,
-    configDir
+    configDir,
+    targets
   );
   const background = await resolveBackground(config, configDir, options);
 
@@ -561,6 +562,10 @@ async function collectModuleFiles(directoryPath: string): Promise<string[]> {
 }
 
 function isSupportedModuleFile(fileName: string): boolean {
+  if (fileName.endsWith('.d.ts')) {
+    return false;
+  }
+
   const extension = path.extname(fileName).toLowerCase();
   return (
     extension === '.ts' ||

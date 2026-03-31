@@ -8,6 +8,7 @@ import {
   MountRegistry,
   createMountRootId,
   defineContentScript,
+  resolveAnchors,
   mountContentScript,
   validateContentScripts,
 } from '../src/index.js';
@@ -61,7 +62,10 @@ describe('content anchors', () => {
       [...dom.window.document.querySelectorAll('[data-extfn-module-id]')].map(
         (node) => node.id
       )
-    ).toEqual(['extfn-root-twitter-post', 'extfn-root-twitter-profile']);
+    ).toEqual([
+      'extfn-root-twitter-post-post-anchor',
+      'extfn-root-twitter-profile-profile-anchor',
+    ]);
   });
 
   it('resolves selector-list and resolver anchors, tolerates empty anchors, and logs resolver failures', async () => {
@@ -148,6 +152,36 @@ describe('content anchors', () => {
     ).toBe(3);
   });
 
+  it('creates unique keys for multiple selector anchors in one content script', async () => {
+    const dom = new JSDOM(`
+      <main>
+        <section class="target" id="first"></section>
+        <section class="target" id="second"></section>
+      </main>
+    `);
+
+    const anchors = await resolveAnchors(
+      defineContentScript({
+        id: 'selector-script',
+        entry: './__tests__/fixtures/content/twitter-post.ts',
+        matches: ['https://x.com/*'],
+        anchors: [
+          { kind: 'selector', selector: '#first', mountMode: 'append' },
+          { kind: 'selector', selector: '#second', mountMode: 'append' },
+        ],
+      }),
+      {
+        document: dom.window.document,
+        moduleId: 'selector-script',
+      }
+    );
+
+    expect(anchors.map((anchor) => anchor.anchorKey)).toEqual([
+      'selector-script/first',
+      'selector-script/second',
+    ]);
+  });
+
   it('validates content script ids, entries, and style isolation deterministically', async () => {
     await expect(
       validateContentScripts(
@@ -201,6 +235,42 @@ describe('content anchors', () => {
     ).rejects.toMatchObject({
       code: 'E_ENTRY_NOT_FOUND',
       message: 'Missing content entry: ./__tests__/fixtures/content/missing.ts',
+    });
+
+    await expect(
+      validateContentScripts(
+        [
+          defineContentScript({
+            id: 'bad-target',
+            entry: './__tests__/fixtures/content/twitter-post.ts',
+            matches: ['https://x.com/*'],
+            targets: ['safari-mv3' as 'chromium-mv3'],
+          }),
+        ],
+        coreDir
+      )
+    ).rejects.toMatchObject({
+      code: 'E_CONFIG_INVALID',
+      message: 'Content script bad-target contains unsupported target: safari-mv3',
+    });
+
+    await expect(
+      validateContentScripts(
+        [
+          defineContentScript({
+            id: 'out-of-scope',
+            entry: './__tests__/fixtures/content/twitter-post.ts',
+            matches: ['https://x.com/*'],
+            targets: ['firefox-mv3'],
+          }),
+        ],
+        coreDir,
+        ['chromium-mv3']
+      )
+    ).rejects.toMatchObject({
+      code: 'E_CONFIG_INVALID',
+      message:
+        'Content script out-of-scope target is not listed in extension.targets: firefox-mv3',
     });
   });
 });

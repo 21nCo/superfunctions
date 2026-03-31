@@ -40,7 +40,7 @@ export async function resolveAnchors(
 
       resolved.push({
         anchor,
-        anchorKey: `${contentScript.id}/anchor-0`,
+        anchorKey: createAnchorKey(contentScript.id, anchor, resolved.length),
         mountMode: strategy.mountMode,
       });
       continue;
