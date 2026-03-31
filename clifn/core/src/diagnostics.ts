@@ -23,32 +23,54 @@ const SEVERITY_ORDER: Record<DiagnosticSeverity, number> = {
   info: 2,
 };
 
-function cloneValue(value: unknown): unknown {
+const CIRCULAR_SENTINEL = "[Circular]";
+
+function cloneValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => cloneValue(item));
+    if (seen.has(value)) {
+      return CIRCULAR_SENTINEL;
+    }
+
+    seen.add(value);
+    return value.map((item) => cloneValue(item, seen));
   }
 
   if (value && typeof value === "object") {
+    if (seen.has(value)) {
+      return CIRCULAR_SENTINEL;
+    }
+
+    seen.add(value);
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, cloneValue(nested)])
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, cloneValue(nested, seen)])
     );
   }
 
   return value;
 }
 
-export function redactValue(value: unknown): unknown {
+export function redactValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => redactValue(item));
+    if (seen.has(value)) {
+      return CIRCULAR_SENTINEL;
+    }
+
+    seen.add(value);
+    return value.map((item) => redactValue(item, seen));
   }
 
   if (value && typeof value === "object") {
+    if (seen.has(value)) {
+      return CIRCULAR_SENTINEL;
+    }
+
+    seen.add(value);
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, nested]) => {
         if (SENSITIVE_KEY_PATTERN.test(key)) {
           return [key, "[REDACTED]"];
         }
-        return [key, redactValue(nested)];
+        return [key, redactValue(nested, seen)];
       })
     );
   }
@@ -56,16 +78,26 @@ export function redactValue(value: unknown): unknown {
   return value;
 }
 
-function normalizeForSerialization(value: unknown): unknown {
+function normalizeForSerialization(value: unknown, seen = new WeakSet<object>()): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeForSerialization(item));
+    if (seen.has(value)) {
+      return CIRCULAR_SENTINEL;
+    }
+
+    seen.add(value);
+    return value.map((item) => normalizeForSerialization(item, seen));
   }
 
   if (value && typeof value === "object") {
+    if (seen.has(value)) {
+      return CIRCULAR_SENTINEL;
+    }
+
+    seen.add(value);
     return Object.fromEntries(
       Object.keys(value as Record<string, unknown>)
         .sort((left, right) => left.localeCompare(right))
-        .map((key) => [key, normalizeForSerialization((value as Record<string, unknown>)[key])])
+        .map((key) => [key, normalizeForSerialization((value as Record<string, unknown>)[key], seen)])
     );
   }
 

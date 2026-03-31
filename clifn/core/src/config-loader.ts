@@ -19,7 +19,7 @@ export type ConfigLoaderErrorCode =
   | "CLIFN_CONFIG_NOT_FOUND"
   | "CLIFN_CONFIG_UNSUPPORTED";
 
-class ConfigLoaderError extends Error {
+export class ConfigLoaderError extends Error {
   readonly code: ConfigLoaderErrorCode;
 
   constructor(code: ConfigLoaderErrorCode, message: string) {
@@ -112,7 +112,7 @@ async function loadModuleConfig(resolvedPath: string): Promise<unknown> {
   }
 
   if (extension === ".ts") {
-    const jiti = createJiti(process.cwd(), {
+    const jiti = createJiti(path.dirname(resolvedPath), {
       moduleCache: false,
       interopDefault: false,
       extensions: [".ts", ".js", ".mjs", ".cjs", ".json"],

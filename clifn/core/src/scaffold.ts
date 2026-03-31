@@ -1,4 +1,4 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type FileExistsBehavior = "error" | "skip" | "overwrite";
@@ -42,18 +42,48 @@ function isWithinRoot(root: string, target: string): boolean {
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
-    const result = await stat(filePath);
-    return result.isFile();
+    await stat(filePath);
+    return true;
   } catch {
     return false;
   }
 }
 
-function resolveOperationPath(root: string, inputPath: string): string {
-  const resolved = path.resolve(root, inputPath);
-  if (!isWithinRoot(root, resolved)) {
+async function findNearestExistingPath(target: string): Promise<string> {
+  let current = target;
+
+  while (true) {
+    try {
+      await stat(current);
+      return current;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return current;
+      }
+      current = parent;
+    }
+  }
+}
+
+async function assertWithinRoot(root: string, target: string): Promise<void> {
+  const realRoot = await realpath(root);
+  const nearestExisting = await findNearestExistingPath(target);
+  const realNearest = await realpath(nearestExisting);
+
+  if (!isWithinRoot(realRoot, realNearest)) {
     throw new ScaffoldError("CLIFN_SCAFFOLD_INVALID_PATH", "Scaffold path escapes the configured working directory.");
   }
+
+  const canonicalTarget = path.resolve(realNearest, path.relative(nearestExisting, target));
+  if (!isWithinRoot(realRoot, canonicalTarget)) {
+    throw new ScaffoldError("CLIFN_SCAFFOLD_INVALID_PATH", "Scaffold path escapes the configured working directory.");
+  }
+}
+
+async function resolveOperationPath(root: string, inputPath: string): Promise<string> {
+  const resolved = path.resolve(root, inputPath);
+  await assertWithinRoot(root, resolved);
   return resolved;
 }
 
@@ -66,7 +96,7 @@ export function createScaffold(): ScaffoldService {
       const skipped: string[] = [];
 
       for (const operation of operations) {
-        const resolvedPath = resolveOperationPath(cwd, operation.path);
+        const resolvedPath = await resolveOperationPath(cwd, operation.path);
         const relativePath = path.relative(cwd, resolvedPath) || path.basename(resolvedPath);
 
         if (operation.kind === "mkdir") {

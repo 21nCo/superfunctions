@@ -79,6 +79,26 @@ describe("diagnostics", () => {
     });
   });
 
+  it("stays finite when diagnostics contain circular references", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    expect(redactValue(circular)).toEqual({
+      self: "[Circular]",
+    });
+
+    expect(
+      formatDiagnosticsJson([
+        {
+          code: "CYCLE",
+          severity: "warning",
+          message: "cycle",
+          details: circular,
+        },
+      ])
+    ).toContain('"self":"[Circular]"');
+  });
+
   it("formats diagnostics as stable json", () => {
     expect(formatDiagnosticsJson(unsorted)).toBe(
       '{"diagnostics":[{"code":"A","details":{"path":"x"},"message":"a","severity":"error"},{"code":"B","details":{"nested":{"Authorization":"[REDACTED]"},"token":"[REDACTED]"},"message":"b","severity":"warning"},{"code":"C","message":"c","path":"docs/readme.md","severity":"info"}],"ok":false}\n'

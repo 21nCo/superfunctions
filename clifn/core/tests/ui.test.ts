@@ -26,7 +26,7 @@ describe("ui", () => {
     expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining("[i] info"));
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("[x] error"));
     expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining("name  | status"));
-    expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining("[ok] done"));
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("[ok] done"));
 
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();

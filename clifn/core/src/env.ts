@@ -94,6 +94,10 @@ export function readBooleanEnv(key: string, options: BooleanEnvOptions = {}): bo
 }
 
 function validateInt(key: string, value: number, options: IntEnvOptions): number {
+  if (!Number.isInteger(value)) {
+    throw new EnvError("CLIFN_ENV_INVALID", `${key} must be an integer`);
+  }
+
   if (options.min !== undefined && value < options.min) {
     throw new EnvError("CLIFN_ENV_OUT_OF_RANGE", `${key} must be >= ${options.min}`);
   }

@@ -17,6 +17,7 @@ export {
   type RunnerOptions,
 } from "./runner.js";
 export {
+  ConfigLoaderError,
   defineConfig,
   loadConfig,
   type ConfigLoaderOptions,

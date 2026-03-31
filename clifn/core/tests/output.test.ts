@@ -68,6 +68,18 @@ describe("createOutput", () => {
     expect(stdout.join("")).toBe('{"ok":true,"message":"done"}\n');
   });
 
+  it("normalizes top-level undefined to valid json output", () => {
+    const stdout: string[] = [];
+    const output = createOutput({
+      mode: "json",
+      stdout: (text) => stdout.push(text),
+    });
+
+    output.json(undefined);
+
+    expect(stdout.join("")).toBe("null\n");
+  });
+
   it("renders tables using declared column order", () => {
     const stdout: string[] = [];
     const output = createOutput({
@@ -92,9 +104,11 @@ describe("createOutput", () => {
     vi.useFakeTimers();
 
     const stdout: string[] = [];
+    const stderr: string[] = [];
     const output = createOutput({
       color: false,
       stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
     });
 
     const spinner = output.spinner("loading");
@@ -102,8 +116,9 @@ describe("createOutput", () => {
     vi.advanceTimersByTime(90);
     spinner.succeed("done");
 
-    expect(stdout.join("")).toContain("\r- loading");
-    expect(stdout.join("")).toContain("[ok] done\n");
+    expect(stderr.join("")).toContain("\r- loading");
+    expect(stderr.join("")).toContain("[ok] done\n");
+    expect(stdout.join("")).toBe("");
 
     vi.useRealTimers();
   });

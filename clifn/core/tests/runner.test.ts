@@ -1,4 +1,7 @@
 import type { Diagnostic } from "../src/diagnostics.js";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { runAction } from "../src/runner.js";
 
 describe("runAction", () => {
@@ -7,15 +10,13 @@ describe("runAction", () => {
     const exitCode = await runAction(
       async (options: { name: string }, ctx) => {
         expect(options.name).toBe("world");
-        expect(Object.keys(ctx).sort()).toEqual([
-          "cwd",
-          "diagnostics",
-          "env",
-          "exec",
-          "nonInteractive",
-          "output",
-          "scaffold",
-        ]);
+        expect(ctx).toHaveProperty("cwd");
+        expect(ctx).toHaveProperty("diagnostics");
+        expect(ctx).toHaveProperty("env");
+        expect(ctx).toHaveProperty("exec");
+        expect(ctx).toHaveProperty("nonInteractive");
+        expect(ctx).toHaveProperty("output");
+        expect(ctx).toHaveProperty("scaffold");
         expect(ctx.cwd).toBe("repo root");
         expect(ctx.nonInteractive).toBe(true);
         expect(typeof ctx.exec.command).toBe("function");
@@ -153,5 +154,46 @@ describe("runAction", () => {
         },
       ],
     ]);
+  });
+
+  it("binds exec and scaffold to the runner cwd and env by default", async () => {
+    const stdout: string[] = [];
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "clifn-runner-"));
+    const resolvedCwd = await realpath(cwd);
+
+    try {
+      const exitCode = await runAction(
+        async (_options, ctx) => {
+          const execResult = await ctx.exec.command(process.execPath, [
+            "-e",
+            "process.stdout.write(`${process.cwd()} ${process.env.TEST_FLAG}`)",
+          ]);
+          expect(execResult.stdout).toBe(`${resolvedCwd} bound`);
+
+          const scaffoldResult = await ctx.scaffold.apply(
+            [{ kind: "write-file", path: "nested/file.txt", content: "ok\n", ifExists: "error" }],
+            { dryRun: true }
+          );
+          expect(scaffoldResult.written).toEqual(["nested/file.txt"]);
+
+          ctx.output.info("done");
+        },
+        undefined,
+        {
+          cwd,
+          env: {
+            ...process.env,
+            TEST_FLAG: "bound",
+          },
+          color: false,
+          stdout: (text) => stdout.push(text),
+        }
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stdout.join("")).toBe("[i] done\n");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCredentialStore, MissingProfileError } from "../src/credentials.js";
@@ -23,6 +23,8 @@ describe("credentials", () => {
 
     const raw = readFileSync(filePath, "utf8");
     expect(raw).toContain("[default]");
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
   });
 
   it("throws typed error for missing profiles", () => {

@@ -14,7 +14,8 @@ describe("client", () => {
     });
 
     const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const auth = (init?.headers as Record<string, string>).Authorization;
+      const headers = new Headers(init?.headers);
+      const auth = headers.get("Authorization");
       expect(String(input)).toContain("/health");
       expect(auth).toBe("Bearer sk_live_abc");
       return new Response(JSON.stringify({ ok: true }), {
@@ -31,6 +32,20 @@ describe("client", () => {
 
     const response = await client.get<{ ok: boolean }>("/health");
     expect(response.data).toEqual({ ok: true });
+  });
+
+  it("rejects absolute request URLs so auth headers stay scoped to the configured backend", async () => {
+    const client = createApiClient({
+      baseUrl: "https://api.conduct.sh",
+      apiKey: "sk_live_abc",
+      retries: 0,
+      fetchImpl: vi.fn() as unknown as typeof fetch,
+    });
+
+    await expect(client.get("https://evil.example/steal")).rejects.toMatchObject({
+      code: "CLIFN_HTTP_REQUEST_ERROR",
+      message: "HTTP request error for https://api.conduct.sh: request path must be relative",
+    });
   });
 
   it("throws typed error for missing profile", () => {

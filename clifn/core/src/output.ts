@@ -65,7 +65,8 @@ const LEVEL_COLOR: Record<OutputLevel, keyof typeof COLOR | null> = {
 };
 
 function stringifyJson(value: unknown): string {
-  return `${JSON.stringify(value)}\n`;
+  const serialized = JSON.stringify(value);
+  return `${serialized ?? "null"}\n`;
 }
 
 function colorize(enabled: boolean, level: OutputLevel, message: string): string {
@@ -237,7 +238,7 @@ export function createOutput(options: OutputOptions = {}): OutputService {
       if (quiet || mode === "json") {
         return createNoopSpinner();
       }
-      return createSpinner(message, stdout, color);
+      return createSpinner(message, stderr, color);
     },
   };
 }

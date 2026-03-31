@@ -86,7 +86,7 @@ describe("readme examples", () => {
     await Promise.all(
       referencedPaths.map(async (relativePath) => {
         const stat = await fs.stat(path.join(repoRootPath, relativePath));
-        expect(stat.isFile()).toBe(true);
+        expect(stat.isFile(), `Expected ${relativePath} to be a file`).toBe(true);
       })
     );
   });

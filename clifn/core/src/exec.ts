@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BUFFER_BYTES = 1_048_576;
+const DEFAULT_TIMEOUT_GRACE_MS = 250;
 
 export type ExecErrorCode = "CLIFN_EXEC_TIMEOUT";
 
@@ -85,6 +86,7 @@ export function createExec(): ExecService {
         let timedOut = false;
         let settled = false;
         let timeoutId: NodeJS.Timeout | null = null;
+        let killId: NodeJS.Timeout | null = null;
 
         const finalize = (exitCode: number | null, signal: NodeJS.Signals | null) => {
           if (settled) {
@@ -94,6 +96,9 @@ export function createExec(): ExecService {
 
           if (timeoutId) {
             clearTimeout(timeoutId);
+          }
+          if (killId) {
+            clearTimeout(killId);
           }
 
           const result: ExecResult = {
@@ -116,8 +121,16 @@ export function createExec(): ExecService {
 
         if (timeoutMs > 0) {
           timeoutId = setTimeout(() => {
+            if (settled) {
+              return;
+            }
             timedOut = true;
             child.kill("SIGTERM");
+            killId = setTimeout(() => {
+              if (!settled) {
+                child.kill("SIGKILL");
+              }
+            }, DEFAULT_TIMEOUT_GRACE_MS);
           }, timeoutMs);
         }
 
@@ -126,21 +139,28 @@ export function createExec(): ExecService {
 
         child.stdout?.on("data", (chunk: string) => {
           stdout = appendChunk(stdout, chunk, maxBufferBytes);
-          if (options.streamOutput || options.stdout) {
+          if (options.stdout) {
             options.stdout?.(chunk);
+          } else if (options.streamOutput) {
+            process.stdout.write(chunk);
           }
         });
 
         child.stderr?.on("data", (chunk: string) => {
           stderr = appendChunk(stderr, chunk, maxBufferBytes);
-          if (options.streamOutput || options.stderr) {
+          if (options.stderr) {
             options.stderr?.(chunk);
+          } else if (options.streamOutput) {
+            process.stderr.write(chunk);
           }
         });
 
         child.on("error", (error) => {
           if (timeoutId) {
             clearTimeout(timeoutId);
+          }
+          if (killId) {
+            clearTimeout(killId);
           }
           if (settled) {
             return;

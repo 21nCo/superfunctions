@@ -72,7 +72,11 @@ export async function runAction<TOptions>(
   options: TOptions,
   runnerOptions: RunnerOptions = {}
 ): Promise<number> {
+  const cwd = runnerOptions.cwd ?? process.cwd();
+  const env = runnerOptions.env ?? process.env;
   const diagnostics: Diagnostic[] = [];
+  const baseExec = createExec();
+  const baseScaffold = createScaffold();
   const output = createOutput({
     quiet: runnerOptions.quiet,
     verbose: runnerOptions.verbose,
@@ -92,12 +96,27 @@ export async function runAction<TOptions>(
   };
 
   const ctx: RunnerContext = {
-    cwd: runnerOptions.cwd ?? process.cwd(),
-    env: runnerOptions.env ?? process.env,
+    cwd,
+    env,
     output,
     diagnostics: diagnosticSink,
-    exec: createExec(),
-    scaffold: createScaffold(),
+    exec: {
+      command(file, args, options) {
+        return baseExec.command(file, args, {
+          ...options,
+          cwd: options?.cwd ?? cwd,
+          env: options?.env ?? env,
+        });
+      },
+    },
+    scaffold: {
+      apply(operations, options) {
+        return baseScaffold.apply(operations, {
+          ...options,
+          cwd: options?.cwd ?? cwd,
+        });
+      },
+    },
     nonInteractive: runnerOptions.nonInteractive ?? false,
   };
 

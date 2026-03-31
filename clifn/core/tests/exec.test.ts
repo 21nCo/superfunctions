@@ -51,4 +51,19 @@ describe("createExec", () => {
       }),
     });
   });
+
+  it("escalates timed-out processes that ignore SIGTERM", async () => {
+    const exec = createExec();
+
+    await expect(
+      exec.command(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 50)"], {
+        timeoutMs: 10,
+      })
+    ).rejects.toMatchObject({
+      code: "CLIFN_EXEC_TIMEOUT",
+      result: expect.objectContaining({
+        timedOut: true,
+      }),
+    });
+  });
 });

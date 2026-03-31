@@ -82,6 +82,18 @@ describe("env readers", () => {
       code: "CLIFN_ENV_OUT_OF_RANGE",
       message: "PORT must be >= 1024",
     });
+
+    expect(
+      captureThrownError(() =>
+        readIntEnv("PORT", {
+          env: {},
+          defaultValue: 3.14,
+        })
+      )
+    ).toEqual({
+      code: "CLIFN_ENV_INVALID",
+      message: "PORT must be an integer",
+    });
   });
 
   it("parses common boolean env spellings consistently", () => {

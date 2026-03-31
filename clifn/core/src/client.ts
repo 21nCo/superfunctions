@@ -84,7 +84,11 @@ function resolveAuth(config: ApiClientConfig): { baseUrl: string; apiKey: string
 }
 
 function buildUrl(baseUrl: string, path: string, query?: ApiRequestOptions["query"]): string {
-  const url = new URL(path.startsWith("http") ? path : `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path) || path.startsWith("//")) {
+    throw new HttpRequestError(baseUrl, "request path must be relative");
+  }
+
+  const url = new URL(`${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined) {

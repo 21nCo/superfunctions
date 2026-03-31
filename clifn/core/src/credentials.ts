@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import ini from "ini";
@@ -58,9 +58,12 @@ function readProfiles(path: string): Record<string, CredentialProfile> {
 }
 
 function writeProfiles(path: string, profiles: Record<string, CredentialProfile>): void {
-  mkdirSync(dirname(path), { recursive: true });
+  const directory = dirname(path);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
   const serialized = ini.stringify(profiles);
-  writeFileSync(path, serialized, "utf8");
+  writeFileSync(path, serialized, { encoding: "utf8", mode: 0o600 });
+  chmodSync(path, 0o600);
 }
 
 export function createCredentialStore(path = DEFAULT_CREDENTIALS_PATH): CredentialStore {

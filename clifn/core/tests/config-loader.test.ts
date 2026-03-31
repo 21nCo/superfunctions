@@ -75,13 +75,20 @@ describe("loadConfig", () => {
   });
 
   it("fails deterministically for missing explicit config paths", async () => {
-    await expect(
-      loadConfig({
-        configPath: "missing.config.ts",
-      })
-    ).rejects.toMatchObject({
-      code: "CLIFN_CONFIG_NOT_FOUND",
-      message: "Config file not found: missing.config.ts",
-    });
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "clifn-config-loader-"));
+
+    try {
+      await expect(
+        loadConfig({
+          cwd,
+          configPath: "missing.config.ts",
+        })
+      ).rejects.toMatchObject({
+        code: "CLIFN_CONFIG_NOT_FOUND",
+        message: "Config file not found: missing.config.ts",
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
