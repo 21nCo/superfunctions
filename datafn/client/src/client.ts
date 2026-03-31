@@ -1046,12 +1046,13 @@ function _buildRawClient<S extends DatafnSchema>(
 
   // Client lifecycle state (CLN-001)
   let destroyed = false;
+  let destroying = false;
   
   /**
    * Guard method to ensure client is not destroyed
    */
   const guardDestroyed = () => {
-    if (destroyed) {
+    if (destroyed || destroying) {
       throw createClientError(
         "DFQL_INVALID",
         "Client has been destroyed",
@@ -1182,7 +1183,7 @@ function _buildRawClient<S extends DatafnSchema>(
         extensionSubscriptionManager
           .registerSubscriber(filter)
           .then((unsub) => {
-            if (unsubscribed) {
+            if (unsubscribed || destroying || destroyed) {
               unsub().catch((err) => {
                 console.error("Failed to unsubscribe from remote:", err);
               });
@@ -1218,60 +1219,64 @@ function _buildRawClient<S extends DatafnSchema>(
      * Tear down client: stop sync, close connections, unsubscribe all, release resources (CLN-001)
      */
     async destroy() {
-      if (destroyed) return;
-      
-      // 1. Flush all pending debounced mutations (DEB-001)
-      await debouncerMap.flushAll();
-      
-      // 2. Stop sync engine
-      if (nativeSyncController) {
-        try {
-          await awaitNativeBridgeReady();
-          await nativeSyncController.stop();
-        } catch {
-          // Best-effort cleanup if the bridge is already unavailable.
-        }
-      } else if (syncEngine) {
-        syncEngine.stop();
-      }
-      
-      // 3. Dispose all signals
-      signalRegistry.disposeAll();
-      
-      // 4. Close cross-tab relay (TAB-001)
-      if (crossTabRelay) {
-        crossTabRelay.close();
-      }
+      if (destroyed || destroying) return;
+      destroying = true;
 
-      // 5. Close extension subscriptions and event listeners
-      if (extensionSubscriptionManager) {
-        try {
-          await extensionSubscriptionManager.closeAll();
-        } catch {
-          // Best-effort cleanup: do not block destroy()
-        }
-      }
-      extensionEventUnsubscribe?.();
-      
-      // 6. Clear event bus
-      eventBus.clear();
-      
-      // 7. Close storage
-      if (resolvedStorage) {
-        await resolvedStorage.close();
-      }
+      try {
+        // 1. Flush all pending debounced mutations (DEB-001)
+        await debouncerMap.flushAll();
 
-      // 8. Dispose search provider (best-effort)
-      if (config.searchProvider?.dispose) {
-        try {
-          await config.searchProvider.dispose();
-        } catch {
-          // Best-effort cleanup: do not block destroy()
+        // 2. Stop sync engine
+        if (nativeSyncController) {
+          try {
+            await awaitNativeBridgeReady();
+            await nativeSyncController.stop();
+          } catch {
+            // Best-effort cleanup if the bridge is already unavailable.
+          }
+        } else if (syncEngine) {
+          syncEngine.stop();
         }
+
+        // 3. Dispose all signals
+        signalRegistry.disposeAll();
+
+        // 4. Close cross-tab relay (TAB-001)
+        if (crossTabRelay) {
+          crossTabRelay.close();
+        }
+
+        // 5. Close extension subscriptions and event listeners
+        if (extensionSubscriptionManager) {
+          try {
+            await extensionSubscriptionManager.closeAll();
+          } catch {
+            // Best-effort cleanup: do not block destroy()
+          }
+        }
+        extensionEventUnsubscribe?.();
+
+        // 6. Clear event bus
+        eventBus.clear();
+
+        // 7. Close storage
+        if (resolvedStorage) {
+          await resolvedStorage.close();
+        }
+
+        // 8. Dispose search provider (best-effort)
+        if (config.searchProvider?.dispose) {
+          try {
+            await config.searchProvider.dispose();
+          } catch {
+            // Best-effort cleanup: do not block destroy()
+          }
+        }
+      } finally {
+        // Mark the client unusable even if a cleanup step throws.
+        destroyed = true;
+        destroying = false;
       }
-      
-      // 9. Set destroyed flag
-      destroyed = true;
     },
 
     /**

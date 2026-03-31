@@ -175,6 +175,19 @@ public enum DatafnRuntimeSchemaError: Error, Equatable {
     case invalidResourceName
 }
 
+private func normalizeSchemaResourceName(_ raw: String) -> String {
+    let normalized = raw.unicodeScalars.map { scalar -> Character in
+        if CharacterSet.alphanumerics.contains(scalar) {
+            return Character(String(scalar).lowercased())
+        }
+        return "_"
+    }
+
+    return String(normalized)
+        .replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
+        .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+}
+
 extension DatafnRuntimeSchema {
     public func validate() throws {
         guard !resources.isEmpty else {
@@ -188,17 +201,7 @@ extension DatafnRuntimeSchema {
                 throw DatafnRuntimeSchemaError.invalidResourceName
             }
 
-            let normalizedName = trimmedName
-                .unicodeScalars
-                .map { scalar -> Character in
-                    if CharacterSet.alphanumerics.contains(scalar) {
-                        return Character(String(scalar).lowercased())
-                    }
-                    return "_"
-                }
-            let dedupedName = String(normalizedName)
-                .replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+            let dedupedName = normalizeSchemaResourceName(trimmedName)
 
             if dedupedName.isEmpty {
                 throw DatafnRuntimeSchemaError.invalidResourceName
@@ -615,17 +618,7 @@ public struct CoreDataModelBuilder {
     }
 
     private func sanitize(_ raw: String) -> String {
-        let sanitized = raw.unicodeScalars.map { scalar -> Character in
-            if CharacterSet.alphanumerics.contains(scalar) {
-                return Character(String(scalar).lowercased())
-            }
-
-            return "_"
-        }
-
-        return String(sanitized)
-            .replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        normalizeSchemaResourceName(raw)
     }
 
     private var builtInEntityNames: [String] {

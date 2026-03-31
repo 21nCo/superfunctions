@@ -76,6 +76,7 @@ public final class DatafnObservedQuery<Value: Sendable> {
                 await self?.applyLoadedValue(loadedValue, generation: generation)
             } catch {
                 if error is CancellationError {
+                    await self?.applyCancellation(generation: generation)
                     return
                 }
                 await self?.applyLoadError(error, generation: generation)
@@ -140,6 +141,13 @@ public final class DatafnObservedQuery<Value: Sendable> {
             return
         }
         lastError = Self.normalize(error)
+        isLoading = false
+    }
+
+    private func applyCancellation(generation: Int) {
+        guard generation == refreshGeneration else {
+            return
+        }
         isLoading = false
     }
 }

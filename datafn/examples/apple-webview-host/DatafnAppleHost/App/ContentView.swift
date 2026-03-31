@@ -29,6 +29,7 @@ final class DatafnExampleHostSession: ObservableObject {
     }
 
     func activate(topology: DatafnExampleTopology) async {
+        guard !Task.isCancelled else { return }
         self.topology = topology
 
         if let runtime {

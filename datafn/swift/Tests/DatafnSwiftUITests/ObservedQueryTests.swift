@@ -152,6 +152,35 @@ struct ObservedQueryTests {
         #expect(lastError == nil)
     }
 
+    @Test("ObservedQuery clears loading state for a cancelled current refresh")
+    func observedQueryClearsLoadingStateForCancelledCurrentRefresh() async throws {
+        let source = DatafnRuntimeObservationSource(
+            listRecords: { _ in [] },
+            getRecord: { _, _ in nil },
+            subscribe: { _ in UUID() },
+            unsubscribe: { _ in }
+        )
+
+        let query = await MainActor.run {
+            DatafnObservedQuery<String>(
+                initialValue: "initial",
+                source: source,
+                loader: { _ in
+                    throw CancellationError()
+                }
+            )
+        }
+
+        try await waitUntil {
+            await MainActor.run { !query.isLoading }
+        }
+
+        let value = await MainActor.run { query.value }
+        let lastError = await MainActor.run { query.lastError }
+        #expect(value == "initial")
+        #expect(lastError == nil)
+    }
+
     private func makeServerRuntime(namespace: String) async throws -> DatafnAppleRuntime {
         try await DatafnAppleRuntime(
             configuration: DatafnAppleRuntimeConfiguration(
