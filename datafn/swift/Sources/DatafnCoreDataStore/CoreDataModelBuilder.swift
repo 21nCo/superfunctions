@@ -200,6 +200,10 @@ extension DatafnRuntimeSchema {
                 .replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
 
+            if dedupedName.isEmpty {
+                throw DatafnRuntimeSchemaError.invalidResourceName
+            }
+
             if !names.insert(dedupedName).inserted {
                 throw DatafnRuntimeSchemaError.duplicateResource(trimmedName)
             }

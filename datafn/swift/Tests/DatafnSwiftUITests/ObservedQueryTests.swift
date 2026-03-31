@@ -106,6 +106,52 @@ struct ObservedQueryTests {
         #expect(lastError == nil)
     }
 
+    @Test("ObservedQuery ignores cancellation from superseded refresh tasks")
+    func observedQueryIgnoresCancellationFromSupersededRefreshTasks() async throws {
+        let source = DatafnRuntimeObservationSource(
+            listRecords: { _ in [] },
+            getRecord: { _, _ in nil },
+            subscribe: { _ in UUID() },
+            unsubscribe: { _ in }
+        )
+        let loaderCallCount = LockedBox(0)
+
+        let query = await MainActor.run {
+            DatafnObservedQuery<String>(
+                initialValue: "initial",
+                source: source,
+                loader: { _ in
+                    let callNumber = loaderCallCount.withValue { value in
+                        value += 1
+                        return value
+                    }
+
+                    if callNumber == 1 {
+                        try await Task.sleep(nanoseconds: 50_000_000)
+                        try Task.checkCancellation()
+                        return "stale"
+                    }
+
+                    return "fresh"
+                }
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 5_000_000)
+        await MainActor.run {
+            query.refresh()
+        }
+
+        try await waitUntil {
+            await MainActor.run {
+                query.value == "fresh" && !query.isLoading
+            }
+        }
+
+        let lastError = await MainActor.run { query.lastError }
+        #expect(lastError == nil)
+    }
+
     private func makeServerRuntime(namespace: String) async throws -> DatafnAppleRuntime {
         try await DatafnAppleRuntime(
             configuration: DatafnAppleRuntimeConfiguration(

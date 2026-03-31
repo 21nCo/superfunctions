@@ -72,6 +72,26 @@ struct CoreDataModelBuilderTests {
         #expect(namespaceALocation1.changeTrackingDomain != namespaceBLocation.changeTrackingDomain)
     }
 
+    @Test("Resource names that normalize to empty strings are rejected")
+    func normalizedEmptyResourceNamesAreRejected() throws {
+        let builder = CoreDataModelBuilder()
+        let schema = DatafnRuntimeSchema(
+            resources: [
+                .init(
+                    name: "---",
+                    version: 1,
+                    fields: [
+                        .init(name: "title", type: "string"),
+                    ]
+                ),
+            ]
+        )
+
+        #expect(throws: DatafnRuntimeSchemaError.invalidResourceName) {
+            _ = try builder.buildModel(from: schema)
+        }
+    }
+
     private func makeSchema() -> DatafnRuntimeSchema {
         DatafnRuntimeSchema(
             resources: [

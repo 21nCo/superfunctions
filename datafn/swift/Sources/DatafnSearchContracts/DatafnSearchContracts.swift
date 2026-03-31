@@ -143,6 +143,14 @@ public struct DatafnSearchInitializeRequest: Sendable, Equatable, Codable {
                 throw DatafnSearchError.invalid("resource name is required", path: "resources[\(index)].name")
             }
 
+            let fields = resource.searchFields
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            if fields.isEmpty {
+                continue
+            }
+
             let normalizedKey = name.lowercased()
             if seen.contains(normalizedKey) {
                 throw DatafnSearchError.invalid(
@@ -151,14 +159,6 @@ public struct DatafnSearchInitializeRequest: Sendable, Equatable, Codable {
                 )
             }
             seen.insert(normalizedKey)
-
-            let fields = resource.searchFields
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-
-            if fields.isEmpty {
-                continue
-            }
 
             let dedupedFields = Array(NSOrderedSet(array: fields)) as? [String] ?? fields
             normalizedResources.append(

@@ -35,6 +35,20 @@ struct DatafnSearchContractsTests {
         }
     }
 
+    @Test("Resources skipped for empty search fields do not reserve duplicate names")
+    func skippedEmptySearchResourcesDoNotReserveDuplicateNames() throws {
+        let request = try DatafnSearchInitializeRequest(
+            resources: [
+                DatafnSearchResourceConfiguration(name: "todos", searchFields: []),
+                DatafnSearchResourceConfiguration(name: " Todos ", searchFields: ["text"]),
+            ]
+        ).validated()
+
+        #expect(request.resources == [
+            DatafnSearchResourceConfiguration(name: "Todos", searchFields: ["text"]),
+        ])
+    }
+
     @Test("Search request contracts preserve typed options")
     func searchRequestContractsPreserveTypedOptions() {
         let request = DatafnSearchRequest(

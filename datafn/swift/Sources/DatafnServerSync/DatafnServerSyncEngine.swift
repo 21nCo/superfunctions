@@ -266,6 +266,7 @@ public actor DatafnServerSyncEngine {
                 while true {
                     let pending = try store.changelogList(limit: 100)
                     guard let throughSeq = pending.last?.seq else {
+                        lastPendingCount = 0
                         break
                     }
 

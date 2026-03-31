@@ -392,6 +392,17 @@ describe("native-backed mode", () => {
       },
     });
 
+    await expect(
+      client.query([null as any, { resource: "auditLogs", version: 1 }] as any),
+    ).rejects.toMatchObject({
+      code: "DFQL_UNSUPPORTED",
+      message: "Remote-only resource is unsupported in icloud mode",
+      details: {
+        path: "query.resource",
+        resource: "auditLogs",
+      },
+    });
+
     await client.destroy();
   });
 

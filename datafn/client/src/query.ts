@@ -137,7 +137,13 @@ export async function executeQuery<T = unknown>(
   if (Array.isArray(normalizedQuery)) {
     if (nativeRemoteMode === "icloud" && schema) {
       const remoteOnlyResource = normalizedQuery
-        .map((entry) => entry.resource as string | undefined)
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return undefined;
+          }
+          const resource = (entry as { resource?: unknown }).resource;
+          return typeof resource === "string" ? resource : undefined;
+        })
         .find((name) =>
           name &&
           schema.resources.some(

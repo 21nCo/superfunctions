@@ -31,6 +31,7 @@ public final class DatafnObservedQuery<Value: Sendable> {
     @ObservationIgnored private let shouldRefresh: @Sendable (DatafnStoreEvent) -> Bool
     @ObservationIgnored private var observerToken: UUID?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var refreshGeneration = 0
 
     public init(
         initialValue: Value,
@@ -65,14 +66,19 @@ public final class DatafnObservedQuery<Value: Sendable> {
     public func refresh() {
         refreshTask?.cancel()
         isLoading = true
+        refreshGeneration += 1
+        let generation = refreshGeneration
         let source = self.source
         let loader = self.loader
         refreshTask = Task.detached { [weak self] in
             do {
                 let loadedValue = try await loader(source)
-                await self?.applyLoadedValue(loadedValue)
+                await self?.applyLoadedValue(loadedValue, generation: generation)
             } catch {
-                await self?.applyLoadError(error)
+                if error is CancellationError {
+                    return
+                }
+                await self?.applyLoadError(error, generation: generation)
             }
         }
     }
@@ -120,13 +126,19 @@ public final class DatafnObservedQuery<Value: Sendable> {
         )
     }
 
-    private func applyLoadedValue(_ loadedValue: Value) {
+    private func applyLoadedValue(_ loadedValue: Value, generation: Int) {
+        guard generation == refreshGeneration else {
+            return
+        }
         value = loadedValue
         lastError = nil
         isLoading = false
     }
 
-    private func applyLoadError(_ error: Error) {
+    private func applyLoadError(_ error: Error, generation: Int) {
+        guard generation == refreshGeneration else {
+            return
+        }
         lastError = Self.normalize(error)
         isLoading = false
     }

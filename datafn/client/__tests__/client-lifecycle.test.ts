@@ -179,6 +179,30 @@ describe("@datafn/client lifecycle - destroy", () => {
     expect(() => client.subscribe(() => {})).toThrow();
   });
 
+  it("destroy disposes extension event listeners", async () => {
+    const storage = new MemoryStorageAdapter(["task", "kv"]);
+    const cleanup = vi.fn();
+    const remote = {
+      ...createStubRemote(),
+      onEvent: vi.fn(() => cleanup),
+      subscribeRemote: vi.fn(async () => "sub-1"),
+      unsubscribeRemote: vi.fn(async () => {}),
+    };
+
+    const client = createDatafnClient({
+      schema: testSchema,
+      sync: { remoteAdapter: remote },
+      clientId: "test-client",
+      storage,
+      getTimestamp: () => Date.now(),
+    });
+
+    await client.destroy();
+
+    expect(remote.onEvent).toHaveBeenCalledTimes(1);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
   it("TV-CLN-001: Query after destroy throws DFQL_INVALID", async () => {
     const storage = new MemoryStorageAdapter(["task", "kv"]);
     const remote = createStubRemote();

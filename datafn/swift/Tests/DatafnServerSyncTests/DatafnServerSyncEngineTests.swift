@@ -32,7 +32,7 @@ struct DatafnServerSyncEngineTests {
         let schema = makeSchema()
         let store = try makeStore(namespace: "org-1:user-1", schema: schema)
         let pushBodies = LockedBox<[Any]>([])
-        let syncEvents = LockedBox<[String]>([])
+        let syncEvents = LockedBox<[DatafnJSONObject]>([])
 
         try store.setHydrationState(resource: "tasks", state: .hydrating)
         try store.setHydrationState(resource: "tasks", state: .ready)
@@ -61,7 +61,7 @@ struct DatafnServerSyncEngineTests {
 
         let token = store.subscribe { event in
             if event.name == DatafnCoreDataStore.syncStatusEvent {
-                syncEvents.withValue { $0.append(event.name) }
+                syncEvents.withValue { $0.append(event.payload) }
             }
         }
         defer { store.unsubscribe(token) }
@@ -134,7 +134,8 @@ struct DatafnServerSyncEngineTests {
         #expect(try store.getCursor(resource: "tasks") == "7")
         #expect(try store.getCursor(resource: "__global_cursor__") == "7")
         #expect(try store.getRecord(resource: "tasks", id: "task:server")?["title"] == "From server")
-        #expect(syncEvents.get().contains("sync.status"))
+        let schedulePushEvent = syncEvents.get().first(where: { $0["action"]?.stringValue == "schedulePush" })
+        #expect(schedulePushEvent?["pendingMutations"]?.intValue == 0)
     }
 
     @Test("TV-SYN-004 negative: transport failures surface as sync.push errors")
