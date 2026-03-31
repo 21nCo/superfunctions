@@ -124,6 +124,36 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isBodyInitLike(value: unknown): value is BodyInit {
+  return (
+    typeof value === "string" ||
+    value instanceof URLSearchParams ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value) ||
+    (typeof FormData !== "undefined" && value instanceof FormData) ||
+    (typeof Blob !== "undefined" && value instanceof Blob) ||
+    (typeof ReadableStream !== "undefined" && value instanceof ReadableStream)
+  );
+}
+
+function serializeRequestBody(body: unknown): {
+  body: BodyInit | undefined;
+  defaultContentType?: string;
+} {
+  if (body === undefined) {
+    return { body: undefined };
+  }
+
+  if (isBodyInitLike(body)) {
+    return { body };
+  }
+
+  return {
+    body: JSON.stringify(body),
+    defaultContentType: "application/json",
+  };
+}
+
 export function createApiClient(config: ApiClientConfig): ApiClient {
   const auth = resolveAuth(config);
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
@@ -143,6 +173,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        const serializedBody = serializeRequestBody(options.body);
         const headers: Record<string, string> = {
           Authorization: `Bearer ${auth.apiKey}`,
           ...config.defaultHeaders,
@@ -151,14 +182,18 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         if (config.projectId) {
           headers["X-Project-ID"] = config.projectId;
         }
-        if (options.body !== undefined && headers["Content-Type"] === undefined) {
-          headers["Content-Type"] = "application/json";
+        if (
+          serializedBody.defaultContentType &&
+          headers["Content-Type"] === undefined &&
+          headers["content-type"] === undefined
+        ) {
+          headers["Content-Type"] = serializedBody.defaultContentType;
         }
 
         const response = await fetchImpl(url, {
           method,
           headers,
-          body: options.body === undefined ? undefined : JSON.stringify(options.body),
+          body: serializedBody.body,
           signal: controller.signal,
         });
 

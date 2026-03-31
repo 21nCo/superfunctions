@@ -107,7 +107,10 @@
   },
   "superfunctionsPhasePlan": {
     "clifnPhase00": {
-      "addedRuntimeDependencies": [],
+      "addedRuntimeDependencies": [
+        "ini",
+        "jiti"
+      ],
       "dependencyPolicy": "Prefer repository-shared mechanisms such as the existing packages/cli loader pattern before adding new dependencies in later phases."
     }
   },

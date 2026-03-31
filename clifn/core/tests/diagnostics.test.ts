@@ -99,6 +99,34 @@ describe("diagnostics", () => {
     ).toContain('"self":"[Circular]"');
   });
 
+  it("preserves repeated references that are not circular", () => {
+    const shared = { value: "same" };
+
+    expect(
+      redactValue({
+        first: shared,
+        second: shared,
+      })
+    ).toEqual({
+      first: { value: "same" },
+      second: { value: "same" },
+    });
+
+    expect(
+      formatDiagnosticsJson([
+        {
+          code: "SHARED",
+          severity: "info",
+          message: "shared",
+          details: {
+            first: shared,
+            second: shared,
+          },
+        },
+      ])
+    ).toContain('"first":{"value":"same"},"second":{"value":"same"}');
+  });
+
   it("formats diagnostics as stable json", () => {
     expect(formatDiagnosticsJson(unsorted)).toBe(
       '{"diagnostics":[{"code":"A","details":{"path":"x"},"message":"a","severity":"error"},{"code":"B","details":{"nested":{"Authorization":"[REDACTED]"},"token":"[REDACTED]"},"message":"b","severity":"warning"},{"code":"C","message":"c","path":"docs/readme.md","severity":"info"}],"ok":false}\n'

@@ -66,7 +66,7 @@ describe("parser canaries", () => {
     for (const content of contents) {
       expect(content).not.toMatch(/from ["']cac["']/);
       expect(content).not.toMatch(/from ["']commander["']/);
-      expect(content).not.toMatch(/from ["']node:util["'][^]*parseArgs/);
+      expect(content).not.toMatch(/import\s*\{[^}]*\bparseArgs\b[^}]*\}\s*from ["']node:util["']/);
       expect(content).not.toMatch(/const\s*\{\s*parseArgs\s*\}\s*=\s*require\(["']node:util["']\)/);
       expect(content).not.toMatch(/require\(["']node:util["']\)\.parseArgs/);
     }

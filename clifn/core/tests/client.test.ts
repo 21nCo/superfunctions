@@ -87,4 +87,27 @@ describe("client", () => {
 
     await expect(client.get("/network")).rejects.toBeInstanceOf(HttpRequestError);
   });
+
+  it("preserves non-json request bodies instead of stringifying them", async () => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.body).toBe("plain text payload");
+      expect(new Headers(init?.headers).get("Content-Type")).toBeNull();
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = createApiClient({
+      baseUrl: "https://api.conduct.sh",
+      apiKey: "sk_live_abc",
+      retries: 0,
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+    });
+
+    await expect(client.post("/plain", "plain text payload")).resolves.toMatchObject({
+      data: { ok: true },
+    });
+  });
 });

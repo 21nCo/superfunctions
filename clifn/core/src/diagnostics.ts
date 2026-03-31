@@ -32,7 +32,11 @@ function cloneValue(value: unknown, seen = new WeakSet<object>()): unknown {
     }
 
     seen.add(value);
-    return value.map((item) => cloneValue(item, seen));
+    try {
+      return value.map((item) => cloneValue(item, seen));
+    } finally {
+      seen.delete(value);
+    }
   }
 
   if (value && typeof value === "object") {
@@ -41,9 +45,13 @@ function cloneValue(value: unknown, seen = new WeakSet<object>()): unknown {
     }
 
     seen.add(value);
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, cloneValue(nested, seen)])
-    );
+    try {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, cloneValue(nested, seen)])
+      );
+    } finally {
+      seen.delete(value);
+    }
   }
 
   return value;
@@ -56,7 +64,11 @@ export function redactValue(value: unknown, seen = new WeakSet<object>()): unkno
     }
 
     seen.add(value);
-    return value.map((item) => redactValue(item, seen));
+    try {
+      return value.map((item) => redactValue(item, seen));
+    } finally {
+      seen.delete(value);
+    }
   }
 
   if (value && typeof value === "object") {
@@ -65,14 +77,18 @@ export function redactValue(value: unknown, seen = new WeakSet<object>()): unkno
     }
 
     seen.add(value);
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, nested]) => {
-        if (SENSITIVE_KEY_PATTERN.test(key)) {
-          return [key, "[REDACTED]"];
-        }
-        return [key, redactValue(nested, seen)];
-      })
-    );
+    try {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, nested]) => {
+          if (SENSITIVE_KEY_PATTERN.test(key)) {
+            return [key, "[REDACTED]"];
+          }
+          return [key, redactValue(nested, seen)];
+        })
+      );
+    } finally {
+      seen.delete(value);
+    }
   }
 
   return value;
@@ -85,7 +101,11 @@ function normalizeForSerialization(value: unknown, seen = new WeakSet<object>())
     }
 
     seen.add(value);
-    return value.map((item) => normalizeForSerialization(item, seen));
+    try {
+      return value.map((item) => normalizeForSerialization(item, seen));
+    } finally {
+      seen.delete(value);
+    }
   }
 
   if (value && typeof value === "object") {
@@ -94,11 +114,15 @@ function normalizeForSerialization(value: unknown, seen = new WeakSet<object>())
     }
 
     seen.add(value);
-    return Object.fromEntries(
-      Object.keys(value as Record<string, unknown>)
-        .sort((left, right) => left.localeCompare(right))
-        .map((key) => [key, normalizeForSerialization((value as Record<string, unknown>)[key], seen)])
-    );
+    try {
+      return Object.fromEntries(
+        Object.keys(value as Record<string, unknown>)
+          .sort((left, right) => left.localeCompare(right))
+          .map((key) => [key, normalizeForSerialization((value as Record<string, unknown>)[key], seen)])
+      );
+    } finally {
+      seen.delete(value);
+    }
   }
 
   return value;
