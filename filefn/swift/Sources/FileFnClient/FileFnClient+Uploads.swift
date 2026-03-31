@@ -143,6 +143,8 @@ extension FileFnClient {
                 bodySnippet: String(data: data.prefix(256), encoding: .utf8),
                 capability: nil
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as FileFnClientError {
             throw error
         } catch {

@@ -52,7 +52,11 @@ describe('filefn client contract artifact', () => {
 
     expect(artifact.paths['/upload/init'].post.parameters).toContainEqual({ $ref: '#/components/parameters/XIdempotencyKey' });
     expect(artifact.paths['/upload/{uploadSessionId}/status'].get.parameters).toContainEqual({ $ref: '#/components/parameters/XUploadSessionToken' });
-    expect(artifact.paths['/{fileId}/share-links'].post.responses['200'].content['application/json'].schema.allOf[1].properties.data.$ref)
+    expect(artifact.paths['/{fileId}/share-links'].post.responses['201'].content['application/json'].schema.allOf[1].properties.data.$ref)
       .toBe('#/components/schemas/ShareLink');
+    expect(artifact.paths['/{fileId}/permissions'].post.responses['201'].content['application/json'].schema.allOf[1].properties.data.$ref)
+      .toBe('#/components/schemas/PermissionGrant');
+    expect(artifact.paths['/share-links/{token}/download'].get.responses['200'].content['application/json'].schema.allOf[1].properties.data.$ref)
+      .toBe('#/components/schemas/ShareDownloadDescriptor');
   });
 });

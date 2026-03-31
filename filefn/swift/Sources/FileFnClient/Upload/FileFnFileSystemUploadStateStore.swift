@@ -60,6 +60,12 @@ public actor FileFnFileSystemUploadStateStore: FileFnUploadStateStore {
     }
 
     private func snapshotURL(uploadID: String) -> URL {
-        snapshotsDirectory.appendingPathComponent("\(uploadID).json", isDirectory: false)
+        snapshotsDirectory.appendingPathComponent("\(safeSnapshotComponent(for: uploadID)).json", isDirectory: false)
+    }
+
+    private func safeSnapshotComponent(for uploadID: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        let encoded = uploadID.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        return encoded.isEmpty ? "_upload" : encoded
     }
 }

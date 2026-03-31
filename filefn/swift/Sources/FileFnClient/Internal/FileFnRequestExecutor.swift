@@ -88,12 +88,6 @@ struct FileFnRequestExecutor: Sendable {
             }
         }
 
-        _ = configuration.retryPolicy.shouldRetry(
-            method: method,
-            path: path,
-            hasIdempotencyKey: hasIdempotencyKey
-        )
-
         return request
     }
 
@@ -108,48 +102,128 @@ struct FileFnRequestExecutor: Sendable {
         capability: FileFnCapability? = nil,
         responseType: Value.Type = Value.self
     ) async throws -> DecodedResponse<Value> {
-        let request = try await buildRequest(
-            method: method,
-            path: path,
-            query: query,
-            body: body,
-            requiresUploadSessionToken: requiresUploadSessionToken,
-            hasIdempotencyKey: hasIdempotencyKey,
-            extraHeaders: extraHeaders
-        )
+        var attempt = 0
+        while true {
+            attempt += 1
+            let request = try await buildRequest(
+                method: method,
+                path: path,
+                query: query,
+                body: body,
+                requiresUploadSessionToken: requiresUploadSessionToken,
+                hasIdempotencyKey: hasIdempotencyKey,
+                extraHeaders: extraHeaders
+            )
 
-        do {
-            let (data, response) = try await configuration.urlSession.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw FileFnClientError.transport(
+            do {
+                let (data, response) = try await configuration.urlSession.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw FileFnClientError.transport(
+                        status: nil,
+                        requestId: nil,
+                        bodySnippet: "Response was not an HTTP response"
+                    )
+                }
+
+                if (200 ..< 300).contains(httpResponse.statusCode) {
+                    return try decodeSuccess(
+                        data: data,
+                        requestIdHint: httpResponse.value(forHTTPHeaderField: "x-request-id"),
+                        responseType: responseType
+                    )
+                }
+
+                let error = decodeFailure(
+                    data: data,
+                    response: httpResponse,
+                    capability: capability
+                )
+                if try await shouldRetry(
+                    error: error,
+                    attempt: attempt,
+                    method: method,
+                    path: path,
+                    hasIdempotencyKey: hasIdempotencyKey
+                ) {
+                    continue
+                }
+                throw error
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as FileFnClientError {
+                if try await shouldRetry(
+                    error: error,
+                    attempt: attempt,
+                    method: method,
+                    path: path,
+                    hasIdempotencyKey: hasIdempotencyKey
+                ) {
+                    continue
+                }
+                throw error
+            } catch {
+                let transportError = FileFnClientError.transport(
                     status: nil,
                     requestId: nil,
-                    bodySnippet: "Response was not an HTTP response"
+                    bodySnippet: error.localizedDescription
                 )
+                if try await shouldRetry(
+                    error: transportError,
+                    attempt: attempt,
+                    method: method,
+                    path: path,
+                    hasIdempotencyKey: hasIdempotencyKey
+                ) {
+                    continue
+                }
+                throw transportError
             }
-
-            if (200 ..< 300).contains(httpResponse.statusCode) {
-                return try decodeSuccess(
-                    data: data,
-                    requestIdHint: httpResponse.value(forHTTPHeaderField: "x-request-id"),
-                    responseType: responseType
-                )
-            }
-
-            throw decodeFailure(
-                data: data,
-                response: httpResponse,
-                capability: capability
-            )
-        } catch let error as FileFnClientError {
-            throw error
-        } catch {
-            throw FileFnClientError.transport(
-                status: nil,
-                requestId: nil,
-                bodySnippet: error.localizedDescription
-            )
         }
+    }
+
+    private func shouldRetry(
+        error: FileFnClientError,
+        attempt: Int,
+        method: String,
+        path: String,
+        hasIdempotencyKey: Bool
+    ) async throws -> Bool {
+        let policy = configuration.retryPolicy
+        guard attempt < max(policy.maxAttempts, 1) else {
+            return false
+        }
+        guard policy.shouldRetry(method: method, path: path, hasIdempotencyKey: hasIdempotencyKey) else {
+            return false
+        }
+
+        let shouldRetryStatus: Bool
+        switch error {
+        case .server(let status, _, _):
+            shouldRetryStatus = policy.retryableStatusCodes.contains(status)
+        case .capabilityUnavailable(_, let status, _):
+            shouldRetryStatus = policy.retryableStatusCodes.contains(status)
+        case .transport(let status, _, _):
+            shouldRetryStatus = status.map(policy.retryableStatusCodes.contains(_:)) ?? true
+        default:
+            shouldRetryStatus = false
+        }
+
+        guard shouldRetryStatus else {
+            return false
+        }
+
+        let delay = retryDelayMilliseconds(forAttempt: attempt, policy: policy)
+        if delay > 0 {
+            try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000)
+        }
+        return true
+    }
+
+    private func retryDelayMilliseconds(forAttempt attempt: Int, policy: FileFnRetryPolicy) -> Int {
+        let exponent = max(attempt - 1, 0)
+        let multiplier = 1 << min(exponent, 16)
+        let rawDelay = max(policy.baseDelayMilliseconds, 0) * multiplier
+        return min(rawDelay, max(policy.maxDelayMilliseconds, 0))
     }
 
     private func decodeSuccess<Value: Decodable & Sendable>(

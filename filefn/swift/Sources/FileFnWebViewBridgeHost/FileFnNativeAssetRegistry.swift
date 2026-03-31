@@ -62,9 +62,23 @@ public actor FileFnNativeAssetRegistry {
         }
 
         let handle = assetHandle ?? fileFnBridgeGenerateRandomIdentifier(prefix: "asset")
+        guard fileFnBridgeIsValidPreviewScheme(previewScheme) else {
+            throw FileFnBridgeError(
+                code: "BRIDGE_INVALID_SOURCE",
+                message: "Preview scheme must use a valid custom URL scheme",
+                details: ["previewScheme": .string(previewScheme)]
+            )
+        }
+        guard fileFnBridgeIsValidAssetHandle(handle) else {
+            throw FileFnBridgeError(
+                code: "BRIDGE_INVALID_SOURCE",
+                message: "Asset handle must use URL-safe characters",
+                details: ["assetHandle": .string(handle)]
+            )
+        }
         let resolvedFileName = fileName ?? values.name ?? fileURL.lastPathComponent
         let resolvedMimeType = mimeType ?? fileFnBridgeInferMimeType(fileName: resolvedFileName)
-        let previewURL = URL(string: "\(previewScheme)://asset/\(handle)/preview")!
+        let previewURL = try fileFnBridgePreviewURL(previewScheme: previewScheme, assetHandle: handle)
         let descriptor = FileFnNativeAssetDescriptor(
             assetHandle: handle,
             fileName: resolvedFileName,
@@ -125,4 +139,40 @@ private func fileFnBridgeInferMimeType(fileName: String) -> String {
     }
 
     return "application/octet-stream"
+}
+
+private func fileFnBridgePreviewURL(previewScheme: String, assetHandle: String) throws -> URL {
+    var components = URLComponents()
+    components.scheme = previewScheme
+    components.host = "asset"
+    components.percentEncodedPath = "/\(assetHandle)/preview"
+    guard let url = components.url else {
+        throw FileFnBridgeError(
+            code: "BRIDGE_INVALID_SOURCE",
+            message: "Unable to construct preview URL",
+            details: [
+                "previewScheme": .string(previewScheme),
+                "assetHandle": .string(assetHandle),
+            ]
+        )
+    }
+    return url
+}
+
+private func fileFnBridgeIsValidPreviewScheme(_ previewScheme: String) -> Bool {
+    guard let first = previewScheme.unicodeScalars.first,
+          CharacterSet.letters.contains(first)
+    else {
+        return false
+    }
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+-."))
+    return previewScheme.unicodeScalars.allSatisfy { allowed.contains($0) }
+}
+
+private func fileFnBridgeIsValidAssetHandle(_ assetHandle: String) -> Bool {
+    guard !assetHandle.isEmpty else {
+        return false
+    }
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+    return assetHandle.unicodeScalars.allSatisfy { allowed.contains($0) }
 }

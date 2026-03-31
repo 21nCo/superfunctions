@@ -79,8 +79,8 @@ struct FileFnBridgeSecurityTests {
                       "data": {
                         "url": "https://storage.example.com/upload?X-Amz-Signature=secret",
                         "headers": {
-                          "Authorization": "Bearer secret_auth",
-                          "x-upload-session-token": "upls_secret_001"
+                          "Authorization": "Bearer test-auth-token",
+                          "x-upload-session-token": "test-upload-token-001"
                         }
                       }
                     }
@@ -96,7 +96,9 @@ struct FileFnBridgeSecurityTests {
             }
         }
 
-        let bridgeHost = FileFnWKWebViewBridgeHost(client: client)
+        let bridgeHost = await MainActor.run {
+            FileFnWKWebViewBridgeHost(client: client)
+        }
         _ = await bridgeHost.handleMessageForTesting([
             "protocol": FILEFN_BRIDGE_PROTOCOL,
             "id": "bridge_req_030",
@@ -138,10 +140,11 @@ struct FileFnBridgeSecurityTests {
         emitter.emit(
             event: "upload.progress",
             payload: .object([
-                "Authorization": .string("Bearer bridge_secret"),
-                "uploadSessionToken": .string("upls_bridge_001"),
+                "Authorization": .string("Bearer bridge-auth-token"),
+                "uploadSessionToken": .string("test-bridge-upload-token"),
                 "signedURL": .string("https://storage.example.com/upload?X-Amz-Signature=secret"),
                 "sourcePath": .string("/private/var/mobile/Containers/Data/Application/UUID/tmp/avatar.png"),
+                "localFileURL": .string("file:///private/var/mobile/Containers/Data/Application/UUID/tmp/avatar.png?token=abc"),
                 "previewURL": .string("filefn-bridge://asset/asset_001/preview"),
             ])
         )
@@ -152,6 +155,7 @@ struct FileFnBridgeSecurityTests {
             "uploadSessionToken": .string("[REDACTED]"),
             "signedURL": .string("https://storage.example.com/upload?[REDACTED_QUERY]"),
             "sourcePath": .string("avatar.png"),
+            "localFileURL": .string("avatar.png?[REDACTED_QUERY]"),
             "previewURL": .string("filefn-bridge://asset/asset_001/preview"),
         ]))
     }

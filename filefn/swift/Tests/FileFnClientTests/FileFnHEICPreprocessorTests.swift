@@ -218,7 +218,7 @@ struct FileFnHEICPreprocessorTests {
                       "ok": true,
                       "data": {
                         "uploadSessionId": "upl_heic_bg_001",
-                        "uploadSessionToken": "upls_heic_bg_001",
+                        "uploadSessionToken": "test-upload-token-heic-bg",
                         "uploadMode": "proxy",
                         "chunkSizeBytes": 64,
                         "totalParts": 1,

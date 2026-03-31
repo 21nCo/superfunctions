@@ -60,6 +60,9 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
 
     public func attach(to userContentController: WKUserContentController) {
         userContentController.add(self, name: configuration.handlerName)
+        Task {
+            await dispatcher.resetHandshake()
+        }
     }
 
     public func detach(from userContentController: WKUserContentController) {
@@ -71,6 +74,9 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
         deliveryLock.lock()
         currentWebView = nil
         deliveryLock.unlock()
+        Task {
+            await dispatcher.resetHandshake()
+        }
     }
 
     public func userContentController(
@@ -82,13 +88,21 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
         }
 
         deliveryLock.lock()
+        let previousWebView = currentWebView
         currentWebView = message.webView
         deliveryLock.unlock()
 
+        let shouldResetHandshake = previousWebView !== message.webView
+
         Task { [weak self] in
             guard let self else { return }
+            if shouldResetHandshake {
+                await self.dispatcher.resetHandshake()
+            }
             let response = await self.dispatcher.dispatch(rawMessage: message.body)
-            self.deliver(response, preferredWebView: message.webView)
+            await MainActor.run {
+                self.deliver(response, preferredWebView: message.webView)
+            }
         }
     }
 
@@ -102,6 +116,7 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
         deliveryLock.unlock()
     }
 
+    @MainActor
     private func deliver(_ response: FileFnBridgeResponseEnvelope, preferredWebView: WKWebView? = nil) {
         do {
             let outbound = try fileFnBridgeFoundationObject(from: response)
@@ -122,6 +137,7 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
         }
     }
 
+    @MainActor
     private func deliver(_ event: FileFnBridgeEventEnvelope) {
         do {
             let outbound = try fileFnBridgeFoundationObject(from: event)

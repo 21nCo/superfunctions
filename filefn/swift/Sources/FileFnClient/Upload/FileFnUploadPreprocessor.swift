@@ -6,19 +6,22 @@ public struct FileFnPreparedUpload: Sendable {
     public let mimeType: String
     public let metadata: [String: FileFnJSONValue]?
     public let fileSize: Int64
+    public let cleanupFileURL: URL?
 
     public init(
         fileURL: URL,
         fileName: String,
         mimeType: String,
         metadata: [String: FileFnJSONValue]? = nil,
-        fileSize: Int64
+        fileSize: Int64,
+        cleanupFileURL: URL? = nil
     ) {
         self.fileURL = fileURL
         self.fileName = fileName
         self.mimeType = mimeType
         self.metadata = metadata
         self.fileSize = fileSize
+        self.cleanupFileURL = cleanupFileURL
     }
 
     public func replacing(
@@ -26,14 +29,16 @@ public struct FileFnPreparedUpload: Sendable {
         fileName: String? = nil,
         mimeType: String? = nil,
         metadata: [String: FileFnJSONValue]?? = nil,
-        fileSize: Int64? = nil
+        fileSize: Int64? = nil,
+        cleanupFileURL: URL?? = nil
     ) -> FileFnPreparedUpload {
         FileFnPreparedUpload(
             fileURL: fileURL ?? self.fileURL,
             fileName: fileName ?? self.fileName,
             mimeType: mimeType ?? self.mimeType,
             metadata: metadata ?? self.metadata,
-            fileSize: fileSize ?? self.fileSize
+            fileSize: fileSize ?? self.fileSize,
+            cleanupFileURL: cleanupFileURL ?? self.cleanupFileURL
         )
     }
 }
@@ -76,15 +81,18 @@ enum FileFnUploadPreparation {
                 fileName: materialized.fileName
             ),
             metadata: request.metadata,
-            fileSize: materialized.fileSize
+            fileSize: materialized.fileSize,
+            cleanupFileURL: materialized.isTemporary ? materialized.fileURL : nil
         )
 
         let preprocessors = request.preprocessors ?? defaultPreprocessors
         for preprocessor in preprocessors {
             let next = try await preprocessor.prepare(prepared)
             try validatePreparedUpload(next)
-            if next.fileURL != prepared.fileURL, !cleanupURLs.contains(next.fileURL) {
-                cleanupURLs.append(next.fileURL)
+            if let cleanupFileURL = next.cleanupFileURL,
+               !cleanupURLs.contains(cleanupFileURL)
+            {
+                cleanupURLs.append(cleanupFileURL)
             }
             prepared = next
         }
@@ -96,6 +104,12 @@ enum FileFnUploadPreparation {
         let values = try upload.fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values.isRegularFile == true else {
             throw FileFnClientError.fileAccess(reason: "Prepared upload source must be a regular file")
+        }
+        let actualFileSize = Int64(values.fileSize ?? 0)
+        guard actualFileSize == upload.fileSize else {
+            throw FileFnClientError.fileAccess(
+                reason: "Prepared upload fileSize \(upload.fileSize) did not match actual file size \(actualFileSize)"
+            )
         }
     }
 }

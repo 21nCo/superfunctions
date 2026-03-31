@@ -15,27 +15,13 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-const pendingRequests = new Map<string, PendingRequest>();
-const eventHandlers = new Set<(event: FileFnBridgeEventEnvelope) => void>();
-
-const bridgeReceiver = (message: unknown) => {
-  if (isBridgeResponseEnvelope(message)) {
-    const pending = pendingRequests.get(message.id);
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    pendingRequests.delete(message.id);
-    pending.resolve(message);
-    return;
-  }
-
-  if (isBridgeEventEnvelope(message)) {
-    eventHandlers.forEach((handler) => handler(message));
-  }
-};
+const activeBridgeReceivers = new Set<(message: unknown) => void>();
 
 function installGlobalReceiver() {
   if (typeof window !== "undefined") {
-    window.__filefnBridgeReceive__ = bridgeReceiver;
+    window.__filefnBridgeReceive__ = (message: unknown) => {
+      activeBridgeReceivers.forEach((receiver) => receiver(message));
+    };
   }
 }
 
@@ -44,11 +30,37 @@ export function createWKWebViewBridgeBus(
 ): FileFnBridgeBus {
   const handlerName = options.handlerName ?? "filefn";
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const pendingRequests = new Map<string, PendingRequest>();
+  const eventHandlers = new Set<(event: FileFnBridgeEventEnvelope) => void>();
 
-  installGlobalReceiver();
+  const bridgeReceiver = (message: unknown) => {
+    if (isBridgeResponseEnvelope(message)) {
+      const pending = pendingRequests.get(message.id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      pendingRequests.delete(message.id);
+      pending.resolve(message);
+      if (pendingRequests.size === 0 && eventHandlers.size === 0) {
+        activeBridgeReceivers.delete(bridgeReceiver);
+      }
+      return;
+    }
+
+    if (isBridgeEventEnvelope(message)) {
+      eventHandlers.forEach((handler) => handler(message));
+    }
+  };
+
+  const ensureReceiverRegistered = () => {
+    installGlobalReceiver();
+    activeBridgeReceivers.add(bridgeReceiver);
+  };
+
+  ensureReceiverRegistered();
 
   return {
     async request(message) {
+      ensureReceiverRegistered();
       if (message.protocol !== FILEFN_BRIDGE_PROTOCOL) {
         return createBridgeErrorResponse(
           message.id,
@@ -97,6 +109,9 @@ export function createWKWebViewBridgeBus(
       return new Promise<FileFnBridgeResponseEnvelope>((resolve) => {
         const timer = setTimeout(() => {
           pendingRequests.delete(message.id);
+          if (pendingRequests.size === 0 && eventHandlers.size === 0) {
+            activeBridgeReceivers.delete(bridgeReceiver);
+          }
           resolve(
             createBridgeErrorResponse(
               message.id,
@@ -112,9 +127,13 @@ export function createWKWebViewBridgeBus(
       });
     },
     subscribe(handler) {
+      ensureReceiverRegistered();
       eventHandlers.add(handler);
       return () => {
         eventHandlers.delete(handler);
+        if (pendingRequests.size === 0 && eventHandlers.size === 0) {
+          activeBridgeReceivers.delete(bridgeReceiver);
+        }
       };
     },
   };

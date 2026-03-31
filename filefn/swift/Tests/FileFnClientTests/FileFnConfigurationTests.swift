@@ -64,4 +64,86 @@ struct FileFnConfigurationTests {
         #expect(policy.shouldRetry(method: "POST", path: "/upload/init", hasIdempotencyKey: false) == false)
         #expect(policy.shouldRetry(method: "POST", path: "/upload/init", hasIdempotencyKey: true) == true)
     }
+
+    @Test
+    func retryableGetRequestsRetryOnTransientFailures() async throws {
+        let host = "config-retry.example.test"
+        defer { FileFnMockURLProtocol.unregister(host: host) }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [FileFnMockURLProtocol.self]
+
+        let attempts = LockedCounter()
+        FileFnMockURLProtocol.register(host: host) { request in
+            let attempt = attempts.incrementAndLoad()
+            if attempt == 1 {
+                return makeJSONResponse(
+                    request: request,
+                    status: 503,
+                    body: """
+                    {
+                      "ok": false,
+                      "error": {
+                        "code": "FILEFN_TEMPORARY_UNAVAILABLE",
+                        "message": "Try again"
+                      }
+                    }
+                    """
+                )
+            }
+
+            return makeJSONResponse(
+                request: request,
+                status: 200,
+                body: """
+                {
+                  "ok": true,
+                  "data": {
+                    "fileId": "file_001",
+                    "currentVersionId": "ver_001",
+                    "ownerId": "user_001",
+                    "tenantId": "tenant_001",
+                    "visibility": "private",
+                    "mimeType": "image/png",
+                    "size": 42,
+                    "name": "avatar.png",
+                    "createdAt": "2026-03-29T11:00:00Z",
+                    "updatedAt": "2026-03-29T11:00:00Z"
+                  }
+                }
+                """
+            )
+        }
+
+        let client = try FileFnClient(
+            configuration: FileFnClientConfiguration(
+                baseURL: URL(string: "https://\(host)/filefn")!,
+                retryPolicy: FileFnRetryPolicy(maxAttempts: 2, baseDelayMilliseconds: 0, maxDelayMilliseconds: 0),
+                sendClientVersionHeader: false,
+                urlSession: URLSession(configuration: configuration)
+            )
+        )
+
+        let file = try await client.getFile(fileId: "file_001")
+        #expect(file.fileId == "file_001")
+        #expect(attempts.load() == 2)
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func incrementAndLoad() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
+    }
+
+    func load() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }

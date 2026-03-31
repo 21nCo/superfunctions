@@ -388,7 +388,7 @@ export const fileFnClientContract = {
           },
         },
         responses: {
-          '200': successResponse('#/components/schemas/PermissionGrant'),
+          '201': successResponse('#/components/schemas/PermissionGrant', 'Created'),
           default: errorResponse(),
         },
       }),
@@ -427,7 +427,7 @@ export const fileFnClientContract = {
           },
         },
         responses: {
-          '200': successResponse('#/components/schemas/ShareLink'),
+          '201': successResponse('#/components/schemas/ShareLink', 'Created'),
           default: errorResponse(),
         },
       }),
@@ -457,7 +457,7 @@ export const fileFnClientContract = {
         tags: ['shares'],
         parameters: [ref('#/components/parameters/Token')],
         responses: {
-          '200': successResponse('#/components/schemas/DownloadDescriptor'),
+          '200': successResponse('#/components/schemas/ShareDownloadDescriptor'),
           default: errorResponse(),
         },
       }),
@@ -631,8 +631,23 @@ export const fileFnClientContract = {
             type: 'object',
             additionalProperties: { type: 'string' },
           },
+          fileName: { type: 'string' },
+          mimeType: { type: 'string' },
         },
         required: ['url'],
+      },
+      ShareDownloadDescriptor: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', format: 'uri-reference' },
+          headers: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+          },
+          fileName: { type: 'string' },
+          mimeType: { type: 'string' },
+        },
+        required: ['url', 'fileName', 'mimeType'],
       },
       RenderDescriptor: {
         type: 'object',
@@ -827,20 +842,32 @@ export const fileFnClientContract = {
       CreateGrantRequest: {
         type: 'object',
         properties: {
-          principalId: { type: 'string' },
-          permission: { type: 'string' },
+          userId: { type: 'string' },
+          role: { type: 'string' },
+          tenantId: { type: 'string' },
+          canRead: { type: 'boolean' },
+          canWrite: { type: 'boolean' },
+          canDelete: { type: 'boolean' },
+          canShare: { type: 'boolean' },
+          expiresAt: { type: 'string' },
         },
-        required: ['principalId', 'permission'],
       },
       PermissionGrant: {
         type: 'object',
         properties: {
           permissionId: { type: 'string' },
-          principalId: { type: 'string' },
-          permission: { type: 'string' },
+          fileId: { type: 'string' },
+          userId: { type: 'string' },
+          role: { type: 'string' },
+          tenantId: { type: 'string' },
+          canRead: { type: 'boolean' },
+          canWrite: { type: 'boolean' },
+          canDelete: { type: 'boolean' },
+          canShare: { type: 'boolean' },
+          expiresAt: { type: 'string' },
           createdAt: { type: 'string' },
         },
-        required: ['permissionId', 'principalId', 'permission', 'createdAt'],
+        required: ['permissionId', 'fileId', 'canRead', 'canWrite', 'canDelete', 'canShare', 'createdAt'],
       },
       GrantPage: {
         type: 'object',
@@ -859,7 +886,10 @@ export const fileFnClientContract = {
       CreateShareLinkRequest: {
         type: 'object',
         properties: {
+          versionId: { type: 'string' },
           expiresAt: { type: 'string' },
+          requiresAuth: { type: 'boolean' },
+          maxDownloads: { type: 'integer' },
         },
       },
       ShareLink: {
@@ -868,16 +898,26 @@ export const fileFnClientContract = {
           token: { type: 'string' },
           url: { type: 'string', format: 'uri-reference' },
           expiresAt: { type: 'string' },
+          versionId: { type: 'string' },
+          requiresAuth: { type: 'boolean' },
+          maxDownloads: { type: 'integer' },
         },
-        required: ['token', 'url'],
+        required: ['token'],
       },
       ShareLinkSummary: {
         type: 'object',
         properties: {
-          token: { type: 'string' },
+          tokenHashPrefix: { type: 'string' },
+          fileId: { type: 'string' },
+          versionId: { type: 'string' },
           expiresAt: { type: 'string' },
+          requiresAuth: { type: 'boolean' },
+          maxDownloads: { type: 'integer' },
+          downloads: { type: 'integer' },
+          createdAt: { type: 'string' },
+          revokedAt: { type: 'string' },
         },
-        required: ['token'],
+        required: ['tokenHashPrefix', 'fileId', 'requiresAuth', 'downloads', 'createdAt'],
       },
       SharePage: {
         type: 'object',
@@ -889,8 +929,14 @@ export const fileFnClientContract = {
       TriggerProcessingRequest: {
         type: 'object',
         properties: {
+          versionId: { type: 'string' },
+          storageKey: { type: 'string' },
+          mimeType: { type: 'string' },
+          size: { type: 'integer' },
+          fileName: { type: 'string' },
           processors: { type: 'array', items: { type: 'string' } },
         },
+        required: ['storageKey', 'mimeType', 'size', 'fileName'],
       },
       ProcessingStatus: {
         type: 'object',

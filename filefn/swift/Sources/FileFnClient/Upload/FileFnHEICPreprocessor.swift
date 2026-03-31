@@ -66,7 +66,8 @@ public struct FileFnHEICPreprocessor: FileFnUploadPreprocessor {
                 fileName: fileFnJPEGFileName(from: upload.fileName),
                 mimeType: "image/jpeg",
                 metadata: metadata,
-                fileSize: Int64(values.fileSize ?? 0)
+                fileSize: Int64(values.fileSize ?? 0),
+                cleanupFileURL: outputURL
             )
         } catch let error as FileFnClientError {
             try? FileManager.default.removeItem(at: outputURL)

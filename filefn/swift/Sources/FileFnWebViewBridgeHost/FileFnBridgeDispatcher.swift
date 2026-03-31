@@ -20,7 +20,7 @@ private struct FileFnBridgeUploadEntry: Sendable, Equatable {
     let background: Bool
     var state: String
     var bytesSent: Int64
-    let bytesExpected: Int64
+    var bytesExpected: Int64
     var result: FileFnCompletedUpload?
     var error: FileFnBridgeError?
 }
@@ -103,6 +103,10 @@ public actor FileFnBridgeDispatcher {
                 message: String(describing: error)
             )
         }
+    }
+
+    public func resetHandshake() {
+        handshakeCompleted = false
     }
 
     private func dispatchValidated(_ request: FileFnBridgeRequestEnvelope) async throws -> FileFnBridgeResponseEnvelope {
@@ -337,6 +341,7 @@ public actor FileFnBridgeDispatcher {
         }
 
         entry.bytesSent = event.progress.bytesUploaded
+        entry.bytesExpected = event.progress.totalBytes
         entry.state = event.kind == .completed ? "completed" : "running"
         uploads[uploadID] = entry
 
@@ -363,6 +368,13 @@ public actor FileFnBridgeDispatcher {
             )
         }
 
+        if entry.state == "completed" || entry.state == "failed" {
+            return try await success(requestID, FileFnBridgeUploadAbortResult(uploadID: uploadID, aborted: false))
+        }
+        if entry.state == "cancelled" {
+            return try await success(requestID, FileFnBridgeUploadAbortResult(uploadID: uploadID, aborted: true))
+        }
+
         if entry.background {
             try await backgroundUploader?.cancel(uploadID: uploadID)
         } else {
@@ -377,9 +389,13 @@ public actor FileFnBridgeDispatcher {
             return
         }
         entry.state = "completed"
-        entry.bytesSent = entry.bytesExpected
+        if entry.bytesExpected > 0 {
+            entry.bytesSent = max(entry.bytesSent, entry.bytesExpected)
+        }
         entry.result = result
         uploads[uploadID] = entry
+        foregroundTasks.removeValue(forKey: uploadID)
+        foregroundEventTasks.removeValue(forKey: uploadID)?.cancel()
         eventEmitter.emit(
             event: "upload.completed",
             payload: .object([
@@ -396,6 +412,8 @@ public actor FileFnBridgeDispatcher {
         entry.state = "failed"
         entry.error = error
         uploads[uploadID] = entry
+        foregroundTasks.removeValue(forKey: uploadID)
+        foregroundEventTasks.removeValue(forKey: uploadID)?.cancel()
         eventEmitter.emit(
             event: "upload.failed",
             payload: .object([
@@ -410,10 +428,21 @@ public actor FileFnBridgeDispatcher {
     }
 
     private func cancelUpload(uploadID: String) {
-        if var entry = uploads[uploadID] {
-            entry.state = "cancelled"
-            uploads[uploadID] = entry
+        guard var entry = uploads[uploadID] else {
+            foregroundTasks.removeValue(forKey: uploadID)
+            foregroundEventTasks.removeValue(forKey: uploadID)?.cancel()
+            return
         }
+
+        let terminalStates = Set(["cancelled", "completed", "failed"])
+        guard !terminalStates.contains(entry.state) else {
+            foregroundTasks.removeValue(forKey: uploadID)
+            foregroundEventTasks.removeValue(forKey: uploadID)?.cancel()
+            return
+        }
+
+        entry.state = "cancelled"
+        uploads[uploadID] = entry
         foregroundTasks.removeValue(forKey: uploadID)
         foregroundEventTasks.removeValue(forKey: uploadID)?.cancel()
         eventEmitter.emit(

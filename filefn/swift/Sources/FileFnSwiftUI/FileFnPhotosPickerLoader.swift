@@ -69,19 +69,36 @@ public enum FileFnPhotosPickerLoader {
 }
 
 func fileFnWriteImportedAsset(data: Data, fileName: String) throws -> URL {
-    let sanitizedFileName = fileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? "imported"
-        : fileName
-    let baseURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(fileFnImportedAssetIdentifier(), isDirectory: true)
-    try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
-    let destinationURL = baseURL.appendingPathComponent(sanitizedFileName, isDirectory: false)
+    let destinationURL = try fileFnImportedAssetDestinationURL(fileName: fileName)
     do {
         try data.write(to: destinationURL, options: .atomic)
         return destinationURL
     } catch {
         throw FileFnClientError.fileAccess(reason: "Unable to import asset into a local file: \(error.localizedDescription)")
     }
+}
+
+func fileFnCopyImportedAsset(from sourceURL: URL, fileName: String) throws -> URL {
+    let destinationURL = try fileFnImportedAssetDestinationURL(fileName: fileName)
+    do {
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        return destinationURL
+    } catch {
+        throw FileFnClientError.fileAccess(reason: "Unable to import asset into a local file: \(error.localizedDescription)")
+    }
+}
+
+private func fileFnImportedAssetDestinationURL(fileName: String) throws -> URL {
+    let sanitizedFileName = fileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "imported"
+        : fileName
+    let baseURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(fileFnImportedAssetIdentifier(), isDirectory: true)
+    try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+    return baseURL.appendingPathComponent(sanitizedFileName, isDirectory: false)
 }
 
 func fileFnImportedAssetIdentifier() -> String {

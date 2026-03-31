@@ -10,11 +10,11 @@ public enum FileFnFileImporterLoader {
             throw FileFnClientError.fileAccess(reason: "Imported file must use a local file URL")
         }
 
+        let didStartSecurityScope = url.startAccessingSecurityScopedResource()
         let normalizedURL = url.standardizedFileURL.resolvingSymlinksInPath()
-        let didStartSecurityScope = normalizedURL.startAccessingSecurityScopedResource()
         defer {
             if didStartSecurityScope {
-                normalizedURL.stopAccessingSecurityScopedResource()
+                url.stopAccessingSecurityScopedResource()
             }
         }
 
@@ -23,19 +23,12 @@ public enum FileFnFileImporterLoader {
             throw FileFnClientError.fileAccess(reason: "Imported file URL must reference a readable regular file")
         }
 
-        let data: Data
-        do {
-            data = try Data(contentsOf: normalizedURL)
-        } catch {
-            throw FileFnClientError.fileAccess(reason: "Unable to import file from URL: \(error.localizedDescription)")
-        }
-
         let fileName = values.name ?? normalizedURL.lastPathComponent
         let mimeType = fileFnImportedAssetMimeType(
             for: UTType(filenameExtension: normalizedURL.pathExtension),
             fileName: fileName
         )
-        let localURL = try fileFnWriteImportedAsset(data: data, fileName: fileName)
+        let localURL = try fileFnCopyImportedAsset(from: normalizedURL, fileName: fileName)
         return FileFnImportedAsset(fileURL: localURL, fileName: fileName, mimeType: mimeType)
     }
 }

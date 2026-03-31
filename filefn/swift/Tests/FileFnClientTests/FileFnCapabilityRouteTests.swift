@@ -409,6 +409,18 @@ struct FileFnCapabilityRouteTests {
         defer { FileFnMockURLProtocol.unregister(host: host) }
 
         let client = try makeFileFnTestClient(host: host) { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/filefn/file_001/process"):
+                break
+            default:
+                Issue.record("Unexpected request \(request.httpMethod ?? "nil") \(request.url?.absoluteString ?? "nil")")
+                return makeJSONResponse(
+                    request: request,
+                    status: 500,
+                    body: #"{"ok":false,"error":{"code":"TEST_UNEXPECTED","message":"Unexpected request"}}"#
+                )
+            }
+
             let body = try JSONSerialization.jsonObject(with: fileFnRequestBodyData(request)) as? [String: Any]
             #expect(body?["versionId"] as? String == "ver_001")
             #expect(body?["storageKey"] as? String == "tenant/file_001/ver_001.png")

@@ -158,7 +158,9 @@ struct FileFnBridgeHostTests {
             }
         }
 
-        let bridgeHost = FileFnWKWebViewBridgeHost(client: client)
+        let bridgeHost = await MainActor.run {
+            FileFnWKWebViewBridgeHost(client: client)
+        }
 
         let handshake = await bridgeHost.handleMessageForTesting([
             "protocol": FILEFN_BRIDGE_PROTOCOL,
@@ -208,7 +210,9 @@ struct FileFnBridgeHostTests {
             )
         }
 
-        let bridgeHost = FileFnWKWebViewBridgeHost(client: client)
+        let bridgeHost = await MainActor.run {
+            FileFnWKWebViewBridgeHost(client: client)
+        }
 
         let preHandshake = await bridgeHost.handleMessageForTesting([
             "protocol": FILEFN_BRIDGE_PROTOCOL,
@@ -292,7 +296,7 @@ struct FileFnBridgeHostTests {
                       "ok": true,
                       "data": {
                         "uploadSessionId": "upl_bridge_001",
-                        "uploadSessionToken": "upls_bridge_001",
+                        "uploadSessionToken": "test-upload-token-bridge",
                         "uploadMode": "proxy",
                         "chunkSizeBytes": 5,
                         "totalParts": 3,
@@ -325,7 +329,7 @@ struct FileFnBridgeHostTests {
             case ("PUT", "/filefn/upload/upl_bridge_001/parts/1"),
                  ("PUT", "/filefn/upload/upl_bridge_001/parts/2"),
                  ("PUT", "/filefn/upload/upl_bridge_001/parts/3"):
-                #expect(request.value(forHTTPHeaderField: "x-upload-session-token") == "upls_bridge_001")
+                #expect(request.value(forHTTPHeaderField: "x-upload-session-token") == "test-upload-token-bridge")
                 return makeBridgeJSONResponse(
                     request: request,
                     status: 200,
@@ -371,11 +375,13 @@ struct FileFnBridgeHostTests {
             )
         )
 
-        let bridgeHost = FileFnWKWebViewBridgeHost(
-            client: client,
-            assetRegistry: assetRegistry,
-            backgroundUploader: backgroundUploader
-        )
+        let bridgeHost = await MainActor.run {
+            FileFnWKWebViewBridgeHost(
+                client: client,
+                assetRegistry: assetRegistry,
+                backgroundUploader: backgroundUploader
+            )
+        }
 
         let sink = LockedBridgeSink()
         bridgeHost.setTestingSink { value in
@@ -449,7 +455,7 @@ struct FileFnBridgeHostTests {
                       "ok": true,
                       "data": {
                         "uploadSessionId": "upl_bridge_heic_001",
-                        "uploadSessionToken": "upls_bridge_heic_001",
+                        "uploadSessionToken": "test-upload-token-bridge-heic",
                         "uploadMode": "proxy",
                         "chunkSizeBytes": 64,
                         "totalParts": 1,
@@ -533,11 +539,13 @@ struct FileFnBridgeHostTests {
             ]
         )
 
-        let bridgeHost = FileFnWKWebViewBridgeHost(
-            client: client,
-            assetRegistry: assetRegistry,
-            foregroundUploader: foregroundUploader
-        )
+        let bridgeHost = await MainActor.run {
+            FileFnWKWebViewBridgeHost(
+                client: client,
+                assetRegistry: assetRegistry,
+                foregroundUploader: foregroundUploader
+            )
+        }
 
         let sink = LockedBridgeSink()
         bridgeHost.setTestingSink { value in

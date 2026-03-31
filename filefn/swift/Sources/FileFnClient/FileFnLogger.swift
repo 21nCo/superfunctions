@@ -79,9 +79,16 @@ private func fileFnRedactString(for key: String, value: String) -> String {
         return "[REDACTED]"
     }
 
-    if let url = URL(string: value), url.scheme != nil, url.query != nil {
-        let separator = value.contains("?") ? "?" : ""
-        return "\(value.components(separatedBy: "?").first ?? value)\(separator)[REDACTED_QUERY]"
+    if let url = URL(string: value), url.scheme != nil {
+        if url.scheme == "file" {
+            let baseName = URL(fileURLWithPath: url.path).lastPathComponent
+            return url.query != nil ? "\(baseName)?[REDACTED_QUERY]" : baseName
+        }
+
+        if url.query != nil {
+            let separator = value.contains("?") ? "?" : ""
+            return "\(value.components(separatedBy: "?").first ?? value)\(separator)[REDACTED_QUERY]"
+        }
     }
 
     if value.hasPrefix("/") {

@@ -368,12 +368,13 @@ private func fileFnBridgeSanitizeEntry(key: String, value: FileFnJSONValue) -> F
 
 private func fileFnBridgeSanitizeString(_ value: String) -> String {
     if let url = URL(string: value), url.scheme != nil {
+        if url.scheme == "file" {
+            let baseName = URL(fileURLWithPath: url.path).lastPathComponent
+            return url.query != nil ? "\(baseName)?[REDACTED_QUERY]" : baseName
+        }
         if url.query != nil {
             let prefix = value.components(separatedBy: "?").first ?? value
             return "\(prefix)?[REDACTED_QUERY]"
-        }
-        if value.hasPrefix("file://") {
-            return URL(fileURLWithPath: url.path).lastPathComponent
         }
         return value
     }

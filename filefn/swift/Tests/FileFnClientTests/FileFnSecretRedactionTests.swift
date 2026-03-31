@@ -2,6 +2,22 @@
 import Foundation
 import Testing
 
+private actor FileFnSecretRedactionSecretStore: FileFnSecretStore {
+    private var tokens: [String: String] = [:]
+
+    func storeUploadSessionToken(_ token: String, uploadID: String) async throws {
+        tokens[uploadID] = token
+    }
+
+    func loadUploadSessionToken(uploadID: String) async throws -> String? {
+        tokens[uploadID]
+    }
+
+    func deleteUploadSessionToken(uploadID: String) async throws {
+        tokens.removeValue(forKey: uploadID)
+    }
+}
+
 struct FileFnSecretRedactionTests {
     @Test
     func logEventRedactionRemovesSecretsQueriesAndAbsolutePaths() throws {
@@ -9,15 +25,16 @@ struct FileFnSecretRedactionTests {
             level: .info,
             message: "secret-test",
             metadata: [
-                "Authorization": .string("Bearer secret_auth"),
-                "x-upload-session-token": .string("upls_secret_001"),
+                "Authorization": .string("Bearer test-auth-token"),
+                "x-upload-session-token": .string("test-upload-token-001"),
                 "signedURL": .string("https://storage.example.com/upload?X-Amz-Signature=secret"),
                 "filePath": .string("/private/var/mobile/Containers/Data/Application/UUID/tmp/avatar.png"),
+                "localFileURL": .string("file:///private/var/mobile/Containers/Data/Application/UUID/tmp/avatar.png?token=abc"),
                 "bridgeEvent": .object([
                     "event": .string("upload.progress"),
                     "payload": .object([
-                        "Authorization": .string("Bearer bridge_secret"),
-                        "uploadSessionToken": .string("upls_bridge_001"),
+                        "Authorization": .string("Bearer bridge-auth-token"),
+                        "uploadSessionToken": .string("test-bridge-upload-token"),
                         "previewURL": .string("filefn-bridge://asset/asset_001/preview"),
                         "sourcePath": .string("/private/var/mobile/Containers/Data/Application/UUID/tmp/avatar.png"),
                     ]),
@@ -31,6 +48,7 @@ struct FileFnSecretRedactionTests {
         #expect(redacted.metadata["x-upload-session-token"] == .string("[REDACTED]"))
         #expect(redacted.metadata["signedURL"] == .string("https://storage.example.com/upload?[REDACTED_QUERY]"))
         #expect(redacted.metadata["filePath"] == .string("avatar.png"))
+        #expect(redacted.metadata["localFileURL"] == .string("avatar.png?[REDACTED_QUERY]"))
 
         guard case .object(let bridgeEvent)? = redacted.metadata["bridgeEvent"],
               case .object(let payload)? = bridgeEvent["payload"] else {
@@ -50,6 +68,9 @@ struct FileFnSecretRedactionTests {
         defer { try? FileManager.default.removeItem(at: rootDirectory) }
 
         let store = FileFnFileSystemUploadStateStore(rootDirectory: rootDirectory)
+        let secretStore = FileFnSecretRedactionSecretStore()
+        try await secretStore.storeUploadSessionToken("test-upload-token-001", uploadID: "bg_001")
+        #expect(try await secretStore.loadUploadSessionToken(uploadID: "bg_001") == "test-upload-token-001")
         let snapshot = FileFnBackgroundUploadSnapshot(
             uploadID: "bg_001",
             fileId: "file_bg_001",
@@ -74,7 +95,7 @@ struct FileFnSecretRedactionTests {
         let snapshotURL = rootDirectory.appendingPathComponent("snapshots", isDirectory: true).appendingPathComponent("bg_001.json", isDirectory: false)
         let contents = try String(contentsOf: snapshotURL)
 
-        #expect(contents.contains("upls_secret_001") == false)
+        #expect(contents.contains("test-upload-token-001") == false)
         #expect(contents.contains("Authorization") == false)
         #expect(contents.contains("X-Amz-Signature") == false)
         #expect(contents.contains("/private/var/") == false)

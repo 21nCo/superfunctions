@@ -1301,8 +1301,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -1489,8 +1489,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Successful response",
+          "201": {
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -1677,7 +1677,7 @@
                       "type": "object",
                       "properties": {
                         "data": {
-                          "$ref": "#/components/schemas/DownloadDescriptor"
+                          "$ref": "#/components/schemas/ShareDownloadDescriptor"
                         }
                       },
                       "required": [
@@ -2108,10 +2108,42 @@
             "additionalProperties": {
               "type": "string"
             }
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
           }
         },
         "required": [
           "url"
+        ]
+      },
+      "ShareDownloadDescriptor": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "fileName",
+          "mimeType"
         ]
       },
       "RenderDescriptor": {
@@ -2565,17 +2597,31 @@
       "CreateGrantRequest": {
         "type": "object",
         "properties": {
-          "principalId": {
+          "userId": {
             "type": "string"
           },
-          "permission": {
+          "role": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "canRead": {
+            "type": "boolean"
+          },
+          "canWrite": {
+            "type": "boolean"
+          },
+          "canDelete": {
+            "type": "boolean"
+          },
+          "canShare": {
+            "type": "boolean"
+          },
+          "expiresAt": {
             "type": "string"
           }
-        },
-        "required": [
-          "principalId",
-          "permission"
-        ]
+        }
       },
       "PermissionGrant": {
         "type": "object",
@@ -2583,10 +2629,31 @@
           "permissionId": {
             "type": "string"
           },
-          "principalId": {
+          "fileId": {
             "type": "string"
           },
-          "permission": {
+          "userId": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "tenantId": {
+            "type": "string"
+          },
+          "canRead": {
+            "type": "boolean"
+          },
+          "canWrite": {
+            "type": "boolean"
+          },
+          "canDelete": {
+            "type": "boolean"
+          },
+          "canShare": {
+            "type": "boolean"
+          },
+          "expiresAt": {
             "type": "string"
           },
           "createdAt": {
@@ -2595,8 +2662,11 @@
         },
         "required": [
           "permissionId",
-          "principalId",
-          "permission",
+          "fileId",
+          "canRead",
+          "canWrite",
+          "canDelete",
+          "canShare",
           "createdAt"
         ]
       },
@@ -2628,8 +2698,17 @@
       "CreateShareLinkRequest": {
         "type": "object",
         "properties": {
+          "versionId": {
+            "type": "string"
+          },
           "expiresAt": {
             "type": "string"
+          },
+          "requiresAuth": {
+            "type": "boolean"
+          },
+          "maxDownloads": {
+            "type": "integer"
           }
         }
       },
@@ -2645,25 +2724,58 @@
           },
           "expiresAt": {
             "type": "string"
+          },
+          "versionId": {
+            "type": "string"
+          },
+          "requiresAuth": {
+            "type": "boolean"
+          },
+          "maxDownloads": {
+            "type": "integer"
           }
         },
         "required": [
-          "token",
-          "url"
+          "token"
         ]
       },
       "ShareLinkSummary": {
         "type": "object",
         "properties": {
-          "token": {
+          "tokenHashPrefix": {
+            "type": "string"
+          },
+          "fileId": {
+            "type": "string"
+          },
+          "versionId": {
             "type": "string"
           },
           "expiresAt": {
             "type": "string"
+          },
+          "requiresAuth": {
+            "type": "boolean"
+          },
+          "maxDownloads": {
+            "type": "integer"
+          },
+          "downloads": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "revokedAt": {
+            "type": "string"
           }
         },
         "required": [
-          "token"
+          "tokenHashPrefix",
+          "fileId",
+          "requiresAuth",
+          "downloads",
+          "createdAt"
         ]
       },
       "SharePage": {
@@ -2683,13 +2795,34 @@
       "TriggerProcessingRequest": {
         "type": "object",
         "properties": {
+          "versionId": {
+            "type": "string"
+          },
+          "storageKey": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "fileName": {
+            "type": "string"
+          },
           "processors": {
             "type": "array",
             "items": {
               "type": "string"
             }
           }
-        }
+        },
+        "required": [
+          "storageKey",
+          "mimeType",
+          "size",
+          "fileName"
+        ]
       },
       "ProcessingStatus": {
         "type": "object",
