@@ -1,5 +1,10 @@
 import sharp from 'sharp';
-import type { Processor, ProcessorInput, ProcessorResult } from '../types.js';
+import type {
+  Processor,
+  ProcessorInput,
+  ProcessorResult,
+  VideoConfig,
+} from '../types.js';
 
 const SUPPORTED_MIME_TYPES = [
   'video/mp4',
@@ -9,29 +14,6 @@ const SUPPORTED_MIME_TYPES = [
   'video/x-msvideo',
   'video/x-matroska',
 ];
-
-export interface VideoTranscodeOptions {
-  codec?: 'h264' | 'h265' | 'vp9' | 'av1';
-  resolution?: '1080p' | '720p' | '480p' | '360p';
-  bitrate?: string;
-  fps?: number;
-}
-
-export interface VideoPosterOptions {
-  timestamp?: number;
-  width?: number;
-  height?: number;
-  format?: 'jpeg' | 'png' | 'webp';
-  quality?: number;
-}
-
-export interface VideoConfig {
-  generatePoster?: boolean;
-  posterOptions?: VideoPosterOptions;
-  transcode?: boolean;
-  transcodeOptions?: VideoTranscodeOptions;
-  extractMetadata?: boolean;
-}
 
 export function createVideoProcessor(config: VideoConfig = {}): Processor {
   const {
@@ -135,7 +117,7 @@ export function createVideoProcessor(config: VideoConfig = {}): Processor {
               sourceVersionId: input.versionId,
               originalSize: videoData.length,
               transcodedSize: transcodedData.length,
-              compressionRatio: transcodedData.length / videoData.length,
+              compressionRatio: videoData.length > 0 ? transcodedData.length / videoData.length : 0,
             },
           });
         }
@@ -235,13 +217,21 @@ async function transcodeVideo(
   void bitrate;
   void fps;
 
-  const mockTranscodedData = new Uint8Array(Math.floor(videoData.length * 0.7));
-  mockTranscodedData.set(videoData.slice(0, Math.min(100, videoData.length)));
+  const targetSize = Math.max(1, Math.floor(videoData.length * 0.7));
+  const mockTranscodedData = new Uint8Array(targetSize);
 
   const header = new TextEncoder().encode(
     `TRANSCODED:codec=${codec},resolution=${resolution},bitrate=${bitrate},fps=${fps}\n`
   );
-  mockTranscodedData.set(header, 0);
+  const headerLength = Math.min(header.length, mockTranscodedData.length);
+  mockTranscodedData.set(header.slice(0, headerLength), 0);
+
+  const payloadOffset = headerLength;
+  const remaining = Math.max(0, mockTranscodedData.length - payloadOffset);
+  if (remaining > 0) {
+    const copyLength = Math.min(remaining, videoData.length);
+    mockTranscodedData.set(videoData.slice(0, copyLength), payloadOffset);
+  }
 
   return mockTranscodedData;
 }

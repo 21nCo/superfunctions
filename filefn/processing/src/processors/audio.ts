@@ -1,4 +1,9 @@
-import type { Processor, ProcessorInput, ProcessorResult } from '../types.js';
+import type {
+  AudioConfig,
+  Processor,
+  ProcessorInput,
+  ProcessorResult,
+} from '../types.js';
 
 const SUPPORTED_MIME_TYPES = [
   'audio/mpeg',
@@ -12,20 +17,6 @@ const SUPPORTED_MIME_TYPES = [
   'audio/flac',
   'audio/x-m4a',
 ];
-
-export interface AudioTranscodeOptions {
-  codec?: 'mp3' | 'aac' | 'opus' | 'vorbis' | 'flac';
-  bitrate?: string;
-  sampleRate?: number;
-  channels?: number;
-}
-
-export interface AudioConfig {
-  transcode?: boolean;
-  transcodeOptions?: AudioTranscodeOptions;
-  extractMetadata?: boolean;
-  generateWaveform?: boolean;
-}
 
 export function createAudioProcessor(config: AudioConfig = {}): Processor {
   const {
@@ -155,14 +146,21 @@ async function transcodeAudio(
 
   const bitrateNum = parseInt(bitrate.replace(/[^0-9]/g, ''), 10);
   const compressionFactor = Math.max(0.3, Math.min(0.9, bitrateNum / 320));
-  const mockTranscodedData = new Uint8Array(Math.floor(audioData.length * compressionFactor));
-
-  mockTranscodedData.set(audioData.slice(0, Math.min(100, audioData.length)));
+  const targetSize = Math.max(1, Math.floor(audioData.length * compressionFactor));
+  const mockTranscodedData = new Uint8Array(targetSize);
 
   const header = new TextEncoder().encode(
     `TRANSCODED_AUDIO:codec=${codec},bitrate=${bitrate},sampleRate=${sampleRate},channels=${channels}\n`
   );
-  mockTranscodedData.set(header, 0);
+  const headerLength = Math.min(header.length, mockTranscodedData.length);
+  mockTranscodedData.set(header.slice(0, headerLength), 0);
+
+  const payloadOffset = headerLength;
+  const remaining = Math.max(0, mockTranscodedData.length - payloadOffset);
+  if (remaining > 0) {
+    const copyLength = Math.min(remaining, audioData.length);
+    mockTranscodedData.set(audioData.slice(0, copyLength), payloadOffset);
+  }
 
   return mockTranscodedData;
 }
