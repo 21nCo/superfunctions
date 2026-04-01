@@ -61,8 +61,10 @@ class InMemoryPolicyRegistry:
     def register(self, policy: Policy) -> None:
         self._policies[policy.name] = policy
 
-    def define(self, name: str, **kwargs) -> None:
-        policy = Policy(name=name, **kwargs)
+    def define(self, name: str, policy: Optional[Dict[str, Any]] = None, **kwargs) -> None:
+        payload = dict(policy or {})
+        payload.update(kwargs)
+        policy = Policy(name=name, **payload)
         self._policies[name] = policy
 
     def list(self) -> List[Policy]:

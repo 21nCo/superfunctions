@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-import random
 import secrets
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -44,6 +43,7 @@ class UploadSessionServiceConfig(BaseModel):
     file_write_checker: Optional[Any] = None
     processing_service: Optional[Any] = None
     namespace: str = "filefn"
+    allow_anonymous_uploads: bool = True
     default_chunk_size_bytes: int = 8 * 1024 * 1024
     upload_session_ttl_seconds: int = 86400
     signed_url_ttl_seconds: int = 900
@@ -74,12 +74,13 @@ class UploadSessionService:
         self.file_write_checker = config.file_write_checker
         self.processing_service = config.processing_service
         self.namespace = config.namespace
+        self.allow_anonymous_uploads = config.allow_anonymous_uploads
         self.default_chunk_size_bytes = config.default_chunk_size_bytes
         self.upload_session_ttl_seconds = config.upload_session_ttl_seconds
         self.signed_url_ttl_seconds = config.signed_url_ttl_seconds
 
     def _generate_id(self) -> str:
-        return f"upl_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 100000)}"
+        return f"upl_{secrets.token_urlsafe(16)}"
 
     def _hash_payload(self, input: CreateSessionInput, ctx: FileProviderContext) -> str:
         payload = {
@@ -193,6 +194,9 @@ class UploadSessionService:
     async def create_session(self, input: CreateSessionInput, ctx: FileProviderContext) -> Dict[str, Any]:
         warnings: List[str] = []
 
+        if not ctx.principalId and not self.allow_anonymous_uploads:
+            raise errors.auth_required()
+
         if input.idempotencyKey:
             existing_data = await self.db.find_one(
                 model="uploadSessions",
@@ -269,8 +273,8 @@ class UploadSessionService:
         now = datetime.now(timezone.utc)
         expires_at = (now + timedelta(seconds=self.upload_session_ttl_seconds)).isoformat()
 
-        file_id = input.fileId or f"file_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 10000)}"
-        version_id = f"ver_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 10000)}"
+        file_id = input.fileId or f"file_{secrets.token_urlsafe(12)}"
+        version_id = f"ver_{secrets.token_urlsafe(12)}"
 
         class StoragePathContext:
             def __init__(self, **kwargs: Any):
@@ -506,6 +510,28 @@ class UploadSessionService:
             raise errors.no_supported_upload_mode()
 
         etag = hashlib.md5(data).hexdigest()
+        if session.status == "aborted":
+            raise errors.upload_aborted()
+        if session.status == "completed":
+            raise errors.upload_already_completed()
+        if self._is_expired(session.expiresAt):
+            raise errors.upload_expired()
+        if part_number < 1 or part_number > session.totalParts:
+            raise errors.invalid_part_number()
+
+        existing = await self.db.find_one(
+            model="uploadParts",
+            where=[
+                {"field": "uploadSessionId", "operator": "eq", "value": upload_session_id},
+                {"field": "partNumber", "operator": "eq", "value": part_number},
+            ],
+            namespace=self.namespace,
+        )
+        if existing:
+            if existing.get("etag") == etag and existing.get("size") == len(data):
+                return {"etag": etag, "size": len(data), "recorded": True}
+            raise errors.part_conflict(upload_session_id, part_number)
+
         part_key = self._proxy_part_key(session, part_number)
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
@@ -569,6 +595,9 @@ class UploadSessionService:
         )
         if len(parts_data) != session.totalParts:
             raise errors.upload_incomplete()
+        uploaded_size = sum(int(part.get("size") or 0) for part in parts_data)
+        if uploaded_size != session.size:
+            raise errors.upload_size_mismatch(session.size, uploaded_size)
 
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)

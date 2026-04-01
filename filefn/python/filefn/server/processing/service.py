@@ -109,6 +109,7 @@ class ProcessingService:
         self.namespace = config.namespace
         self.enabled = config.enabled
         self.queue_name = "filefn.processing"
+        self._background_tasks: Set[asyncio.Task[Any]] = set()
 
     def _file_storage_target(self, policy_name: Optional[str]) -> str:
         policy = self.policies.get(policy_name) if (self.policies and policy_name) else None
@@ -182,7 +183,9 @@ class ProcessingService:
                 except Exception:
                     raise errors.processing_enqueue_failed()
 
-        asyncio.create_task(self._safe_run_processing(ProcessorInput(**input), ctx))
+        task = asyncio.create_task(self._safe_run_processing(ProcessorInput(**input), ctx))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         return {"enqueued": False}
 
     async def _safe_run_processing(self, input: ProcessorInput, ctx: FileProviderContext) -> None:

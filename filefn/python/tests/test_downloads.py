@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -611,3 +611,112 @@ async def test_delete_treats_same_storage_key_in_different_targets_as_distinct()
 
     await service.delete_file("file_temporary", _ctx("user_123"))
     assert "default:shared/object.png" in temporary.delete_calls
+
+
+@pytest.mark.asyncio
+async def test_read_grants_ignore_expired_permissions() -> None:
+    db = FakeDB()
+    await _seed_file_rows(db)
+    await db.update(
+        model="files",
+        where=[{"field": "fileId", "operator": "eq", "value": "file_0001"}],
+        data={"ownerId": "owner_user"},
+    )
+    await db.create(
+        model="filePermissions",
+        data={
+            "permissionId": "perm_valid",
+            "fileId": "file_0001",
+            "userId": "user_123",
+            "tenantId": None,
+            "canRead": True,
+            "canWrite": False,
+            "canDelete": False,
+            "canShare": False,
+            "expiresAt": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    service = create_file_service(
+        FileServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=False),
+            events=create_event_emitter(),
+            namespace="filefn",
+        )
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        await service.get_file("file_0001", _ctx("user_123"))
+    assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_delete_file_removes_completed_upload_sessions() -> None:
+    db = FakeDB()
+    now = datetime.now(timezone.utc).isoformat()
+    await db.create(
+        model="files",
+        data={
+            "fileId": "file_cleanup",
+            "currentVersionId": "ver_cleanup",
+            "ownerId": "user_123",
+            "tenantId": "org_123",
+            "visibility": "private",
+            "policy": "user-avatar",
+            "mimeType": "image/png",
+            "size": 3,
+            "name": "cleanup.png",
+            "metadata": {},
+            "createdAt": now,
+            "updatedAt": now,
+        },
+    )
+    await db.create(
+        model="fileVersions",
+        data={
+            "versionId": "ver_cleanup",
+            "fileId": "file_cleanup",
+            "storageKey": "uploads/file_cleanup/ver_cleanup.png",
+            "mimeType": "image/png",
+            "size": 3,
+            "checksumSha256Base64": None,
+            "tenantId": "org_123",
+            "createdAt": now,
+        },
+    )
+    await db.create(
+        model="uploadSessions",
+        data={
+            "uploadSessionId": "upl_completed",
+            "status": "completed",
+            "policy": "user-avatar",
+            "fileId": "file_cleanup",
+            "fileName": "cleanup.png",
+            "mimeType": "image/png",
+            "size": 3,
+            "uploadMode": "proxy",
+            "chunkSizeBytes": 3,
+            "totalParts": 1,
+            "storageKey": "uploads/file_cleanup/ver_cleanup.png",
+            "storageUploadId": None,
+            "ownerId": "user_123",
+            "tenantId": "org_123",
+            "metadata": {},
+            "expiresAt": now,
+            "createdAt": now,
+        },
+    )
+
+    service = create_file_service(
+        FileServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=False),
+            events=create_event_emitter(),
+            namespace="filefn",
+        )
+    )
+
+    await service.delete_file("file_cleanup", _ctx("user_123"))
+    assert await db.find_many("uploadSessions", where=[{"field": "fileId", "operator": "eq", "value": "file_cleanup"}]) == []

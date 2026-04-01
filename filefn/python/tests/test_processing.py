@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -11,6 +12,7 @@ from filefn.processing import (
     create_pdf_preview_processor,
     create_thumbnail_processor,
 )
+from filefn.processing.types import PdfPreviewConfig, ThumbnailConfig
 from filefn.server import create_event_emitter, create_routed_storage_adapter
 from filefn.server.policies import Policy, create_policy_registry
 from filefn.server.processing.service import (
@@ -20,6 +22,24 @@ from filefn.server.processing.service import (
     ProcessorResult,
     create_processing_service,
 )
+
+
+def _assert_image_artifact_format_consistency(artifact: ProcessorOutputArtifact) -> None:
+    if artifact.data.startswith(b"\x89PNG\r\n\x1a\n"):
+        assert artifact.mimeType == "image/png"
+        assert artifact.storageKey.endswith(".png")
+        return
+
+    riff_magic = artifact.data[:4]
+    webp_signature = artifact.data[8:12]
+    if riff_magic == b"RIFF" and webp_signature == b"WEBP":
+        assert artifact.mimeType == "image/webp"
+        assert artifact.storageKey.endswith(".webp")
+        return
+
+    # Placeholder conversion can emit JPEG when Pillow is available.
+    assert artifact.mimeType == "image/jpeg"
+    assert artifact.storageKey.endswith(".jpg")
 
 
 class FakeDB:
@@ -497,6 +517,31 @@ async def test_pdf_preview_processor_emits_canonical_artifact_kinds() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pdf_preview_processor_respects_configured_output_format_for_placeholder_previews() -> None:
+    processor = create_pdf_preview_processor(PdfPreviewConfig(format="jpeg", quality=70))
+
+    async def get_pdf() -> bytes:
+        return b"%PDF-placeholder"
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_pdf_fmt",
+            versionId="ver_pdf_fmt",
+            storageKey="uploads/file_pdf_fmt/ver_pdf_fmt-report.pdf",
+            mimeType="application/pdf",
+            size=16,
+            fileName="report.pdf",
+            tenantId="org_123",
+        ),
+        get_pdf,
+    )
+
+    assert result.success is True
+    for artifact in result.artifacts:
+        _assert_image_artifact_format_consistency(artifact)
+
+
+@pytest.mark.asyncio
 async def test_thumbnail_processor_keeps_canonical_reserved_kinds() -> None:
     processor = create_thumbnail_processor()
     not_a_real_image = b"\x89PNG\r\nplaceholder"
@@ -524,3 +569,72 @@ async def test_thumbnail_processor_keeps_canonical_reserved_kinds() -> None:
         "thumbnail-large",
     ]
     assert all(artifact.metadata and artifact.metadata.get("renderMode") for artifact in result.artifacts)
+
+
+@pytest.mark.asyncio
+async def test_thumbnail_placeholder_respects_configured_output_format() -> None:
+    processor = create_thumbnail_processor(ThumbnailConfig(format="webp", quality=75))
+
+    async def get_image() -> bytes:
+        return b"\x89PNG\r\nplaceholder"
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_thumb_fmt",
+            versionId="ver_thumb_fmt",
+            storageKey="uploads/file_thumb_fmt/ver_thumb_fmt-image.png",
+            mimeType="image/png",
+            size=16,
+            fileName="image.png",
+            tenantId="org_123",
+        ),
+        get_image,
+    )
+
+    assert result.success is True
+    for artifact in result.artifacts:
+        _assert_image_artifact_format_consistency(artifact)
+
+
+@pytest.mark.asyncio
+async def test_trigger_processing_retains_background_task_until_completion() -> None:
+    gate = asyncio.Event()
+
+    class SlowProcessor:
+        name = "slow"
+        supportedMimeTypes = ["image/png"]
+
+        async def process(self, input: ProcessorInput, get_data):
+            await gate.wait()
+            return ProcessorResult(success=True, artifacts=[])
+
+    service = create_processing_service(
+        ProcessingServiceConfig(
+            db=FakeDB(),
+            storage=FakeStorage(),
+            events=create_event_emitter(),
+            processors=[SlowProcessor()],
+            namespace="filefn",
+            enabled=True,
+        )
+    )
+
+    result = await service.trigger_processing(
+        {
+            "fileId": "file_slow",
+            "versionId": "ver_slow",
+            "storageKey": "uploads/file_slow/ver_slow.png",
+            "mimeType": "image/png",
+            "size": 3,
+            "fileName": "slow.png",
+            "tenantId": "org_123",
+        },
+        _ctx("user_123"),
+    )
+
+    assert result["enqueued"] is False
+    assert len(service._background_tasks) == 1
+
+    gate.set()
+    await asyncio.gather(*list(service._background_tasks))
+    assert len(service._background_tasks) == 0

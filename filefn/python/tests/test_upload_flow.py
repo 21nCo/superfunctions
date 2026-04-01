@@ -285,6 +285,7 @@ def _make_service(
     storage: Optional[FakeStorage] = None,
     dedup_enabled: bool = False,
     chunk_size: int = 3,
+    allow_anonymous_uploads: bool = True,
 ) -> UploadSessionService:
     db = db or FakeDB()
     storage = storage or FakeStorage({"proxyStreamingUpload": True})
@@ -307,6 +308,7 @@ def _make_service(
             events=create_event_emitter(),
             dedup=dedup,
             namespace="filefn",
+            allow_anonymous_uploads=allow_anonymous_uploads,
             default_chunk_size_bytes=chunk_size,
             upload_session_ttl_seconds=3600,
         )
@@ -427,6 +429,18 @@ async def test_anonymous_init_replay_returns_original_upload_session_token() -> 
 
 
 @pytest.mark.asyncio
+async def test_create_session_respects_anonymous_upload_policy() -> None:
+    service = _make_service(allow_anonymous_uploads=False)
+
+    with pytest.raises(Exception) as exc_info:
+        await service.create_session(
+            CreateSessionInput(policy="user-avatar", fileName="anon-disabled.png", size=3, mimeType="image/png"),
+            _ctx(principal_id=None, tenant_id="org_123"),
+        )
+    assert getattr(exc_info.value, "code", "") == "FILEFN_AUTH_REQUIRED"
+
+
+@pytest.mark.asyncio
 async def test_completion_persists_upload_metadata() -> None:
     db = FakeDB()
     storage = FakeStorage({"proxyStreamingUpload": True})
@@ -489,6 +503,22 @@ async def test_proxy_part_recording_idempotency_conflict_and_complete_idempotenc
     with pytest.raises(Exception) as exc_incomplete:
         await service.complete_session(incomplete_session["uploadSessionId"], _ctx())
     assert getattr(exc_incomplete.value, "code", "") == "FILEFN_UPLOAD_INCOMPLETE"
+
+
+@pytest.mark.asyncio
+async def test_complete_session_validates_uploaded_size_matches_declared_size() -> None:
+    service = _make_service()
+    session = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="size-mismatch.png", size=6, mimeType="image/png"),
+        _ctx(),
+    )
+
+    await service.record_proxy_part(session["uploadSessionId"], 1, b"abc", _ctx())
+    await service.record_proxy_part(session["uploadSessionId"], 2, b"xy", _ctx())
+
+    with pytest.raises(Exception) as exc_info:
+        await service.complete_session(session["uploadSessionId"], _ctx())
+    assert getattr(exc_info.value, "code", "") == "FILEFN_UPLOAD_SIZE_MISMATCH"
 
 
 @pytest.mark.asyncio

@@ -135,19 +135,40 @@ class FileService:
             return False
         return file.fileId > cursor["fileId"]
 
+    def _is_grant_expired(self, expires_at: Optional[str]) -> bool:
+        if not expires_at:
+            return False
+        try:
+            return self._parse_timestamp(expires_at) <= datetime.now(timezone.utc)
+        except Exception:
+            return False
+
     async def _get_readable_grant_file_ids(self, ctx: FileProviderContext) -> Set[str]:
         if not ctx.principalId:
             return set()
 
-        grants = await self.db.find_many(
-            model="filePermissions",
-            where=[],
-            namespace=self.namespace,
+        grants: List[Dict[str, Any]] = []
+        grants.extend(
+            await self.db.find_many(
+                model="filePermissions",
+                where=[{"field": "userId", "operator": "eq", "value": ctx.principalId}],
+                namespace=self.namespace,
+            )
         )
+        if ctx.tenantId:
+            grants.extend(
+                await self.db.find_many(
+                    model="filePermissions",
+                    where=[{"field": "tenantId", "operator": "eq", "value": ctx.tenantId}],
+                    namespace=self.namespace,
+                )
+            )
 
         readable: Set[str] = set()
         for grant in grants:
             if not grant.get("canRead"):
+                continue
+            if self._is_grant_expired(grant.get("expiresAt")):
                 continue
             if grant.get("userId") == ctx.principalId:
                 readable.add(grant.get("fileId"))
@@ -422,7 +443,7 @@ class FileService:
             where=[{"field": "fileId", "operator": "eq", "value": file_id}],
             namespace=self.namespace,
         )
-        for session in pending_sessions:
+        for session in all_sessions:
             await self.db.delete(
                 model="uploadSessions",
                 where=[{"field": "uploadSessionId", "operator": "eq", "value": session.get("uploadSessionId")}],

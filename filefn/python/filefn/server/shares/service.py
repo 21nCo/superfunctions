@@ -174,6 +174,7 @@ class SharesService:
                     "fileName": file.name,
                     "mimeType": file.mimeType,
                 }
+                await self._increment_downloads(token_hash, share.downloads)
             except Exception:
                 descriptor = {
                     "url": f"/proxy/share-links/{token}/download",

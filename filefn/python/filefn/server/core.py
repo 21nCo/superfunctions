@@ -258,6 +258,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
             file_write_checker=file_service,
             processing_service=processing_service,
             namespace=namespace,
+            allow_anonymous_uploads=(config.auth.allow_anonymous_uploads if config.auth is not None else True),
             default_chunk_size_bytes=chunk_size,
             upload_session_ttl_seconds=upload_ttl,
             signed_url_ttl_seconds=signed_url_ttl,
