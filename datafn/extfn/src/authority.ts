@@ -389,13 +389,13 @@ function sendBrowserRuntimeMessage(
   runtime: BrowserRuntimeLike,
   message: unknown,
 ): Promise<unknown> {
-  const sendMessage = runtime.sendMessage;
-  if (typeof sendMessage !== "function") {
+  if (typeof runtime.sendMessage !== "function") {
     throw createExtfnLikeError(
       "E_CONTEXT_UNAVAILABLE",
       "Browser runtime messaging is unavailable.",
     );
   }
+  const sendMessage = runtime.sendMessage.bind(runtime);
 
   return new Promise((resolve, reject) => {
     let settled = false;

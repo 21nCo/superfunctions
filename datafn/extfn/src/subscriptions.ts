@@ -88,10 +88,15 @@ export class DatafnExtfnSubscriptions {
         }),
       ).catch(async (error) => {
         if (options.onFailure) {
-          await options.onFailure(
-            normalizeDeliveryError(error, subscriptionId),
-            subscriptionId,
-          );
+          try {
+            await options.onFailure(
+              normalizeDeliveryError(error, subscriptionId),
+              subscriptionId,
+            );
+          } catch {
+            // Ignore onFailure handler errors so detached delivery work does not
+            // surface unhandled rejections when callers use a best-effort hook.
+          }
         }
       });
     }, filter);

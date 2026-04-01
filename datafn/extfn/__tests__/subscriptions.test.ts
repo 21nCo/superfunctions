@@ -143,4 +143,32 @@ describe("@datafn/extfn subscriptions", () => {
       },
     ]);
   });
+
+  it("swallows onFailure rejections from detached delivery work", async () => {
+    const eventBus = new EventBus();
+    const subscriptions = new DatafnExtfnSubscriptions({
+      subscribe: (handler, filter) => eventBus.subscribe(handler, filter),
+    });
+
+    await expect(
+      subscriptions.subscribe({
+        deliver: async () => {
+          throw new Error("delivery failed");
+        },
+        onFailure: async () => {
+          throw new Error("handler failed");
+        },
+      }),
+    ).resolves.toMatchObject({
+      subscriptionId: expect.any(String),
+      resumed: false,
+    });
+
+    expect(() => {
+      eventBus.emit(createMutationEvent(5));
+    }).not.toThrow();
+
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 });

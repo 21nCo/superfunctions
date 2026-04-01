@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildManifest, createTargetBuildOutputs, extfnVite } from '../src/index.js';
 import { loadExtensionConfig } from '../src/loadExtensionConfig.js';
+import { applyFirefoxTargetManifest } from '../src/targets/firefox.js';
 
 describe('buildManifest', () => {
   it('builds deterministic dual-target manifests and emits target directories through vite build', async () => {
@@ -185,5 +186,23 @@ describe('buildManifest', () => {
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });
     }
+  });
+
+  it('preserves user gecko settings while keeping the default firefox id', async () => {
+    const manifest = applyFirefoxTargetManifest({
+      name: 'Firefox demo',
+      browser_specific_settings: {
+        gecko: {
+          strict_min_version: '128.0',
+        },
+      },
+    });
+
+    expect(manifest.browser_specific_settings).toEqual({
+      gecko: {
+        id: 'extfn@example.local',
+        strict_min_version: '128.0',
+      },
+    });
   });
 });

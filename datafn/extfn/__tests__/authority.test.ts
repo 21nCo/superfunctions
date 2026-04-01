@@ -154,4 +154,66 @@ describe("@datafn/extfn authority", () => {
       event: "subscription",
     });
   });
+
+  it("supports runtimes whose sendMessage depends on the runtime receiver", async () => {
+    const authority = createDatafnExtfnAuthority({
+      schema,
+      clientId: "authority:demo",
+      namespace: "tenant:demo",
+    });
+    let listener:
+      | ((message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void)
+      | undefined;
+    const runtime = {
+      marker: "runtime",
+      sendMessage(this: { marker: string }, _message: unknown, callback?: (response: unknown) => void) {
+        if (this.marker !== "runtime") {
+          throw new Error("runtime receiver lost");
+        }
+        callback?.(undefined);
+      },
+      onMessage: {
+        addListener(handler: typeof listener) {
+          listener = handler;
+        },
+        removeListener() {},
+      },
+    };
+
+    authority.attachBrowserRuntimeBridge(runtime);
+
+    const request = {
+      v: 1 as const,
+      kind: "request" as const,
+      requestId: "req_receiver",
+      namespace: "datafn",
+      method: "subscribe",
+      source: {
+        context: "popup" as const,
+        surfaceId: "main",
+      },
+      target: {
+        context: "background" as const,
+      },
+      payload: {},
+    };
+
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const handled = listener?.(request, undefined, (response) => {
+          try {
+            expect(response).toMatchObject({
+              ok: true,
+              requestId: "req_receiver",
+            });
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+
+        expect(handled).toBe(true);
+      }),
+    ).resolves.toBeUndefined();
+  });
 });
