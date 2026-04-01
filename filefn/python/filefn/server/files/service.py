@@ -176,6 +176,45 @@ class FileService:
                 readable.add(grant.get("fileId"))
         return readable
 
+    async def _find_files(self, where: List[Dict[str, Any]]) -> List[FileRecord]:
+        rows = await self.db.find_many(
+            model="files",
+            where=where,
+            namespace=self.namespace,
+        )
+        return [FileRecord(**item) for item in rows]
+
+    async def _list_accessible_files_default(self, ctx: FileProviderContext) -> List[FileRecord]:
+        files_by_id: Dict[str, FileRecord] = {}
+
+        for file in await self._find_files([{"field": "visibility", "operator": "eq", "value": Visibility.PUBLIC.value}]):
+            files_by_id[file.fileId] = file
+
+        if ctx.tenantId:
+            for file in await self._find_files(
+                [
+                    {"field": "visibility", "operator": "eq", "value": Visibility.SHARED.value},
+                    {"field": "tenantId", "operator": "eq", "value": ctx.tenantId},
+                ]
+            ):
+                files_by_id[file.fileId] = file
+
+        if ctx.principalId:
+            for file in await self._find_files([{"field": "ownerId", "operator": "eq", "value": ctx.principalId}]):
+                files_by_id[file.fileId] = file
+
+            granted_file_ids = await self._get_readable_grant_file_ids(ctx)
+            for file_id in granted_file_ids:
+                file_data = await self.db.find_one(
+                    model="files",
+                    where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                    namespace=self.namespace,
+                )
+                if file_data:
+                    files_by_id[file_id] = FileRecord(**file_data)
+
+        return list(files_by_id.values())
+
     async def _can_read_file(
         self,
         file: FileRecord,
@@ -232,18 +271,20 @@ class FileService:
             requested = 20
         limit = min(100, max(1, requested))
 
-        all_files_data = await self.db.find_many(
-            model="files",
-            where=[],
-            namespace=self.namespace,
-        )
-        all_files = [FileRecord(**item) for item in all_files_data]
-
-        granted_file_ids = await self._get_readable_grant_file_ids(ctx)
-        accessible_files: List[FileRecord] = []
-        for file in all_files:
-            if await self._can_read_file(file, ctx, granted_file_ids):
-                accessible_files.append(file)
+        if isinstance(self.authorizer, DefaultAuthorizer):
+            accessible_files = await self._list_accessible_files_default(ctx)
+        else:
+            all_files_data = await self.db.find_many(
+                model="files",
+                where=[],
+                namespace=self.namespace,
+            )
+            all_files = [FileRecord(**item) for item in all_files_data]
+            granted_file_ids = await self._get_readable_grant_file_ids(ctx)
+            accessible_files = []
+            for file in all_files:
+                if await self._can_read_file(file, ctx, granted_file_ids):
+                    accessible_files.append(file)
 
         accessible_files.sort(key=self._file_sort_key)
 

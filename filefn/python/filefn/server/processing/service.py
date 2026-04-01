@@ -123,11 +123,22 @@ class ProcessingService:
         if not ctx.principalId:
             return set()
 
-        grants = await self.db.find_many(
-            model="filePermissions",
-            where=[],
-            namespace=self.namespace,
+        grants: List[Dict[str, Any]] = []
+        grants.extend(
+            await self.db.find_many(
+                model="filePermissions",
+                where=[{"field": "userId", "operator": "eq", "value": ctx.principalId}],
+                namespace=self.namespace,
+            )
         )
+        if ctx.tenantId:
+            grants.extend(
+                await self.db.find_many(
+                    model="filePermissions",
+                    where=[{"field": "tenantId", "operator": "eq", "value": ctx.tenantId}],
+                    namespace=self.namespace,
+                )
+            )
 
         readable: Set[str] = set()
         for grant in grants:

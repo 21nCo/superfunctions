@@ -16,6 +16,7 @@ from filefn.server.shares.service import CreateShareLinkInput, SharesServiceConf
 class FakeDB:
     def __init__(self) -> None:
         self.tables: Dict[str, List[Dict[str, Any]]] = {}
+        self.find_many_calls: List[Dict[str, Any]] = []
 
     def _table(self, model: str) -> List[Dict[str, Any]]:
         return self.tables.setdefault(model, [])
@@ -55,6 +56,7 @@ class FakeDB:
         limit: Optional[int] = None,
         namespace: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        self.find_many_calls.append({"model": model, "where": where})
         rows = [dict(row) for row in self._table(model) if self._matches(row, where)]
 
         if order_by:
@@ -297,6 +299,10 @@ async def test_version_aware_get_file_and_list_files_are_deterministic() -> None
         {"limit": 2, "cursor": first_page["nextCursor"]},
     )
     assert [file["fileId"] for file in second_page["files"]] == ["file_0002"]
+    assert not any(
+        call["model"] == "files" and call["where"] == []
+        for call in db.find_many_calls
+    )
 
 
 @pytest.mark.asyncio
@@ -336,6 +342,33 @@ async def test_share_proxy_descriptor_defers_download_counter_until_stream_acces
         payload.append(chunk)
 
     assert b"".join(payload) == b"bytes"
+    share_rows = await db.find_many("fileShares", where=[])
+    assert share_rows[0]["downloads"] == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_share_descriptor_increments_downloads_once() -> None:
+    db = FakeDB()
+    await _seed_file_rows(db)
+
+    shares_service = create_shares_service(
+        SharesServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=True),
+            namespace="filefn",
+        )
+    )
+    shares_service.storage.capabilities = {"signedDownloadUrls": True}
+
+    create_res = await shares_service.create_share_link(
+        CreateShareLinkInput(fileId="file_0001", versionId="ver_0001"),
+        _ctx("user_123"),
+    )
+
+    token = create_res["token"]
+    descriptor = await shares_service.download_via_share_link(token, _ctx(None), is_authenticated=False)
+
+    assert descriptor["url"].startswith("https://download.local/")
     share_rows = await db.find_many("fileShares", where=[])
     assert share_rows[0]["downloads"] == 1
 
