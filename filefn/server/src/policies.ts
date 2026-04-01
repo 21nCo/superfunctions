@@ -93,11 +93,18 @@ export function computeStoragePath(
   if (policy.storagePath) {
     return policy.storagePath(ctx);
   }
+  const sanitizePathSegment = (value: string): string =>
+    value
+      .replace(/[\\/]+/g, '_')
+      .replace(/\.\.+/g, '_')
+      .replace(/[\u0000-\u001f\u007f]+/g, '')
+      .replace(/_+/g, '_')
+      .trim() || '_';
   const parts: string[] = [];
-  if (ctx.tenantId) parts.push(ctx.tenantId);
-  if (ctx.principalId) parts.push(ctx.principalId);
-  parts.push(ctx.fileId);
-  parts.push(`${ctx.versionId}-${ctx.fileName}`);
+  if (ctx.tenantId) parts.push(sanitizePathSegment(ctx.tenantId));
+  if (ctx.principalId) parts.push(sanitizePathSegment(ctx.principalId));
+  parts.push(sanitizePathSegment(ctx.fileId));
+  parts.push(`${sanitizePathSegment(ctx.versionId)}-${sanitizePathSegment(ctx.fileName)}`);
   return parts.join('/');
 }
 

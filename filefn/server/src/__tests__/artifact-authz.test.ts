@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFn, type FileFn } from '../index.js';
 import { createSharesService } from '../shares/service.js';
 import { createFakeStorageAdapter } from '@superfunctions/storage';
@@ -344,6 +344,91 @@ describe('PHASE_03 PROCESS-002/FILE-002 share and artifact authz + proxy descrip
 
     expect(res!.status).toBe(403);
     expect(body.error.code).toBe('FILEFN_FORBIDDEN');
+  });
+
+  it('TV-PROCESS-NEG-002: artifact routes enforce auth by default when auth is required', async () => {
+    const authRequiredFileFn = createFileFn({
+      db,
+      storage: createFakeStorageAdapter({
+        capabilities: {
+          signedUploadUrls: true,
+          signedDownloadUrls: false,
+          multipart: true,
+          proxyStreamingUpload: true,
+          proxyStreamingDownload: true,
+        },
+      }),
+      policies: [{ name: 'user-avatar', contentTypes: ['image/png'], maxSizeBytes: 1024 * 1024 }],
+      auth: {
+        required: true,
+        resolveSession: async () => null,
+      },
+    });
+
+    const res = await authRequiredFileFn.router.handle(
+      new Request('http://localhost/file_0002/artifacts', { method: 'GET' }),
+    );
+    const body = await res!.json();
+
+    expect(res!.status).toBe(401);
+    expect(body.error.code).toBe('FILEFN_AUTH_REQUIRED');
+  });
+
+  it('TV-PROCESS-TRIGGER-001: triggerProcessing uses the stored current version when versionId is omitted', async () => {
+    const storage = createFakeStorageAdapter({
+      capabilities: {
+        signedUploadUrls: true,
+        signedDownloadUrls: false,
+        multipart: true,
+        proxyStreamingUpload: true,
+        proxyStreamingDownload: true,
+      },
+    });
+
+    const events: any[] = [];
+    const fileFnWithProcessing = createFileFn({
+      db,
+      storage,
+      policies: [{ name: 'user-avatar', contentTypes: ['image/png'], maxSizeBytes: 1024 * 1024 }],
+      auth: {
+        required: false,
+        resolveSession: async () => ({ principalId: 'user_123', tenantId: 'org_123' }),
+      },
+      processing: {
+        enabled: true,
+        processors: [{
+          name: 'test-processor',
+          supportedMimeTypes: ['image/png'],
+          process: async (input: any) => {
+            events.push(input);
+            return { success: true, artifacts: [] };
+          },
+        }],
+      },
+    });
+
+    const res = await fileFnWithProcessing.router.handle(
+      new Request('http://localhost/file_0002/process', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+    );
+    const body = await res!.json();
+
+    expect(res!.status).toBe(200);
+    expect(body.ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(events).toHaveLength(1);
+    });
+    expect(events[0]).toEqual(expect.objectContaining({
+      fileId: 'file_0002',
+      versionId: 'ver_0002',
+      storageKey: 'files/file_0002/ver_0002',
+      mimeType: 'image/png',
+      size: 10,
+      fileName: 'two.png',
+    }));
   });
 
   it('TV-DOWNLOAD-FALLBACK-001: share download descriptor should be an HTTP proxy route, never proxy://', async () => {

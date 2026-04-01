@@ -73,18 +73,30 @@ export interface FileArtifactRecord {
 
 interface FileRecord {
   fileId: string;
+  currentVersionId: string;
   ownerId: string;
   tenantId: string | null;
   visibility: 'private' | 'shared' | 'public';
   policy: string;
+  name: string;
+  mimeType: string;
+  size: number;
 }
 
 interface FilePermissionRecord {
   fileId: string;
-  principalId?: string;
   userId?: string;
   tenantId?: string | null;
   canRead?: boolean;
+  expiresAt?: string | null;
+}
+
+interface FileVersionRecord {
+  versionId: string;
+  fileId: string;
+  storageKey: string;
+  mimeType: string;
+  size: number;
 }
 
 function generateId(): string {
@@ -101,6 +113,17 @@ function supportsProcessor(processor: Processor, mimeType: string): boolean {
 function buildProcessingIdempotencyKey(fileId: string, versionId: string, processors: Processor[]): string {
   const processorKey = processors.map((processor) => processor.name).sort().join(',');
   return `processing:${fileId}:${versionId}:${processorKey}`;
+}
+
+function isGrantExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) {
+    return false;
+  }
+  const expiresAtMs = Date.parse(expiresAt);
+  if (Number.isNaN(expiresAtMs)) {
+    return false;
+  }
+  return expiresAtMs <= Date.now();
 }
 
 export function createProcessingService(config: ProcessingServiceConfig) {
@@ -122,17 +145,26 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       return new Set<string>();
     }
 
-    const grants = await db.findMany<FilePermissionRecord>({
-      model: 'filePermissions',
-      where: [],
-      namespace,
-    });
+    const grants: FilePermissionRecord[] = [];
+    if (ctx.principalId) {
+      grants.push(...await db.findMany<FilePermissionRecord>({
+        model: 'filePermissions',
+        where: [{ field: 'userId', operator: 'eq', value: ctx.principalId }],
+        namespace,
+      }));
+    }
+    if (ctx.tenantId) {
+      grants.push(...await db.findMany<FilePermissionRecord>({
+        model: 'filePermissions',
+        where: [{ field: 'tenantId', operator: 'eq', value: ctx.tenantId }],
+        namespace,
+      }));
+    }
 
     const readable = new Set<string>();
     for (const grant of grants) {
-      if (!grant?.canRead) continue;
+      if (!grant?.canRead || isGrantExpired(grant.expiresAt)) continue;
       if (
-        grant.principalId === ctx.principalId ||
         grant.userId === ctx.principalId ||
         (grant.tenantId && grant.tenantId === ctx.tenantId)
       ) {
@@ -171,6 +203,34 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
 
     throw errors.forbidden();
+  }
+
+  async function getVersionChecked(fileId: string, versionId: string): Promise<FileVersionRecord> {
+    const version = await db.findOne<FileVersionRecord>({
+      model: 'fileVersions',
+      where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+      namespace,
+    });
+
+    if (!version) {
+      throw errors.notFound('Version');
+    }
+
+    if (version.fileId !== fileId) {
+      throw errors.notFound('Version');
+    }
+
+    return version;
+  }
+
+  async function getReadableVersionForFile(
+    fileId: string,
+    ctx: FileProviderContext,
+    versionId?: string,
+  ): Promise<{ file: FileRecord; version: FileVersionRecord }> {
+    const file = await requireReadableFile(fileId, ctx);
+    const version = await getVersionChecked(fileId, versionId || file.currentVersionId);
+    return { file, version };
   }
 
   function getFileStorageTarget(file: Pick<FileRecord, 'policy'>): string {
@@ -431,8 +491,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       artifactId: string,
       ctx: FileProviderContext
     ): Promise<{ url: string; headers?: Record<string, string> }> {
-      void ctx;
-
       const artifact = await db.findOne<FileArtifactRecord>({
         model: 'fileArtifacts',
         where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
@@ -448,6 +506,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         where: [{ field: 'fileId', operator: 'eq', value: artifact.fileId }],
         namespace,
       });
+      if (file) {
+        await requireReadableFile(file.fileId, ctx);
+      }
       const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
 
       if (getStorageCapabilities(storage, artifactStorageTarget).signedDownloadUrls && storage.signDownloadUrl) {
@@ -512,6 +573,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         contentType: artifact.mimeType,
         size: artifact.size,
       };
+    },
+
+    async getReadableVersionForFile(
+      fileId: string,
+      ctx: FileProviderContext,
+      versionId?: string,
+    ) {
+      return getReadableVersionForFile(fileId, ctx, versionId);
     },
   };
 }

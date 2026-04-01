@@ -105,6 +105,17 @@ export interface DefaultAuthorizerContext extends FileProviderContext {
 export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Authorizer {
   const { db, namespace = 'filefn', adminRoles = ['admin'] } = config;
 
+  function isGrantExpired(expiresAt: string | null): boolean {
+    if (!expiresAt) {
+      return false;
+    }
+    const expiresAtMs = Date.parse(expiresAt);
+    if (Number.isNaN(expiresAtMs)) {
+      return false;
+    }
+    return expiresAtMs <= Date.now();
+  }
+
   async function getApplicableGrants(
     fileId: string,
     ctx: DefaultAuthorizerContext
@@ -115,10 +126,8 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
       namespace,
     });
 
-    const now = new Date().toISOString();
-
     return grants.filter(grant => {
-      if (grant.expiresAt && grant.expiresAt < now) return false;
+      if (isGrantExpired(grant.expiresAt)) return false;
 
       if (grant.userId && grant.userId === ctx.principalId) return true;
       if (grant.role && ctx.roles?.includes(grant.role)) return true;

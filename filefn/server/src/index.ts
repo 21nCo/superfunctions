@@ -159,7 +159,7 @@ export function createFileFn(config: FileFnConfig): FileFn {
     processors: processingConfig?.processors,
     flowFn: processingConfig?.flowFn,
     namespace,
-    enabled: processingConfig?.enabled ?? true,
+    enabled: processingConfig?.enabled ?? false,
   });
 
   const uploadService = createUploadSessionService({

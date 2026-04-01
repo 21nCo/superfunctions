@@ -59,10 +59,11 @@ interface UploadPartRecord {
 
 interface FilePermissionGrantRecord {
   fileId: string;
-  principalId?: string;
   userId?: string;
   tenantId?: string | null;
   canRead?: boolean;
+  canShare?: boolean;
+  expiresAt?: string | null;
 }
 
 export interface Authorizer {
@@ -164,7 +165,18 @@ function isAfterCursor(file: FileRecord, cursor: CursorTuple): boolean {
   if (fileTs < cursorTs) return true;
   if (fileTs > cursorTs) return false;
 
-  return file.fileId > cursor.fileId;
+  return file.fileId.localeCompare(cursor.fileId) > 0;
+}
+
+function isGrantExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) {
+    return false;
+  }
+  const expiresAtMs = Date.parse(expiresAt);
+  if (Number.isNaN(expiresAtMs)) {
+    return false;
+  }
+  return expiresAtMs <= Date.now();
 }
 
 function tryParseCursor(cursor: string): CursorTuple | null {
@@ -231,17 +243,24 @@ export function createFileService(config: FileServiceConfig) {
       return new Set<string>();
     }
 
-    const grants = await findMany.call(db, {
+    const grants: FilePermissionGrantRecord[] = [];
+    grants.push(...await findMany.call(db, {
       model: 'filePermissions',
-      where: [],
+      where: [{ field: 'userId', operator: 'eq', value: ctx.principalId }],
       namespace,
-    }) as FilePermissionGrantRecord[];
+    }) as FilePermissionGrantRecord[]);
+    if (ctx.tenantId) {
+      grants.push(...await findMany.call(db, {
+        model: 'filePermissions',
+        where: [{ field: 'tenantId', operator: 'eq', value: ctx.tenantId }],
+        namespace,
+      }) as FilePermissionGrantRecord[]);
+    }
 
     const readable = new Set<string>();
     for (const grant of grants) {
-      if (!grant?.canRead) continue;
+      if (!grant?.canRead || isGrantExpired(grant.expiresAt)) continue;
       if (
-        grant.principalId === ctx.principalId ||
         grant.userId === ctx.principalId ||
         (grant.tenantId && grant.tenantId === ctx.tenantId)
       ) {
@@ -618,7 +637,7 @@ export function createFileService(config: FileServiceConfig) {
         throw errors.notFound('File');
       }
 
-        const canDelete = await authorizer.canDelete(file, ctx);
+      const canDelete = await authorizer.canDelete(file, ctx);
       if (!canDelete) {
         throw errors.forbidden();
       }
