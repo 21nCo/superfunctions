@@ -7,7 +7,7 @@
  * - TV-CLIENT-UPLOAD-NEG-001: Client surfaces server policy error
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFileFnClient } from '../src/index.js';
 import type { FileFnClient } from '../src/index.js';
 
@@ -17,6 +17,10 @@ describe('@filefn/client envelope unwrapping', () => {
   beforeEach(() => {
     mockFetch = vi.fn();
     vi.stubGlobal('fetch', mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   describe('TV-CLIENT-ENVELOPE-UNWRAP-001: Unwrap success envelopes', () => {

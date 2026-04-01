@@ -87,13 +87,24 @@ describe('Offline Client', () => {
         global.window = {
             addEventListener: vi.fn((event, cb) => {
                 if (event === 'online') onlineCallback = cb;
-            })
+            }),
+            removeEventListener: vi.fn((event, cb) => {
+                if (event === 'online' && onlineCallback === cb) onlineCallback = undefined;
+            }),
         } as any;
     } else {
         vi.spyOn(window, 'addEventListener').mockImplementation((event, cb) => {
             if (event === 'online') onlineCallback = cb as any;
         });
+        vi.spyOn(window, 'removeEventListener').mockImplementation((event, cb) => {
+            if (event === 'online' && onlineCallback === cb) onlineCallback = undefined;
+        });
     }
+  });
+
+  afterEach(() => {
+    onlineCallback = undefined;
+    vi.clearAllMocks();
   });
 
   it('TV-CLIENT-OFFLINE-001: should stage when offline and sync when online', async () => {

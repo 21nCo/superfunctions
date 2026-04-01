@@ -232,8 +232,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       store,
       client: {
         uploadFile: async (input) => {
-          const manager = new UploadManager(httpClient, preprocessors);
-          // startUpload returns UploadResult which matches what we need
+          const manager = new UploadManager(httpClient);
           return manager.startUpload(input);
         }
       }

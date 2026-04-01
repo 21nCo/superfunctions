@@ -150,7 +150,10 @@ export async function prepareUploadInput(
     const result = await preprocessor.process(context);
     const nextFile = result.file;
     const nextFileName = result.fileName || currentFileName(nextFile, prepared.fileName);
-    const nextMimeType = result.mimeType || currentMimeType(nextFile) || prepared.mimeType;
+    const derivedMimeType = currentMimeType(nextFile);
+    const nextMimeType =
+      result.mimeType ||
+      (derivedMimeType !== 'application/octet-stream' ? derivedMimeType : prepared.mimeType);
     const nextMetadata = result.metadata ?? prepared.metadata;
     const nextLocalSource = {
       ...derivePendingLocalSource(nextFileName, nextMimeType, nextFile.size),
@@ -196,6 +199,9 @@ export class UploadManager {
   ): UploadHandle {
     let uploadPromise: Promise<UploadResult> | null = null;
     const fileId = input.fileId ?? generateFileId();
+    if (!input.fileId) {
+      input.fileId = fileId;
+    }
 
     const handle: UploadHandle = {
       uploadSessionId: "",

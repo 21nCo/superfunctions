@@ -170,6 +170,11 @@ describe('uploadFile', () => {
     const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
     const file = createMockBlob(300);
     const progressEvents: UploadProgress[] = [];
+    let rejectUpload!: (reason?: unknown) => void;
+    const pendingUpload = new Promise((_, reject) => {
+      rejectUpload = reject;
+    });
+    pendingUpload.catch(() => {});
 
     mockFetch
       .mockResolvedValueOnce(createMockResponse({
@@ -182,16 +187,16 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag1"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockImplementationOnce(() => {
-        return Promise.reject(new DOMException('Aborted', 'AbortError'));
-      });
+      .mockImplementationOnce(() => pendingUpload);
 
     const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_abort' });
     handle.onProgress((progress) => progressEvents.push({ ...progress }));
+    const donePromise = handle.done();
+    const rejectedUpload = expect(donePromise).rejects.toThrow('Aborted');
+    handle.abort();
+    rejectUpload(new DOMException('Aborted', 'AbortError'));
 
-    setTimeout(() => handle.abort(), 10);
-
-    await expect(handle.done()).rejects.toThrow('Aborted');
+    await rejectedUpload;
     expect(progressEvents.length).toBeLessThanOrEqual(1);
   });
 

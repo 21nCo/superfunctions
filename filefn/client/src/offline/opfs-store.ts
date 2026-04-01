@@ -59,6 +59,7 @@ export class OPFSStore {
   private rootDirName: string;
   private rootDir: FileSystemDirectoryHandle | null = null;
   private isInitialized = false;
+  private localObjectUrls = new Map<string, string>();
 
   constructor(config: OPFSStoreConfig = {}) {
     this.rootDirName = config.rootDir || 'filefn-pending-uploads';
@@ -139,15 +140,13 @@ export class OPFSStore {
     await this.ensureInitialized();
 
     try {
-      const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId);
-
-      // Read metadata
-      const metaFileHandle = await uploadDir.getFileHandle('metadata.json');
-      const metaFile = await metaFileHandle.getFile();
-      const metaText = await metaFile.text();
-      const metadata = JSON.parse(metaText);
+      const metadata = await this.readPendingMetadata(uploadSessionId);
+      if (!metadata) {
+        return null;
+      }
 
       // Read file data
+      const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId);
       const dataFileHandle = await uploadDir.getFileHandle('data.bin');
       const dataFile = await dataFileHandle.getFile();
       const fileData = await dataFile.arrayBuffer();
@@ -184,9 +183,9 @@ export class OPFSStore {
   async getPendingUploadByFileId(fileId: string): Promise<PendingUpload | null> {
     const uploadSessionIds = await this.listPendingUploads();
     for (const uploadSessionId of uploadSessionIds) {
-      const pending = await this.getPendingUpload(uploadSessionId);
-      if (pending?.fileId === fileId) {
-        return pending;
+      const metadata = await this.readPendingMetadata(uploadSessionId);
+      if (metadata?.fileId === fileId) {
+        return this.getPendingUpload(uploadSessionId);
       }
     }
     return null;
@@ -204,8 +203,12 @@ export class OPFSStore {
       throw error;
     }
 
-    const blob = new Blob([upload.fileData], { type: upload.mimeType });
-    const url = URL.createObjectURL(blob);
+    let url = this.localObjectUrls.get(upload.uploadSessionId);
+    if (!url) {
+      const blob = new Blob([upload.fileData], { type: upload.mimeType });
+      url = URL.createObjectURL(blob);
+      this.localObjectUrls.set(upload.uploadSessionId, url);
+    }
     const resolvedFileId = upload.fileId ?? upload.uploadSessionId;
     const resolvedLocalSource = upload.localSource ?? deriveFallbackLocalSource(upload);
 
@@ -227,6 +230,7 @@ export class OPFSStore {
     await this.ensureInitialized();
 
     try {
+      this.revokeLocalObjectUrl(uploadSessionId);
       await this.rootDir!.removeEntry(uploadSessionId, { recursive: true });
     } catch (error) {
       // Ignore errors if directory doesn't exist
@@ -279,6 +283,34 @@ export class OPFSStore {
   private async ensureInitialized(): Promise<void> {
     if (!this.isInitialized) {
       await this.init();
+    }
+  }
+
+  private async readPendingMetadata(uploadSessionId: string): Promise<Omit<PendingUpload, 'fileData'> | null> {
+    try {
+      const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId);
+      const metaFileHandle = await uploadDir.getFileHandle('metadata.json');
+      const metaFile = await metaFileHandle.getFile();
+      const metaText = await metaFile.text();
+      const metadata = JSON.parse(metaText);
+      return {
+        ...metadata,
+        fileId: metadata.fileId || uploadSessionId,
+        localSource: metadata.localSource || deriveFallbackLocalSource(metadata),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private revokeLocalObjectUrl(uploadSessionId: string): void {
+    const url = this.localObjectUrls.get(uploadSessionId);
+    if (!url) {
+      return;
+    }
+    this.localObjectUrls.delete(uploadSessionId);
+    if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(url);
     }
   }
 }

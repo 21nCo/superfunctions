@@ -34,8 +34,8 @@ export interface SyncResult {
 
 export interface ConnectivityChecker {
   isOnline(): boolean;
-  onOnline(callback: () => void): void;
-  onOffline(callback: () => void): void;
+  onOnline(callback: () => void): () => void;
+  onOffline(callback: () => void): () => void;
 }
 
 type UploadCompletionListener = (result: { fileId: string; versionId: string } | Error) => void;
@@ -45,6 +45,8 @@ export class OfflineSync {
   private isSyncing = false;
   private connectivityChecker: ConnectivityChecker;
   private listeners: Map<string, UploadCompletionListener[]> = new Map();
+  private settledResults: Map<string, { fileId: string; versionId: string } | Error> = new Map();
+  private stopOnlineListener?: () => void;
 
   constructor(config: SyncConfig) {
     this.config = {
@@ -64,16 +66,21 @@ export class OfflineSync {
    * Start listening for online events and automatically sync when online.
    */
   startAutoSync(): void {
-    this.connectivityChecker.onOnline(async () => {
+    this.stopAutoSync();
+    this.stopOnlineListener = this.connectivityChecker.onOnline(async () => {
       await this.syncAll();
     });
+    if (this.connectivityChecker.isOnline()) {
+      void this.syncAll();
+    }
   }
 
   /**
    * Stop listening for online events.
    */
   stopAutoSync(): void {
-    // Placeholder
+    this.stopOnlineListener?.();
+    this.stopOnlineListener = undefined;
   }
 
   /**
@@ -87,6 +94,14 @@ export class OfflineSync {
    * Register a listener for a specific upload session completion.
    */
   waitForUpload(uploadSessionId: string): Promise<{ fileId: string; versionId: string }> {
+    const settled = this.settledResults.get(uploadSessionId);
+    if (settled) {
+      if (settled instanceof Error) {
+        return Promise.reject(settled);
+      }
+      return Promise.resolve(settled);
+    }
+
     return new Promise((resolve, reject) => {
       if (!this.listeners.has(uploadSessionId)) {
         this.listeners.set(uploadSessionId, []);
@@ -102,6 +117,7 @@ export class OfflineSync {
   }
 
   private notifyListeners(uploadSessionId: string, result: { fileId: string; versionId: string } | Error) {
+    this.settledResults.set(uploadSessionId, result);
     const listeners = this.listeners.get(uploadSessionId);
     if (listeners) {
       listeners.forEach(l => l(result));
@@ -247,11 +263,21 @@ export class OfflineSync {
         if (typeof window !== 'undefined') {
           window.addEventListener('online', callback);
         }
+        return () => {
+          if (typeof window !== 'undefined') {
+            window.removeEventListener('online', callback);
+          }
+        };
       },
       onOffline: (callback: () => void) => {
         if (typeof window !== 'undefined') {
           window.addEventListener('offline', callback);
         }
+        return () => {
+          if (typeof window !== 'undefined') {
+            window.removeEventListener('offline', callback);
+          }
+        };
       },
     };
   }
