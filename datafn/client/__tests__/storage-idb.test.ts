@@ -288,6 +288,17 @@ describe("IndexedDbStorageAdapter — global cursor support (SYNC-CURSOR-001)", 
     await adapter.close();
   });
 
+  it("allows getCursor and setCursor for __datafn_actor_feed__", async () => {
+    const dbName = "test_actor_feed_cursor_" + Math.random();
+    const adapter = IndexedDbStorageAdapter.create({ dbName, schema });
+
+    await expect(adapter.getCursor("__datafn_actor_feed__")).resolves.toBeNull();
+    await expect(adapter.setCursor("__datafn_actor_feed__", "42")).resolves.toBeUndefined();
+    await expect(adapter.getCursor("__datafn_actor_feed__")).resolves.toBe("42");
+
+    await adapter.close();
+  });
+
   it("still validates actual resource names when using schema-based creation", async () => {
     const dbName = "test_validation_cursor_" + Math.random();
     const adapter = IndexedDbStorageAdapter.create({ dbName, schema });

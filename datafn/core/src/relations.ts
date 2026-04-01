@@ -25,7 +25,10 @@ export function normalizeRelationPayload(
     return [{ toId: payload, metadata: {} }];
   }
   if (Array.isArray(payload)) {
-    return payload.map((item) => {
+    return payload.flatMap((item) => {
+      if (Array.isArray(item)) {
+        return normalizeRelationPayload(item);
+      }
       if (typeof item === "string") {
         return { toId: item, metadata: {} };
       }

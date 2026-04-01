@@ -31,4 +31,9 @@ describe("chunk serializer", () => {
     const decoded = decodePostings(buffer.buffer, encoding);
     expect(decoded.postings).toEqual([]);
   });
+
+  it("rejects oversized 5-byte varints instead of wrapping them", () => {
+    const malformed = new Uint8Array([0xff, 0xff, 0xff, 0xff, 0x10]);
+    expect(() => decodePostings(malformed.buffer, "delta-varint")).toThrow("Varint decoding overflow");
+  });
 });

@@ -71,14 +71,8 @@ async def test_transact_atomic_rollback():
             {
                 "mutation": {
                     "resource": "tasks",
-                    "operation": "insert",
                     "clientId": "c1",
                     "mutationId": "m2",
-                    # Missing required ID for update, or generally invalid Op to trigger error
-                    # Let's trigger schema validation error (missing 'id' for update/insert?)
-                    # Wait, 'id' is in payload but maybe 'record' missing field?
-                    # Schema doesn't enforce required fields in tests unless we add check.
-                    # Let's use invalid operation.
                     "operation": "invalid_op",
                     "record": {}
                 }

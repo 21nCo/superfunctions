@@ -392,6 +392,8 @@ function hasInMemoryFilterPatterns(
   filters: Record<string, unknown>,
 ): boolean {
   for (const [key, value] of Object.entries(filters)) {
+    if (key === "$or") return true;
+
     // Dot-path key (e.g. "goal.label") — requires relation traversal
     if (key.includes(".")) return true;
 

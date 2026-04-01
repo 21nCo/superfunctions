@@ -217,9 +217,11 @@ export async function executeTransaction(
         error: String(e?.message || e),
       });
       // Map to an error result
+      const errorCode =
+        typeof e?.code === "string" && e.code.length > 0 ? e.code : "INTERNAL";
       results.push({
         ok: false,
-        error: { code: e.code || "INTERNAL", message: e.message }
+        error: { code: errorCode, message: e?.message || String(e) }
       });
       if (isAtomic) return { ok: true, result: { ok: false, results } };
     }

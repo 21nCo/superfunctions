@@ -17,7 +17,7 @@ import type {
   InitializeParams,
 } from "@searchfn/adapter-contracts";
 import { SearchAdapterError, SEARCH_ADAPTER_DISPOSED } from "@searchfn/adapter-contracts";
-import { ensureMetaTable, ensureResourceTable, resourceTableName } from "./postgres-schema";
+import { ensureMetaTable, ensureResourceTable } from "./postgres-schema";
 import { buildUpsertQuery, buildDeleteQuery, buildSearchQuery, buildClearQuery } from "./postgres-sql";
 import type { UpsertRow } from "./postgres-sql";
 import { redactSensitive } from "./internal/redaction";
@@ -68,6 +68,18 @@ function isRetryable(err: unknown): boolean {
   return false;
 }
 
+function coerceId(value: string): string | number {
+  if (/^(0|[1-9]\d*)$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed) && String(parsed) === value) {
+      return parsed;
+    }
+  }
+  return value;
+}
+
+const MAX_SAFE_POSTGRES_PARAMS = 60_000;
+
 export class PostgresAdapter implements SearchAdapter {
   readonly name = "postgres";
   readonly capabilities: SearchAdapterCapabilities = {
@@ -85,7 +97,7 @@ export class PostgresAdapter implements SearchAdapter {
   private readonly maxBatchSize: number;
   private readonly defaults: SearchDefaults;
 
-  constructor(public readonly options: PostgresAdapterOptions) {
+  constructor(private readonly options: PostgresAdapterOptions) {
     this.queryTimeoutMs = options.queryTimeoutMs ?? 30_000;
     this.maxBatchSize = options.maxBatchSize ?? 10_000;
     this.defaults = options.defaults ?? {};
@@ -142,15 +154,19 @@ export class PostgresAdapter implements SearchAdapter {
     }
 
     const pool = this.getPool();
+    const nextKnownResources = new Map<string, string[]>();
 
     await this.withRetry(async () => {
       await ensureMetaTable(pool, this.options.schema);
       for (const { name, searchFields } of resources) {
         await ensureResourceTable(pool, name, searchFields, this.options.schema);
-        this.knownResources.set(name, searchFields);
+        nextKnownResources.set(name, searchFields);
       }
     });
-
+    this.knownResources.clear();
+    for (const [name, searchFields] of nextKnownResources.entries()) {
+      this.knownResources.set(name, searchFields);
+    }
   }
 
   async index({ resource, documents, signal }: IndexParams): Promise<void> {
@@ -179,24 +195,21 @@ export class PostgresAdapter implements SearchAdapter {
         }
       }
 
-      if (rows.length === 0) continue;
-
       await this.withRetry(async () => {
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
 
           // Delete existing rows for these doc_ids to ensure clean upsert
-          const table = resourceTableName(resource, this.options.schema);
           const deleteIds = Array.from(docIds);
-          const deletePlaceholders = deleteIds.map((_, i) => `$${i + 1}`).join(", ");
-          await client.query(
-            `DELETE FROM ${table} WHERE doc_id IN (${deletePlaceholders})`,
-            deleteIds,
-          );
+          for (let i = 0; i < deleteIds.length; i += MAX_SAFE_POSTGRES_PARAMS) {
+            const deleteBatch = deleteIds.slice(i, i + MAX_SAFE_POSTGRES_PARAMS);
+            const q = buildDeleteQuery(resource, deleteBatch, this.options.schema);
+            await client.query(q.text, q.values);
+          }
 
           // Insert new rows in sub-batches to avoid parameter limit (65535)
-          const maxParamsPerQuery = 60_000;
+          const maxParamsPerQuery = MAX_SAFE_POSTGRES_PARAMS;
           const paramsPerRow = 3;
           const subBatchSize = Math.floor(maxParamsPerQuery / paramsPerRow);
 
@@ -245,7 +258,7 @@ export class PostgresAdapter implements SearchAdapter {
       }
     });
 
-    return result.rows.map((row: { doc_id: string }) => row.doc_id);
+    return result.rows.map((row: { doc_id: string }) => coerceId(row.doc_id));
   }
 
   async searchAll(params: SearchAllParams): Promise<SearchAllResult[]> {
@@ -293,7 +306,7 @@ export class PostgresAdapter implements SearchAdapter {
       for (const row of result.rows) {
         allResults.push({
           resource,
-          id: row.doc_id,
+          id: coerceId(row.doc_id),
           score: parseFloat(row.score),
         });
       }

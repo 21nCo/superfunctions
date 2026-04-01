@@ -2,6 +2,22 @@ from typing import Any, Dict, List, Optional
 from .db import Adapter
 from .validation import SchemaIndex
 
+def _resolve_one_many_inverse_fk(rel_def: Dict[str, Any]) -> str:
+    inverse_fk = rel_def.get("inverseForeignKey")
+    if inverse_fk:
+        return inverse_fk
+
+    inverse_name = rel_def.get("inverse")
+    if not inverse_name:
+        raise ValueError("one-many relation requires 'inverse' or 'inverseForeignKey'")
+    return f"{inverse_name}Id"
+
+
+def _normalize_targets(rel_type: str, target: Any) -> List[Any]:
+    if rel_type == "many-one" and isinstance(target, list):
+        raise ValueError("many-one relation must have a single target")
+    return target if isinstance(target, list) else [target]
+
 async def execute_relate(db: Adapter, index: SchemaIndex, mutation: Dict[str, Any], namespace: str = "datafn") -> None:
     resource = mutation["resource"]
     record_id = mutation["id"]
@@ -13,11 +29,13 @@ async def execute_relate(db: Adapter, index: SchemaIndex, mutation: Dict[str, An
             continue
             
         rel_type = rel_def.get("type", "many-one") # Default assumption?
-        
-        targets = target if isinstance(target, list) else [target]
+
+        targets = _normalize_targets(rel_type, target)
         
         for t in targets:
             target_id = t if isinstance(t, str) else t.get("$ref")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise ValueError("relation target must include a non-empty $ref")
             metadata = {k: v for k, v in t.items() if k != "$ref"} if isinstance(t, dict) else {}
             
             if rel_type == "many-many":
@@ -31,8 +49,10 @@ async def execute_relate(db: Adapter, index: SchemaIndex, mutation: Dict[str, An
                     to_col = f"{rel_def['to']}_id" # simplified
                     
                     # Or check 'fromKey', 'toKey' in rel_def
-                    if "fromKey" in rel_def: from_col = rel_def["fromKey"]
-                    if "toKey" in rel_def: to_col = rel_def["toKey"]
+                    if "fromKey" in rel_def:
+                        from_col = rel_def["fromKey"]
+                    if "toKey" in rel_def:
+                        to_col = rel_def["toKey"]
                     
                     # Insert into join table
                     data = {
@@ -56,7 +76,7 @@ async def execute_relate(db: Adapter, index: SchemaIndex, mutation: Dict[str, An
             elif rel_type == "one-many":
                 # We are 'projects', rel is 'tasks' (one-many to tasks).
                 # We update 'tasks' (target) to set project_id = us.
-                inverse_fk = rel_def.get("inverseForeignKey", f"{rel_def['inverse']}Id")
+                inverse_fk = _resolve_one_many_inverse_fk(rel_def)
                 await db.update(
                     rel_def["to"],
                     [{"field": "id", "operator": "eq", "value": target_id}],
@@ -79,14 +99,18 @@ async def execute_modify_relation(db: Adapter, index: SchemaIndex, mutation: Dic
         if not join_table:
             continue
             
-        targets = target if isinstance(target, list) else [target]
+        targets = _normalize_targets(rel_def.get("type", "many-many"), target)
         for t in targets:
-            if not isinstance(t, dict): continue # Must have metadata to modify
+            if not isinstance(t, dict):
+                continue # Must have metadata to modify
             
             target_id = t.get("$ref")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise ValueError("relation target must include a non-empty $ref")
             metadata = {k: v for k, v in t.items() if k != "$ref"}
             
-            if not metadata: continue
+            if not metadata:
+                continue
 
             from_col = rel_def.get("fromKey", f"{resource}_id")
             to_col = rel_def.get("toKey", f"{rel_def['to']}_id")
@@ -112,10 +136,12 @@ async def execute_unrelate(db: Adapter, index: SchemaIndex, mutation: Dict[str, 
             continue
             
         rel_type = rel_def.get("type", "many-one")
-        targets = target if isinstance(target, list) else [target]
+        targets = _normalize_targets(rel_type, target)
         
         for t in targets:
             target_id = t if isinstance(t, str) else t.get("$ref")
+            if not isinstance(target_id, str) or not target_id.strip():
+                raise ValueError("relation target must include a non-empty $ref")
             
             if rel_type == "many-many":
                 join_table = rel_def.get("joinTable")
@@ -144,7 +170,7 @@ async def execute_unrelate(db: Adapter, index: SchemaIndex, mutation: Dict[str, 
                 
             elif rel_type == "one-many":
                 # Clear FK on target
-                inverse_fk = rel_def.get("inverseForeignKey", f"{rel_def['inverse']}Id")
+                inverse_fk = _resolve_one_many_inverse_fk(rel_def)
                 await db.update(
                     rel_def["to"],
                     [{"field": "id", "operator": "eq", "value": target_id}],

@@ -76,9 +76,6 @@ const schema = defineSchema({
       type: "many-many",
       relation: "tags",
       inverse: "todos",
-      // Opt-in to relation capabilities: adds server-managed createdAt, updatedAt,
-      // createdBy, updatedBy columns to the join table. Requires schema regen + migration.
-      capabilities: ["timestamps", "audit"] as any,
     },
   ],
 });

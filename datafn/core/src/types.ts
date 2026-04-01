@@ -277,7 +277,7 @@ export interface DatafnPlugin {
     ctx: DatafnHookContext,
     m: unknown | unknown[],
     result: unknown,
-  ) => Promise<void> | void;
+  ) => Promise<unknown> | unknown;
   beforeSync?: (
     ctx: DatafnHookContext,
     phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
@@ -288,5 +288,5 @@ export interface DatafnPlugin {
     phase: "seed" | "clone" | "pull" | "push" | "cloneUp" | "reconcile",
     payload: unknown,
     result: unknown,
-  ) => Promise<void> | void;
+  ) => Promise<unknown> | unknown;
 }

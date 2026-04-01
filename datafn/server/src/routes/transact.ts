@@ -136,18 +136,29 @@ export function createTransactHandler(
         };
         for (let i = 0; i < body.steps.length; i++) {
           const step = body.steps[i];
-          const isMutation = !!(step.mutation || (typeof step.operation === "string"));
 
           let authzResult;
-          if (isMutation) {
+          if (step.mutation) {
             authzResult = validateMutationAuthz(
-              (step.mutation || step) as Record<string, unknown>,
+              step.mutation as Record<string, unknown>,
+              validatedSchema,
+              authzOpts,
+            );
+          } else if (step.query) {
+            authzResult = validateQueryAuthz(
+              step.query as Record<string, unknown>,
+              validatedSchema,
+              authzOpts,
+            );
+          } else if (typeof step.operation === "string") {
+            authzResult = validateMutationAuthz(
+              step as Record<string, unknown>,
               validatedSchema,
               authzOpts,
             );
           } else {
             authzResult = validateQueryAuthz(
-              (step.query || step) as Record<string, unknown>,
+              step as Record<string, unknown>,
               validatedSchema,
               authzOpts,
             );

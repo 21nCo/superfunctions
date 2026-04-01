@@ -126,6 +126,17 @@ describe("createSearchProvider — updateIndices", () => {
     expect(adapter.index).not.toHaveBeenCalled();
   });
 
+  it("stringifies delete ids before delegating to adapter.remove", async () => {
+    const adapter = makeAdapter();
+    const provider = createSearchProvider(adapter);
+    await provider.updateIndices({
+      resource: "tasks",
+      records: [{ id: 1 }, { id: 2 }],
+      operation: "delete",
+    });
+    expect(adapter.remove).toHaveBeenCalledWith({ resource: "tasks", ids: ["1", "2"] });
+  });
+
   it("calls adapter.index on upsert operation", async () => {
     const adapter = makeAdapter();
     const provider = createSearchProvider(adapter, {
@@ -158,6 +169,43 @@ describe("createSearchProvider — updateIndices", () => {
             fields: { count: "42", active: "true", meta: '{"x":1}' },
           },
         ],
+      }),
+    );
+  });
+
+  it("uses configured resourceFields when extracting indexed fields", async () => {
+    const adapter = makeAdapter();
+    const provider = createSearchProvider(adapter, {
+      resourceFields: { tasks: ["title"] },
+    });
+
+    await provider.updateIndices({
+      resource: "tasks",
+      records: [{ id: "1", title: "Hello", body: "Ignored" }],
+      operation: "upsert",
+    });
+
+    expect(adapter.index).toHaveBeenCalledWith({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "Hello" } }],
+    });
+  });
+
+  it("falls back to String(value) when JSON serialization fails", async () => {
+    const adapter = makeAdapter();
+    const provider = createSearchProvider(adapter);
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    await provider.updateIndices({
+      resource: "tasks",
+      records: [{ id: "1", meta: circular }],
+      operation: "upsert",
+    });
+
+    expect(adapter.index).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documents: [{ id: "1", fields: { meta: "[object Object]" } }],
       }),
     );
   });
@@ -299,5 +347,23 @@ describe("createSearchProvider — TV-DFP-002: forwards search options to adapte
         prefix: true,
       }),
     );
+  });
+
+  it("continues fallback searchAll results when one resource search fails", async () => {
+    const searchSpy = vi.fn()
+      .mockResolvedValueOnce(["a1"])
+      .mockRejectedValueOnce(new Error("boom"));
+    const adapter = makeAdapter({ search: searchSpy });
+    delete (adapter as Partial<SearchAdapter>).searchAll;
+    const provider = createSearchProvider(adapter, {
+      resourceFields: { alpha: ["title"], beta: ["title"] },
+    });
+
+    const results = await provider.searchAll({
+      query: "to",
+      resources: ["alpha", "beta"],
+    } as any);
+
+    expect(results).toEqual([{ resource: "alpha", id: "a1", score: 50 }]);
   });
 });

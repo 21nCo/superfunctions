@@ -275,30 +275,48 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
         }
 
         const hasUpdate = update && Object.keys(update).length > 0;
+        const targetFields = Array.isArray(target) ? target : [target];
+        const stableWhere = targetFields
+          .map((field) => {
+            const fromCreate = (create as any)[field];
+            if (fromCreate !== undefined) {
+              return { field, operator: 'eq' as const, value: fromCreate };
+            }
+
+            const fromWhere = where.find((clause) => clause.field === field && clause.operator === 'eq');
+            return fromWhere
+              ? { field, operator: 'eq' as const, value: fromWhere.value }
+              : null;
+          })
+          .filter((clause): clause is { field: string; operator: 'eq'; value: unknown } => clause !== null);
+        const reselectWhere = stableWhere.length === targetFields.length ? stableWhere : where;
 
         if (config.dialect === 'mysql') {
-          const q = hasUpdate
-            ? db.insert(tbl).values(create as any).onDuplicateKeyUpdate({ set: update as any })
-            : db.insert(tbl).values(create as any).$onDuplicateKeyUpdate
-              ? db.insert(tbl).values(create as any).onDuplicateKeyUpdate({ set: create as any })
-              : db.insert(tbl).values(create as any);
-          if (select && select.length > 0) {
-            try { await q.execute(); } catch (e: any) {
-              // MySQL INSERT IGNORE equivalent: if duplicate, ignore
-              if (!hasUpdate && e?.code === 'ER_DUP_ENTRY') { /* no-op: row already exists */ }
-              else throw e;
+          const insertQuery = db.insert(tbl).values(create as any);
+
+          try {
+            if (hasUpdate) {
+              await insertQuery.onDuplicateKeyUpdate({ set: update as any }).execute();
+            } else {
+              await insertQuery.execute();
             }
-            // reselect
-            const row = await this.findOne<T>({ model, where, select });
-            if (!row) throw new Error('Upsert failed to return a row');
-            return row;
-          } else {
-            try { await q.execute(); } catch (e: any) {
-              if (!hasUpdate && e?.code === 'ER_DUP_ENTRY') { /* no-op: row already exists */ }
-              else throw e;
+          } catch (error: any) {
+            if (hasUpdate || error?.code !== 'ER_DUP_ENTRY') {
+              throw error;
             }
-            return (create as any) as T;
           }
+
+          const row = await this.findOne<T>({
+            model,
+            where: reselectWhere,
+            select,
+          });
+
+          if (row) {
+            return row;
+          }
+
+          throw new Error('Upsert failed to return a row');
         } else {
           const keys = Array.isArray(target) ? target.map((k) => (tbl as any)[k]) : [(tbl as any)[target as string]];
           const returning = select && select.length > 0 ? Object.fromEntries(select.map((k) => [k, (tbl as any)[k]])) : undefined;

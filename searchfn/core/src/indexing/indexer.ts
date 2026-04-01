@@ -1,5 +1,5 @@
 import type { DocId } from "../types";
-import type { Pipeline } from "../pipeline";
+import type { Pipeline, Token } from "../pipeline";
 import { PipelineEngine } from "../pipeline";
 import { DocumentAccumulator } from "./document-accumulator";
 
@@ -46,7 +46,7 @@ export class Indexer {
    */
   ingestBatch(records: IndexingInputRecord[]): IngestedDocument[] {
     // Token cache: Map<field, Map<text, tokens>>
-    const tokenCache = new Map<string, Map<string, import("../pipeline").Token[]>>();
+    const tokenCache = new Map<string, Map<string, Token[]>>();
     
     // Phase 1: Collect unique field values and tokenize once
     for (const record of records) {
@@ -76,7 +76,10 @@ export class Indexer {
         if (!text) continue;
         const tokens = tokenCache.get(field)?.get(text) ?? [];
         for (const token of tokens) {
-          accumulator.addToken(token);
+          accumulator.addToken({
+            ...token,
+            documentId: record.docId,
+          });
         }
       }
       

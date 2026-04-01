@@ -35,7 +35,7 @@ async def get_user(request, context):
     return Response(status=200, body=user)
 
 async def create_user(request, context):
-    data = await context.json()
+    data = await request.json()
     user = await db.create(...)
     return Response(status=201, body=user)
 
@@ -82,7 +82,6 @@ async def route(request: Request, id: str):
 Write framework-agnostic handlers that work across:
 - FastAPI
 - Flask (with `superfunctions-flask`)
-- Django (with `superfunctions-django`)
 
 ## Example with authfn
 

@@ -17,14 +17,17 @@ def to_epoch_ms(value: Any) -> int:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return int(dt.timestamp() * 1000)
-        except (ValueError, TypeError):
-            raise ValueError(f"Invalid date value: {value}")
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid date value: {value}") from e
     raise ValueError(f"Cannot convert {type(value).__name__} to epoch ms")
 
 
 def from_epoch_ms(value: Union[int, float, str]) -> datetime:
     if isinstance(value, str):
-        value = int(value)
+        try:
+            value = int(value)
+        except ValueError as e:
+            raise ValueError(f"Invalid epoch ms value: {value}") from e
     return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
 
 

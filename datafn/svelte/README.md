@@ -14,7 +14,7 @@ npm install svelte
 
 - **Seamless Reactivity** — Mutations and sync changes in DataFn automatically update your Svelte components
 - **Automatic Cleanup** — Store subscriptions are cleaned up when components are destroyed
-- **State Properties** — Stores expose `data`, `loading`, `error`, and `refreshing` for complete UI control
+- **State Properties** — Stores expose `data`, `loading`, `error`, `refreshing`, and `nextCursor` for complete UI control
 - **Derived Store Support** — Returns standard Svelte `Readable`, composable with `derived` stores
 - **Svelte 3 / 4 / 5 Compatible** — Works with reactive declarations (`$:`) and runes
 
@@ -71,23 +71,25 @@ Converts a DataFn `Signal<T>` into a Svelte `Readable` store that wraps the sign
 
 **Returns:**
 
-A `Readable<{ data: T; loading: boolean; error: DatafnError | null; refreshing: boolean }>`.
+A `Readable<{ data: T | undefined; loading: boolean; error: DatafnError | null; refreshing: boolean; nextCursor: string | null }>`.
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `data` | `T` | The current signal value (query results, KV value, etc.) |
+| `data` | `T \| undefined` | The current signal value (query results, KV value, etc.) |
 | `loading` | `boolean` | `true` while the initial fetch is in progress |
 | `error` | `DatafnError \| null` | Non-null if the last fetch/refresh failed |
 | `refreshing` | `boolean` | `true` while a background refresh is in progress |
+| `nextCursor` | `string \| null` | Cursor for the next page when the backing signal is paginated |
 
 **Type:**
 
 ```typescript
 type DatafnSvelteStore<T> = Readable<{
-  data: T;
+  data: T | undefined;
   loading: boolean;
   error: DatafnError | null;
   refreshing: boolean;
+  nextCursor: string | null;
 }>;
 ```
 
@@ -282,7 +284,7 @@ This means:
 
 ```typescript
 export { toSvelteStore }
-export type { DatafnSvelteStore }
+export type { DatafnSvelteStore, ClientRef }
 ```
 
 ## License

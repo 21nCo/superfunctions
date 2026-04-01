@@ -8,9 +8,10 @@
  * so we verify dbName via the private property.
  */
 
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // Mock indexedDB before importing the adapter
+const originalIndexedDb = globalThis.indexedDB;
 beforeAll(() => {
   // Minimal IDB mock to prevent constructor errors
   const mockStore = {
@@ -44,6 +45,14 @@ beforeAll(() => {
       return mockRequest;
     }),
   };
+});
+
+afterAll(() => {
+  if (originalIndexedDb === undefined) {
+    delete (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  } else {
+    globalThis.indexedDB = originalIndexedDb;
+  }
 });
 
 import { IndexedDbStorageAdapter } from "../src/adapters/indexedDbStorage.js";

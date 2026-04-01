@@ -12,6 +12,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./in-memory-search": {
+      "types": "./dist/in-memory-search.d.ts",
+      "import": "./dist/in-memory-search.js",
+      "require": "./dist/in-memory-search.cjs"
+    },
+    "./constructors": {
+      "types": "./dist/constructors.d.ts",
+      "import": "./dist/constructors.js",
+      "require": "./dist/constructors.cjs"
     }
   },
   "files": [
@@ -27,7 +37,7 @@
     "test:watch": "vitest watch",
     "typecheck": "tsc --noEmit",
     "benchmark": "tsx benchmarks/indexing-benchmark.ts",
-    "prepublish": "npm run lint && npm run build"
+    "prepublishOnly": "npm run lint && npm run build"
   },
   "engines": {
     "node": ">=18.18.0"
@@ -42,7 +52,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/21nCo/super-functions.git",
-    "directory": "searchfn"
+    "directory": "searchfn/client"
   },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
@@ -52,10 +62,10 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "@searchfn/core": "file:../core",
-    "@searchfn/adapter-contracts": "file:../adapter-contracts",
-    "@searchfn/adapter-memory": "file:../adapter-memory",
-    "@searchfn/adapter-indexeddb": "file:../adapter-indexeddb"
+    "@searchfn/core": "^0.3.0",
+    "@searchfn/adapter-contracts": "^0.1.0",
+    "@searchfn/adapter-memory": "^0.1.0",
+    "@searchfn/adapter-indexeddb": "^0.1.0"
   },
   "superfunctions": {
     "initFunction": "searchFn",

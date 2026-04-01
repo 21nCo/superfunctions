@@ -1,6 +1,15 @@
 import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import { parseJsonBody, errorResponse, mapAdapterErrorToResponse, okResponse } from "../http/errors.js";
-import { validateQuery, validateLimit, validateResourcesArray } from "../http/validation.js";
+import {
+  validateFieldBoosts,
+  validateFields,
+  validateFuzzy,
+  validateLimit,
+  validateObjectBody,
+  validatePrefix,
+  validateQuery,
+  validateResourcesArray,
+} from "../http/validation.js";
 import type { ServerLimits } from "../http/validation.js";
 import type { ServerContext } from "../server.js";
 
@@ -9,7 +18,8 @@ export function searchAllHandler(adapter: SearchAdapter, limits: ServerLimits) {
     const parsed = await parseJsonBody(req, limits.maxPayloadBytes);
     if (!parsed.ok) return parsed.response;
 
-    const body = parsed.data as Record<string, unknown>;
+    const { value: body, error: bodyErr } = validateObjectBody(parsed.data);
+    if (bodyErr) return bodyErr;
 
     const queryErr = validateQuery(body.query, limits);
     if (queryErr) return queryErr;
@@ -29,6 +39,18 @@ export function searchAllHandler(adapter: SearchAdapter, limits: ServerLimits) {
       "limitPerResource",
     );
     if (lprErr) return lprErr;
+
+    const fieldsErr = validateFields(body.fields);
+    if (fieldsErr) return fieldsErr;
+
+    const fuzzyErr = validateFuzzy(body.fuzzy);
+    if (fuzzyErr) return fuzzyErr;
+
+    const prefixErr = validatePrefix(body.prefix);
+    if (prefixErr) return prefixErr;
+
+    const fieldBoostsErr = validateFieldBoosts(body.fieldBoosts);
+    if (fieldBoostsErr) return fieldBoostsErr;
 
     if (!adapter.searchAll) {
       // Fallback: adapter doesn't support searchAll natively

@@ -1,6 +1,7 @@
 export { createSearchClient, SearchClientValidationError } from "./client";
 export { createMemorySearchClient, createIndexedDbSearchClient } from "./constructors";
 export { InMemorySearchFn } from "./in-memory-search";
+export { InMemorySearchFn as SearchFn } from "./in-memory-search";
 export type {
   SearchClient,
   SearchClientConfig,

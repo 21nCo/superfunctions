@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
-import { SearchFn } from "../src/search-engine";
+import { SearchFn } from "../src";
 import { createDocumentsFromFlexStore } from "../src/compat/migration";
 
 const globalObject = globalThis as unknown as {
@@ -67,16 +67,24 @@ async function runBenchmark(size = 1000): Promise<BenchmarkReport> {
 }
 
 async function main() {
-  const size = Number.parseInt(process.argv[2] ?? "1000", 10);
+  const parsedSize = Number.parseInt(process.argv[2] ?? "1000", 10);
+  if (!Number.isFinite(parsedSize) || parsedSize <= 0) {
+    throw new Error("size must be a positive integer");
+  }
+  const size = parsedSize;
   const report = await runBenchmark(size);
+  const avgAddPerDoc = report.documents > 0 ? (report.addDuration / report.documents).toFixed(4) : "0.0000";
+  const avgSearchPerQuery = report.queries > 0
+    ? (report.searchDuration / report.queries).toFixed(4)
+    : "0.0000";
   console.log(
     JSON.stringify(
       {
         size: report.documents,
         addMs: report.addDuration.toFixed(2),
-        avgAddPerDoc: (report.addDuration / report.documents).toFixed(4),
+        avgAddPerDoc,
         searchMs: report.searchDuration.toFixed(2),
-        avgSearchPerQuery: (report.searchDuration / report.queries).toFixed(4)
+        avgSearchPerQuery
       },
       null,
       2

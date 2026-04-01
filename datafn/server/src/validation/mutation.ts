@@ -391,7 +391,7 @@ export function validateMutation(
         const resource = resourceResult.result;
         const record = m.record as Record<string, unknown>;
         for (const field of resource.fields) {
-            if (field.required && !field.default && field.name !== "id" && !field.readonly) {
+            if (field.required && field.default === undefined && field.name !== "id" && !field.readonly) {
                 // If required, no default, not id, not readonly (system)
                 // Must be present
                 if (!(field.name in record) || record[field.name] === null || record[field.name] === undefined) {

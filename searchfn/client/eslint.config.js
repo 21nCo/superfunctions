@@ -3,7 +3,7 @@ import tsPlugin from "@typescript-eslint/eslint-plugin";
 import { fileURLToPath } from "url";
 
 const recommendedRules = tsPlugin.configs.recommended.rules;
-const typeCheckedRules = tsPlugin.configs["recommended-requiring-type-checking"].rules;
+const typeCheckedRules = tsPlugin.configs["recommended-type-checked"].rules;
 
 export default [
   {

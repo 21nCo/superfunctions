@@ -67,7 +67,7 @@ export function errorResponse(
 }
 
 function isSearchFnErrorCode(code: string): code is SearchFnErrorCode {
-  return code in STATUS_MAP;
+  return Object.prototype.hasOwnProperty.call(STATUS_MAP, code);
 }
 
 export function mapAdapterErrorToResponse(
@@ -135,6 +135,18 @@ export async function parseJsonBody(
         ok: false,
         response: errorResponse("DFQL_INVALID", "Invalid JSON", { path: "$" }),
       };
+    }
+    if (maxPayloadBytes) {
+      const payloadBytes = new TextEncoder().encode(text).byteLength;
+      if (payloadBytes > maxPayloadBytes) {
+        return {
+          ok: false,
+          response: errorResponse("LIMIT_EXCEEDED", "Request payload exceeds maximum size", {
+            path: "$",
+            max: maxPayloadBytes,
+          }),
+        };
+      }
     }
     return { ok: true, data: JSON.parse(text) };
   } catch {

@@ -160,6 +160,204 @@ describe("IndexedDbAdapter — IDB-specific tests", () => {
     }
   });
 
+  it("keeps legacy doc-term snapshots from polluting fuzzy vocabulary with prefix terms", async () => {
+    const dbName = freshDbName();
+
+    const adapter1 = new IndexedDbAdapter({ dbName });
+    await adapter1.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "testing" } }],
+    });
+
+    const engine1 = (adapter1 as any).getOrCreateEngine("tasks");
+    await (adapter1 as any).ensureOpen(engine1);
+    const docTermsBuffer = await engine1.storage.getCacheState("doc-terms");
+    expect(docTermsBuffer).toBeTruthy();
+
+    const legacySnapshot = JSON.parse(
+      new TextDecoder().decode(docTermsBuffer),
+    ) as Record<string, Array<{ field: string; term: string; isPrefix?: boolean }>>;
+
+    for (const entries of Object.values(legacySnapshot)) {
+      for (const entry of entries) {
+        delete entry.isPrefix;
+      }
+    }
+
+    await engine1.storage.putCacheState(
+      "doc-terms",
+      new TextEncoder().encode(JSON.stringify(legacySnapshot)).buffer,
+    );
+    await adapter1.dispose();
+
+    const adapter2 = new IndexedDbAdapter({ dbName });
+    try {
+      await adapter2.index({
+        resource: "tasks",
+        documents: [{ id: "2", fields: { title: "alpha" } }],
+      });
+
+      const result = await adapter2.search({
+        resource: "tasks",
+        query: "test",
+        fuzzy: true,
+      });
+
+      expect(result).toEqual([]);
+    } finally {
+      await adapter2.dispose();
+    }
+  });
+
+  it("removes stale legacy vocabulary entries after deleting the last legacy document", async () => {
+    const dbName = freshDbName();
+
+    const adapter1 = new IndexedDbAdapter({ dbName });
+    await adapter1.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "testing" } }],
+    });
+
+    const engine1 = (adapter1 as any).getOrCreateEngine("tasks");
+    await (adapter1 as any).ensureOpen(engine1);
+    const docTermsBuffer = await engine1.storage.getCacheState("doc-terms");
+    expect(docTermsBuffer).toBeTruthy();
+
+    const legacySnapshot = JSON.parse(
+      new TextDecoder().decode(docTermsBuffer),
+    ) as Record<string, Array<{ field: string; term: string; isPrefix?: boolean }>>;
+
+    for (const entries of Object.values(legacySnapshot)) {
+      for (const entry of entries) {
+        delete entry.isPrefix;
+      }
+    }
+
+    await engine1.storage.putCacheState(
+      "doc-terms",
+      new TextEncoder().encode(JSON.stringify(legacySnapshot)).buffer,
+    );
+    await adapter1.dispose();
+
+    const adapter2 = new IndexedDbAdapter({ dbName });
+    try {
+      await adapter2.remove({ resource: "tasks", ids: ["1"] });
+
+      const engine2 = (adapter2 as any).getOrCreateEngine("tasks");
+      await (adapter2 as any).ensureOpen(engine2);
+
+      expect(Array.from(engine2.vocabulary)).not.toContain("testing");
+    } finally {
+      await adapter2.dispose();
+    }
+  });
+
+  it("supports remove after cold restart without explicit initialize", async () => {
+    const dbName = freshDbName();
+
+    const adapter1 = new IndexedDbAdapter({ dbName });
+    await adapter1.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "cold restart removal" } }],
+    });
+    await adapter1.dispose();
+
+    const adapter2 = new IndexedDbAdapter({ dbName });
+    try {
+      await adapter2.remove({ resource: "tasks", ids: ["1"] });
+
+      const result = await adapter2.search({
+        resource: "tasks",
+        query: "cold",
+        fields: ["title"],
+      });
+      expect(result).toEqual([]);
+    } finally {
+      await adapter2.dispose();
+    }
+  });
+
+  it("supports explicit-resource searchAll after cold restart", async () => {
+    const dbName = freshDbName();
+
+    const adapter1 = new IndexedDbAdapter({ dbName });
+    await adapter1.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "cold restart search all" } }],
+    });
+    await adapter1.dispose();
+
+    const adapter2 = new IndexedDbAdapter({ dbName });
+    try {
+      const result = await adapter2.searchAll({
+        resources: ["tasks"],
+        query: "cold",
+        limit: 10,
+      });
+
+      expect(result).toEqual([
+        expect.objectContaining({ resource: "tasks", id: "1" }),
+      ]);
+    } finally {
+      await adapter2.dispose();
+    }
+  });
+
+  it("honors configured searchFields when params.fields is omitted", async () => {
+    const adapter = new IndexedDbAdapter({ dbName: freshDbName() });
+    try {
+      await adapter.initialize({
+        resources: [{ name: "tasks", searchFields: ["title"] }],
+      });
+      await adapter.index({
+        resource: "tasks",
+        documents: [{ id: "1", fields: { title: "visible", body: "hidden-body-term" } }],
+      });
+
+      const result = await adapter.search({
+        resource: "tasks",
+        query: "hidden-body-term",
+      });
+
+      expect(result).toEqual([]);
+    } finally {
+      await adapter.dispose();
+    }
+  });
+
+  it("drops removed resources from implicit searchAll after reinitialize", async () => {
+    const adapter = new IndexedDbAdapter({ dbName: freshDbName() });
+    try {
+      await adapter.initialize({
+        resources: [
+          { name: "tasks", searchFields: ["title"] },
+          { name: "notes", searchFields: ["title"] },
+        ],
+      });
+      await adapter.index({
+        resource: "tasks",
+        documents: [{ id: "1", fields: { title: "task alpha" } }],
+      });
+      await adapter.index({
+        resource: "notes",
+        documents: [{ id: "n1", fields: { title: "note beta" } }],
+      });
+
+      await adapter.initialize({
+        resources: [{ name: "tasks", searchFields: ["title"] }],
+      });
+
+      const result = await adapter.searchAll({
+        query: "note",
+        limit: 10,
+      });
+
+      expect(result).toEqual([]);
+    } finally {
+      await adapter.dispose();
+    }
+  });
+
   it("supports fieldBoosts for ranking", async () => {
     const dbName = freshDbName();
     const adapter = new IndexedDbAdapter({ dbName });

@@ -26,7 +26,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@searchfn/core": "file:../core"
+    "@searchfn/core": "^0.3.0"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

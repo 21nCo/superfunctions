@@ -11,6 +11,7 @@ import type { Adapter } from "@superfunctions/db";
 import type { RedisAdapter, KVStoreAdapter } from "@superfunctions/db";
 import { ensureInternalTable } from "../internal-tables.js";
 import type { DatafnLogger } from "../../logger.js";
+import { withAdapterNamespaceLock } from "./namespace-lock.js";
 
 /**
  * Interface for sequence generation stores
@@ -122,31 +123,49 @@ export class DatabaseSequenceStore implements SequenceStore {
       await ensureInternalTable(this.db, "__datafn_meta");
       this.ensured = true;
     }
+    const needed = minSeq + 1;
     try {
-      const meta = await this.db.internal.findOne("__datafn_meta", [
-        { field: "namespace", op: "eq", value: namespace },
-      ]);
-      const needed = minSeq + 1;
-      if (!meta) {
-        try {
-          await this.db.internal.create("__datafn_meta", {
-            id: `meta:${namespace}`,
-            namespace,
-            next_server_seq: needed,
-          });
-        } catch {
-          // Race: another process may have created it
+      await withAdapterNamespaceLock(this.db, namespace, async () => {
+        const meta = await this.db.internal.findOne("__datafn_meta", [
+          { field: "namespace", op: "eq", value: namespace },
+        ]);
+        if (!meta) {
+          try {
+            await this.db.internal.create("__datafn_meta", {
+              id: `meta:${namespace}`,
+              namespace,
+              next_server_seq: needed,
+            });
+          } catch {
+            const currentMeta = await this.db.internal.findOne("__datafn_meta", [
+              { field: "namespace", op: "eq", value: namespace },
+            ]);
+            const current = (currentMeta?.next_server_seq as number) || 1;
+            if (current < needed) {
+              await this.db.internal.update(
+                "__datafn_meta",
+                [
+                  { field: "namespace", op: "eq", value: namespace },
+                  { field: "next_server_seq", op: "eq", value: current },
+                ],
+                { next_server_seq: needed },
+              );
+            }
+          }
+        } else {
+          const current = (meta.next_server_seq as number) || 1;
+          if (current < needed) {
+            await this.db.internal.update(
+              "__datafn_meta",
+              [
+                { field: "namespace", op: "eq", value: namespace },
+                { field: "next_server_seq", op: "eq", value: current },
+              ],
+              { next_server_seq: needed },
+            );
+          }
         }
-      } else {
-        const current = (meta.next_server_seq as number) || 1;
-        if (current < needed) {
-          await this.db.internal.update(
-            "__datafn_meta",
-            [{ field: "namespace", op: "eq", value: namespace }],
-            { next_server_seq: needed },
-          );
-        }
-      }
+      });
     } catch (error) {
       this.logger?.warn("Failed to ensureMinSeq during failover", {
         error: String(error),
@@ -164,67 +183,77 @@ export class DatabaseSequenceStore implements SequenceStore {
       throw new Error("count must be a positive integer between 1 and 1000");
     }
 
-    if (!this.ensured) {
-      await ensureInternalTable(this.db, "__datafn_meta");
-      this.ensured = true;
-    }
+    return await withAdapterNamespaceLock(this.db, namespace, async () => {
+      if (!this.ensured) {
+        await ensureInternalTable(this.db, "__datafn_meta");
+        this.ensured = true;
+      }
 
-    const MAX_RETRIES = 10;
+      const MAX_RETRIES = 10;
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        const meta = await this.db.internal.findOne("__datafn_meta", [
-          { field: "namespace", op: "eq", value: namespace },
-        ]);
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          const meta = await this.db.internal.findOne("__datafn_meta", [
+            { field: "namespace", op: "eq", value: namespace },
+          ]);
 
-        if (!meta) {
-          try {
-            await this.db.internal.create("__datafn_meta", {
-              id: `meta:${namespace}`,
-              namespace: namespace,
-              next_server_seq: 1 + count,
-            });
-            return Array.from({ length: count }, (_, i) => 1 + i);
-          } catch (error) {
-            this.logger?.warn("Sequence allocation create retry", { attempt, error: String(error), operation: "seq-create" });
-            continue;
-          }
-        } else {
-          const currentSeq = (meta.next_server_seq as number) || 1;
-
-          try {
-            const affected = await this.db.internal.update(
-              "__datafn_meta",
-              [
-                { field: "namespace", op: "eq", value: namespace },
-                { field: "next_server_seq", op: "eq", value: currentSeq },
-              ],
-              { next_server_seq: currentSeq + count },
-            );
-
-            if (affected === 0) {
+          if (!meta) {
+            try {
+              await this.db.internal.create("__datafn_meta", {
+                id: `meta:${namespace}`,
+                namespace: namespace,
+                next_server_seq: 1 + count,
+              });
+              return Array.from({ length: count }, (_, i) => 1 + i);
+            } catch (error) {
+              this.logger?.warn("Sequence allocation create retry", {
+                attempt,
+                error: String(error),
+                operation: "seq-create",
+              });
               continue;
             }
+          } else {
+            const currentSeq = (meta.next_server_seq as number) || 1;
 
-            return Array.from({ length: count }, (_, i) => currentSeq + i);
-          } catch (error) {
-            this.logger?.warn("Sequence allocation CAS retry", { attempt, error: String(error), operation: "seq-cas" });
-            continue;
+            try {
+              const affected = await this.db.internal.update(
+                "__datafn_meta",
+                [
+                  { field: "namespace", op: "eq", value: namespace },
+                  { field: "next_server_seq", op: "eq", value: currentSeq },
+                ],
+                { next_server_seq: currentSeq + count },
+              );
+
+              if (affected === 0) {
+                continue;
+              }
+
+              return Array.from({ length: count }, (_, i) => currentSeq + i);
+            } catch (error) {
+              this.logger?.warn("Sequence allocation CAS retry", {
+                attempt,
+                error: String(error),
+                operation: "seq-cas",
+              });
+              continue;
+            }
+          }
+        } catch (error) {
+          if (attempt === MAX_RETRIES - 1) {
+            this.logger?.error("Failed to get next serverSeq after max retries", {
+              error: String(error),
+              operation: "getNextN",
+              resource: "__datafn_meta",
+            });
+            throw new Error("INTERNAL: Failed to allocate serverSeq after maximum retries");
           }
         }
-      } catch (error) {
-        if (attempt === MAX_RETRIES - 1) {
-          this.logger?.error("Failed to get next serverSeq after max retries", {
-            error: String(error),
-            operation: "getNextN",
-            resource: "__datafn_meta",
-          });
-          throw new Error("INTERNAL: Failed to allocate serverSeq after maximum retries");
-        }
       }
-    }
 
-    throw new Error("INTERNAL: Failed to allocate serverSeq after maximum retries");
+      throw new Error("INTERNAL: Failed to allocate serverSeq after maximum retries");
+    });
   }
 
   async getCurrent(namespace: string): Promise<number> {

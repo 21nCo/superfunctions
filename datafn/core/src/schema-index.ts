@@ -105,9 +105,12 @@ export function findRelationBidirectional(
   resource: string,
   relationName: string,
 ): DatafnRelationSchema | undefined {
+  const matchesEndpoint = (endpoint: string | string[], value: string): boolean =>
+    Array.isArray(endpoint) ? endpoint.includes(value) : endpoint === value;
+
   return schema.relations?.find(
     (r) =>
-      (r.from === resource && r.relation === relationName) ||
-      (r.to === resource && r.inverse === relationName),
+      (matchesEndpoint(r.from, resource) && r.relation === relationName) ||
+      (matchesEndpoint(r.to, resource) && r.inverse === relationName),
   );
 }

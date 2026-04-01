@@ -84,4 +84,38 @@ describe("InMemorySearchFn", () => {
     expect(search.search("alpha")).toEqual([]);
     expect(search.search("beta")).toEqual(["doc-1"]);
   });
+
+  it("keeps numeric and string document ids distinct", () => {
+    const search = new InMemorySearchFn({
+      fields: ["title"],
+    });
+
+    search.add({
+      id: 1,
+      fields: { title: "shared numeric" },
+      store: { kind: "number" },
+    });
+    search.add({
+      id: "1",
+      fields: { title: "shared string" },
+      store: { kind: "string" },
+    });
+
+    const results = search.searchDetailed("shared", { includeStored: true, limit: 10 });
+    expect(results).toHaveLength(2);
+    expect(results.map((result) => result.docId)).toEqual([1, "1"]);
+  });
+
+  it("supports limit zero without returning a default result", () => {
+    const search = new InMemorySearchFn({
+      fields: ["title"],
+    });
+
+    search.add({
+      id: "doc-1",
+      fields: { title: "Alpha" },
+    });
+
+    expect(search.searchDetailed("alpha", { limit: 0 })).toEqual([]);
+  });
 });

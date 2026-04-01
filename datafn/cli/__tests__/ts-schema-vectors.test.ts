@@ -67,7 +67,7 @@ describe("Test Vectors: TypeScript schema support (14 vectors)", () => {
 
   it("TV-TS-LOAD-001: Load schema from .datafn.ts with default export", () => {
     const schemaPath = join(workDir, "test-schema.datafn.ts");
-    const outputPath = join(workDir, "output.ts");
+    const outputDir = join(workDir, "output");
     writeFileSync(
       schemaPath,
       `
@@ -79,9 +79,9 @@ export default {
 };
 `
     );
-    const result = runCli(`generate-types --schema "${schemaPath}" --output "${outputPath}"`);
+    const result = runCli(`generate --adapter drizzle --database postgres --schema "${schemaPath}" --output "${outputDir}"`);
     expect(result).toContain("Types written to");
-    const out = readFileSync(outputPath, "utf-8");
+    const out = readFileSync(join(outputDir, "datafn-types.ts"), "utf-8");
     expect(out).toContain("export interface Task");
     expect(out).toContain("id: string;");
     expect(out).toContain("title: string;");
@@ -89,7 +89,7 @@ export default {
 
   it("TV-TS-LOAD-002: Load schema from .datafn.ts with named export", () => {
     const schemaPath = join(workDir, "named.datafn.ts");
-    const outputPath = join(workDir, "output.ts");
+    const outputDir = join(workDir, "output");
     writeFileSync(
       schemaPath,
       `
@@ -101,9 +101,9 @@ export const schema = {
 };
 `
     );
-    const result = runCli(`generate-types --schema "${schemaPath}" --output "${outputPath}"`);
+    const result = runCli(`generate --adapter drizzle --database postgres --schema "${schemaPath}" --output "${outputDir}"`);
     expect(result).toContain("Types written to");
-    const out = readFileSync(outputPath, "utf-8");
+    const out = readFileSync(join(outputDir, "datafn-types.ts"), "utf-8");
     expect(out).toContain("export interface Goal");
     expect(out).toContain("target: number;");
   });
@@ -113,7 +113,7 @@ export const schema = {
       join(workDir, "schema.datafn.ts"),
       "export default { resources: [{ name: 'user', version: 1, fields: [{ name: 'id', type: 'string', required: true }] }], relations: [] };"
     );
-    const result = runCli("generate-types", workDir);
+    const result = runCli("generate --adapter drizzle --database postgres", workDir);
     expect(result).toContain("Found schema: ./schema.datafn.ts");
     expect(result).toContain("Types written to");
     expect(readFileSync(join(workDir, "datafn-types.ts"), "utf-8")).toContain("User");
@@ -125,7 +125,7 @@ export const schema = {
       join(workDir, "src", "schema.datafn.ts"),
       "export default { resources: [{ name: 'post', version: 1, fields: [{ name: 'id', type: 'string', required: true }] }], relations: [] };"
     );
-    const result = runCli("generate-types", workDir);
+    const result = runCli("generate --adapter drizzle --database postgres", workDir);
     expect(result).toContain("Found schema: ./src/schema.datafn.ts");
     expect(readFileSync(join(workDir, "datafn-types.ts"), "utf-8")).toContain("Post");
   });
@@ -138,7 +138,7 @@ export const schema = {
         relations: [],
       })
     );
-    const result = runCli("generate-types", workDir, true);
+    const result = runCli("generate --adapter drizzle --database postgres", workDir, true);
     expect(result).toContain("Found schema: ./schema.json");
     expect(readFileSync(join(workDir, "datafn-types.ts"), "utf-8")).toContain("Comment");
   });
@@ -152,7 +152,7 @@ export const schema = {
       join(workDir, "schema.json"),
       JSON.stringify({ resources: [{ name: "json_resource", version: 1, fields: [] }], relations: [] })
     );
-    const result = runCli("generate-types", workDir);
+    const result = runCli("generate --adapter drizzle --database postgres", workDir);
     expect(result).toContain("Found schema: ./schema.datafn.ts");
     const out = readFileSync(join(workDir, "datafn-types.ts"), "utf-8");
     expect(out).toContain("TsResource");
@@ -179,18 +179,18 @@ export const schema = {
       `export default ${JSON.stringify(taskSchema)};`
     );
     writeFileSync(join(workDir, "schema.json"), JSON.stringify(taskSchema));
-    runCli(`generate-types --schema "${join(workDir, "schema.datafn.ts")}" --output "${join(workDir, "output-ts.ts")}"`);
-    runCli(`generate-types --schema "${join(workDir, "schema.json")}" --output "${join(workDir, "output-json.ts")}"`);
-    const tsOut = readFileSync(join(workDir, "output-ts.ts"), "utf-8");
-    const jsonOut = readFileSync(join(workDir, "output-json.ts"), "utf-8");
+    runCli(`generate --adapter drizzle --database postgres --schema "${join(workDir, "schema.datafn.ts")}" --output "${join(workDir, "output-ts")}"`);
+    runCli(`generate --adapter drizzle --database postgres --schema "${join(workDir, "schema.json")}" --output "${join(workDir, "output-json")}"`);
+    const tsOut = readFileSync(join(workDir, "output-ts", "datafn-types.ts"), "utf-8");
+    const jsonOut = readFileSync(join(workDir, "output-json", "datafn-types.ts"), "utf-8");
     expect(tsOut).toBe(jsonOut);
   });
 
   it("TV-TS-ERR-001: Reject .ts files without .datafn. extension", () => {
     const badPath = join(workDir, "schema.ts");
     writeFileSync(badPath, "export default { resources: [], relations: [] };");
-    expect(() => runCli(`generate-types --schema "${badPath}"`, process.cwd(), true)).toThrow();
-    const stderr = runCliStderr(`generate-types --schema "${badPath}"`, process.cwd(), true);
+    expect(() => runCli(`generate --adapter drizzle --database postgres --schema "${badPath}"`, process.cwd(), true)).toThrow();
+    const stderr = runCliStderr(`generate --adapter drizzle --database postgres --schema "${badPath}"`, process.cwd(), true);
     expect(stderr).toContain("Invalid schema file extension");
     expect(stderr).toContain("*.datafn.ts");
     expect(stderr).toContain(".datafn.ts extension for security");
@@ -204,14 +204,14 @@ export const schema = {
 const mySchema = { resources: [], relations: [] };
 `
     );
-    expect(() => runCli(`generate-types --schema "${noExportPath}"`)).toThrow();
-    const stderr = runCliStderr(`generate-types --schema "${noExportPath}"`);
+    expect(() => runCli(`generate --adapter drizzle --database postgres --schema "${noExportPath}"`)).toThrow();
+    const stderr = runCliStderr(`generate --adapter drizzle --database postgres --schema "${noExportPath}"`);
     expect(stderr).toMatch(/No schema export found|Invalid schema|Expected/);
   });
 
   it("TV-TS-ERR-003: Auto-discovery failure error", () => {
-    expect(() => runCli("generate-types", workDir, true)).toThrow();
-    const stderr = runCliStderr("generate-types", workDir, true);
+    expect(() => runCli("generate --adapter drizzle --database postgres", workDir, true)).toThrow();
+    const stderr = runCliStderr("generate --adapter drizzle --database postgres", workDir, true);
     expect(stderr).toContain("No schema file found");
     expect(stderr).toContain("schema.datafn.ts");
     expect(stderr).toContain("schema.json");
@@ -221,8 +221,8 @@ const mySchema = { resources: [], relations: [] };
   it("TV-TS-ERR-004: Invalid TypeScript syntax error", () => {
     const badPath = join(workDir, "invalid-syntax.datafn.ts");
     writeFileSync(badPath, "export default { resources: [ { name: 'broken' version: 1 } ], relations: [] };");
-    expect(() => runCli(`generate-types --schema "${badPath}"`)).toThrow();
-    const stderr = runCliStderr(`generate-types --schema "${badPath}"`);
+    expect(() => runCli(`generate --adapter drizzle --database postgres --schema "${badPath}"`)).toThrow();
+    const stderr = runCliStderr(`generate --adapter drizzle --database postgres --schema "${badPath}"`);
     expect(stderr).toContain("invalid-syntax.datafn.ts");
   });
 
@@ -232,8 +232,8 @@ const mySchema = { resources: [], relations: [] };
       badPath,
       "export default { resources: [ { name: 'invalid', version: 1 } ], relations: [] };"
     );
-    expect(() => runCli(`generate-types --schema "${badPath}"`)).toThrow();
-    const stderr = runCliStderr(`generate-types --schema "${badPath}"`);
+    expect(() => runCli(`generate --adapter drizzle --database postgres --schema "${badPath}"`)).toThrow();
+    const stderr = runCliStderr(`generate --adapter drizzle --database postgres --schema "${badPath}"`);
     expect(stderr).toMatch(/invalid|validation|SCHEMA|fields/i);
   });
 
@@ -244,18 +244,17 @@ const mySchema = { resources: [], relations: [] };
       "export default { resources: [{ name: 'item', version: 1, fields: [] }], relations: [] };"
     );
     const result = runCli(
-      `generate-types --schema "${join(workDir, "config", "custom-schema.datafn.ts")}" --output "${join(workDir, "types.ts")}"`
+      `generate --adapter drizzle --database postgres --schema "${join(workDir, "config", "custom-schema.datafn.ts")}" --output "${join(workDir, "types")}"`
     );
     expect(result).toContain("Types written to");
-    expect(readFileSync(join(workDir, "types.ts"), "utf-8")).toContain("Item");
+    expect(readFileSync(join(workDir, "types", "datafn-types.ts"), "utf-8")).toContain("Item");
   });
 
   it("TV-TS-HELP-001: Help text includes TypeScript documentation", () => {
-    const help = runCli("generate-types --help", process.cwd(), true);
+    const help = runCli("generate --help", process.cwd(), true);
     expect(help).toContain(".datafn.ts");
     expect(help).toContain("schema.datafn.ts");
-    expect(help).toContain("datafn generate-types");
-    expect(help).toMatch(/1\.\s*\.\/schema\.datafn\.ts/);
-    expect(help).toMatch(/2\.\s*\.\/src\/schema\.datafn\.ts/);
+    expect(help).toContain("datafn generate");
+    expect(help).toContain("--schema <path>");
   });
 });

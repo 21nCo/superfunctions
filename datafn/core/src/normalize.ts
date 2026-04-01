@@ -5,6 +5,20 @@
  * and deterministic comparisons.
  */
 
+const DISALLOWED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function createSafeRecord(): Record<string, unknown> {
+  return Object.create(null) as Record<string, unknown>;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 /**
  * Recursively normalizes a value:
  * - Sorts object keys alphabetically
@@ -29,11 +43,26 @@ export function normalizeDfql(value: unknown): unknown {
     return value.map((item) => normalizeDfql(item));
   }
 
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+  }
+
+  if (!isPlainObject(value)) {
+    const toJSON = (value as { toJSON?: () => unknown }).toJSON;
+    if (typeof toJSON === "function") {
+      return normalizeDfql(toJSON.call(value));
+    }
+    return value;
+  }
+
   // Object: sort keys, remove undefined values, recursively normalize
-  const normalized: Record<string, unknown> = {};
+  const normalized = createSafeRecord();
   const keys = Object.keys(value as Record<string, unknown>).sort();
 
   for (const key of keys) {
+    if (DISALLOWED_KEYS.has(key)) {
+      continue;
+    }
     const val = (value as Record<string, unknown>)[key];
     if (val !== undefined) {
       normalized[key] = normalizeDfql(val);
@@ -44,9 +73,9 @@ export function normalizeDfql(value: unknown): unknown {
 }
 
 /**
- * Returns a stable string key for a  DFQL value.
+ * Returns a stable string key for a DFQL value.
  * This is the canonical form used for caching and comparison.
  */
 export function dfqlKey(value: unknown): string {
-  return JSON.stringify(normalizeDfql(value));
+  return JSON.stringify(normalizeDfql(value)) ?? "undefined";
 }

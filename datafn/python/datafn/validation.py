@@ -206,15 +206,14 @@ def apply_defaults(record: Dict[str, Any], resource_name: str, schema_index: Sch
 def _count_filter_keys(filters: Any, depth: int = 0) -> int:
     if not isinstance(filters, dict):
         return 0
-    count = 0
+    count = sum(1 for key in filters if not key.startswith("$"))
+    nested_counts = [count]
     for key, value in filters.items():
         if key in ("$and", "$or"):
             if isinstance(value, list):
                 for item in value:
-                    count = max(count, _count_filter_keys(item, depth + 1))
-        elif not key.startswith("$"):
-            count += 1
-    return count
+                    nested_counts.append(_count_filter_keys(item, depth + 1))
+    return max(nested_counts)
 
 
 def validate_query_limits(query: Dict[str, Any], limits: Dict[str, Any]) -> Optional[DatafnError]:
@@ -234,9 +233,9 @@ def validate_query_limits(query: Dict[str, Any], limits: Dict[str, Any]) -> Opti
     max_filter_keys = limits.get("maxFilterKeysPerLevel", 20)
     filters = query.get("filters", {})
     if isinstance(filters, dict):
-        top_level_keys = sum(1 for k in filters if not k.startswith("$"))
-        if top_level_keys > max_filter_keys:
-            return DatafnError(code="LIMIT_EXCEEDED", message=f"Too many filter keys ({top_level_keys}), maximum is {max_filter_keys}")
+        filter_key_count = _count_filter_keys(filters)
+        if filter_key_count > max_filter_keys:
+            return DatafnError(code="LIMIT_EXCEEDED", message=f"Too many filter keys ({filter_key_count}), maximum is {max_filter_keys}")
 
     max_agg = limits.get("maxAggregations", 10)
     aggregations = query.get("aggregations", {})

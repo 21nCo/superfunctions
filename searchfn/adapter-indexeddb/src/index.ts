@@ -44,6 +44,7 @@ interface PostingInfo {
 interface DocTermEntry {
   field: string;
   term: string;
+  isPrefix?: boolean;
 }
 
 interface ResourceEngine {
@@ -57,8 +58,10 @@ interface ResourceEngine {
   postings: Map<string, Map<string, Map<string, PostingInfo>>>;
   dirtyPostings: Map<string, Set<string>>;
   fieldNames: Set<string>;
+  searchFields: string[] | null;
   docTerms: Map<string, DocTermEntry[]>;
   openPromise: Promise<void> | null;
+  mutationQueue: Promise<void>;
   vocabulary: Set<string>;
   fuzzyCache: Map<string, string[]>;
 }
@@ -128,8 +131,10 @@ export class IndexedDbAdapter implements SearchAdapter {
         postings: new Map(),
         dirtyPostings: new Map(),
         fieldNames: new Set(),
+        searchFields: null,
         docTerms: new Map(),
         openPromise: null,
+        mutationQueue: Promise.resolve(),
         vocabulary: new Set(),
         fuzzyCache: new Map(),
       };
@@ -156,7 +161,7 @@ export class IndexedDbAdapter implements SearchAdapter {
     distance: number,
   ): string[] {
     const cacheKey = `${term}:${distance}`;
-    let expansion = engine.fuzzyCache.get(cacheKey);
+    let expansion: string[] | undefined = engine.fuzzyCache.get(cacheKey);
     if (!expansion) {
       expansion = fuzzyExpand(term, distance, engine.vocabulary);
       engine.fuzzyCache.set(cacheKey, expansion);
@@ -167,7 +172,7 @@ export class IndexedDbAdapter implements SearchAdapter {
         }
       }
     }
-    return expansion;
+    return expansion ?? [];
   }
 
   private async ensureOpen(engine: ResourceEngine): Promise<void> {
@@ -177,6 +182,7 @@ export class IndexedDbAdapter implements SearchAdapter {
         await this.loadStats(engine);
         await this.loadDocTerms(engine);
         await this.loadFieldNames(engine);
+        await this.loadVocabulary(engine);
       })();
     }
     await engine.openPromise;
@@ -213,6 +219,20 @@ export class IndexedDbAdapter implements SearchAdapter {
     }
   }
 
+  private async loadVocabulary(engine: ResourceEngine): Promise<void> {
+    const buffer = await engine.storage.getCacheState("vocabulary");
+    if (!buffer) {
+      return;
+    }
+    const json = new TextDecoder().decode(buffer);
+    const terms = JSON.parse(json) as string[];
+    engine.vocabulary.clear();
+    for (const term of terms) {
+      engine.vocabulary.add(term);
+    }
+    engine.fuzzyCache.clear();
+  }
+
   private async persistStats(engine: ResourceEngine): Promise<void> {
     const encoded = new TextEncoder().encode(JSON.stringify(engine.statsManager.snapshot()));
     await engine.storage.putCacheState("document-stats", encoded.buffer);
@@ -230,6 +250,57 @@ export class IndexedDbAdapter implements SearchAdapter {
   private async persistFieldNames(engine: ResourceEngine): Promise<void> {
     const encoded = new TextEncoder().encode(JSON.stringify(Array.from(engine.fieldNames)));
     await engine.storage.putCacheState("field-names", encoded.buffer);
+  }
+
+  private async persistVocabulary(engine: ResourceEngine): Promise<void> {
+    this.refreshVocabulary(engine);
+    const encoded = new TextEncoder().encode(JSON.stringify(Array.from(engine.vocabulary)));
+    await engine.storage.putCacheState("vocabulary", encoded.buffer);
+  }
+
+  private refreshVocabulary(engine: ResourceEngine): void {
+    const previousVocabulary = new Set(engine.vocabulary);
+    const nextVocabulary = new Set<string>();
+    for (const terms of engine.docTerms.values()) {
+      for (const entry of terms) {
+        if (entry.isPrefix === false) {
+          nextVocabulary.add(entry.term);
+          continue;
+        }
+        // Legacy snapshots omitted `isPrefix`; only keep terms that were
+        // already known as searchable vocabulary before this refresh.
+        if (entry.isPrefix === undefined && previousVocabulary.has(entry.term)) {
+          nextVocabulary.add(entry.term);
+        }
+      }
+    }
+    const changed =
+      nextVocabulary.size !== previousVocabulary.size ||
+      Array.from(nextVocabulary).some((term) => !previousVocabulary.has(term));
+    engine.vocabulary.clear();
+    for (const term of nextVocabulary) {
+      engine.vocabulary.add(term);
+    }
+    if (changed || engine.fuzzyCache.size > 0) {
+      engine.fuzzyCache.clear();
+    }
+  }
+
+  private async withMutationLock<T>(
+    engine: ResourceEngine,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const previous = engine.mutationQueue;
+    let release!: () => void;
+    engine.mutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.catch(() => undefined);
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
   }
 
   private async loadTermFromDb(
@@ -381,6 +452,7 @@ export class IndexedDbAdapter implements SearchAdapter {
       this.persistStats(engine),
       this.persistDocTerms(engine),
       this.persistFieldNames(engine),
+      this.persistVocabulary(engine),
     ]);
   }
 
@@ -396,7 +468,9 @@ export class IndexedDbAdapter implements SearchAdapter {
     for (const field of fields) {
       const rawTokens = engine.pipeline.run(field, query);
       // Always filter out isPrefix-flagged pipeline tokens (edge-ngram artefacts at index time)
-      const filtered = rawTokens.filter((t) => !t.metadata?.isPrefix);
+      const filtered = rawTokens.filter(
+        (t: { metadata?: Record<string, unknown>; value: string }) => !t.metadata?.isPrefix,
+      );
       const fieldBoost = fieldBoosts?.[field] ?? 1.0;
       for (const token of filtered) {
         if (prefix) {
@@ -431,54 +505,56 @@ export class IndexedDbAdapter implements SearchAdapter {
     this.assertNotDisposed();
     this.assertNotAborted(signal, "Index operation");
     const engine = this.getOrCreateEngine(resource);
-    await this.ensureOpen(engine);
+    await this.withMutationLock(engine, async () => {
+      await this.ensureOpen(engine);
 
-    for (
-      let offset = 0;
-      offset < documents.length;
-      offset += IndexedDbAdapter.MAX_INDEX_BATCH_SIZE
-    ) {
-      this.assertNotAborted(signal, "Index operation");
-      const chunk = documents.slice(
-        offset,
-        offset + IndexedDbAdapter.MAX_INDEX_BATCH_SIZE,
-      );
-      for (const doc of chunk) {
+      for (
+        let offset = 0;
+        offset < documents.length;
+        offset += IndexedDbAdapter.MAX_INDEX_BATCH_SIZE
+      ) {
         this.assertNotAborted(signal, "Index operation");
-        const docId = String(doc.id);
-        if (engine.docTerms.has(docId)) {
-          await this.removeDocById(engine, docId);
-        }
-
-        const ingest = engine.indexer.ingest({ docId: doc.id, fields: doc.fields });
-        if (ingest.totalLength === 0) continue;
-
-        engine.statsManager.addDocument(doc.id, ingest.totalLength);
-
-        const docTermEntries: DocTermEntry[] = [];
-        for (const [field, termFrequencies] of ingest.fieldFrequencies.entries()) {
-          engine.fieldNames.add(field);
-          const metadata =
-            ingest.fieldMetadata.get(field) ?? new Map<string, Record<string, unknown>>();
-          for (const [term, frequency] of termFrequencies.entries()) {
-            const termMetadata = metadata.get(term);
-            this.upsertPosting(engine, field, term, docId, frequency, termMetadata);
-            const isPrefix =
-              termMetadata !== undefined && termMetadata["isPrefix"] === true;
-            if (!isPrefix) {
-              engine.vocabulary.add(term);
-              engine.fuzzyCache.clear();
-            }
-            docTermEntries.push({ field, term });
+        const chunk = documents.slice(
+          offset,
+          offset + IndexedDbAdapter.MAX_INDEX_BATCH_SIZE,
+        );
+        for (const doc of chunk) {
+          this.assertNotAborted(signal, "Index operation");
+          const docId = String(doc.id);
+          if (engine.docTerms.has(docId)) {
+            await this.removeDocById(engine, docId);
           }
+
+          const ingest = engine.indexer.ingest({ docId, fields: doc.fields });
+          if (ingest.totalLength === 0) continue;
+
+          engine.statsManager.addDocument(docId, ingest.totalLength);
+
+          const docTermEntries: DocTermEntry[] = [];
+          for (const [field, termFrequencies] of ingest.fieldFrequencies.entries()) {
+            engine.fieldNames.add(field);
+            const metadata =
+              ingest.fieldMetadata.get(field) ?? new Map<string, Record<string, unknown>>();
+            for (const [term, frequency] of termFrequencies.entries()) {
+              const termMetadata = metadata.get(term);
+              this.upsertPosting(engine, field, term, docId, frequency, termMetadata);
+              const isPrefix =
+                termMetadata !== undefined && termMetadata["isPrefix"] === true;
+              if (!isPrefix) {
+                engine.vocabulary.add(term);
+                engine.fuzzyCache.clear();
+              }
+              docTermEntries.push({ field, term, isPrefix });
+            }
+          }
+
+          engine.docTerms.set(docId, docTermEntries);
         }
-
-        engine.docTerms.set(docId, docTermEntries);
       }
-    }
 
-    this.updateTermCache(engine);
-    await this.persistAll(engine);
+      this.updateTermCache(engine);
+      await this.persistAll(engine);
+    });
   }
 
   async search(params: SearchParams): Promise<DocId[]> {
@@ -487,7 +563,7 @@ export class IndexedDbAdapter implements SearchAdapter {
     const engine = this.getOrCreateEngine(params.resource);
     await this.ensureOpen(engine);
 
-    const fields = params.fields ?? Array.from(engine.fieldNames);
+    const fields = params.fields ?? engine.searchFields ?? Array.from(engine.fieldNames);
     if (fields.length === 0) return [];
 
     const effectivePrefix = params.prefix ?? this.defaults.prefix;
@@ -506,41 +582,45 @@ export class IndexedDbAdapter implements SearchAdapter {
 
     const limit = Math.max(1, params.limit ?? 10);
     const result = await engine.queryEngine.execute(tokens, { limit });
-    return result.documents.map((d) => d.docId);
+    return result.documents.map((d: { docId: DocId }) => d.docId);
   }
 
   async remove({ resource, ids, signal }: RemoveParams): Promise<void> {
     this.assertNotDisposed();
     this.assertNotAborted(signal, "Remove operation");
-    const engine = this.engines.get(resource);
-    if (!engine) return;
-    await this.ensureOpen(engine);
+    const engine = this.getOrCreateEngine(resource);
+    await this.withMutationLock(engine, async () => {
+      await this.ensureOpen(engine);
 
-    for (const id of ids) {
-      this.assertNotAborted(signal, "Remove operation");
-      await this.removeDocById(engine, String(id));
-    }
+      for (const id of ids) {
+        this.assertNotAborted(signal, "Remove operation");
+        await this.removeDocById(engine, String(id));
+      }
 
-    engine.termCache.clear();
-    await this.persistAll(engine);
+      engine.termCache.clear();
+      await this.persistAll(engine);
+    });
   }
 
   async clear(resource: string, signal?: AbortSignal): Promise<void> {
     this.assertNotDisposed();
     this.assertNotAborted(signal, "Clear operation");
-    const engine = this.engines.get(resource);
-    if (!engine) return;
-    await this.ensureOpen(engine);
+    const engine = this.getOrCreateEngine(resource);
+    await this.withMutationLock(engine, async () => {
+      await this.ensureOpen(engine);
 
-    engine.postings.clear();
-    engine.dirtyPostings.clear();
-    engine.termCache.clear();
-    engine.statsManager.load([]);
-    engine.docTerms.clear();
-    engine.fieldNames.clear();
+      engine.postings.clear();
+      engine.dirtyPostings.clear();
+      engine.termCache.clear();
+      engine.statsManager.load([]);
+      engine.docTerms.clear();
+      engine.fieldNames.clear();
+      engine.vocabulary.clear();
+      engine.fuzzyCache.clear();
 
-    await engine.storage.clearStore("terms");
-    await engine.storage.clearStore("cacheState");
+      await engine.storage.clearStore("terms");
+      await engine.storage.clearStore("cacheState");
+    });
   }
 
   async searchAll(params: SearchAllParams): Promise<SearchAllResult[]> {
@@ -554,11 +634,11 @@ export class IndexedDbAdapter implements SearchAdapter {
 
     for (const resourceName of resourceNames) {
       this.assertNotAborted(params.signal, "SearchAll operation");
-      const engine = this.engines.get(resourceName);
+      const engine = params.resources ? this.getOrCreateEngine(resourceName) : this.engines.get(resourceName);
       if (!engine) continue;
       await this.ensureOpen(engine);
 
-      const fields = params.fields ?? Array.from(engine.fieldNames);
+      const fields = params.fields ?? engine.searchFields ?? Array.from(engine.fieldNames);
       if (fields.length === 0) continue;
 
       const effectivePrefix = params.prefix ?? this.defaults.prefix;
@@ -596,7 +676,22 @@ export class IndexedDbAdapter implements SearchAdapter {
     if (this.disposed) {
       this.disposed = false;
     }
+    const requested = new Set(resources.map((resource) => resource.name));
+    for (const [name, engine] of this.engines.entries()) {
+      if (requested.has(name)) {
+        continue;
+      }
+      await engine.mutationQueue.catch(() => undefined);
+      await engine.storage.close();
+      this.engines.delete(name);
+    }
     const engines = resources.map(({ name }) => this.getOrCreateEngine(name));
+    for (const resource of resources) {
+      const engine = this.engines.get(resource.name);
+      if (engine) {
+        engine.searchFields = [...resource.searchFields];
+      }
+    }
     await Promise.all(engines.map((engine) => this.ensureOpen(engine)));
   }
 

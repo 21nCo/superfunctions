@@ -23,7 +23,11 @@ function decodeVarint(buffer: Uint8Array, offset: number): [number, number] {
 
   while (pos < buffer.length) {
     const byte = buffer[pos];
-    result |= (byte & 0x7f) << shift;
+    const payload = byte & 0x7f;
+    if (shift === 28 && payload > 0x0f) {
+      throw new Error("Varint decoding overflow");
+    }
+    result |= payload << shift;
     pos += 1;
 
     if ((byte & 0x80) === 0) {

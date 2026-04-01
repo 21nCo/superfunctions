@@ -75,15 +75,40 @@ export function validateDemoCrossWorkspaceSharing(input: {
   workspaceId: DemoWorkspaceId;
   payload: unknown;
 }): ValidationResult {
-  const mutations = Array.isArray(input.payload) ? input.payload : [input.payload];
-
-  for (let index = 0; index < mutations.length; index += 1) {
-    const mutation = mutations[index];
-    if (typeof mutation !== "object" || mutation === null) {
-      continue;
+  const collectMutationEntries = (
+    value: unknown,
+    path: string,
+    acc: Array<{ entry: Record<string, unknown>; path: string }>,
+  ) => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        collectMutationEntries(item, `${path}[${index}]`, acc);
+      });
+      return;
     }
 
-    const entry = mutation as Record<string, unknown>;
+    if (typeof value !== "object" || value === null) {
+      return;
+    }
+
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.operation === "string") {
+      acc.push({ entry, path });
+    }
+
+    for (const [key, child] of Object.entries(entry)) {
+      if (Array.isArray(child) || (typeof child === "object" && child !== null)) {
+        const childPath = path === "$" ? `$.${key}` : `${path}.${key}`;
+        collectMutationEntries(child, childPath, acc);
+      }
+    }
+  };
+
+  const mutations: Array<{ entry: Record<string, unknown>; path: string }> = [];
+  collectMutationEntries(input.payload, "$", mutations);
+
+  for (const mutation of mutations) {
+    const entry = mutation.entry;
     const operation = entry.operation;
     if (operation !== "share" && operation !== "unshare") {
       continue;
@@ -100,9 +125,7 @@ export function validateDemoCrossWorkspaceSharing(input: {
         error: buildCrossWorkspaceError({
           fromWorkspaceId: input.workspaceId,
           targetWorkspaceId: parsed.targetWorkspaceId,
-          path: Array.isArray(input.payload)
-            ? `$[${index}].shareWith.principalId`
-            : "$.shareWith.principalId",
+          path: `${mutation.path}.shareWith.principalId`,
         }),
       };
     }

@@ -126,6 +126,11 @@ describe("validateFieldValue", () => {
     expect(validateFieldValue("date", 1767225600000, false)).toEqual({ ok: true });
   });
 
+  it("rejects invalid epoch numbers for date field", () => {
+    const result = validateFieldValue("date", Number.NaN, false);
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects non-ISO string for date field", () => {
     const result = validateFieldValue("date", "not-a-date", false);
     expect(result.ok).toBe(false);

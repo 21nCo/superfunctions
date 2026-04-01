@@ -77,6 +77,8 @@ export function createSearchClient(config: SearchClientConfig): SearchClient {
   if (!adapter) {
     throw new SearchClientValidationError("DFQL_INVALID", "adapter is required", "adapter");
   }
+  validateLimit(defaults.limit, "defaults.limit", MAX_LIMIT);
+  validateLimit(defaults.limitPerResource, "defaults.limitPerResource", MAX_LIMIT_PER_RESOURCE);
 
   const client: SearchClient = {
     async index(params: IndexParams): Promise<void> {
@@ -121,6 +123,16 @@ export function createSearchClient(config: SearchClientConfig): SearchClient {
         if (params.resources.length > MAX_RESOURCES_PER_SEARCH_ALL) {
           throw new SearchClientValidationError("LIMIT_EXCEEDED", `resources exceeds maximum of ${MAX_RESOURCES_PER_SEARCH_ALL}`, "resources");
         }
+        params.resources.forEach((resource: string, index: number) => {
+          try {
+            validateResource(resource);
+          } catch (error) {
+            if (error instanceof SearchClientValidationError) {
+              throw new SearchClientValidationError(error.code, error.message, `resources[${index}]`);
+            }
+            throw error;
+          }
+        });
       }
 
       const effectiveLimit = clampLimit(params.limit, defaults.limit ?? DEFAULT_LIMIT, MAX_LIMIT);

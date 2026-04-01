@@ -1,4 +1,5 @@
 import time
+import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 from ..envelope import ok_response, error_response, DatafnError, classify_error
 from ..validation import (
@@ -381,7 +382,13 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
         mutation_id = payload.get("mutationId")
 
         if client_id and mutation_id:
-            cached = await check_idempotency(config.db, namespace, client_id, mutation_id)
+            cached = await check_idempotency(
+                config.db,
+                namespace,
+                client_id,
+                mutation_id,
+                logger=logger,
+            )
             if cached:
                 cached_result = dict(cached)
                 cached_result["deduped"] = True
@@ -428,8 +435,12 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
             for change in changes:
                 try:
                     await _write_change(config.db, change, namespace)
-                except Exception:
-                    pass  # Change tracking failure is non-fatal
+                except Exception as e:
+                    if logger:
+                        logger.warn(
+                            "Change tracking failed",
+                            {"namespace": namespace, "change": change, "error": str(e)},
+                        )
 
         # Store Idempotency
         if client_id and mutation_id:
@@ -439,7 +450,15 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
 
         # Run after_mutation hooks
         if plugins:
-            await run_after_hook(plugins, "server", "after_mutation", ctx, payload, response, logger=logger)
+            response = await run_after_hook(
+                plugins,
+                "server",
+                "after_mutation",
+                ctx,
+                payload,
+                response,
+                logger=logger,
+            )
 
         if logger:
             logger.debug("Mutation completed", {"resource": resource})
@@ -452,10 +471,17 @@ async def _handle_single_mutation(ctx: Any, payload: Any, config: Any) -> Dict[s
         return e.to_envelope()
     except Exception as e:
         if logger:
-            logger.error("Mutation failed", {"code": "INTERNAL", "message": str(e)})
+            logger.error(
+                "Mutation failed",
+                {
+                    "code": "INTERNAL",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
         return error_response({
             "code": "INTERNAL",
-            "message": str(e),
+            "message": "Internal server error",
             "details": {}
         })
 
@@ -527,6 +553,12 @@ async def execute_mutation_core(
         affected_ids = []
         changes = []
         for i, rec in enumerate(records_list):
+            if not isinstance(rec, dict):
+                raise DatafnError(
+                    code="DFQL_INVALID",
+                    message="Record must be an object",
+                    details={"path": f"records[{i}]"},
+                )
             # Prototype pollution check
             poisoned = check_prototype_pollution(rec)
             if poisoned:
@@ -570,6 +602,12 @@ async def execute_mutation_core(
 
     # Single record path
     record = payload.get("record", {})
+    if not isinstance(record, dict):
+        raise DatafnError(
+            code="DFQL_INVALID",
+            message="Record must be an object",
+            details={"path": "record"},
+        )
 
     # Prototype pollution check
     poisoned = check_prototype_pollution(record)
@@ -649,8 +687,9 @@ async def execute_mutation_core(
             raise DatafnError(code=code, message=str(e), details={"path": "record"})
 
         rid = record.get("id")
-        affected_ids.append(rid)
-        changes.append({"table": resource, "operation": "insert", "recordId": rid})
+        if rid:
+            affected_ids.append(rid)
+            changes.append({"table": resource, "operation": "insert", "recordId": rid})
 
     elif operation == "merge":
         if not record_id:
@@ -730,6 +769,11 @@ async def execute_mutation_core(
             if key in readonly or key in RESERVED_FIELDS:
                 continue
             replace_record[key] = value
+
+        if existing:
+            for field in ("createdAt", "createdBy", "version"):
+                if field in existing:
+                    replace_record[field] = existing[field]
 
         # Type validation on the final replacement
         type_errors = validate_record_types(replace_record, resource, index)
@@ -817,19 +861,19 @@ async def execute_mutation_core(
     elif operation == "relate":
         if not record_id:
             raise DatafnError(code="DFQL_INVALID", message="Missing id", details={"path": "id"})
-        await execute_relate(db, index, payload)
+        await execute_relate(db, index, payload, namespace=namespace)
         affected_ids.append(record_id)
 
     elif operation == "modifyRelation":
         if not record_id:
             raise DatafnError(code="DFQL_INVALID", message="Missing id", details={"path": "id"})
-        await execute_modify_relation(db, index, payload)
+        await execute_modify_relation(db, index, payload, namespace=namespace)
         affected_ids.append(record_id)
 
     elif operation == "unrelate":
         if not record_id:
             raise DatafnError(code="DFQL_INVALID", message="Missing id", details={"path": "id"})
-        await execute_unrelate(db, index, payload)
+        await execute_unrelate(db, index, payload, namespace=namespace)
         affected_ids.append(record_id)
 
     else:

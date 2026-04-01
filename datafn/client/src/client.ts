@@ -2,7 +2,13 @@
  * DataFn client factory
  */
 
-import type { DatafnSchema, DatafnPlugin, SearchProvider } from "@datafn/core";
+import type {
+  DatafnEnvelope,
+  DatafnError,
+  DatafnSchema,
+  DatafnPlugin,
+  SearchProvider,
+} from "@datafn/core";
 import { validateSchema, buildSchemaIndex, evaluateFilter as coreEvaluateFilter } from "@datafn/core";
 import { EventBus, type EventHandler } from "./events/bus.js";
 import type { EventFilter } from "./events/filter.js";
@@ -10,11 +16,18 @@ import { createClientError } from "./errors.js";
 import { TableRegistry } from "./tables/registry.js";
 import type { DatafnTable } from "./tables/table.js";
 import { executeQuery } from "./query.js";
-import { executeMutation } from "./mutate.js";
+import {
+  executeMutation,
+  type MutationPushScheduler,
+} from "./mutate.js";
 import { executeTransact } from "./transact.js";
 import { SignalRegistry } from "./signals/querySignal.js";
 import { LiveSignalRegistry } from "./signals/liveSignal.js";
-import { createSyncFacade, type SyncFacade } from "./sync.js";
+import {
+  createSyncFacade,
+  type SyncControlMethods,
+  type SyncFacade,
+} from "./sync.js";
 import type { DatafnStorageAdapter, DatafnStorageFactory } from "./storage.js";
 import { DefaultHttpTransport } from "./transport/http.js";
 import { SyncEngine } from "./sync/engine.js";
@@ -41,7 +54,65 @@ export interface DatafnRemoteAdapter {
   search?(payload: unknown): Promise<unknown>;
 }
 
+export type DatafnSyncOwner = "javascript" | "native";
+
+export type DatafnNativeRemoteMode = "datafn-server" | "icloud";
+
+export interface DatafnBridgeEventEnvelope {
+  protocol: "datafn-bridge/v1";
+  event: string;
+  payload: unknown;
+}
+
+export interface DatafnNativeHandshakeRequest {
+  schemaHash: string;
+  namespace: string;
+  clientId: string;
+  remoteMode: DatafnNativeRemoteMode;
+  remoteProfile?: string;
+}
+
+export interface DatafnNativeHandshakeResult {
+  bridgeVersion: number;
+  schemaHash: string;
+  namespace: string;
+  storageBackend: "coredata";
+  syncOwner: "native";
+  remoteMode: DatafnNativeRemoteMode;
+  indexedDbDisabled: boolean;
+  cloudKitPrivateOnly?: boolean;
+  capabilities: string[];
+}
+
+export interface DatafnNativeSyncController {
+  readonly __datafnNativeBacked?: true;
+  handshake(
+    payload: DatafnNativeHandshakeRequest,
+  ): Promise<DatafnEnvelope<DatafnNativeHandshakeResult>>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  pullNow(): Promise<void>;
+  cloneNow(): Promise<void>;
+  reconcileNow(): Promise<void>;
+  schedulePush(): Promise<void>;
+  onEvent(handler: (event: DatafnBridgeEventEnvelope) => void): () => void;
+}
+
+export interface DatafnNativeSyncConfig {
+  syncController: DatafnNativeSyncController;
+  remoteMode: DatafnNativeRemoteMode;
+  failIfUnavailable?: boolean;
+  expectedSchemaHash?: string;
+  remoteProfile?: string;
+}
+
 export interface DatafnSyncConfig {
+  /**
+   * Select who owns remote synchronization for this client instance.
+   * Defaults to "javascript".
+   */
+  owner?: DatafnSyncOwner;
+
   /**
    * Enable offline support. Requires `storage` adapter.
    */
@@ -58,6 +129,12 @@ export interface DatafnSyncConfig {
    * Required for extension environments.
    */
   remoteAdapter?: DatafnRemoteAdapter;
+
+  /**
+   * Native-backed synchronization configuration.
+   * Required when `owner` is `"native"`.
+   */
+  native?: DatafnNativeSyncConfig;
 
   /**
    * Enable WebSocket updates.
@@ -175,6 +252,98 @@ export interface DatafnSyncConfig {
   skipCloneIndexing?: boolean;
 }
 
+function isNativeBackedBridgeValue(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { __datafnNativeBacked?: unknown }).__datafnNativeBacked === true
+  );
+}
+
+function deriveSearchProviderResources(
+  schema: DatafnSchema,
+): Array<{ name: string; searchFields: string[] }> {
+  const resources: Array<{ name: string; searchFields: string[] }> = [];
+  const seen = new Set<string>();
+
+  for (const [index, resource] of schema.resources.entries()) {
+    const searchPath = `schema.resources[${index}].indices.search`;
+    const rawSearchFields = Array.isArray(resource.indices)
+      ? []
+      : (resource.indices?.search ?? []);
+
+    if (!Array.isArray(rawSearchFields)) {
+      throw createClientError(
+        "DFQL_INVALID",
+        "Invalid schema search index configuration: search fields must be an array",
+        { path: searchPath },
+      );
+    }
+
+    const searchFields = rawSearchFields.map((field, fieldIndex) => {
+      if (typeof field !== "string" || field.trim().length === 0) {
+        throw createClientError(
+          "DFQL_INVALID",
+          "Invalid schema search index configuration: search fields must be non-empty strings",
+          { path: `${searchPath}[${fieldIndex}]` },
+        );
+      }
+      return field.trim();
+    });
+
+    if (searchFields.length === 0) {
+      continue;
+    }
+
+    const resourceName = resource.name.trim();
+    const normalizedResourceName = resourceName.toLowerCase();
+    if (seen.has(normalizedResourceName)) {
+      throw createClientError(
+        "DFQL_INVALID",
+        "Duplicate normalized search resource definitions are not allowed",
+        { path: "resources" },
+      );
+    }
+    seen.add(normalizedResourceName);
+
+    resources.push({
+      name: resourceName,
+      searchFields: Array.from(new Set(searchFields)),
+    });
+  }
+
+  return resources;
+}
+
+function normalizeClientErrorDetails(
+  details: unknown,
+  fallbackPath: string,
+): { path: string; [key: string]: unknown } {
+  if (
+    typeof details === "object" &&
+    details !== null &&
+    !Array.isArray(details)
+  ) {
+    const normalized = details as Record<string, unknown>;
+    const path =
+      typeof normalized.path === "string" ? normalized.path : fallbackPath;
+    return { ...normalized, path };
+  }
+
+  return { path: fallbackPath };
+}
+
+function throwBridgeClientError(
+  error: DatafnError,
+  fallbackPath: string,
+): never {
+  throw createClientError(
+    error.code,
+    error.message,
+    normalizeClientErrorDetails(error.details, fallbackPath),
+  );
+}
+
 export interface DatafnClientConfig<S extends DatafnSchema> {
   schema: S;
   /**
@@ -238,13 +407,7 @@ export type DatafnClient<S extends DatafnSchema> = {
   mutate(mutation: unknown | unknown[]): Promise<unknown>;
   transact(payload: unknown): Promise<unknown>;
   subscribe(handler: EventHandler, filter?: EventFilter): () => void;
-  sync: SyncFacade & {
-    start(): Promise<void>;
-    stop(): void;
-    pullNow(): Promise<void>;
-    cloneNow(): Promise<void>;
-    reconcileNow(): Promise<void>;
-  };
+  sync: SyncFacade & SyncControlMethods;
   kv: DatafnKvApi;
   /** Tear down client: stop sync, close connections, unsubscribe all, release resources. */
   destroy(): Promise<void>;
@@ -304,6 +467,8 @@ function _buildRawClient<S extends DatafnSchema>(
   // Validate Sync Config (CFG-001, CFG-002)
   // Note: We validate offlinability requires storage after resolving storage below
   if (config.sync) {
+    const syncOwner = config.sync.owner ?? "javascript";
+
     // Determine sync mode (default to "sync")
     const syncMode = config.sync.mode || "sync";
 
@@ -316,6 +481,16 @@ function _buildRawClient<S extends DatafnSchema>(
           { path: "sync" },
         );
       }
+    }
+
+    if (syncOwner === "native" && config.sync.remote) {
+      const message =
+        config.sync.native?.remoteMode === "icloud"
+          ? "native icloud mode forbids direct JavaScript remote ownership"
+          : "native sync owner forbids direct JavaScript remote ownership";
+      throw createClientError("DFQL_INVALID", message, {
+        path: "sync.remote",
+      });
     }
 
     // CFG-002: In local-only mode, forbid ws without remote/wsUrl
@@ -452,6 +627,142 @@ function _buildRawClient<S extends DatafnSchema>(
     );
   }
 
+  if (config.sync && (config.sync.owner ?? "javascript") === "native") {
+    const nativeConfig = config.sync.native;
+    const hasExpectedSchemaHash =
+      typeof nativeConfig?.expectedSchemaHash === "string" &&
+      nativeConfig.expectedSchemaHash.length > 0;
+
+    if (
+      !nativeConfig ||
+      !resolvedStorage ||
+      !config.sync.remoteAdapter ||
+      config.sync.offlinability !== true ||
+      !hasExpectedSchemaHash ||
+      !isNativeBackedBridgeValue(resolvedStorage) ||
+      !isNativeBackedBridgeValue(config.sync.remoteAdapter) ||
+      !isNativeBackedBridgeValue(nativeConfig.syncController)
+    ) {
+      throw createClientError(
+        "DFQL_INVALID",
+        "native sync owner requires native-backed storage, remoteAdapter, and native config",
+        { path: "sync.native" },
+      );
+    }
+  }
+
+  const resolvedSyncOwner = config.sync?.owner ?? "javascript";
+  const nativeSyncConfig =
+    resolvedSyncOwner === "native" ? config.sync?.native : undefined;
+  const nativeSyncController = nativeSyncConfig?.syncController;
+  const nativeNamespace = resolvedNamespace ?? "default";
+  const nativeBridgeInitPromise =
+    nativeSyncConfig && nativeSyncController
+      ? (async () => {
+          const handshake = await nativeSyncController.handshake({
+            schemaHash: nativeSyncConfig.expectedSchemaHash!,
+            namespace: nativeNamespace,
+            clientId: config.clientId,
+            remoteMode: nativeSyncConfig.remoteMode,
+            ...(nativeSyncConfig.remoteProfile !== undefined
+              ? { remoteProfile: nativeSyncConfig.remoteProfile }
+              : {}),
+          });
+
+          if (!handshake.ok) {
+            if (
+              nativeSyncConfig.failIfUnavailable !== false ||
+              handshake.error.code !== "BRIDGE_UNAVAILABLE"
+            ) {
+              throwBridgeClientError(handshake.error, "sync.native");
+            }
+            return;
+          }
+
+          const result = handshake.result;
+
+          if (result.bridgeVersion !== 1) {
+            throw createClientError(
+              "BRIDGE_PROTOCOL_MISMATCH",
+              "Native bridge protocol version mismatch",
+              {
+                path: "sync.native",
+                expectedBridgeVersion: 1,
+                actualBridgeVersion: result.bridgeVersion,
+              },
+            );
+          }
+
+          if (result.schemaHash !== nativeSyncConfig.expectedSchemaHash) {
+            throw createClientError(
+              "BRIDGE_PROTOCOL_MISMATCH",
+              "Native bridge schema hash mismatch",
+              {
+                path: "sync.native.expectedSchemaHash",
+                expectedSchemaHash: nativeSyncConfig.expectedSchemaHash,
+                actualSchemaHash: result.schemaHash,
+              },
+            );
+          }
+
+          if (result.namespace !== nativeNamespace) {
+            throw createClientError(
+              "BRIDGE_PROTOCOL_MISMATCH",
+              "Native bridge namespace mismatch",
+              {
+                path: "namespace",
+                expectedNamespace: nativeNamespace,
+                actualNamespace: result.namespace,
+              },
+            );
+          }
+
+          if (result.syncOwner !== "native") {
+            throw createClientError(
+              "BRIDGE_PROTOCOL_MISMATCH",
+              "Native bridge did not accept native sync ownership",
+              { path: "sync.owner", actualSyncOwner: result.syncOwner },
+            );
+          }
+
+          if (result.storageBackend !== "coredata") {
+            throw createClientError(
+              "BRIDGE_PROTOCOL_MISMATCH",
+              "Native bridge reported an unsupported storage backend",
+              {
+                path: "sync.native",
+                storageBackend: result.storageBackend,
+              },
+            );
+          }
+
+          if (result.remoteMode !== nativeSyncConfig.remoteMode) {
+            throw createClientError(
+              "BRIDGE_PROTOCOL_MISMATCH",
+              "Native bridge remote mode mismatch",
+              {
+                path: "sync.native.remoteMode",
+                expectedRemoteMode: nativeSyncConfig.remoteMode,
+                actualRemoteMode: result.remoteMode,
+              },
+            );
+          }
+
+          if (result.indexedDbDisabled !== true) {
+            throw createClientError(
+              "BRIDGE_PROTOCOL_MISMATCH",
+              "Native bridge must disable IndexedDB persistence",
+              { path: "sync.native", indexedDbDisabled: result.indexedDbDisabled },
+            );
+          }
+        })()
+      : Promise.resolve();
+  nativeBridgeInitPromise.catch(() => {});
+
+  const awaitNativeBridgeReady = async (): Promise<void> => {
+    await nativeBridgeInitPromise;
+  };
+
   // STORAGE-INIT-001: Validate storage has all required resource stores.
   // Probes each resource with a lightweight getRecord call. If a store is
   // missing (e.g. schema was not passed to IndexedDbStorageAdapter), this
@@ -460,6 +771,7 @@ function _buildRawClient<S extends DatafnSchema>(
   // Defined before localOnlyInitPromise so that it can be awaited first.
   const storageValidationPromise = resolvedStorage
     ? (async () => {
+        await awaitNativeBridgeReady();
         for (const resource of schema.resources) {
           if (resource.isRemoteOnly) continue;
           try {
@@ -515,12 +827,10 @@ function _buildRawClient<S extends DatafnSchema>(
   // This promise is awaited by query/mutate/search so init failures surface deterministically.
   const searchProviderInitPromise = (async () => {
     if (!config.searchProvider?.initialize) return;
-    const resources = schema.resources
-      .map((resource) => ({
-        name: resource.name,
-        searchFields: Array.isArray(resource.indices) ? [] : (resource.indices?.search ?? []),
-      }))
-      .filter((resource) => resource.searchFields.length > 0);
+    if (isNativeBackedBridgeValue(config.searchProvider)) {
+      await awaitNativeBridgeReady();
+    }
+    const resources = deriveSearchProviderResources(schema);
     await config.searchProvider.initialize({ resources });
   })();
   searchProviderInitPromise.catch(() => {});
@@ -528,6 +838,7 @@ function _buildRawClient<S extends DatafnSchema>(
   // Resolve remote adapter (CFG-001)
   let remote: DatafnRemoteAdapter;
   let extensionSubscriptionManager: ExtensionSubscriptionManager | undefined;
+  let extensionEventUnsubscribe: (() => void) | undefined;
 
   if (config.sync?.remoteAdapter) {
     // Precedence 1: Use provided remoteAdapter
@@ -539,7 +850,7 @@ function _buildRawClient<S extends DatafnSchema>(
       const extAdapter = remote as any; // Has onEvent, subscribeRemote, unsubscribeRemote methods
 
       // Wire inbound remote events into local event bus
-      extAdapter.onEvent((delivery: { subscriptionId: string; event: any }) => {
+      extensionEventUnsubscribe = extAdapter.onEvent((delivery: { subscriptionId: string; event: any }) => {
         // Emit the remote event into local event bus
         // The event is already in DatafnEvent format from background
         eventBus.emit(delivery.event);
@@ -621,7 +932,11 @@ function _buildRawClient<S extends DatafnSchema>(
 
   // Create SyncEngine (for offline push)
   let syncEngine: SyncEngine | undefined;
-  if (config.sync?.offlinability && resolvedStorage) {
+  if (
+    config.sync?.offlinability &&
+    resolvedStorage &&
+    resolvedSyncOwner !== "native"
+  ) {
     syncEngine = new SyncEngine(
       resolvedStorage,
       remote,
@@ -634,6 +949,17 @@ function _buildRawClient<S extends DatafnSchema>(
       config.searchProvider,
     );
   }
+
+  const schedulePush: MutationPushScheduler | undefined = nativeSyncController
+    ? async () => {
+        await awaitNativeBridgeReady();
+        await nativeSyncController.schedulePush();
+      }
+    : syncEngine
+      ? () => {
+          syncEngine.schedulePush();
+        }
+      : undefined;
 
   // Create base sync facade
   const baseSync = createSyncFacade(
@@ -655,31 +981,62 @@ function _buildRawClient<S extends DatafnSchema>(
   );
 
   // Enhanced sync facade with start/stop/pullNow/cloneNow/reconcileNow
-  const sync = {
+  const sync: SyncFacade & SyncControlMethods = {
     ...baseSync,
     async start() {
+      if (nativeSyncController) {
+        await awaitNativeBridgeReady();
+        await nativeSyncController.start();
+        return;
+      }
       if (syncEngine) {
         await syncEngine.start();
       }
     },
     stop() {
+      if (nativeSyncController) {
+        void awaitNativeBridgeReady()
+          .then(() => nativeSyncController.stop())
+          .catch(() => {});
+        return;
+      }
       if (syncEngine) {
         syncEngine.stop();
       }
     },
     async pullNow() {
+      if (nativeSyncController) {
+        await awaitNativeBridgeReady();
+        await nativeSyncController.pullNow();
+        return;
+      }
       if (syncEngine) {
         await syncEngine.pullNow();
       }
     },
     async cloneNow() {
+      if (nativeSyncController) {
+        await awaitNativeBridgeReady();
+        await nativeSyncController.cloneNow();
+        return;
+      }
       if (syncEngine) {
         await syncEngine.cloneNow();
       }
     },
     async reconcileNow() {
+      if (nativeSyncController) {
+        await awaitNativeBridgeReady();
+        await nativeSyncController.reconcileNow();
+        return;
+      }
       if (syncEngine) {
         await syncEngine.reconcileNow();
+      }
+    },
+    async schedulePush() {
+      if (schedulePush) {
+        await schedulePush();
       }
     },
   };
@@ -689,12 +1046,13 @@ function _buildRawClient<S extends DatafnSchema>(
 
   // Client lifecycle state (CLN-001)
   let destroyed = false;
+  let destroying = false;
   
   /**
    * Guard method to ensure client is not destroyed
    */
   const guardDestroyed = () => {
-    if (destroyed) {
+    if (destroyed || destroying) {
       throw createClientError(
         "DFQL_INVALID",
         "Client has been destroyed",
@@ -756,6 +1114,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async query(q: unknown | unknown[]) {
       guardDestroyed();
+      await awaitNativeBridgeReady();
       await searchProviderInitPromise;
       await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
@@ -766,6 +1125,7 @@ function _buildRawClient<S extends DatafnSchema>(
         config.plugins || [],
         schema,
         schemaIndex,
+        nativeSyncConfig?.remoteMode,
       );
     },
 
@@ -779,7 +1139,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async transact(payload: unknown) {
       guardDestroyed();
-      return executeTransact(remote, payload);
+      return executeTransact(remote, payload, awaitNativeBridgeReady);
     },
 
     /**
@@ -787,6 +1147,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async mutate(mutation: unknown | unknown[]) {
       guardDestroyed();
+      await awaitNativeBridgeReady();
       await searchProviderInitPromise;
       await storageValidationPromise; // STORAGE-INIT-001: fail fast if stores are missing
       await localOnlyInitPromise; // Ensure hydration state is ready in local-only mode
@@ -798,7 +1159,7 @@ function _buildRawClient<S extends DatafnSchema>(
         resolvedStorage,
         config.plugins || [],
         schema,
-        syncEngine,
+        schedulePush,
         config.sync?.offlinability,
         config.clientId,
         debouncerMap,
@@ -816,19 +1177,32 @@ function _buildRawClient<S extends DatafnSchema>(
       // EXT-001: If using extension adapter with subscription manager, register with remote
       if (extensionSubscriptionManager) {
         let remoteUnsub: (() => Promise<void>) | undefined;
+        let unsubscribed = false;
 
         // Register with remote subscription manager (async)
         extensionSubscriptionManager
           .registerSubscriber(filter)
           .then((unsub) => {
+            if (unsubscribed || destroying || destroyed) {
+              unsub().catch((err) => {
+                console.error("Failed to unsubscribe from remote:", err);
+              });
+              return;
+            }
             remoteUnsub = unsub;
           })
           .catch((err) => {
-            console.error("Failed to register remote subscription:", err);
+            if (!unsubscribed) {
+              console.error("Failed to register remote subscription:", err);
+            }
           });
 
         // Return combined unsubscribe that cleans up both local and remote
         return () => {
+          if (unsubscribed) {
+            return;
+          }
+          unsubscribed = true;
           localUnsub();
           if (remoteUnsub) {
             remoteUnsub().catch((err) => {
@@ -845,43 +1219,64 @@ function _buildRawClient<S extends DatafnSchema>(
      * Tear down client: stop sync, close connections, unsubscribe all, release resources (CLN-001)
      */
     async destroy() {
-      if (destroyed) return;
-      
-      // 1. Flush all pending debounced mutations (DEB-001)
-      await debouncerMap.flushAll();
-      
-      // 2. Stop sync engine
-      if (syncEngine) {
-        syncEngine.stop();
-      }
-      
-      // 3. Dispose all signals
-      signalRegistry.disposeAll();
-      
-      // 4. Close cross-tab relay (TAB-001)
-      if (crossTabRelay) {
-        crossTabRelay.close();
-      }
-      
-      // 5. Clear event bus
-      eventBus.clear();
-      
-      // 6. Close storage
-      if (resolvedStorage) {
-        await resolvedStorage.close();
-      }
+      if (destroyed || destroying) return;
+      destroying = true;
 
-      // 7. Dispose search provider (best-effort)
-      if (config.searchProvider?.dispose) {
-        try {
-          await config.searchProvider.dispose();
-        } catch {
-          // Best-effort cleanup: do not block destroy()
+      try {
+        // 1. Flush all pending debounced mutations (DEB-001)
+        await debouncerMap.flushAll();
+
+        // 2. Stop sync engine
+        if (nativeSyncController) {
+          try {
+            await awaitNativeBridgeReady();
+            await nativeSyncController.stop();
+          } catch {
+            // Best-effort cleanup if the bridge is already unavailable.
+          }
+        } else if (syncEngine) {
+          syncEngine.stop();
         }
+
+        // 3. Dispose all signals
+        signalRegistry.disposeAll();
+
+        // 4. Close cross-tab relay (TAB-001)
+        if (crossTabRelay) {
+          crossTabRelay.close();
+        }
+
+        // 5. Close extension subscriptions and event listeners
+        if (extensionSubscriptionManager) {
+          try {
+            await extensionSubscriptionManager.closeAll();
+          } catch {
+            // Best-effort cleanup: do not block destroy()
+          }
+        }
+        extensionEventUnsubscribe?.();
+
+        // 6. Clear event bus
+        eventBus.clear();
+
+        // 7. Close storage
+        if (resolvedStorage) {
+          await resolvedStorage.close();
+        }
+
+        // 8. Dispose search provider (best-effort)
+        if (config.searchProvider?.dispose) {
+          try {
+            await config.searchProvider.dispose();
+          } catch {
+            // Best-effort cleanup: do not block destroy()
+          }
+        }
+      } finally {
+        // Mark the client unusable even if a cleanup step throws.
+        destroyed = true;
+        destroying = false;
       }
-      
-      // 8. Set destroyed flag
-      destroyed = true;
     },
 
     /**
@@ -889,6 +1284,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async clear() {
       guardDestroyed();
+      await awaitNativeBridgeReady();
       
       if (resolvedStorage) {
         // 1. Clear all data
@@ -924,6 +1320,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async exportData(options?: { resources?: string[] }): Promise<DatafnExportPayload> {
       guardDestroyed();
+      await awaitNativeBridgeReady();
       
       if (!resolvedStorage) {
         throw createClientError(
@@ -944,6 +1341,7 @@ function _buildRawClient<S extends DatafnSchema>(
       options?: { triggerCloneUp?: boolean }
     ): Promise<DatafnImportResult> {
       guardDestroyed();
+      await awaitNativeBridgeReady();
       
       if (!resolvedStorage) {
         throw createClientError(
@@ -958,6 +1356,7 @@ function _buildRawClient<S extends DatafnSchema>(
 
     async search(params: unknown): Promise<unknown> {
       guardDestroyed();
+      await awaitNativeBridgeReady();
       await searchProviderInitPromise;
 
       if (typeof params !== "object" || params === null || Array.isArray(params)) {
@@ -1243,6 +1642,7 @@ function _buildRawClient<S extends DatafnSchema>(
      */
     async checkHealth(): Promise<{ ok: boolean; issues: string[]; action?: "none" | "reclone" }> {
       guardDestroyed();
+      await awaitNativeBridgeReady();
       
       // Wait for local-only init to complete
       await localOnlyInitPromise;
@@ -1338,7 +1738,11 @@ export function createDatafnClient<S extends DatafnSchema>(
   let currentConfig = config;
   let isDestroyed = false;
   let switchInProgress = false;
-  let switchQueue: Array<() => Promise<void>> = [];
+  let switchQueue: Array<{
+    overrides: SwitchContextOverride;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }> = [];
   const subscribers = new Set<(c: DatafnClient<S>) => void>();
 
   const liveRegistry = new LiveSignalRegistry();
@@ -1418,17 +1822,29 @@ export function createDatafnClient<S extends DatafnSchema>(
   let outer: DatafnClient<S>;
 
   async function performSwitch(overrides: SwitchContextOverride): Promise<void> {
-    await realClient.destroy();
-
-    // Build new config by applying overrides
+    const previousClient = realClient;
     const newConfig: DatafnClientConfig<S> = {
       ...currentConfig,
       ...(overrides.namespace !== undefined ? { namespace: overrides.namespace } : {}),
       ...(overrides.sync !== undefined ? { sync: overrides.sync } : {}),
       ...(overrides.storage !== undefined ? { storage: overrides.storage } : {}),
     };
+    let nextClient: DatafnClient<S> | undefined;
+
+    try {
+      nextClient = _buildRawClient(newConfig);
+      if (newConfig.sync?.mode === "sync") {
+        await nextClient.sync.start();
+      }
+    } catch (error) {
+      if (nextClient) {
+        await nextClient.destroy().catch(() => {});
+      }
+      throw error;
+    }
+
     currentConfig = newConfig;
-    realClient = _buildRawClient(newConfig);
+    realClient = nextClient;
 
     // Rebind all LiveSignals to the new realClient BEFORE notifying subscribers (PROXY-006).
     // Ordering is critical: factories use the updated realClient, and subscribers see rebound signals.
@@ -1439,9 +1855,31 @@ export function createDatafnClient<S extends DatafnSchema>(
       fn(outer);
     }
 
-    // Auto-start sync when switching into sync mode
-    if (newConfig.sync?.mode === "sync") {
-      await realClient.sync.start();
+    try {
+      await previousClient.destroy();
+    } catch {
+      // Best-effort cleanup: the new client is already active.
+    }
+  }
+
+  async function drainQueuedSwitches(): Promise<void> {
+    while (switchQueue.length > 0) {
+      const next = switchQueue.shift();
+      if (!next) continue;
+
+      try {
+        await performSwitch(next.overrides);
+        next.resolve();
+      } catch (error) {
+        next.reject(error);
+      }
+    }
+  }
+
+  function rejectQueuedSwitches(error: unknown): void {
+    while (switchQueue.length > 0) {
+      const next = switchQueue.shift();
+      next?.reject(error);
     }
   }
 
@@ -1452,20 +1890,17 @@ export function createDatafnClient<S extends DatafnSchema>(
 
     if (switchInProgress) {
       return new Promise<void>((resolve, reject) => {
-        switchQueue.push(async () => {
-          try { await performSwitch(overrides); resolve(); }
-          catch (err) { reject(err); }
-        });
+        switchQueue.push({ overrides, resolve, reject });
       });
     }
 
     switchInProgress = true;
     try {
       await performSwitch(overrides);
-      while (switchQueue.length > 0) {
-        const next = switchQueue.shift();
-        if (next) await next();
-      }
+      await drainQueuedSwitches();
+    } catch (error) {
+      rejectQueuedSwitches(error);
+      throw error;
     } finally {
       switchInProgress = false;
     }

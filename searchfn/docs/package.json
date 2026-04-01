@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 6002",
-    "prebuild": "node ./scripts/ensure-styled-jsx.mjs && fumadocs-mdx",
+    "prebuild": "npm --prefix ../../packages/docs-theme run build && node ./scripts/ensure-styled-jsx.mjs && fumadocs-mdx",
     "build": "next build",
     "start": "next start"
   },
@@ -30,6 +30,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10",
+    "eslint": "^10.1.0",
     "postcss": "^8",
     "tailwindcss": "^4",
     "typescript": "^5"

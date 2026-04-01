@@ -18,16 +18,19 @@ function makeMockBus(): MessageBus & { handlers: Set<(msg: unknown) => void> } {
 }
 
 describe("SCA-003: Extension transport request timeout", () => {
-  it("rejects with timeout error after configured timeout", async () => {
+  it("resolves a transport error envelope after configured timeout", async () => {
     const bus = makeMockBus();
     const adapter = createExtensionTransport(bus, { timeout: 50 });
 
     // Make a query that will never get a response
     const promise = adapter.query({ resource: "test" });
 
-    await expect(promise).rejects.toMatchObject({
-      code: "TIMEOUT",
-      message: expect.stringContaining("timed out after 50ms"),
+    await expect(promise).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "TRANSPORT_ERROR",
+        message: expect.stringContaining("timed out after 50ms"),
+      },
     });
   });
 
@@ -51,7 +54,7 @@ describe("SCA-003: Extension transport request timeout", () => {
     const bus = makeMockBus();
     const adapter = createExtensionTransport(bus, { timeout: 50 });
 
-    const promise = adapter.query({ resource: "test" }).catch(() => {});
+    const promise = adapter.query({ resource: "test" });
     await new Promise(r => setTimeout(r, 60));
     await promise;
 

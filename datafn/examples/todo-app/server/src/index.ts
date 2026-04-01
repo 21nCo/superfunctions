@@ -133,6 +133,7 @@ async function main() {
       const records = await adapter.findMany({
         model: resource as string,
         where: [],
+        namespace: "multiclienttest",
       });
       if (records.length > 0) {
         await searchProvider.updateIndices({
@@ -181,4 +182,7 @@ async function main() {
   serve({ fetch: app.fetch, port });
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

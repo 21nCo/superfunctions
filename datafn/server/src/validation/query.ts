@@ -43,7 +43,7 @@ export function validateQuery(
   limits?: QueryValidationLimits,
 ): ValidationResult<void> {
   if (typeof query !== "object" || query === null || Array.isArray(query)) {
-    return vErr("DFQL_INVALID", "Invalid DFQL: expected object or array", basePath);
+    return vErr("DFQL_INVALID", "Invalid DFQL: expected object", basePath);
   }
 
   const q = query as Record<string, unknown>;
@@ -134,7 +134,7 @@ export function validateQuery(
   // Validate cursor and sort tie-breaker
   if (q.cursor && typeof q.cursor === "object") {
     const cursor = q.cursor as Record<string, unknown>;
-    const hasCursor = cursor.after || cursor.before;
+    const hasCursor = cursor.after !== undefined || cursor.before !== undefined;
 
     if (hasCursor) {
         if (!q.sort) {
@@ -498,10 +498,10 @@ function validateCursor(
   cursor: Record<string, unknown>,
   sort: unknown,
 ): ValidationResult<void> {
-  if (cursor.after && (typeof cursor.after !== "object" || cursor.after === null)) {
+  if (cursor.after !== undefined && (typeof cursor.after !== "object" || cursor.after === null)) {
       return vErr("DFQL_INVALID", "Invalid DFQL: cursor.after must be object", "cursor.after");
   }
-  if (cursor.before && (typeof cursor.before !== "object" || cursor.before === null)) {
+  if (cursor.before !== undefined && (typeof cursor.before !== "object" || cursor.before === null)) {
       return vErr("DFQL_INVALID", "Invalid DFQL: cursor.before must be object", "cursor.before");
   }
   return vOk(undefined);
@@ -546,7 +546,10 @@ function validateGroupBy(
   // Reject relation expansions in select if groupBy is present
   if (q.select && Array.isArray(q.select)) {
     for (let i = 0; i < q.select.length; i++) {
-      const token = q.select[i] as string;
+      const token = q.select[i];
+      if (typeof token !== "string") {
+        continue;
+      }
       if (token.includes(".*") || token.includes(".**") || token.endsWith(".#")) {
         return vErr(
           "DFQL_UNSUPPORTED",

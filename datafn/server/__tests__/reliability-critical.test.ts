@@ -3,12 +3,13 @@
  * Tests for REL-001, REL-002, REL-003
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createDatafnServer } from "../src/server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { executeTransaction } from "../src/execution/transact.js";
 import { executePush } from "../src/execution/sync/push.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
+import * as mutationExecution from "../src/execution/mutation/execute.js";
 import type { DatafnSchema } from "@datafn/core";
 
 const testSchema: DatafnSchema = {
@@ -19,6 +20,17 @@ const testSchema: DatafnSchema = {
       fields: [
         { name: "title", type: "string", required: true },
       ],
+    },
+  ],
+};
+
+const capabilitySchema: DatafnSchema = {
+  resources: [
+    {
+      name: "tasks",
+      version: 1,
+      capabilities: ["timestamps", "audit"] as any,
+      fields: [{ name: "title", type: "string", required: true }],
     },
   ],
 };
@@ -95,6 +107,37 @@ describe("REL-001: Transaction atomicity — no silent fallthrough", () => {
     // The key assertion for REL-001: the response should NOT have code "INTERNAL"
     // at the top level — sequential execution was used, not a transaction failure
     expect(body.error?.code).not.toBe("INTERNAL");
+  });
+
+  it("guards nullish thrown values when mapping transact step errors", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    delete (db as any).transaction;
+    const executeMutationSpy = vi.spyOn(mutationExecution, "executeMutation")
+      .mockRejectedValueOnce(null);
+    const idempotencyStore = makeMemoryIdempotencyStore();
+
+    const result = await executeTransaction(
+      {
+        atomic: true,
+        steps: [
+          { mutation: { resource: "tasks", operation: "insert", id: "t1", record: { title: "A" } } as any },
+        ],
+      },
+      testSchema,
+      db,
+      idempotencyStore,
+      undefined,
+      "default",
+      undefined,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.result?.ok).toBe(false);
+    expect(result.result?.results[0].error.code).toBe("INTERNAL");
+    expect(result.result?.results[0].error.message).toBe("null");
+
+    executeMutationSpy.mockRestore();
+    vi.restoreAllMocks();
   });
 });
 
@@ -268,6 +311,56 @@ describe("REL-002: Push change tracking failure propagation", () => {
     expect(result.applied).toContain("m1");
     expect(result.errors.length).toBe(0);
     expect(callCount).toBeGreaterThanOrEqual(2);
+
+    recordChangeSpy.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  it("replace change records use the persisted row when upsert creates a record", async () => {
+    const db = memoryAdapter({ libraryNamespace: "datafn" });
+    const idempotencyStore = makeMemoryIdempotencyStore();
+    const recordChangeSpy = vi.spyOn(ChangeTrackingService.prototype, "recordChange")
+      .mockResolvedValue(undefined);
+    vi.spyOn(ChangeTrackingService.prototype, "getNextServerSeq").mockResolvedValue(1);
+    vi.spyOn(ChangeTrackingService.prototype, "getCurrentServerSeq").mockResolvedValue(0);
+
+    const result = await executePush(
+      {
+        clientId: "c1",
+        mutations: [
+          {
+            clientId: "c1",
+            mutationId: "m-replace",
+            resource: "tasks",
+            operation: "replace",
+            id: "t-replace",
+            record: { title: "A" },
+          },
+        ],
+      },
+      capabilitySchema,
+      db,
+      idempotencyStore,
+      "default",
+      undefined,
+      undefined,
+      "user:alice",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.applied).toContain("m-replace");
+    expect(result.errors).toHaveLength(0);
+    expect(recordChangeSpy).toHaveBeenCalledTimes(1);
+    const [entry] = recordChangeSpy.mock.calls[0];
+    expect(entry.op).toBe("replace");
+    expect(entry.record).toEqual(
+      expect.objectContaining({
+        id: "t-replace",
+        title: "A",
+        createdBy: "user:alice",
+      }),
+    );
+    expect(typeof entry.record?.createdAt).toBe("number");
 
     recordChangeSpy.mockRestore();
     vi.restoreAllMocks();

@@ -33,10 +33,20 @@ const DEFAULT_RETRY_POLICY: NormalizedRetryPolicy = {
   maxDelayMs: 5_000,
 };
 
+function normalizeFiniteInteger(value: number | undefined, fallback: number, min: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.floor(value));
+}
+
 export function normalizeRetryPolicy(policy?: RetryPolicy): NormalizedRetryPolicy {
-  const maxRetries = Math.max(0, Math.floor(policy?.maxRetries ?? DEFAULT_RETRY_POLICY.maxRetries));
-  const baseDelayMs = Math.max(1, Math.floor(policy?.baseDelayMs ?? DEFAULT_RETRY_POLICY.baseDelayMs));
-  const maxDelayMs = Math.max(baseDelayMs, Math.floor(policy?.maxDelayMs ?? DEFAULT_RETRY_POLICY.maxDelayMs));
+  const maxRetries = normalizeFiniteInteger(policy?.maxRetries, DEFAULT_RETRY_POLICY.maxRetries, 0);
+  const baseDelayMs = normalizeFiniteInteger(policy?.baseDelayMs, DEFAULT_RETRY_POLICY.baseDelayMs, 1);
+  const maxDelayMs = Math.max(
+    baseDelayMs,
+    normalizeFiniteInteger(policy?.maxDelayMs, DEFAULT_RETRY_POLICY.maxDelayMs, 1),
+  );
 
   return {
     maxRetries,
@@ -65,7 +75,8 @@ export async function runWithRetry<T>(
   for (let attempt = 0; attempt <= policy.maxRetries; attempt++) {
     try {
       const result = await operation();
-      if (options.isRetryableResult?.(result) && attempt < policy.maxRetries) {
+      const retryableResult = options.isRetryableResult?.(result) ?? false;
+      if (retryableResult && attempt < policy.maxRetries) {
         const delayMs = computeRetryDelayMs(attempt, policy);
         options.onRetry?.({
           attempt,
@@ -76,7 +87,7 @@ export async function runWithRetry<T>(
         await sleep(delayMs);
         continue;
       }
-      if (options.isRetryableResult?.(result)) {
+      if (retryableResult) {
         throw exhaustedError;
       }
       return result;

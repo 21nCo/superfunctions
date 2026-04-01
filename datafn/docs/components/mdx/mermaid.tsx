@@ -29,6 +29,7 @@ function MermaidContent({ chart }: { chart: string }) {
   const id = useId();
   const { resolvedTheme } = useTheme();
   const { default: mermaid } = use(cachePromise('mermaid', () => import('mermaid')));
+  const renderKey = `${id}-${resolvedTheme}-${chart}`;
 
   mermaid.initialize({
     startOnLoad: false,
@@ -39,7 +40,7 @@ function MermaidContent({ chart }: { chart: string }) {
   });
 
   const { svg, bindFunctions } = use(
-    cachePromise(`${chart}-${resolvedTheme}`, () => {
+    cachePromise(renderKey, () => {
       return mermaid.render(id, chart.replaceAll('\\n', '\n'));
     }),
   );

@@ -52,6 +52,65 @@ function isRetryableError(err: unknown): boolean {
   );
 }
 
+function mergeSignals(
+  ...signals: Array<AbortSignal | undefined>
+): { signal?: AbortSignal; cleanup(): void } {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (activeSignals.length === 0) {
+    return {
+      signal: undefined,
+      cleanup() {},
+    };
+  }
+  const controller = new AbortController();
+  const listeners: Array<{ signal: AbortSignal; listener: () => void }> = [];
+  const cleanup = () => {
+    for (const { signal, listener } of listeners) {
+      signal.removeEventListener("abort", listener);
+    }
+    listeners.length = 0;
+  };
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      controller.abort();
+      cleanup();
+      return { signal: controller.signal, cleanup };
+    }
+    const listener = () => {
+      cleanup();
+      controller.abort();
+    };
+    signal.addEventListener("abort", listener, { once: true });
+    listeners.push({ signal, listener });
+  }
+  return { signal: controller.signal, cleanup };
+}
+
+function parseResponseBody<T>(
+  text: string,
+  options: { strictJson: boolean },
+): T | string | undefined {
+  if (text.length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    if (options.strictJson) {
+      const invalidJsonError = new Error("Elastic backend returned invalid JSON");
+      (invalidJsonError as Error & { cause?: unknown }).cause = error;
+      throw invalidJsonError;
+    }
+    return text;
+  }
+}
+
+function buildRequestUrl(base: string, path: string): URL {
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  const normalizedPath = path.replace(/^\/+/, "");
+  return new URL(normalizedPath, normalizedBase);
+}
+
 export class ElasticClient {
   private readonly requestTimeoutMs: number;
 
@@ -90,7 +149,7 @@ export class ElasticClient {
     if (response.status >= 400 && !ignoreStatuses.has(response.status)) {
       throw withRedactedErrorMessage(
         `Elastic backend request failed with status ${response.status}`,
-        response.body,
+        typeof response.body === "string" ? response.body : JSON.stringify(response.body),
       );
     }
 
@@ -107,7 +166,7 @@ export class ElasticClient {
   private async execute<T>(opts: ElasticRequestOptions): Promise<ElasticResponse<T>> {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), this.requestTimeoutMs);
-    const mergedSignal = AbortSignal.any([timeoutController.signal, opts.signal].filter(Boolean) as AbortSignal[]);
+    const merged = mergeSignals(timeoutController.signal, opts.signal);
 
     const headers: Record<string, string> = { accept: "application/json" };
     if (this.options.auth) {
@@ -132,20 +191,22 @@ export class ElasticClient {
     }
 
     try {
-      const url = new URL(opts.path, this.options.node.endsWith("/") ? this.options.node : `${this.options.node}/`);
+      const url = buildRequestUrl(this.options.node, opts.path);
       const response = await fetch(url, {
         method: opts.method,
         headers,
         body,
-        signal: mergedSignal,
+        signal: merged.signal,
       });
 
       const text = await response.text();
-      const parsed = text.length > 0 ? (JSON.parse(text) as T) : undefined;
+      const parsed = parseResponseBody<T>(text, {
+        strictJson: response.ok,
+      });
 
       return {
         status: response.status,
-        body: parsed,
+        body: parsed as T | undefined,
       };
     } catch (error) {
       if (opts.signal?.aborted) {
@@ -154,6 +215,7 @@ export class ElasticClient {
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      merged.cleanup();
     }
   }
 }

@@ -22,6 +22,7 @@ import { SearchAdapterError, SEARCH_ADAPTER_DISPOSED } from "@searchfn/adapter-c
 type DocId = string | number;
 
 interface PostingInfo {
+  docId: DocId;
   frequency: number;
   metadata?: Record<string, unknown>;
 }
@@ -31,8 +32,10 @@ interface ResourceEngine {
   indexer: Indexer;
   statsManager: DocumentStatsManager;
   postings: Map<string, Map<string, PostingInfo>>;
+  docIds: Map<string, DocId>;
   fieldNames: Set<string>;
   vocabulary: Set<string>;
+  vocabularyRefs: Map<string, number>;
   fuzzyCache: Map<string, string[]>;
 }
 
@@ -71,8 +74,10 @@ export class MemoryAdapter implements SearchAdapter {
       indexer: new Indexer(pipeline),
       statsManager: new DocumentStatsManager(),
       postings: new Map(),
+      docIds: new Map(),
       fieldNames: new Set(),
       vocabulary: new Set(),
+      vocabularyRefs: new Map(),
       fuzzyCache: new Map()
     };
   }
@@ -94,7 +99,9 @@ export class MemoryAdapter implements SearchAdapter {
     const ingest = engine.indexer.ingest({ docId, fields });
     if (ingest.totalLength === 0) return;
 
-    engine.statsManager.addDocument(docId, ingest.totalLength);
+    const docKey = this.toKey(docId);
+    engine.statsManager.addDocument(docKey, ingest.totalLength);
+    engine.docIds.set(docKey, docId);
 
     for (const [field, termFrequencies] of ingest.fieldFrequencies.entries()) {
       engine.fieldNames.add(field);
@@ -109,8 +116,7 @@ export class MemoryAdapter implements SearchAdapter {
         const isPrefix =
           termMetadata !== undefined && termMetadata["isPrefix"] === true;
         if (!isPrefix) {
-          engine.vocabulary.add(term);
-          engine.fuzzyCache.clear();
+          this.incrementVocabularyRef(engine, term);
         }
       }
     }
@@ -119,12 +125,44 @@ export class MemoryAdapter implements SearchAdapter {
   private removeDocFromEngine(engine: ResourceEngine, docId: DocId): void {
     const docKey = this.toKey(docId);
     for (const [key, docMap] of engine.postings.entries()) {
+      const posting = docMap.get(docKey);
       docMap.delete(docKey);
+      if (posting?.metadata?.["isPrefix"] !== true) {
+        this.decrementVocabularyRef(engine, posting ? key.split("::")[1] ?? "" : "");
+      }
       if (docMap.size === 0) {
         engine.postings.delete(key);
       }
     }
-    engine.statsManager.removeDocument(docId);
+    engine.statsManager.removeDocument(docKey);
+    engine.docIds.delete(docKey);
+  }
+
+  private incrementVocabularyRef(engine: ResourceEngine, term: string): void {
+    const next = (engine.vocabularyRefs.get(term) ?? 0) + 1;
+    engine.vocabularyRefs.set(term, next);
+    if (next === 1) {
+      engine.vocabulary.add(term);
+      engine.fuzzyCache.clear();
+    }
+  }
+
+  private decrementVocabularyRef(engine: ResourceEngine, term: string): void {
+    if (!term) {
+      return;
+    }
+    const current = engine.vocabularyRefs.get(term);
+    if (current === undefined) {
+      return;
+    }
+    if (current <= 1) {
+      engine.vocabularyRefs.delete(term);
+      if (engine.vocabulary.delete(term)) {
+        engine.fuzzyCache.clear();
+      }
+      return;
+    }
+    engine.vocabularyRefs.set(term, current - 1);
   }
 
   private upsertPosting(
@@ -138,7 +176,7 @@ export class MemoryAdapter implements SearchAdapter {
     const key = this.postingKey(field, term);
     const docKey = this.toKey(docId);
     const entry = engine.postings.get(key) ?? new Map<string, PostingInfo>();
-    entry.set(docKey, { frequency, metadata });
+    entry.set(docKey, { docId, frequency, metadata });
     engine.postings.set(key, entry);
   }
 
@@ -147,12 +185,12 @@ export class MemoryAdapter implements SearchAdapter {
   }
 
   private toKey(docId: DocId): string {
-    return typeof docId === "string" ? docId : String(docId);
+    return `${typeof docId === "string" ? "s" : "n"}:${String(docId)}`;
   }
 
   private getFuzzyDistance(fuzzy?: number | boolean): number | undefined {
     if (fuzzy === true) return 2;
-    if (typeof fuzzy === "number" && fuzzy > 0) return fuzzy;
+    if (typeof fuzzy === "number" && fuzzy > 0) return Math.min(fuzzy, 3);
     return undefined;
   }
 
@@ -302,7 +340,10 @@ export class MemoryAdapter implements SearchAdapter {
     });
 
     const limit = Math.max(1, params.limit ?? 10);
-    return scored.slice(0, limit);
+      return scored.slice(0, limit).map((entry) => ({
+        docId: engine.docIds.get(String(entry.docId)) ?? entry.docId,
+        score: entry.score,
+      }));
   }
 
   index({ resource, documents, signal }: IndexParams): Promise<void> {

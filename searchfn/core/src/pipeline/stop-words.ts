@@ -181,7 +181,6 @@ export const STOP_WORDS_ES = new Set([
   "oír",
   "acabar",
   "mil",
-  "against",
   "durante"
 ]);
 

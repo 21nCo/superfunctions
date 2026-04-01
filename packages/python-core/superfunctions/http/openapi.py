@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .types import Route, get_route_openapi_meta
+from .types import OpenApiRouteMeta, Route, get_route_openapi_meta
 
 _METHOD_ORDER = ["get", "post", "put", "patch", "delete", "options", "head"]
 
@@ -29,6 +29,7 @@ def generate_openapi_document(title: str, version: str, routes: list[Route]) -> 
     """Generate a deterministic OpenAPI document from shared route metadata."""
 
     path_entries: dict[str, dict[str, dict[str, Any]]] = {}
+    operation_sources: dict[tuple[str, str], str] = {}
 
     for route in routes:
         meta = get_route_openapi_meta(route)
@@ -44,6 +45,21 @@ def generate_openapi_document(title: str, version: str, routes: list[Route]) -> 
         normalized_path = _normalize_openapi_path(route.path)
         normalized_method = route.method.value.lower()
         operations = path_entries.setdefault(normalized_path, {})
+        collision_key = (normalized_path, normalized_method)
+
+        if collision_key in operation_sources:
+            raise OpenApiGenerationError(
+                "duplicate normalized OpenAPI operation",
+                code="OPENAPI_ROUTE_COLLISION",
+                details={
+                    "method": route.method.value,
+                    "path": normalized_path,
+                    "firstRoutePath": operation_sources[collision_key],
+                    "duplicateRoutePath": route.path,
+                },
+            )
+
+        operation_sources[collision_key] = route.path
         operations[normalized_method] = _build_operation(meta)
 
     return {
@@ -62,7 +78,7 @@ def generate_openapi_document(title: str, version: str, routes: list[Route]) -> 
     }
 
 
-def _build_operation(meta: Any) -> dict[str, Any]:
+def _build_operation(meta: OpenApiRouteMeta) -> dict[str, Any]:
     operation: dict[str, Any] = {"operationId": meta.operation_id}
 
     if meta.summary:

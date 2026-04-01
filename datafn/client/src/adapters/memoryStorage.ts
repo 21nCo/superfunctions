@@ -20,6 +20,10 @@ function validateMutation(mutation: any): void {
   if (!mutation.mutationId) throw new Error("Missing mutationId in mutation");
 }
 
+function isInternalCursorKey(resource: string): boolean {
+  return resource === "__global_cursor__" || resource === "__datafn_actor_feed__";
+}
+
 export class MemoryStorageAdapter implements DatafnStorageAdapter {
   private records = new Map<string, Map<string, Record<string, unknown>>>();
   private joinRows = new Map<string, Map<string, Record<string, unknown>>>();
@@ -255,7 +259,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
 
   async getCursor(resource: string): Promise<string | null> {
     // Skip validation for internal cursor keys (SYNC-CURSOR-001)
-    if (resource !== "__global_cursor__") {
+    if (!isInternalCursorKey(resource)) {
       this.validateTableName(resource);
     }
     return this.cursors.get(resource) || null;
@@ -263,7 +267,7 @@ export class MemoryStorageAdapter implements DatafnStorageAdapter {
 
   async setCursor(resource: string, cursor: string | null): Promise<void> {
     // Skip validation for internal cursor keys (SYNC-CURSOR-001)
-    if (resource !== "__global_cursor__") {
+    if (!isInternalCursorKey(resource)) {
       this.validateTableName(resource);
     }
     validateCursor(cursor);

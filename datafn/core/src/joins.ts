@@ -7,6 +7,10 @@
 
 import type { DatafnRelationSchema } from "./types.js";
 
+function getRelationKeyName(relation: DatafnRelationSchema, to: string): string {
+  return relation.relation ?? relation.inverse ?? relation.joinTable ?? `to_${to}`;
+}
+
 /**
  * Derive the logical join store key used by clients and change tracking.
  * Format: join_{fromResource}_{relationName}_{toResource}
@@ -50,11 +54,10 @@ export function enumerateJoinStoreKeys(
     if (rel.type !== "many-many") continue;
     const froms = Array.isArray(rel.from) ? rel.from : [rel.from];
     const tos = Array.isArray(rel.to) ? rel.to : [rel.to];
-    const relName = rel.relation ?? "rel";
     for (const f of froms) {
       if (resourceFilter && !resourceFilter.has(f)) continue;
       for (const t of tos) {
-        keys.push(getJoinStoreKey(f, relName, t));
+        keys.push(getJoinStoreKey(f, getRelationKeyName(rel, t), t));
       }
     }
   }

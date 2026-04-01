@@ -1,7 +1,10 @@
 import { BadRequestError } from './errors.js';
+import { AUTH_ROUTE_MODES } from './types.js';
 import type { CookieSameSite, HttpRouteMeta, SetCookieInput } from './types.js';
 
 const VALID_SAME_SITE_VALUES: ReadonlySet<CookieSameSite> = new Set(['lax', 'strict', 'none']);
+const COOKIE_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const UNSAFE_COOKIE_ATTRIBUTE_RE = /[\r\n\0;]/;
 
 function normalizeSameSite(value: CookieSameSite | undefined): CookieSameSite {
   const normalized = value ?? 'lax';
@@ -26,11 +29,11 @@ function titleCaseSameSite(value: CookieSameSite): string {
  * Parse a Cookie header into a deterministic key/value map.
  */
 export function parseCookieHeader(header: string | null | undefined): Record<string, string> {
+  const cookies = Object.create(null) as Record<string, string>;
   if (!header) {
-    return {};
+    return cookies;
   }
 
-  const cookies: Record<string, string> = {};
   for (const segment of header.split(';')) {
     const trimmed = segment.trim();
     if (!trimmed) {
@@ -73,10 +76,25 @@ export function serializeSetCookie(input: SetCookieInput): string {
     throw new BadRequestError('Cookie name is required', 'HTTP_META_INVALID');
   }
 
+  if (!COOKIE_NAME_RE.test(input.name)) {
+    throw new BadRequestError('Invalid cookie name', 'HTTP_META_INVALID');
+  }
+
   const sameSite = normalizeSameSite(input.sameSite);
+  const path = input.path ?? '/';
+  if (UNSAFE_COOKIE_ATTRIBUTE_RE.test(path)) {
+    throw new BadRequestError('Invalid cookie path', 'HTTP_META_INVALID');
+  }
+  if (input.domain && UNSAFE_COOKIE_ATTRIBUTE_RE.test(input.domain)) {
+    throw new BadRequestError('Invalid cookie domain', 'HTTP_META_INVALID');
+  }
+  if (sameSite === 'none' && input.secure === false) {
+    throw new BadRequestError('SameSite=None cookies must be Secure', 'HTTP_META_INVALID');
+  }
+
   const parts = [`${input.name}=${encodeURIComponent(input.value)}`];
 
-  parts.push(`Path=${input.path ?? '/'}`);
+  parts.push(`Path=${path}`);
 
   if (input.domain) {
     parts.push(`Domain=${input.domain}`);
@@ -120,8 +138,17 @@ export function assertValidRouteMeta(value: unknown): asserts value is HttpRoute
       throw new BadRequestError('Route auth metadata must be an object', 'HTTP_META_INVALID');
     }
     const mode = value.auth.mode;
-    if (mode !== undefined && !['none', 'cookie-session', 'bearer', 'hybrid'].includes(String(mode))) {
+    if (typeof mode !== 'string' || !AUTH_ROUTE_MODES.includes(mode as (typeof AUTH_ROUTE_MODES)[number])) {
       throw new BadRequestError('Invalid auth route metadata mode', 'HTTP_META_INVALID');
+    }
+    if (value.auth.csrf !== undefined && typeof value.auth.csrf !== 'boolean') {
+      throw new BadRequestError('Route auth metadata csrf must be a boolean', 'HTTP_META_INVALID');
+    }
+    if (
+      value.auth.scopes !== undefined &&
+      (!Array.isArray(value.auth.scopes) || value.auth.scopes.some((scope) => typeof scope !== 'string'))
+    ) {
+      throw new BadRequestError('Route auth metadata scopes must be a string array', 'HTTP_META_INVALID');
     }
   }
 

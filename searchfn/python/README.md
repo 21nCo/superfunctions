@@ -77,12 +77,15 @@ curl -X POST http://localhost:8000/searchfn/search \
 
 **Programmatically:**
 ```python
+import asyncio
 from searchfn import search_index
 
 async def do_search():
     results = await search_index(schema, db, query="fast laptop")
     for res in results:
         print(f"Found {res['id']} in {res['model']} (Score: {res['score']})")
+
+asyncio.run(do_search())
 ```
 
 ## API Reference

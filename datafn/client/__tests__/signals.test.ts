@@ -178,9 +178,16 @@ describe("@datafn/client signals", () => {
     expect(definedValues2[0]).toEqual([{ id: "task:1" }]);
   });
 
-  it("Delegates to @datafn/core.dfqlKey for cache key generation", () => {
-    // Spy on core.dfqlKey
-    const spy = vi.spyOn(core, "dfqlKey");
+  it("Delegates to @datafn/core.dfqlKey for cache key generation", async () => {
+    vi.resetModules();
+    const actualCore = await vi.importActual<typeof import("@datafn/core")>("@datafn/core");
+    const dfqlKeySpy = vi.fn(actualCore.dfqlKey);
+    vi.doMock("@datafn/core", () => ({
+      ...actualCore,
+      dfqlKey: dfqlKeySpy,
+    }));
+    const { createDatafnClient } = await import("../src/client.js");
+    const { DefaultHttpTransport } = await import("../src/transport/http.js");
     vi.spyOn(DefaultHttpTransport.prototype, "query").mockResolvedValue({});
 
     const client = createDatafnClient({
@@ -195,11 +202,14 @@ describe("@datafn/client signals", () => {
     // Creating a signal should call dfqlKey
     table.signal({ select: ["id"] });
 
-    expect(spy).toHaveBeenCalledWith({
+    expect(dfqlKeySpy).toHaveBeenCalledWith({
       select: ["id"],
       resource: "task",
       version: 1,
     });
+
+    vi.doUnmock("@datafn/core");
+    vi.resetModules();
   });
 
   it("TV-SIG-001: Signal dispose removes from registry and unsubscribes from event bus", async () => {

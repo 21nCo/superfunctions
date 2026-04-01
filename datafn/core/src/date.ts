@@ -8,20 +8,29 @@ function dfqlInvalid(msg: string): never {
   throw { code: "DFQL_INVALID", message: msg };
 }
 
+function assertFiniteEpoch(value: number): void {
+  if (!Number.isFinite(value)) {
+    dfqlInvalid(`Invalid epoch milliseconds: ${String(value)}`);
+  }
+}
+
 /**
  * Convert a Date, ISO string, or epoch number to epoch milliseconds.
  * Idempotent: if already a number, returns it directly.
  */
 export function toEpochMs(value: unknown): number {
-  if (typeof value === "number") return value;
+  if (typeof value === "number") {
+    assertFiniteEpoch(value);
+    return value;
+  }
   if (value instanceof Date) {
     const ms = value.getTime();
-    if (isNaN(ms)) dfqlInvalid(`Invalid Date object`);
+    assertFiniteEpoch(ms);
     return ms;
   }
   if (typeof value === "string") {
     const ms = new Date(value).getTime();
-    if (isNaN(ms)) dfqlInvalid(`Invalid date string: ${value}`);
+    assertFiniteEpoch(ms);
     return ms;
   }
   dfqlInvalid(`Cannot convert to epoch ms: ${String(value)}`);
@@ -33,13 +42,16 @@ export function toEpochMs(value: unknown): number {
  */
 export function fromEpochMs(value: unknown): Date {
   if (value instanceof Date) {
-    if (isNaN(value.getTime())) dfqlInvalid(`Invalid Date object`);
+    assertFiniteEpoch(value.getTime());
     return value;
   }
-  if (typeof value === "number") return new Date(value);
+  if (typeof value === "number") {
+    assertFiniteEpoch(value);
+    return new Date(value);
+  }
   if (typeof value === "string") {
     const d = new Date(value);
-    if (isNaN(d.getTime())) dfqlInvalid(`Invalid date string: ${value}`);
+    assertFiniteEpoch(d.getTime());
     return d;
   }
   dfqlInvalid(`Cannot convert to Date: ${String(value)}`);

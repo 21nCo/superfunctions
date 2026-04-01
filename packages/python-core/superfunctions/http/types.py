@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Protocol, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ============================================================================
@@ -80,8 +80,7 @@ class SetCookie(BaseModel):
     max_age: Optional[int] = Field(None, alias="maxAge")
     expires: Optional[datetime] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class Response(BaseModel):
@@ -92,8 +91,7 @@ class Response(BaseModel):
     cookies: List[SetCookie] = Field(default_factory=list)
     body: Union[str, bytes, Dict[str, Any], List[Any], None] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # ============================================================================
@@ -110,8 +108,7 @@ class RouteContext(BaseModel):
     url: str
     method: str
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # ============================================================================
@@ -134,8 +131,7 @@ class AuthRouteMeta(BaseModel):
     csrf: Optional[bool] = None
     scopes: Optional[List[str]] = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class OpenApiRouteMeta(BaseModel):
@@ -149,9 +145,7 @@ class OpenApiRouteMeta(BaseModel):
     request_body_schema: Optional[Dict[str, Any]] = Field(None, alias="requestBodySchema")
     response_schemas: Optional[Dict[str, Dict[str, Any]]] = Field(None, alias="responseSchemas")
 
-    class Config:
-        populate_by_name = True
-        extra = "allow"
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
 
 class RouteMeta(BaseModel):
@@ -160,8 +154,7 @@ class RouteMeta(BaseModel):
     auth: Optional[AuthRouteMeta] = None
     openapi: Optional[OpenApiRouteMeta] = None
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class Route(BaseModel):
@@ -173,8 +166,7 @@ class Route(BaseModel):
     middleware: Optional[List[Any]] = None  # List[Middleware]
     meta: Optional[RouteMeta] = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # ============================================================================
@@ -183,7 +175,14 @@ class Route(BaseModel):
 
 
 class CorsOptions(BaseModel):
-    """CORS configuration."""
+    """CORS configuration.
+
+    Adapters should not return ``Access-Control-Allow-Origin: *`` when
+    ``credentials`` is ``True``. Browsers reject wildcard origins on
+    credentialed requests, so adapters should echo the request's ``Origin``
+    header (or another explicit allowed origin) and include
+    ``Access-Control-Allow-Credentials: true`` instead.
+    """
 
     origins: Union[List[str], Literal["*"]] = ["*"]
     methods: List[str] = Field(
@@ -194,8 +193,7 @@ class CorsOptions(BaseModel):
     max_age: int = Field(86400, alias="maxAge")
     expose_headers: Optional[List[str]] = Field(None, alias="exposeHeaders")
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 # ============================================================================
@@ -211,9 +209,7 @@ class RouterOptions(BaseModel):
     base_path: str = Field("", alias="basePath")
     cors: Optional[Union[CorsOptions, Literal[False]]] = None
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
 # ============================================================================
@@ -322,7 +318,7 @@ class InternalServerError(HttpError):
         super().__init__(message, 500, "INTERNAL_SERVER_ERROR", details)
 
 
-class NotImplementedError(HttpError):
+class HttpNotImplementedError(HttpError):
     """501 Not Implemented."""
 
     def __init__(self, message: str = "Not implemented", details: Optional[Dict[str, Any]] = None):
@@ -341,16 +337,14 @@ class ServiceUnavailableError(HttpError):
 def serialize_set_cookie(cookie: SetCookie) -> str:
     """Serialize a structured cookie definition into a Set-Cookie header value."""
 
-    if cookie.same_site not in {"lax", "strict", "none"}:
-        raise HttpError("Invalid SameSite value", 400, "HTTP_META_INVALID")
-
     parts = [f"{cookie.name}={cookie.value}", f"Path={cookie.path}"]
     if cookie.domain:
         parts.append(f"Domain={cookie.domain}")
     if cookie.max_age is not None:
         parts.append(f"Max-Age={int(cookie.max_age)}")
     if cookie.expires is not None:
-        parts.append(f"Expires={cookie.expires.strftime('%a, %d %b %Y %H:%M:%S GMT')}")
+        expires = _normalize_cookie_expires(cookie.expires)
+        parts.append(f"Expires={expires.strftime('%a, %d %b %Y %H:%M:%S GMT')}")
     if cookie.secure:
         parts.append("Secure")
     if cookie.http_only:
@@ -363,6 +357,14 @@ def serialize_response_cookies(response: Response) -> List[str]:
     """Serialize all cookies for a response in deterministic order."""
 
     return [serialize_set_cookie(cookie) for cookie in response.cookies]
+
+
+def _normalize_cookie_expires(expires: datetime) -> datetime:
+    """Return a UTC datetime suitable for HTTP cookie serialization."""
+
+    if expires.tzinfo is None:
+        return expires.replace(tzinfo=timezone.utc)
+    return expires.astimezone(timezone.utc)
 
 
 def get_route_openapi_meta(route: Route) -> Optional[OpenApiRouteMeta]:

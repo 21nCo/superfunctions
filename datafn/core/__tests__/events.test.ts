@@ -40,12 +40,17 @@ function matchesFilter(event: DatafnEvent, filter: DatafnEventFilter): boolean {
   }
 
   // Fields matching (non-empty intersection)
-  if (filter.fields !== undefined && filter.fields.length > 0) {
+  const fields = filter.fields === undefined
+    ? undefined
+    : Array.isArray(filter.fields)
+      ? filter.fields
+      : [filter.fields];
+  if (fields !== undefined && fields.length > 0) {
     if (!event.fields || event.fields.length === 0) {
       return false;
     }
     const hasIntersection = event.fields.some((field) =>
-      filter.fields!.includes(field),
+      fields.includes(field),
     );
     if (!hasIntersection) {
       return false;
@@ -108,6 +113,17 @@ describe("DatafnEvent and DatafnEventFilter types", () => {
       };
 
       expect(matchesFilter(event, filter)).toBe(true);
+    });
+
+    it("should treat a single string field filter as exact field matching", () => {
+      const event: DatafnEvent = {
+        type: "mutation_applied",
+        timestampMs: 1,
+        fields: ["id"],
+      };
+
+      expect(matchesFilter(event, { fields: "id" })).toBe(true);
+      expect(matchesFilter(event, { fields: "ids" })).toBe(false);
     });
 
     it("should match when all contextKeys are present", () => {

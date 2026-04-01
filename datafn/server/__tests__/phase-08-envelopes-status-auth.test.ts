@@ -40,8 +40,11 @@ describe("Phase 8: Server Status & Auth", () => {
         "dfql.query",
         "dfql.mutation",
         "dfql.transact",
-        "dfql.sync",
-        "dfql.seed",
+        "sync.seed",
+        "sync.clone",
+        "sync.pull",
+        "sync.push",
+        "sync.reconcile",
       ]);
     });
   });

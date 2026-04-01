@@ -53,8 +53,12 @@ export type DfqlMutation = {
 
 export type DfqlMutationFragment = Omit<DfqlMutation, "resource" | "version">;
 
+export type DfqlTransactStep =
+  | { query: DfqlQuery; mutation?: never }
+  | { mutation: DfqlMutation; query?: never };
+
 export type DfqlTransact = {
   transactionId?: string;
   atomic?: boolean;
-  steps: Array<{ query?: DfqlQuery; mutation?: DfqlMutation }>;
+  steps: DfqlTransactStep[];
 };

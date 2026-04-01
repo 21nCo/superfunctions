@@ -1,3 +1,4 @@
+import traceback
 from typing import Any, Dict, List
 from ..envelope import ok_response, error_response, DatafnError
 from ..db import Adapter
@@ -68,6 +69,15 @@ async def handle_seed(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
         return ok_response({"ok": True})
 
     except Exception as e:
+        if logger:
+            logger.error(
+                "Seed failed",
+                {
+                    "code": "INTERNAL",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
         return error_response({"code": "INTERNAL", "message": str(e), "details": {}})
 
 
@@ -131,6 +141,15 @@ async def handle_clone(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
         })
 
     except Exception as e:
+        if logger:
+            logger.error(
+                "Clone failed",
+                {
+                    "code": "INTERNAL",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
         return error_response({"code": "INTERNAL", "message": str(e), "details": {}})
 
 
@@ -272,6 +291,15 @@ async def handle_pull(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
         return ok_response(response)
 
     except Exception as e:
+        if logger:
+            logger.error(
+                "Pull failed",
+                {
+                    "code": "INTERNAL",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
         return error_response({"code": "INTERNAL", "message": str(e), "details": {}})
 
 
@@ -312,7 +340,13 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 continue
 
             # Idempotency
-            cached = await check_idempotency(config.db, namespace, m_client_id, m_id)
+            cached = await check_idempotency(
+                config.db,
+                namespace,
+                m_client_id,
+                m_id,
+                logger=logger,
+            )
             if cached:
                 applied.append(m_id)
                 continue
@@ -333,8 +367,7 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                         continue
 
                 # Date coercion on mutation record
-                resource = mutation.get("resource", "")
-                date_fields = index.date_fields.get(resource, set())
+                date_fields = index.date_fields.get(resource or "", set())
                 if date_fields:
                     record = mutation.get("record")
                     if record and isinstance(record, dict):
@@ -357,8 +390,8 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
                 )
 
                 # Change Tracking
-                server_seq = await get_next_server_seq(config.db, namespace)
                 for change in mutation_changes:
+                    server_seq = await get_next_server_seq(config.db, namespace)
                     await write_change(
                         config.db,
                         namespace,
@@ -397,6 +430,15 @@ async def handle_push(ctx: Any, payload: Any, config: Any) -> Dict[str, Any]:
         })
 
     except Exception as e:
+        if logger:
+            logger.error(
+                "Push failed",
+                {
+                    "code": "INTERNAL",
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
         return error_response({"code": "INTERNAL", "message": str(e), "details": {}})
 
 

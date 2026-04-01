@@ -92,8 +92,9 @@ describe("createIndexedDbSearchClient", () => {
   });
 
   it("supports full lifecycle", async () => {
+    const dbName = `constructors-test-db-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const client = createIndexedDbSearchClient({
-      adapterConfig: { dbName: "constructors-test-db" },
+      adapterConfig: { dbName },
     });
 
     await client.initialize!({

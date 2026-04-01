@@ -42,8 +42,8 @@ export interface InMemorySearchFnSnapshot {
     term: string;
     documents: TermPosting[];
   }>;
-  stats: Array<{ docId: string; length: number }>;
-  documents: Array<{ docId: string; payload: Record<string, unknown> }>;
+  stats: Array<{ docId: string | number; length: number }>;
+  documents: Array<{ docId: string | number; payload: Record<string, unknown> }>;
   vocabulary: string[];
 }
 
@@ -53,16 +53,21 @@ interface PostingBucket {
   documents: Map<string, TermPosting>;
 }
 
+interface StoredDocument {
+  docId: string | number;
+  payload: Record<string, unknown>;
+}
+
 function postingBucketKey(field: string, term: string): string {
   return `${field}\u0000${term}`;
 }
 
 function docIdKey(value: string | number): string {
-  return typeof value === "string" ? value : String(value);
+  return `${typeof value === "string" ? "s" : "n"}:${String(value)}`;
 }
 
-function sortString(a: string, b: string): number {
-  return a.localeCompare(b, "en", {
+function sortString(a: string | number, b: string | number): number {
+  return String(a).localeCompare(String(b), "en", {
     sensitivity: "variant",
     numeric: true,
   });
@@ -75,7 +80,7 @@ export class InMemorySearchFn {
   private readonly indexer: Indexer;
   private readonly statsManager = new DocumentStatsManager();
   private readonly postings = new Map<string, PostingBucket>();
-  private readonly documents = new Map<string, Record<string, unknown>>();
+  private readonly documents = new Map<string, StoredDocument>();
   private readonly vocabulary = new Set<string>();
   private readonly fuzzyCache = new Map<string, string[]>();
 
@@ -101,7 +106,10 @@ export class InMemorySearchFn {
     });
 
     this.statsManager.addDocument(docId, ingested.totalLength);
-    this.documents.set(docKey, input.store ?? {});
+    this.documents.set(docKey, {
+      docId,
+      payload: input.store ?? {},
+    });
 
     for (const [field, termFrequencies] of ingested.fieldFrequencies.entries()) {
       const metadata = ingested.fieldMetadata.get(field) ?? new Map<string, Record<string, unknown>>();
@@ -194,7 +202,9 @@ export class InMemorySearchFn {
     }
 
     const docLengths = new Map(
-      this.statsManager.snapshot().map((entry) => [entry.docId, entry.length] satisfies [string, number])
+      this.statsManager.snapshot().map((entry: { docId: string | number; length: number }) =>
+        [entry.docId, entry.length] satisfies [string | number, number]
+      )
     );
     const scored = scorePostings(
       postings,
@@ -203,10 +213,10 @@ export class InMemorySearchFn {
       { k1: 1.2, b: 0.75, d: 0.5 }
     );
 
-    return scored.slice(0, Math.max(options.limit ?? 10, 1)).map((entry) => ({
+    return scored.slice(0, Math.max(options.limit ?? 10, 0)).map((entry: { docId: string | number; score: number }) => ({
       docId: entry.docId,
       score: entry.score,
-      document: options.includeStored ? this.documents.get(docIdKey(entry.docId)) : undefined,
+      document: options.includeStored ? this.documents.get(docIdKey(entry.docId))?.payload : undefined,
     }));
   }
 
@@ -219,12 +229,30 @@ export class InMemorySearchFn {
       bucket.documents.delete(docKey);
       if (bucket.documents.size === 0) {
         this.postings.delete(bucketKey);
+        if (!this.hasRemainingVocabularyEntry(bucket.term)) {
+          this.vocabulary.delete(bucket.term);
+          this.fuzzyCache.clear();
+        }
       }
     }
   }
 
+  private hasRemainingVocabularyEntry(term: string): boolean {
+    for (const bucket of this.postings.values()) {
+      if (bucket.term !== term || bucket.documents.size === 0) {
+        continue;
+      }
+      for (const posting of bucket.documents.values()) {
+        if (posting.metadata?.isPrefix !== true) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   getDocument(docId: string | number): Record<string, unknown> | undefined {
-    return this.documents.get(docIdKey(docId));
+    return this.documents.get(docIdKey(docId))?.payload;
   }
 
   clear(): void {
@@ -254,9 +282,12 @@ export class InMemorySearchFn {
         }),
       stats: this.statsManager
         .snapshot()
-        .sort((left, right) => sortString(left.docId, right.docId)),
-      documents: [...this.documents.entries()]
-        .map(([docId, payload]) => ({ docId, payload }))
+        .sort(
+          (left: { docId: string | number; length: number }, right: { docId: string | number; length: number }) =>
+            sortString(left.docId, right.docId),
+        ),
+      documents: [...this.documents.values()]
+        .map((document) => ({ docId: document.docId, payload: document.payload }))
         .sort((left, right) => sortString(left.docId, right.docId)),
       vocabulary: [...this.vocabulary].sort(sortString),
     };
@@ -277,7 +308,10 @@ export class InMemorySearchFn {
     }
 
     for (const document of snapshot.documents) {
-      this.documents.set(document.docId, document.payload);
+      this.documents.set(docIdKey(document.docId), {
+        docId: document.docId,
+        payload: document.payload,
+      });
     }
 
     for (const term of snapshot.vocabulary) {

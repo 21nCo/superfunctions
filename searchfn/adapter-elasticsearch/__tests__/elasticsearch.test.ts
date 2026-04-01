@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
 import { ElasticsearchAdapter } from "../src/index";
 import { SearchAdapterError } from "@searchfn/adapter-contracts";
+import { redactSensitive as redactElasticSensitive } from "../src/internal/redaction";
 
 const ES_URL = process.env.SEARCHFN_ES_URL ?? "http://localhost:9200";
 
@@ -43,6 +44,11 @@ describe("ElasticsearchAdapter integration", () => {
         { name: "notes", searchFields: ["content"] },
       ],
     });
+  });
+
+  afterEach(async () => {
+    await adapter?.dispose();
+    vi.restoreAllMocks();
   });
 
   afterAll(async () => {
@@ -123,6 +129,18 @@ describe("ElasticsearchAdapter integration", () => {
 });
 
 describe("ElasticsearchAdapter resilience and validation", () => {
+  it("redacts plain connection keys without over-redacting connectionTimeout", () => {
+    expect(
+      redactElasticSensitive({
+        connection: "http://user:pass@example.test",
+        connectionTimeout: 5000,
+      }),
+    ).toEqual({
+      connection: "[REDACTED]",
+      connectionTimeout: 5000,
+    });
+  });
+
   it("fails unsupported dialect with DFQL_UNSUPPORTED", () => {
     expect(
       () => new ElasticsearchAdapter({ node: "http://localhost:9200", engine: "invalid" as never }),
@@ -164,7 +182,104 @@ describe("ElasticsearchAdapter resilience and validation", () => {
     }
 
     expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves digit-only ids as strings in search results", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      makeHitsResponse([{ _id: "00123" }, { _id: "9007199254740993" }]),
+    );
+
+    try {
+      const adapter = new ElasticsearchAdapter({
+        node: "http://localhost:9200",
+        engine: "elasticsearch",
+      });
+
+      const results = await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
+      expect(results).toEqual(["00123", "9007199254740993"]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("preserves canonical safe integers as numbers in search results", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      makeHitsResponse([{ _id: "123" }, { _id: "0" }]),
+    );
+
+    try {
+      const adapter = new ElasticsearchAdapter({
+        node: "http://localhost:9200",
+        engine: "elasticsearch",
+      });
+
+      const results = await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
+      expect(results).toEqual([123, 0]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("requests filtered bulk error payloads for write operations", async () => {
+    const urls: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      urls.push(String(url));
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify({ errors: false, items: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const adapter = new ElasticsearchAdapter({
+      node: "http://localhost:9200",
+      engine: "elasticsearch",
+    });
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: "a", fields: { title: "incident" } }],
+    });
+    await adapter.remove({
+      resource: "tasks",
+      ids: ["a"],
+    });
+
+    expect(urls).toContain(
+      "http://localhost:9200/_bulk?refresh=wait_for&filter_path=errors,items.*._id,items.*._index,items.*.status,items.*.error",
+    );
+    expect(
+      urls.filter((url) =>
+        url === "http://localhost:9200/_bulk?refresh=wait_for&filter_path=errors,items.*._id,items.*._index,items.*.status,items.*.error",
+      ),
+    ).toHaveLength(2);
+
     fetchSpy.mockRestore();
+  });
+
+  it("preserves configured base paths when building backend URLs", async () => {
+    const urls: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      urls.push(String(url));
+      return makeHitsResponse([{ _id: "123" }]);
+    });
+
+    try {
+      const adapter = new ElasticsearchAdapter({
+        node: "http://localhost:9200/custom-base",
+        engine: "elasticsearch",
+      });
+
+      await adapter.search({ resource: "tasks", query: "incident", limit: 10 });
+      expect(urls[0]).toBe("http://localhost:9200/custom-base/searchfn_tasks/_search");
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

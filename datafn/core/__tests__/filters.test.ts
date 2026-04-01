@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { evaluateFilter } from "../src/filters.js";
+import { evaluateFilter, normalizeFilterOps } from "../src/filters.js";
 
 describe("evaluateFilter — comparison operators (TV-FLT-001)", () => {
   const record = { name: "Alice", age: 30, score: 85.5 };
@@ -49,6 +49,12 @@ describe("evaluateFilter — string operators (TV-FLT-003)", () => {
   it("$like is case-sensitive (no match)", () => expect(evaluateFilter(record, { name: { $like: "alice%" } })).toBe(false));
   it("$not_like", () => expect(evaluateFilter(record, { name: { $not_like: "Bob%" } })).toBe(true));
   it("$not_ilike", () => expect(evaluateFilter(record, { name: { $not_ilike: "bob%" } })).toBe(true));
+  it("$not_like treats non-string values as non-matches", () =>
+    expect(evaluateFilter({ count: 42 }, { count: { $not_like: "4%" } })).toBe(true));
+  it("normalizeFilterOps remaps contains family operators", () =>
+    expect(normalizeFilterOps({ name: { contains: "Ali", startsWith: "A", endsWith: "n" } })).toEqual({
+      name: { $contains: "Ali", $startsWith: "A", $endsWith: "n" },
+    }));
 });
 
 describe("evaluateFilter — null/empty/range operators (TV-FLT-004)", () => {
@@ -155,5 +161,26 @@ describe("evaluateFilter — relation resolver", () => {
 
   it("missing dot-path without resolver → false", () => {
     expect(evaluateFilter(record, { "tags.name": { $eq: "urgent" } })).toBe(false);
+  });
+
+  it("enforces depth limits across relation traversal", () => {
+    const deepRecord = { id: "1" };
+    const deepResolveRelation = (_resource: string, _id: string, relation: string) => {
+      if (relation.startsWith("rel")) {
+        return [{ id: "1" }];
+      }
+      return [];
+    };
+
+    const filter = {
+      "rel0.rel1.rel2.rel3.rel4.rel5.rel6.rel7.rel8.rel9.rel10.name": { $eq: "urgent" },
+    };
+
+    expect(() =>
+      evaluateFilter(deepRecord, filter, {
+        resolveRelation: deepResolveRelation,
+        resource: "todos",
+      }),
+    ).toThrow();
   });
 });

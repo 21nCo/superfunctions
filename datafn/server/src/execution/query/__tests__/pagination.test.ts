@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createDatafnServer } from "../../../server.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { DatafnSchema } from "../../../core-types.js";
+import { applyLimitOffset } from "../pagination.js";
 
 // Schema for testing
 const schema: DatafnSchema = {
@@ -280,4 +281,10 @@ describe("DETERM-003: Cursor Sort Validation", () => {
           expect(body.result.data).toHaveLength(1);
           expect(body.result.data[0].id).toBe("task-2");
     });
+});
+
+describe("applyLimitOffset", () => {
+  it("returns an empty page when limit is zero", () => {
+    expect(applyLimitOffset([{ id: "a" }], 0, 0)).toEqual([]);
+  });
 });

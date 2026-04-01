@@ -1,95 +1,174 @@
-import type { InternalCrud, InternalColumnDef } from '../../adapter/types.js';
+import type {
+  InternalCrud,
+  InternalColumnDef,
+  InternalWhereClause,
+} from '../../adapter/types.js';
+import {
+  assertInternalColumnDefs,
+  assertInternalTableName,
+  assertInternalWhereClauses,
+  internalOperatorSql,
+  normalizeInternalResultCount,
+  parseInternalOrderBy,
+  quoteInternalIdentifier,
+} from '../internal-utils.js';
 
 export type KyselyDialect = 'postgres' | 'mysql' | 'sqlite';
 
 let kyselySql: any;
+let kyselyImportError: unknown;
 try {
   const mod = await import('kysely');
   kyselySql = mod.sql;
-} catch {}
-
-const OP_MAP: Record<string, string> = {
-  eq: '=',
-  ne: '!=',
-  gt: '>',
-  gte: '>=',
-  lt: '<',
-  lte: '<=',
-};
-
-function mapOp(op: string): string {
-  const mapped = OP_MAP[op];
-  if (!mapped) throw new Error(`Unsupported internal CRUD operator: ${op}`);
-  return mapped;
+} catch (error) {
+  kyselyImportError = error;
 }
 
 function buildWhereClause(
-  where: Array<{ field: string; op: string; value: unknown }>,
+  where: InternalWhereClause[],
+  dialect: KyselyDialect,
 ): { fragment: any; empty: boolean } {
   if (where.length === 0) {
     return { fragment: null, empty: true };
   }
 
-  let combined = kyselySql`${kyselySql.raw(where[0].field)} ${kyselySql.raw(mapOp(where[0].op))} ${where[0].value}`;
+  assertInternalWhereClauses(where);
+  const sql = getKyselySql();
+
+  function buildCondition(clause: InternalWhereClause): any {
+    const fieldSql = sql.raw(quoteInternalIdentifier(clause.field, dialect));
+
+    if (clause.value === null && clause.op === 'eq') {
+      return sql`${fieldSql} IS NULL`;
+    }
+
+    if (clause.value === null && clause.op === 'ne') {
+      return sql`${fieldSql} IS NOT NULL`;
+    }
+
+    return sql`${fieldSql} ${sql.raw(internalOperatorSql(clause.op))} ${clause.value}`;
+  }
+
+  let combined = buildCondition(where[0]);
   for (let i = 1; i < where.length; i++) {
-    const w = where[i];
-    combined = kyselySql`${combined} AND ${kyselySql.raw(w.field)} ${kyselySql.raw(mapOp(w.op))} ${w.value}`;
+    combined = sql`${combined} AND ${buildCondition(where[i])}`;
   }
 
   return { fragment: combined, empty: false };
 }
 
-export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): InternalCrud {
-  const ensuredTables = new Set<string>();
+function getKyselySql(): any {
+  if (!kyselySql) {
+    throw new Error(
+      `kysely is required as a peerDependency to use Kysely internal CRUD helpers${kyselyImportError ? `: ${String(kyselyImportError)}` : ''}`,
+    );
+  }
+  return kyselySql;
+}
 
-  const TABLE_NAME_RE = /^__datafn_[a-z0-9_]+$/;
+function extractInternalCreateRow(result: any): Record<string, unknown> | undefined {
+  if (Array.isArray(result?.rows) && result.rows[0] && typeof result.rows[0] === 'object') {
+    return result.rows[0] as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function extractInternalInsertId(result: any): unknown {
+  if (result?.insertId !== undefined && result.insertId !== null) {
+    return result.insertId;
+  }
+  if (result?.lastInsertRowid !== undefined && result.lastInsertRowid !== null) {
+    return result.lastInsertRowid;
+  }
+  const rowId = result?.rows?.[0]?.id;
+  if (rowId !== undefined && rowId !== null) {
+    return rowId;
+  }
+  return undefined;
+}
+
+export function createKyselyInternalCrud(db: any, dialect: KyselyDialect): InternalCrud {
+  const sql = getKyselySql();
+  const ensurePromises = new Map<string, Promise<void>>();
 
   return {
     async ensureTable(name: string, columns: InternalColumnDef[]): Promise<void> {
-      if (!TABLE_NAME_RE.test(name)) {
-        throw new Error(`ensureTable: table name must start with "__datafn_": "${name}"`);
-      }
+      assertInternalTableName(name);
+      assertInternalColumnDefs(columns);
 
-      if (ensuredTables.has(name)) return;
+      if (ensurePromises.has(name)) return ensurePromises.get(name)!;
 
-      let builder = db.schema.createTable(name).ifNotExists();
-      for (const col of columns) {
-        const colType = col.type === 'text' ? 'text' : 'integer';
-        if (col.primaryKey) {
-          builder = builder.addColumn(col.name, colType, (cb: any) => cb.primaryKey());
-        } else {
-          builder = builder.addColumn(col.name, colType);
+      const promise = (async () => {
+        let builder = db.schema.createTable(name).ifNotExists();
+        for (const col of columns) {
+          const colType = col.type === 'text' ? 'text' : 'integer';
+          if (col.primaryKey) {
+            builder = builder.addColumn(col.name, colType, (cb: any) => cb.primaryKey());
+          } else {
+            builder = builder.addColumn(col.name, colType);
+          }
         }
+        await builder.execute();
+      })();
+
+      ensurePromises.set(name, promise);
+      try {
+        await promise;
+      } catch (error) {
+        ensurePromises.delete(name);
+        throw error;
       }
-      await builder.execute();
-      ensuredTables.add(name);
     },
 
     async create(
       table: string,
       data: Record<string, unknown>,
     ): Promise<Record<string, unknown>> {
+      assertInternalTableName(table);
       const cols = Object.keys(data);
+      if (cols.length === 0) {
+        throw new Error('create: data must not be empty');
+      }
+      cols.forEach((col) => assertInternalColumnDefs([{ name: col, type: 'text' }]));
       const vals = cols.map((k) => data[k]);
+      const quotedColumns = cols.map((col) => quoteInternalIdentifier(col, dialect)).join(', ');
 
-      const query = kyselySql`INSERT INTO ${kyselySql.raw(table)} (${kyselySql.raw(cols.join(', '))}) VALUES (${kyselySql.join(
-        vals.map((v: unknown) => kyselySql`${v}`),
-        kyselySql`, `,
+      const insertQuery = sql`INSERT INTO ${sql.raw(quoteInternalIdentifier(table, dialect))} (${sql.raw(quotedColumns)}) VALUES (${sql.join(
+        vals.map((v: unknown) => sql`${v}`),
+        sql`, `,
       )})`;
 
-      await query.execute(db);
+      const executeResult = dialect === 'mysql'
+        ? await insertQuery.execute(db)
+        : await sql<Record<string, unknown>>`${insertQuery} RETURNING *`.execute(db);
+
+      const returnedRow = extractInternalCreateRow(executeResult);
+      if (returnedRow) {
+        return returnedRow;
+      }
+
+      const insertedId =
+        (data.id !== undefined && data.id !== null ? data.id : extractInternalInsertId(executeResult));
+      if (insertedId !== undefined && insertedId !== null) {
+        return (
+          (await this.findOne(table, [{ field: 'id', op: 'eq', value: insertedId }])) ??
+          data
+        );
+      }
+
       return data;
     },
 
     async findOne(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
     ): Promise<Record<string, unknown> | null> {
-      const { fragment, empty } = buildWhereClause(where);
+      assertInternalTableName(table);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? kyselySql<Record<string, unknown>>`SELECT * FROM ${kyselySql.raw(table)} LIMIT 1`
-        : kyselySql<Record<string, unknown>>`SELECT * FROM ${kyselySql.raw(table)} WHERE ${fragment} LIMIT 1`;
+        ? sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} LIMIT 1`
+        : sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment} LIMIT 1`;
 
       const result = await query.execute(db);
       return result.rows[0] ?? null;
@@ -97,27 +176,29 @@ export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): Inte
 
     async findMany(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
       opts?: { orderBy?: string; limit?: number },
     ): Promise<Record<string, unknown>[]> {
-      const { fragment, empty } = buildWhereClause(where);
+      assertInternalTableName(table);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       let query;
       if (empty) {
-        query = kyselySql<Record<string, unknown>>`SELECT * FROM ${kyselySql.raw(table)}`;
+        query = sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))}`;
       } else {
-        query = kyselySql<Record<string, unknown>>`SELECT * FROM ${kyselySql.raw(table)} WHERE ${fragment}`;
+        query = sql<Record<string, unknown>>`SELECT * FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment}`;
       }
 
       if (opts?.orderBy) {
-        const desc = opts.orderBy.startsWith('-');
-        const field = desc ? opts.orderBy.slice(1) : opts.orderBy;
-        const dir = desc ? 'DESC' : 'ASC';
-        query = kyselySql<Record<string, unknown>>`${query} ORDER BY ${kyselySql.raw(field)} ${kyselySql.raw(dir)}`;
+        const order = parseInternalOrderBy(opts.orderBy);
+        query = sql<Record<string, unknown>>`${query} ORDER BY ${sql.raw(quoteInternalIdentifier(order.field, dialect))} ${sql.raw(order.direction)}`;
       }
 
       if (typeof opts?.limit === 'number') {
-        query = kyselySql<Record<string, unknown>>`${query} LIMIT ${opts.limit}`;
+        if (!Number.isFinite(opts.limit) || opts.limit < 0) {
+          throw new TypeError('findMany: limit must be a non-negative finite number');
+        }
+        query = sql<Record<string, unknown>>`${query} LIMIT ${Math.trunc(opts.limit)}`;
       }
 
       const result = await query.execute(db);
@@ -126,36 +207,42 @@ export function createKyselyInternalCrud(db: any, _dialect: KyselyDialect): Inte
 
     async update(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
       data: Record<string, unknown>,
     ): Promise<number> {
+      assertInternalTableName(table);
       const cols = Object.keys(data);
+      cols.forEach((col) => assertInternalColumnDefs([{ name: col, type: 'text' }]));
+      if (cols.length === 0) {
+        return 0;
+      }
 
-      const setParts = cols.map((col) => kyselySql`${kyselySql.raw(col)} = ${data[col]}`);
-      const setClause = kyselySql.join(setParts, kyselySql`, `);
+      const setParts = cols.map((col) => sql`${sql.raw(quoteInternalIdentifier(col, dialect))} = ${data[col]}`);
+      const setClause = sql.join(setParts, sql`, `);
 
-      const { fragment, empty } = buildWhereClause(where);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? kyselySql`UPDATE ${kyselySql.raw(table)} SET ${setClause}`
-        : kyselySql`UPDATE ${kyselySql.raw(table)} SET ${setClause} WHERE ${fragment}`;
+        ? sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, dialect))} SET ${setClause}`
+        : sql`UPDATE ${sql.raw(quoteInternalIdentifier(table, dialect))} SET ${setClause} WHERE ${fragment}`;
 
       const result = await query.execute(db);
-      return Number(result.numAffectedRows ?? 0);
+      return normalizeInternalResultCount(result.numAffectedRows ?? 0);
     },
 
     async delete(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
     ): Promise<number> {
-      const { fragment, empty } = buildWhereClause(where);
+      assertInternalTableName(table);
+      const { fragment, empty } = buildWhereClause(where, dialect);
 
       const query = empty
-        ? kyselySql`DELETE FROM ${kyselySql.raw(table)}`
-        : kyselySql`DELETE FROM ${kyselySql.raw(table)} WHERE ${fragment}`;
+        ? sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, dialect))}`
+        : sql`DELETE FROM ${sql.raw(quoteInternalIdentifier(table, dialect))} WHERE ${fragment}`;
 
       const result = await query.execute(db);
-      return Number(result.numAffectedRows ?? 0);
+      return normalizeInternalResultCount(result.numAffectedRows ?? 0);
     },
   };
 }

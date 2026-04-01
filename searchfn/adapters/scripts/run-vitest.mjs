@@ -1,10 +1,15 @@
 import { spawnSync } from "node:child_process";
+import { delimiter } from "node:path";
 
 const forwarded = process.argv.slice(2).filter((arg) => arg !== "--runInBand");
-const result = spawnSync("vitest", forwarded, {
+const binDir = `${process.cwd()}/node_modules/.bin`;
+const result = spawnSync(process.platform === "win32" ? "vitest.cmd" : "vitest", forwarded, {
   stdio: "inherit",
-  shell: true,
-  env: process.env,
+  shell: false,
+  env: {
+    ...process.env,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+  },
 });
 
 if (result.error) {

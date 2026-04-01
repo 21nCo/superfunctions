@@ -78,6 +78,26 @@ describe("MemoryAdapter — fuzzy search", () => {
     expect(exactResult[0]).toBe("exact");
     expect(fuzzyResult).toContain("fuzzy-match");
   });
+
+  it("keeps shared vocabulary entries when removing one field bucket", async () => {
+    await adapter.index({
+      resource: "tasks",
+      documents: [
+        { id: "1", fields: { title: "report" } },
+        { id: "2", fields: { body: "report" } },
+      ],
+    });
+
+    await adapter.remove({ resource: "tasks", ids: ["1"] });
+
+    const result = await adapter.search({
+      resource: "tasks",
+      query: "report",
+      fuzzy: true,
+    });
+
+    expect(result).toEqual(["2"]);
+  });
 });
 
 describe("MemoryAdapter — field boosts", () => {

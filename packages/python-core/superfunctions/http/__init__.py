@@ -10,6 +10,7 @@ Example:
     ...     return Response(status=200, body={"message": "Hello"})
 """
 
+from .openapi import OpenApiGenerationError, generate_openapi_document
 from .types import (
     AuthRouteMeta,
     BadRequestError,
@@ -22,7 +23,7 @@ from .types import (
     MethodNotAllowedError,
     Middleware,
     NotFoundError,
-    NotImplementedError,
+    HttpNotImplementedError,
     OpenApiRouteMeta,
     Request,
     RequestHandler,
@@ -56,6 +57,8 @@ __all__ = [
     "AuthRouteMeta",
     "OpenApiRouteMeta",
     "get_route_openapi_meta",
+    "generate_openapi_document",
+    "OpenApiGenerationError",
     "serialize_set_cookie",
     "serialize_response_cookies",
     # CORS
@@ -71,6 +74,6 @@ __all__ = [
     "UnprocessableEntityError",
     "TooManyRequestsError",
     "InternalServerError",
-    "NotImplementedError",
+    "HttpNotImplementedError",
     "ServiceUnavailableError",
 ]

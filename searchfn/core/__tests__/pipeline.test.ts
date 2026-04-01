@@ -53,6 +53,14 @@ describe("PipelineEngine", () => {
       expect(values).toEqual(["perro", "gato"]);
     });
 
+    it("does not remove unrelated English stop words from Spanish text", () => {
+      const pipeline = new PipelineEngine({ language: "es" });
+      const tokens = pipeline.run("body", "contra against durante", "doc-1");
+      const values = tokens.map((token) => token.value);
+      expect(values).toContain("against");
+      expect(values).not.toContain("durante");
+    });
+
     it("uses French stop words when language is 'fr'", () => {
       const pipeline = new PipelineEngine({ language: "fr" });
       const tokens = pipeline.run("body", "le chat et le chien", "doc-1");
@@ -304,6 +312,43 @@ describe("PipelineEngine", () => {
       // "the" is removed by stop words
       // "running" -> "run" (stemmed), then n-grams: ru, run
       expect(values).toEqual(["ru", "run"]);
+    });
+
+    it("falls back to global edge n-gram settings for fields missing per-field config", () => {
+      const pipeline = new PipelineEngine({
+        enableEdgeNGrams: true,
+        edgeNGramMinLength: 2,
+        edgeNGramMaxLength: 4,
+        edgeNGramFieldConfig: {
+          title: {
+            enabled: false,
+          },
+        },
+      });
+
+      const bodyTokens = pipeline.run("body", "quick", "doc-1");
+      const titleTokens = pipeline.run("title", "quick", "doc-1");
+
+      expect(bodyTokens.map((token) => token.value)).toEqual(["quick"]);
+      expect(titleTokens.map((token) => token.value)).toEqual(["quick"]);
+    });
+
+    it("normalizes invalid field n-gram ranges", () => {
+      const pipeline = new PipelineEngine({
+        enableEdgeNGrams: true,
+        edgeNGramMinLength: 2,
+        edgeNGramMaxLength: 4,
+        edgeNGramFieldConfig: {
+          body: {
+            enabled: true,
+            minLength: 5,
+            maxLength: 2,
+          },
+        },
+      });
+
+      const bodyTokens = pipeline.run("body", "quick", "doc-1");
+      expect(bodyTokens.map((token) => token.value)).toEqual(["quick"]);
     });
 
     it("disables edge n-grams by default", () => {

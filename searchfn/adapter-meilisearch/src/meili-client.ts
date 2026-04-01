@@ -19,6 +19,7 @@ export interface MeiliClientOptions {
   host: string;
   apiKey?: string;
   requestTimeoutMs?: number;
+  taskTimeoutMs?: number;
   retry?: MeiliRetryPolicy;
   logger?: AdapterLogger;
 }
@@ -52,11 +53,76 @@ function safePath(path: string): string {
   return redactSensitive(path);
 }
 
+function mergeSignals(
+  ...signals: Array<AbortSignal | undefined>
+): { signal?: AbortSignal; cleanup(): void } {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+  if (activeSignals.length === 0) {
+    return {
+      signal: undefined,
+      cleanup() {},
+    };
+  }
+  const controller = new AbortController();
+  const listeners: Array<{ signal: AbortSignal; listener: () => void }> = [];
+  const cleanup = () => {
+    for (const { signal, listener } of listeners) {
+      signal.removeEventListener("abort", listener);
+    }
+    listeners.length = 0;
+  };
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      controller.abort();
+      cleanup();
+      return { signal: controller.signal, cleanup };
+    }
+    const listener = () => {
+      cleanup();
+      controller.abort();
+    };
+    signal.addEventListener("abort", listener, { once: true });
+    listeners.push({ signal, listener });
+  }
+  return { signal: controller.signal, cleanup };
+}
+
+function parseResponseBody<T>(text: string): T | string | undefined {
+  if (text.length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text;
+  }
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(abortedError());
+  }
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+      reject(abortedError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export class MeiliClient {
   private readonly requestTimeoutMs: number;
+  private readonly taskTimeoutMs: number;
 
   constructor(private readonly options: MeiliClientOptions) {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.taskTimeoutMs = options.taskTimeoutMs ?? Math.max(this.requestTimeoutMs * 10, 120_000);
   }
 
   async request<T = unknown>(opts: MeiliRequestOptions): Promise<MeiliResponse<T>> {
@@ -106,7 +172,10 @@ export class MeiliClient {
 
   async waitForTask(taskUid: number, signal?: AbortSignal): Promise<void> {
     const started = Date.now();
-    while (Date.now() - started < this.requestTimeoutMs) {
+    while (Date.now() - started < this.taskTimeoutMs) {
+      if (signal?.aborted) {
+        throw abortedError();
+      }
       const response = await this.request<{ status: string; error?: { message?: string } }>({
         method: "GET",
         path: `/tasks/${taskUid}`,
@@ -118,7 +187,10 @@ export class MeiliClient {
       if (status === "failed") {
         throw withRedactedErrorMessage("Meilisearch task failed", response.body?.error?.message ?? "unknown");
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (signal?.aborted) {
+        throw abortedError();
+      }
+      await delay(50, signal);
     }
     throw retryBudgetExhaustedError();
   }
@@ -126,7 +198,7 @@ export class MeiliClient {
   private async execute<T>(opts: MeiliRequestOptions): Promise<MeiliResponse<T>> {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), this.requestTimeoutMs);
-    const mergedSignal = AbortSignal.any([timeoutController.signal, opts.signal].filter(Boolean) as AbortSignal[]);
+    const merged = mergeSignals(timeoutController.signal, opts.signal);
 
     const headers: Record<string, string> = { accept: "application/json" };
     if (this.options.apiKey) {
@@ -145,15 +217,15 @@ export class MeiliClient {
         method: opts.method,
         headers,
         body,
-        signal: mergedSignal,
+        signal: merged.signal,
       });
 
       const text = await response.text();
-      const parsed = text.length > 0 ? (JSON.parse(text) as T) : undefined;
+      const parsed = parseResponseBody<T>(text);
 
       return {
         status: response.status,
-        body: parsed,
+        body: parsed as T | undefined,
       };
     } catch (error) {
       if (opts.signal?.aborted) {
@@ -162,6 +234,7 @@ export class MeiliClient {
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      merged.cleanup();
     }
   }
 }

@@ -35,43 +35,45 @@ export async function runAdapterBenchmark(
     },
   }));
 
-  if (adapter.initialize) {
-    await adapter.initialize({
-      resources: [{ name: resource, searchFields: ["title", "body"] }],
-    });
+  try {
+    if (adapter.initialize) {
+      await adapter.initialize({
+        resources: [{ name: resource, searchFields: ["title", "body"] }],
+      });
+    }
+
+    await adapter.clear(resource);
+
+    const indexStart = performance.now();
+    await adapter.index({ resource, documents: docs });
+    const indexElapsedMs = performance.now() - indexStart;
+    const docsPerSec = (docs.length / indexElapsedMs) * 1000;
+
+    const searchDurations: number[] = [];
+    for (let i = 0; i < searchIterations; i++) {
+      const start = performance.now();
+      await adapter.search({ resource, query: "incident", limit: 20 });
+      searchDurations.push(performance.now() - start);
+    }
+
+    searchDurations.sort((a, b) => a - b);
+    const p95Index = Math.min(searchDurations.length - 1, Math.ceil(searchDurations.length * 0.95) - 1);
+    const searchP95Ms = searchDurations[p95Index] ?? 0;
+
+    return {
+      target,
+      metrics: {
+        docsPerSec,
+        searchP95Ms,
+      },
+      thresholds,
+    };
+  } finally {
+    await adapter.clear(resource).catch(() => undefined);
+    if (adapter.dispose) {
+      await adapter.dispose().catch(() => undefined);
+    }
   }
-
-  await adapter.clear(resource);
-
-  const indexStart = performance.now();
-  await adapter.index({ resource, documents: docs });
-  const indexElapsedMs = performance.now() - indexStart;
-  const docsPerSec = (docs.length / indexElapsedMs) * 1000;
-
-  const searchDurations: number[] = [];
-  for (let i = 0; i < searchIterations; i++) {
-    const start = performance.now();
-    await adapter.search({ resource, query: "incident", limit: 20 });
-    searchDurations.push(performance.now() - start);
-  }
-
-  searchDurations.sort((a, b) => a - b);
-  const p95Index = Math.min(searchDurations.length - 1, Math.ceil(searchDurations.length * 0.95) - 1);
-  const searchP95Ms = searchDurations[p95Index] ?? 0;
-
-  await adapter.clear(resource);
-  if (adapter.dispose) {
-    await adapter.dispose();
-  }
-
-  return {
-    target,
-    metrics: {
-      docsPerSec,
-      searchP95Ms,
-    },
-    thresholds,
-  };
 }
 
 export function validateBenchmarkGate(result: BenchmarkResult): void {

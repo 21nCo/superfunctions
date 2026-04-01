@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict, List, Optional, Set
 from .envelope import DatafnError
 from .validation import SchemaIndex
@@ -226,7 +227,7 @@ def validate_query_authz(
         if is_private_shareable_resource(resource_def) and not allow_unknown_resources:
             return DatafnError(
                 code="FORBIDDEN",
-                message="Python parity violation",
+                message="Access denied: resource requires explicit permissions",
                 details={"path": "python.authz"},
             )
         return None
@@ -320,7 +321,7 @@ def validate_mutation_authz(
         if is_private_shareable_resource(resource_def) and not allow_unknown_resources:
             return DatafnError(
                 code="FORBIDDEN",
-                message="Python parity violation",
+                message="Access denied: resource requires explicit permissions",
                 details={"path": "python.authz"},
             )
         return None
@@ -377,7 +378,10 @@ def check_payload_size(body: Any, max_bytes: int) -> Optional[DatafnError]:
     elif isinstance(body, str):
         size = len(body.encode("utf-8"))
     elif hasattr(body, "__len__"):
-        size = len(body)
+        try:
+            size = len(json.dumps(body).encode("utf-8"))
+        except TypeError:
+            size = len(repr(body).encode("utf-8"))
     else:
         return None
 

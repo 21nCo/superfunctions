@@ -6,8 +6,9 @@
  */
 
 import { performance } from "node:perf_hooks";
+import { writeFile } from "node:fs/promises";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
-import { SearchFn } from "../src/search-engine";
+import { SearchFn } from "../src";
 
 const globalObject = globalThis as unknown as {
   indexedDB: IDBFactory;
@@ -214,6 +215,9 @@ function printResults(results: BenchmarkResult[]) {
 
 async function main() {
   const documentCount = Number.parseInt(process.argv[2] ?? "1000", 10);
+  if (!Number.isFinite(documentCount) || documentCount <= 0) {
+    throw new Error("documentCount must be a positive integer");
+  }
   
   console.log(`\nGenerating ${documentCount} test documents...`);
   const documents = generateDocuments(documentCount);
@@ -243,7 +247,7 @@ async function main() {
   };
   
   const filename = `benchmark-results-${documentCount}.json`;
-  await Bun.write(filename, JSON.stringify(report, null, 2));
+  await writeFile(filename, JSON.stringify(report, null, 2), "utf8");
   console.log(`\nReport saved to: ${filename}`);
   console.log(JSON.stringify(report, null, 2));
 }

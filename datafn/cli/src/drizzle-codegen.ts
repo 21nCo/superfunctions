@@ -89,6 +89,7 @@ export function generateDrizzleSchema(
       typeof resource.indices === "object" &&
       !Array.isArray(resource.indices) &&
       resource.indices.base?.length;
+    const hasExplicitIdField = fields.some((field) => field.name === "id");
 
     lines.push(`export const ${varName} = ${tableConstructor}("${tableName}", {`);
 
@@ -102,11 +103,11 @@ export function generateDrizzleSchema(
       const colDef = capabilityFieldNames.has(field.name)
         ? buildCapabilityColumnDefinition(field, dialect, usedImports)
         : buildColumnDefinition(field, dialect, usedImports, nsEnabled);
-      lines.push(`  ${field.name}: ${colDef},`);
+      lines.push(`  ${renderTsObjectKey(field.name)}: ${colDef},`);
     }
     for (const field of capabilityFields) {
       const colDef = buildCapabilityColumnDefinition(field, dialect, usedImports);
-      lines.push(`  ${field.name}: ${colDef},`);
+      lines.push(`  ${renderTsObjectKey(field.name)}: ${colDef},`);
     }
 
     const needsIndexCallback = hasBaseIndices || nsEnabled || hasShareable;
@@ -115,23 +116,25 @@ export function generateDrizzleSchema(
       usedImports.add("index");
       lines.push(`}, (table) => [`);
       if (nsEnabled) {
-        usedImports.add("primaryKey");
-        lines.push(`  primaryKey({ columns: [table.__ns, table.id] }),`);
+        if (hasExplicitIdField) {
+          usedImports.add("primaryKey");
+          lines.push(`  primaryKey({ columns: [table.__ns, ${tableAccessor("id")}] }),`);
+        }
         lines.push(`  index("idx_${tableName}___ns").on(table.__ns),`);
       }
       if (hasBaseIndices) {
         const baseIndices = (resource.indices as { base?: string[] }).base!;
         for (const idxField of baseIndices) {
           lines.push(
-            `  index("${tableName}_${camelToSnake(idxField)}_idx").on(table.${idxField}),`,
+            `  index("${tableName}_${camelToSnake(idxField)}_idx").on(${tableAccessor(idxField)}),`,
           );
         }
       }
       if (hasShareable) {
         // PERF-001: optimize private/shared query paths.
-        lines.push(`  index("idx_${tableName}_visibility").on(table.visibility),`);
+        lines.push(`  index("idx_${tableName}_visibility").on(${tableAccessor("visibility")}),`);
         lines.push(
-          `  index("idx_${tableName}_created_by_visibility").on(table.createdBy, table.visibility),`,
+          `  index("idx_${tableName}_created_by_visibility").on(${tableAccessor("createdBy")}, ${tableAccessor("visibility")}),`,
         );
       }
       lines.push(`]);`);
@@ -344,7 +347,7 @@ export function generateDrizzleSchema(
     joinFields.sort((a, b) => a.name.localeCompare(b.name));
 
     for (const jf of joinFields) {
-      lines.push(`  ${jf.name}: ${jf.def},`);
+      lines.push(`  ${renderTsObjectKey(jf.name)}: ${jf.def},`);
     }
 
     const fromSnake = camelToSnake(fromCol);
@@ -357,9 +360,10 @@ export function generateDrizzleSchema(
       lines.push(`  primaryKey({ columns: [table.__ns, table.id] }),`);
       lines.push(`  index("idx_${jtName}___ns").on(table.__ns),`);
     }
-    lines.push(
-      `  uniqueIndex("${jtName}_${fromSnake}_${toSnake}_idx").on(table.${fromCol}, table.${toCol}),`,
-    );
+    const uniqueColumns = nsEnabled
+      ? `table.__ns, ${tableAccessor(fromCol)}, ${tableAccessor(toCol)}`
+      : `${tableAccessor(fromCol)}, ${tableAccessor(toCol)}`;
+    lines.push(`  uniqueIndex("${jtName}_${fromSnake}_${toSnake}_idx").on(${uniqueColumns}),`);
     lines.push(`]);`);
     lines.push("");
   }
@@ -399,11 +403,16 @@ function getImportPath(dialect: Dialect): string {
 }
 
 export function camelToSnake(str: string): string {
-  return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  return str
+    .replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
 }
 
 function sanitizeVarName(name: string): string {
-  return name.replace(/-/g, "_");
+  const sanitized = name.replace(/[^A-Za-z0-9_$]/g, "_");
+  return /^[A-Za-z_$]/.test(sanitized) ? sanitized : `_${sanitized}`;
 }
 
 function buildColumnDefinition(
@@ -433,12 +442,22 @@ function buildColumnDefinition(
   if (field.default !== undefined) {
     const defaultVal =
       typeof field.default === "string"
-        ? `"${field.default}"`
+        ? JSON.stringify(field.default)
         : String(field.default);
     def += `.default(${defaultVal})`;
   }
 
   return def;
+}
+
+function renderTsObjectKey(name: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
+}
+
+function tableAccessor(name: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+    ? `table.${name}`
+    : `table[${JSON.stringify(name)}]`;
 }
 
 function buildSimpleColumn(

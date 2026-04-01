@@ -191,6 +191,10 @@ async function indexWithOldApproach(records: DatabaseRecord[], limit: number) {
   
   // Only index a subset to save time in demo
   const subset = records.slice(0, limit);
+  if (subset.length === 0) {
+    await engine.destroy();
+    return 0;
+  }
   console.log(`Indexing ${subset.length} records (subset for demo)...`);
   
   const startTime = Date.now();
@@ -214,6 +218,9 @@ async function indexWithOldApproach(records: DatabaseRecord[], limit: number) {
 
 async function main() {
   const recordCount = Number.parseInt(process.argv[2] ?? "5000", 10);
+  if (!Number.isFinite(recordCount) || recordCount <= 0) {
+    throw new Error("recordCount must be a positive integer");
+  }
   
   console.log("\n╔═══════════════════════════════════════════════════════════╗");
   console.log("║         Bulk Indexing Worker Example                     ║");
@@ -241,8 +248,8 @@ async function main() {
   console.log(`  Manual Flush:                  ${manualFlushTime}s`);
   console.log(`  addBulk():                     ${addBulkTime}s\n`);
   
-  const speedupVsOld = (oldApproachTime / addBulkTime).toFixed(1);
-  console.log(`Speedup: ${speedupVsOld}x faster with batched persistence\n`);
+  const speedupVsOld = addBulkTime > 0 ? (oldApproachTime / addBulkTime).toFixed(1) : "N/A";
+  console.log(`Speedup: ${speedupVsOld}${speedupVsOld === "N/A" ? "" : "x"} faster with batched persistence\n`);
   
   console.log("Recommendations:");
   console.log("  ✓ Use addBulk() for simplest implementation");

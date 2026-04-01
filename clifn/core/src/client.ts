@@ -10,7 +10,7 @@ export interface ApiRequestOptions {
 
 export interface ApiResponse<T = unknown> {
   status: number;
-  data: T;
+  data: T | null;
   headers: Headers;
 }
 
@@ -84,7 +84,11 @@ function resolveAuth(config: ApiClientConfig): { baseUrl: string; apiKey: string
 }
 
 function buildUrl(baseUrl: string, path: string, query?: ApiRequestOptions["query"]): string {
-  const url = new URL(path.startsWith("http") ? path : `${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path) || path.startsWith("//")) {
+    throw new HttpRequestError(baseUrl, "request path must be relative");
+  }
+
+  const url = new URL(`${baseUrl.replace(/\/$/, "")}/${path.replace(/^\//, "")}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined) {
@@ -120,6 +124,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isOneShotBody(value: unknown): boolean {
+  return typeof ReadableStream !== "undefined" && value instanceof ReadableStream;
+}
+
+function isBodyInitLike(value: unknown): value is BodyInit {
+  return (
+    typeof value === "string" ||
+    value instanceof URLSearchParams ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value) ||
+    (typeof FormData !== "undefined" && value instanceof FormData) ||
+    (typeof Blob !== "undefined" && value instanceof Blob) ||
+    (typeof ReadableStream !== "undefined" && value instanceof ReadableStream)
+  );
+}
+
+function serializeRequestBody(body: unknown): {
+  body: BodyInit | undefined;
+  defaultContentType?: string;
+} {
+  if (body === undefined) {
+    return { body: undefined };
+  }
+
+  if (isBodyInitLike(body)) {
+    return { body };
+  }
+
+  return {
+    body: JSON.stringify(body),
+    defaultContentType: "application/json",
+  };
+}
+
 export function createApiClient(config: ApiClientConfig): ApiClient {
   const auth = resolveAuth(config);
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
@@ -133,34 +171,55 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
 
   async function doRequest<T = unknown>(options: ApiRequestOptions): Promise<ApiResponse<T>> {
     const method = options.method ?? "GET";
-    const url = buildUrl(auth.baseUrl, options.path, options.query);
+    let url: string;
+    try {
+      url = buildUrl(auth.baseUrl, options.path, options.query);
+    } catch (error) {
+      if (error instanceof HttpRequestError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "invalid request url";
+      throw new HttpRequestError(auth.baseUrl, message, error);
+    }
+    const maxRetries = isOneShotBody(options.body) ? 0 : retries;
 
     for (let attempt = 0; ; attempt += 1) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const headers: Record<string, string> = {
-          Authorization: `Bearer ${auth.apiKey}`,
-          ...config.defaultHeaders,
-          ...options.headers,
-        };
-        if (config.projectId) {
-          headers["X-Project-ID"] = config.projectId;
+        const serializedBody = serializeRequestBody(options.body);
+        const headers = new Headers();
+
+        for (const [key, value] of Object.entries(config.defaultHeaders ?? {})) {
+          headers.set(key, value);
         }
-        if (options.body !== undefined && headers["Content-Type"] === undefined) {
-          headers["Content-Type"] = "application/json";
+
+        for (const [key, value] of Object.entries(options.headers ?? {})) {
+          headers.set(key, value);
+        }
+
+        if (!headers.has("authorization")) {
+          headers.set("Authorization", `Bearer ${auth.apiKey}`);
+        }
+
+        if (config.projectId) {
+          headers.set("X-Project-ID", config.projectId);
+        }
+
+        if (serializedBody.defaultContentType && !headers.has("content-type")) {
+          headers.set("Content-Type", serializedBody.defaultContentType);
         }
 
         const response = await fetchImpl(url, {
           method,
           headers,
-          body: options.body === undefined ? undefined : JSON.stringify(options.body),
+          body: serializedBody.body,
           signal: controller.signal,
         });
 
         const data = await readResponseBody(response);
         if (!response.ok) {
-          if (attempt < retries && shouldRetry(response.status)) {
+          if (attempt < maxRetries && shouldRetry(response.status)) {
             await sleep(retryDelayMs * (attempt + 1));
             continue;
           }
@@ -176,7 +235,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         if (error instanceof MissingProfileError || error instanceof HttpFailureError) {
           throw error;
         }
-        if (attempt < retries) {
+        if (attempt < maxRetries) {
           await sleep(retryDelayMs * (attempt + 1));
           continue;
         }

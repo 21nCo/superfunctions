@@ -98,6 +98,9 @@ export function validateFieldValue(
         return { ok: true };
       }
       if (typeof value === "number") {
+        if (!Number.isFinite(value)) {
+          return { ok: false, error: `expected date (ISO 8601 string or epoch number), got invalid epoch number` };
+        }
         return { ok: true };
       }
       return { ok: false, error: `expected date (ISO 8601 string or epoch number), got ${typeof value}` };

@@ -26,7 +26,7 @@ const todosSignal = client.table("todos").signal({
 ```typescript
 interface DatafnSignal<T> {
   /** Synchronous access to the current cached value. */
-  get(): T;
+  get(): T | undefined;
 
   /** Subscribe to value changes. Returns an unsubscribe function. */
   subscribe(handler: (value: T) => void): () => void;
@@ -64,7 +64,7 @@ unsubscribe();
 
 ## Synchronous Access
 
-Use `get()` to read the current cached value without subscribing. Returns `undefined` before the initial fetch completes.
+Use `get()` to read the current cached value without subscribing. It returns `undefined` before the initial fetch completes.
 
 ```typescript
 const currentTodos = todosSignal.get();

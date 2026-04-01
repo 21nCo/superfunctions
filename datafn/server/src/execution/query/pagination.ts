@@ -13,7 +13,7 @@ export function applyLimitOffset(
   offset?: number
 ): Record<string, unknown>[] {
   const start = offset || 0;
-  const end = limit ? start + limit : undefined;
+  const end = limit == null ? undefined : start + limit;
   return records.slice(start, end);
 }
 

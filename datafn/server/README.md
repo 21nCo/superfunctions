@@ -5,7 +5,7 @@ HTTP server runtime for DataFn. Provides DFQL query execution, mutations with id
 ## Installation
 
 ```bash
-npm install @datafn/server @datafn/core @superfunctions/db @superfunctions/http
+npm install @datafn/server @datafn/core @superfunctions/db @superfunctions/http @superfunctions/http-hono hono @hono/node-server
 ```
 
 ## Features

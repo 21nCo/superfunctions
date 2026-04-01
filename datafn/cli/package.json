@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsup",
     "clean": "rm -rf dist",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:watch": "vitest watch"
   },
   "dependencies": {
@@ -33,7 +33,6 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
-    "tsx": "^4.7.0",
     "typescript": "^5.0.0",
     "vitest": "^1.0.0"
   },
