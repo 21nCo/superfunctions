@@ -77,7 +77,7 @@ export function createAudioProcessor(config: AudioConfig = {}): Processor {
               sourceVersionId: input.versionId,
               originalSize: audioData.length,
               transcodedSize: transcodedData.length,
-              compressionRatio: transcodedData.length / audioData.length,
+              compressionRatio: audioData.length > 0 ? transcodedData.length / audioData.length : 0,
             },
           });
         }
@@ -144,7 +144,9 @@ async function transcodeAudio(
   void sampleRate;
   void channels;
 
-  const bitrateNum = parseInt(bitrate.replace(/[^0-9]/g, ''), 10);
+  const bitrateDigits = bitrate.replace(/[^0-9]/g, '');
+  const parsedBitrate = bitrateDigits ? Number.parseInt(bitrateDigits, 10) : Number.NaN;
+  const bitrateNum = Number.isFinite(parsedBitrate) && parsedBitrate > 0 ? parsedBitrate : 128;
   const compressionFactor = Math.max(0.3, Math.min(0.9, bitrateNum / 320));
   const targetSize = Math.max(1, Math.floor(audioData.length * compressionFactor));
   const mockTranscodedData = new Uint8Array(targetSize);
@@ -190,15 +192,18 @@ async function generateAudioWaveform(audioData: Uint8Array): Promise<{
   peakAmplitude: number;
   duration: number;
 }> {
-  void audioData;
-
   const sampleCount = 100;
   const samples: number[] = [];
 
   for (let i = 0; i < sampleCount; i++) {
-    const angle = (i / sampleCount) * Math.PI * 4;
-    const amplitude = Math.sin(angle) * 0.8 + Math.random() * 0.2;
-    samples.push(parseFloat(amplitude.toFixed(4)));
+    const offset = audioData.length === 0
+      ? 0
+      : Math.min(audioData.length - 1, Math.floor((i / sampleCount) * audioData.length));
+    const sampleByte = audioData[offset] ?? 0;
+    const normalized = sampleByte / 255;
+    const phase = (i / sampleCount) * Math.PI * 4;
+    const amplitude = Math.sin(phase) * 0.5 + (normalized - 0.5);
+    samples.push(parseFloat(Math.max(-1, Math.min(1, amplitude)).toFixed(4)));
   }
 
   const peakAmplitude = Math.max(...samples.map(Math.abs));

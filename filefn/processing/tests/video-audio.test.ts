@@ -540,6 +540,30 @@ describe('Audio Processor', () => {
       expect(waveform.samples.length).toBeGreaterThan(0);
     });
 
+    it('should generate deterministic waveform output for the same input', async () => {
+      const processor = createAudioProcessor({
+        transcode: false,
+        generateWaveform: true,
+      });
+
+      const audioData = createMockAudioData(5000);
+      const input = {
+        fileId: 'file_013_repeat',
+        versionId: 'ver_001',
+        storageKey: 'test/audio-repeat.mp3',
+        mimeType: 'audio/mpeg',
+        size: audioData.length,
+        fileName: 'audio-repeat.mp3',
+      };
+
+      const first = await processor.process(input, vi.fn().mockResolvedValue(audioData));
+      const second = await processor.process(input, vi.fn().mockResolvedValue(audioData));
+
+      expect(first.success).toBe(true);
+      expect(second.success).toBe(true);
+      expect(first.artifacts[0].data).toEqual(second.artifacts[0].data);
+    });
+
     it('should generate all artifacts when all options enabled', async () => {
       const processor = createAudioProcessor({
         transcode: true,
@@ -612,6 +636,30 @@ describe('Audio Processor', () => {
       expect(resultHigh.success).toBe(true);
 
       expect(resultLow.artifacts[0].data.length).toBeLessThan(resultHigh.artifacts[0].data.length);
+    });
+
+    it('falls back safely when bitrate is malformed', async () => {
+      const processor = createAudioProcessor({
+        transcode: true,
+        transcodeOptions: { codec: 'aac', bitrate: 'oops' },
+      });
+
+      const audioData = createMockAudioData(10000);
+      const result = await processor.process(
+        {
+          fileId: 'file_016_bad_bitrate',
+          versionId: 'ver_001',
+          storageKey: 'test/audio.wav',
+          mimeType: 'audio/wav',
+          size: audioData.length,
+          fileName: 'audio.wav',
+        },
+        vi.fn().mockResolvedValue(audioData),
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.artifacts[0].metadata).toMatchObject({ bitrate: 'oops' });
+      expect(result.artifacts[0].data.length).toBeGreaterThan(0);
     });
 
     it('should handle getData errors gracefully', async () => {
