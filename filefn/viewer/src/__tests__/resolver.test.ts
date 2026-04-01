@@ -79,7 +79,7 @@ describe('@filefn/viewer', () => {
     expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
-  it('attaches revoke() for local blob URLs', async () => {
+  it('TV-VIEW-003: attaches revoke() for local blob URLs', async () => {
     const revokeObjectURL = vi.fn();
     vi.stubGlobal('URL', {
       revokeObjectURL,
@@ -114,7 +114,7 @@ describe('@filefn/viewer', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:file_local_img');
   });
 
-  it('returns unsupported placeholders deterministically for generic preview flows', async () => {
+  it('TV-VIEW-004: returns unsupported placeholders deterministically for generic preview flows', async () => {
     const client: FileFnClientLike = {
       resolveRenderable: vi.fn().mockResolvedValue({
         fileId: 'file_generic_1',
@@ -143,6 +143,47 @@ describe('@filefn/viewer', () => {
       state: 'unsupported',
       mimeType: 'application/zip',
       placeholderKind: 'unsupported-preview',
+    });
+  });
+
+  it('TV-VIEW-005: preserves source headers for protected artifact URLs', async () => {
+    const client: FileFnClientLike = {
+      resolveRenderable: vi.fn().mockResolvedValue({
+        fileId: 'file_artifact_1',
+        versionId: 'ver_artifact_1',
+        intent: 'preview',
+        state: 'ready',
+        mimeType: 'image/png',
+        name: 'preview.png',
+        size: 128,
+        source: {
+          mode: 'artifact',
+          artifactId: 'artifact_1',
+          artifactKind: 'pdf-preview-page-1-large',
+          url: '/proxy/files/file_artifact_1/artifacts/artifact_1/download',
+          headers: {
+            Authorization: 'Bearer token',
+          },
+        },
+      } satisfies RenderDescriptor),
+    };
+
+    const source = await resolveViewerSource({
+      client,
+      fileId: 'file_artifact_1',
+      intent: 'preview',
+    });
+
+    expect(source).toEqual({
+      fileId: 'file_artifact_1',
+      intent: 'preview',
+      state: 'ready',
+      mimeType: 'image/png',
+      url: '/proxy/files/file_artifact_1/artifacts/artifact_1/download',
+      headers: {
+        Authorization: 'Bearer token',
+      },
+      revoke: undefined,
     });
   });
 });

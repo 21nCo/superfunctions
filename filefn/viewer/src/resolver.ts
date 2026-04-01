@@ -54,6 +54,7 @@ export interface ViewerSource {
   state: RenderState;
   mimeType: string;
   url?: string;
+  headers?: Record<string, string>;
   placeholderKind?: RenderPlaceholderKind;
   revoke?: () => void;
 }
@@ -108,6 +109,7 @@ export async function resolveViewerSource(input: {
     state: descriptor.state,
     mimeType: descriptor.mimeType,
     url: descriptor.source.url,
+    headers: descriptor.source.headers,
     revoke: createBlobRevoke(descriptor.source.url),
   };
 }
