@@ -249,6 +249,40 @@ describe('Offline Client', () => {
     });
   });
 
+  it('uses direct-pdf preview behavior when a staged source exposes it', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    const file = new File(['%PDF-1.4'], 'draft.pdf', { type: 'application/pdf' });
+    const handle = client.uploadFile({ policy: 'p', file });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const staged = stagedUploads.get(handle.uploadSessionId);
+    staged.localSource = {
+      ...staged.localSource,
+      kind: 'pdf',
+      previewBehavior: 'direct-pdf',
+    };
+
+    const descriptor = await client.resolveRenderable({
+      fileId: handle.fileId,
+      intent: 'preview',
+      preferLocal: true,
+    });
+
+    expect(descriptor).toEqual(expect.objectContaining({
+      state: 'pending-local',
+      source: {
+        mode: 'original',
+        url: `blob:${handle.fileId}`,
+      },
+    }));
+  });
+
   it('TV-VIEW-003: should ignore pending-local sources when an explicit version is requested', async () => {
     Object.defineProperty(navigator, 'onLine', { value: false });
 
@@ -292,16 +326,21 @@ describe('Offline Client', () => {
     expect(stagedUploads.size).toBe(0);
   });
 
-  it('TV-CLIENT-OFFLINE-NEG-001: should throw if offline enabled but OPFS unavailable', () => {
+  it('TV-CLIENT-OFFLINE-NEG-001: defers OPFS errors until offline staging is selected', async () => {
     // Mock OPFS unsupported
     // @ts-ignore
     OPFSStore.isSupported.mockReturnValueOnce(false);
 
-    expect(() => {
-        createFileFnClient({
-            baseUrl: 'http://test',
-            offline: { enabled: true }
-        });
-    }).toThrow(/OPFS unavailable/);
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    expect(client).toBeDefined();
+
+    Object.defineProperty(navigator, 'onLine', { value: false });
+    const file = new File(['content'], 'test.txt', { type: 'text/plain' });
+
+    expect(() => client.uploadFile({ policy: 'p', file })).toThrow(/OPFS unavailable/);
   });
 });

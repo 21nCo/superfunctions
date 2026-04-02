@@ -223,6 +223,39 @@ describe('OPFSStore', () => {
       });
     });
 
+    it('prefers the newest pending upload when a fileId is reused', async () => {
+      const store = new OPFSStore();
+      await store.init();
+
+      await store.stagePendingUpload({
+        uploadSessionId: 'offline_old_001',
+        fileId: 'file_reused',
+        policy: 'images',
+        fileName: 'older.jpg',
+        size: 12,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('old').buffer,
+        createdAt: '2026-04-02T10:00:00.000Z',
+        retryCount: 0,
+      });
+      await store.stagePendingUpload({
+        uploadSessionId: 'offline_new_001',
+        fileId: 'file_reused',
+        policy: 'images',
+        fileName: 'newer.jpg',
+        size: 12,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('new').buffer,
+        createdAt: '2026-04-02T11:00:00.000Z',
+        retryCount: 0,
+      });
+
+      const descriptor = await store.getPendingLocalDescriptor('file_reused');
+
+      expect(descriptor?.uploadSessionId).toBe('offline_new_001');
+      expect(descriptor?.source.fileName).toBe('newer.jpg');
+    });
+
     it('should list all pending uploads', async () => {
       const store = new OPFSStore();
       await store.init();

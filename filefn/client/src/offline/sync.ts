@@ -54,6 +54,7 @@ export class OfflineSync {
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private cancelledUploads: Set<string> = new Set();
   private activeSyncControllers: Map<string, AbortController> = new Map();
+  private inFlightSyncs: Map<string, Promise<{ fileId: string; versionId: string }>> = new Map();
 
   constructor(config: SyncConfig) {
     this.config = {
@@ -222,48 +223,58 @@ export class OfflineSync {
    * Sync a single pending upload.
    */
   async syncOne(uploadSessionId: string): Promise<{ fileId: string; versionId: string }> {
-    const pendingUpload = await this.config.store.getPendingUpload(uploadSessionId);
-
-    if (!pendingUpload) {
-      throw new Error(`Pending upload ${uploadSessionId} not found`);
+    const existing = this.inFlightSyncs.get(uploadSessionId);
+    if (existing) {
+      return existing;
     }
 
-    // Check retry limit
-    if (pendingUpload.retryCount >= this.config.maxRetries) {
-      throw new Error(`Max retries exceeded for ${uploadSessionId}`);
-    }
+    const task = (async () => {
+      const pendingUpload = await this.config.store.getPendingUpload(uploadSessionId);
 
-    try {
-      const controller = new AbortController();
-      this.activeSyncControllers.set(uploadSessionId, controller);
-      // Convert ArrayBuffer back to File
-      const file = new File([pendingUpload.fileData], pendingUpload.fileName, {
-        type: pendingUpload.mimeType,
-      });
-
-      // Upload the file
-      const result = await this.config.client.uploadFile({
-        policy: pendingUpload.policy,
-        file,
-        metadata: pendingUpload.metadata,
-        fileId: pendingUpload.fileId,
-        idempotencyKey: pendingUpload.idempotencyKey,
-        signal: controller.signal,
-      });
-
-      // Delete from store on success
-      await this.config.store.deletePendingUpload(uploadSessionId);
-      
-      return result;
-    } catch (error) {
-      if (this.cancelledUploads.has(uploadSessionId) || (error instanceof DOMException && error.name === 'AbortError')) {
-        throw error;
+      if (!pendingUpload) {
+        throw new Error(`Pending upload ${uploadSessionId} not found`);
       }
-      // Increment retry count
-      await this.config.store.incrementRetryCount(uploadSessionId);
-      throw error;
+
+      if (pendingUpload.retryCount >= this.config.maxRetries) {
+        throw new Error(`Max retries exceeded for ${uploadSessionId}`);
+      }
+
+      try {
+        const controller = new AbortController();
+        this.activeSyncControllers.set(uploadSessionId, controller);
+        const file = new File([pendingUpload.fileData], pendingUpload.fileName, {
+          type: pendingUpload.mimeType,
+        });
+
+        const result = await this.config.client.uploadFile({
+          policy: pendingUpload.policy,
+          file,
+          metadata: pendingUpload.metadata,
+          fileId: pendingUpload.fileId,
+          idempotencyKey: pendingUpload.idempotencyKey,
+          signal: controller.signal,
+        });
+
+        await this.config.store.deletePendingUpload(uploadSessionId);
+        return result;
+      } catch (error) {
+        if (this.cancelledUploads.has(uploadSessionId) || (error instanceof DOMException && error.name === 'AbortError')) {
+          throw error;
+        }
+        await this.config.store.incrementRetryCount(uploadSessionId);
+        throw error;
+      } finally {
+        this.activeSyncControllers.delete(uploadSessionId);
+      }
+    })();
+
+    this.inFlightSyncs.set(uploadSessionId, task);
+    try {
+      return await task;
     } finally {
-      this.activeSyncControllers.delete(uploadSessionId);
+      if (this.inFlightSyncs.get(uploadSessionId) === task) {
+        this.inFlightSyncs.delete(uploadSessionId);
+      }
     }
   }
 

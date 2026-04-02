@@ -198,4 +198,62 @@ describe('OfflineSync', () => {
     await vi.advanceTimersByTimeAsync(25);
     expect(client.uploadFile).toHaveBeenCalledTimes(1);
   });
+
+  it('serializes duplicate sync attempts for the same upload session', async () => {
+    const pending = {
+      uploadSessionId: 'offline_dup_1',
+      fileId: 'file_dup_1',
+      policy: 'p',
+      fileName: 'dup.txt',
+      size: 4,
+      mimeType: 'text/plain',
+      fileData: new TextEncoder().encode('test').buffer,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
+    };
+
+    const store = {
+      async listPendingUploads() {
+        return [pending.uploadSessionId];
+      },
+      async getPendingUpload() {
+        return pending;
+      },
+      async deletePendingUpload() {
+        return;
+      },
+      async incrementRetryCount() {
+        return;
+      },
+    };
+
+    let release!: () => void;
+    const client = {
+      uploadFile: vi.fn().mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { fileId: 'file_dup_1', versionId: 'ver_dup_1' };
+      }),
+    };
+
+    const sync = new OfflineSync({
+      store: store as any,
+      client,
+    });
+    sync.setConnectivityChecker({
+      isOnline: () => true,
+      onOnline: () => () => {},
+      onOffline: () => () => {},
+    });
+
+    const first = sync.syncUpload(pending.uploadSessionId);
+    const second = sync.syncUpload(pending.uploadSessionId);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.uploadFile).toHaveBeenCalledTimes(1);
+
+    release();
+    await Promise.all([first, second]);
+    expect(client.uploadFile).toHaveBeenCalledTimes(1);
+  });
 });

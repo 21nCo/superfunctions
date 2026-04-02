@@ -186,13 +186,20 @@ export class OPFSStore {
 
   async getPendingUploadByFileId(fileId: string): Promise<PendingUpload | null> {
     const uploadSessionIds = await this.listPendingUploads();
+    let bestMatch: Omit<PendingUpload, 'fileData'> | null = null;
     for (const uploadSessionId of uploadSessionIds) {
       const metadata = await this.readPendingMetadata(uploadSessionId);
-      if (metadata?.fileId === fileId) {
-        return this.getPendingUpload(uploadSessionId);
+      if (metadata?.fileId !== fileId) {
+        continue;
+      }
+      if (!bestMatch || this.isPreferredPendingUpload(metadata, bestMatch)) {
+        bestMatch = metadata;
       }
     }
-    return null;
+    if (!bestMatch) {
+      return null;
+    }
+    return this.getPendingUpload(bestMatch.uploadSessionId);
   }
 
   async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
@@ -357,5 +364,23 @@ export class OPFSStore {
     }
     clearTimeout(timer);
     this.localObjectUrlTimers.delete(uploadSessionId);
+  }
+
+  private isPreferredPendingUpload(
+    candidate: Omit<PendingUpload, 'fileData'>,
+    current: Omit<PendingUpload, 'fileData'>,
+  ): boolean {
+    const candidateTime = Date.parse(candidate.createdAt);
+    const currentTime = Date.parse(current.createdAt);
+    if (Number.isFinite(candidateTime) && Number.isFinite(currentTime) && candidateTime !== currentTime) {
+      return candidateTime > currentTime;
+    }
+    if (Number.isFinite(candidateTime) && !Number.isFinite(currentTime)) {
+      return true;
+    }
+    if (!Number.isFinite(candidateTime) && Number.isFinite(currentTime)) {
+      return false;
+    }
+    return candidate.uploadSessionId > current.uploadSessionId;
   }
 }

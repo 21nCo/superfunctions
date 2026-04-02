@@ -163,7 +163,7 @@ function resolvePendingLocalRenderable(
     };
   }
 
-  if (pending.source.kind === 'image') {
+  if (pending.source.previewBehavior === 'direct-image' && pending.source.kind === 'image') {
     return {
       ...base,
       state: 'pending-local',
@@ -174,7 +174,18 @@ function resolvePendingLocalRenderable(
     };
   }
 
-  if (pending.source.kind === 'pdf') {
+  if (pending.source.previewBehavior === 'direct-pdf' && pending.source.kind === 'pdf') {
+    return {
+      ...base,
+      state: 'pending-local',
+      source: {
+        mode: 'original',
+        url: pending.source.url,
+      },
+    };
+  }
+
+  if (pending.source.kind === 'pdf' || pending.source.previewBehavior === 'deterministic-placeholder') {
     return createPlaceholderDescriptor({
       ...base,
       state: 'pending-local',
@@ -222,30 +233,34 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
   let offlineSync: OfflineSync | undefined;
   let offlineStore: OPFSStore | undefined;
 
-  if (config.offline?.enabled) {
+  function ensureOfflineSupport(): { store: OPFSStore; sync: OfflineSync } {
+    if (!config.offline?.enabled) {
+      const error = new Error('Offline uploads are disabled') as Error & { code?: string };
+      error.code = 'FILEFN_OFFLINE_DISABLED';
+      throw error;
+    }
     if (!OPFSStore.isSupported()) {
-      const error = new Error('OPFS unavailable') as any;
+      const error = new Error('OPFS unavailable') as Error & { code?: string };
       error.code = 'FILEFN_OFFLINE_UNSUPPORTED';
       throw error;
     }
-
-    const store = new OPFSStore({ rootDir: config.offline.opfsDir });
-    // Initialize lazily but ensure it's started
-    store.init().catch(() => {});
-    offlineStore = store;
-
-    offlineSync = new OfflineSync({
-      store,
-      client: {
-        uploadFile: async (input) => {
-          const manager = new UploadManager(httpClient);
-          manager.bindAbortSignal(input.signal);
-          return manager.startUpload(input);
+    if (!offlineStore || !offlineSync) {
+      const store = new OPFSStore({ rootDir: config.offline.opfsDir });
+      store.init().catch(() => {});
+      offlineStore = store;
+      offlineSync = new OfflineSync({
+        store,
+        client: {
+          uploadFile: async (input) => {
+            const manager = new UploadManager(httpClient);
+            manager.bindAbortSignal(input.signal);
+            return manager.startUpload(input);
+          }
         }
-      }
-    });
-
-    offlineSync.startAutoSync();
+      });
+      offlineSync.startAutoSync();
+    }
+    return { store: offlineStore, sync: offlineSync };
   }
 
   return {
@@ -255,7 +270,8 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
         fileId: input.fileId ?? generateFileId(),
       };
 
-      if (offlineSync && offlineStore && shouldUseOfflineMode(config.offline?.enabled ?? false)) {
+      if (config.offline?.enabled && shouldUseOfflineMode(true)) {
+        const { store: activeOfflineStore, sync: activeOfflineSync } = ensureOfflineSupport();
         const uploadSessionId = generateOfflineSessionId();
         let aborted = false;
         let rejectStage: ((reason?: unknown) => void) | undefined;
@@ -290,9 +306,9 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
                 createdAt: new Date().toISOString(),
                 retryCount: 0
               };
-              await offlineStore!.stagePendingUpload(pending);
+              await activeOfflineStore.stagePendingUpload(pending);
               if (aborted) {
-                await offlineStore!.deletePendingUpload(uploadSessionId);
+                await activeOfflineStore.deletePendingUpload(uploadSessionId);
                 throw createAbortError();
               }
               resolve();
@@ -311,7 +327,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
               return;
             }
             aborted = true;
-            void offlineSync!.cancelUpload(uploadSessionId, createAbortError());
+            void activeOfflineSync.cancelUpload(uploadSessionId, createAbortError());
             rejectStage?.(createAbortError());
           },
           onProgress: (_cb) => {
@@ -326,7 +342,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
               throw createAbortError();
             }
             // Wait for sync to complete when online
-            return offlineSync!.waitForUpload(uploadSessionId);
+            return activeOfflineSync.waitForUpload(uploadSessionId);
           }
         };
 
@@ -373,8 +389,8 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     },
 
     async resolveRenderable(input): Promise<RenderDescriptor> {
-      if (input.preferLocal && !input.versionId && offlineStore) {
-        const pending = await offlineStore.getPendingLocalDescriptor(input.fileId);
+      if (input.preferLocal && !input.versionId && config.offline?.enabled && OPFSStore.isSupported()) {
+        const pending = await (offlineStore ?? ensureOfflineSupport().store).getPendingLocalDescriptor(input.fileId);
         if (pending) {
           return resolvePendingLocalRenderable({ intent: input.intent }, pending);
         }
@@ -391,10 +407,10 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     },
 
     async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
-      if (!offlineStore) {
+      if (!config.offline?.enabled || !OPFSStore.isSupported()) {
         return null;
       }
-      return offlineStore.getPendingLocalDescriptor(fileId);
+      return (offlineStore ?? ensureOfflineSupport().store).getPendingLocalDescriptor(fileId);
     },
   };
 }
