@@ -225,6 +225,43 @@ describe('uploadFile', () => {
     const initCall = mockFetch.mock.calls[0];
     expect(initCall[1].headers.Authorization).toBe('Bearer token123');
   });
+
+  it('exposes upload session metadata as soon as init succeeds', async () => {
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    const file = createMockBlob(50);
+    let releaseSign!: () => void;
+    const signBlocked = new Promise((resolve) => {
+      releaseSign = () => resolve(undefined);
+    });
+
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse({
+        uploadSessionId: 'session_early',
+        uploadSessionToken: 'upls_early',
+        uploadMode: 'multipart-signed-url',
+        chunkSizeBytes: 5 * 1024 * 1024,
+        totalParts: 1,
+        expiresAt: '2025-01-01T00:00:00Z',
+      }))
+      .mockImplementationOnce(async () => {
+        await signBlocked;
+        return createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' });
+      })
+      .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag"' }))
+      .mockResolvedValueOnce(createMockResponse({ recorded: true }))
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_early', versionId: 'ver_early' }));
+
+    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_early' });
+    const donePromise = handle.done();
+    await vi.waitFor(() => {
+      expect(handle.uploadSessionId).toBe('session_early');
+      expect(handle.uploadSessionToken).toBe('upls_early');
+      expect(handle.fileId).toBe('file_early');
+    });
+
+    releaseSign();
+    await expect(donePromise).resolves.toEqual({ fileId: 'file_early', versionId: 'ver_early' });
+  });
 });
 
 describe('resumeUpload', () => {

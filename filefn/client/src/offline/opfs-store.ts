@@ -5,6 +5,7 @@ export interface PendingUpload {
   uploadSessionId: string;
   fileId?: string;
   policy: string;
+  idempotencyKey?: string;
   fileName: string;
   size: number;
   mimeType: string;
@@ -56,10 +57,12 @@ export interface OPFSStoreConfig {
 }
 
 export class OPFSStore {
+  private static readonly LOCAL_OBJECT_URL_REVOKE_DELAY_MS = 5 * 60 * 1000;
   private rootDirName: string;
   private rootDir: FileSystemDirectoryHandle | null = null;
   private isInitialized = false;
   private localObjectUrls = new Map<string, string>();
+  private localObjectUrlTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(config: OPFSStoreConfig = {}) {
     this.rootDirName = config.rootDir || 'filefn-pending-uploads';
@@ -118,6 +121,7 @@ export class OPFSStore {
       uploadSessionId: upload.uploadSessionId,
       fileId: upload.fileId || upload.uploadSessionId,
       policy: upload.policy,
+      idempotencyKey: upload.idempotencyKey,
       fileName: upload.fileName,
       size: upload.size,
       mimeType: upload.mimeType,
@@ -205,6 +209,7 @@ export class OPFSStore {
 
     let url = this.localObjectUrls.get(upload.uploadSessionId);
     if (!url) {
+      this.clearLocalObjectUrlTimer(upload.uploadSessionId);
       const blob = new Blob([upload.fileData], { type: upload.mimeType });
       url = URL.createObjectURL(blob);
       this.localObjectUrls.set(upload.uploadSessionId, url);
@@ -234,7 +239,7 @@ export class OPFSStore {
     } catch (error) {
       // Ignore errors if directory doesn't exist
     } finally {
-      this.revokeLocalObjectUrl(uploadSessionId);
+      this.scheduleLocalObjectUrlRevoke(uploadSessionId);
     }
   }
 
@@ -242,6 +247,7 @@ export class OPFSStore {
    * Increment retry count for a pending upload.
    */
   async incrementRetryCount(uploadSessionId: string): Promise<void> {
+    await this.ensureInitialized();
     const metadata = await this.readPendingMetadata(uploadSessionId);
     if (!metadata) return;
 
@@ -322,6 +328,7 @@ export class OPFSStore {
   }
 
   private revokeLocalObjectUrl(uploadSessionId: string): void {
+    this.clearLocalObjectUrlTimer(uploadSessionId);
     const url = this.localObjectUrls.get(uploadSessionId);
     if (!url) {
       return;
@@ -330,5 +337,25 @@ export class OPFSStore {
     if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
       URL.revokeObjectURL(url);
     }
+  }
+
+  private scheduleLocalObjectUrlRevoke(uploadSessionId: string): void {
+    if (!this.localObjectUrls.has(uploadSessionId)) {
+      return;
+    }
+    this.clearLocalObjectUrlTimer(uploadSessionId);
+    const timer = setTimeout(() => {
+      this.revokeLocalObjectUrl(uploadSessionId);
+    }, OPFSStore.LOCAL_OBJECT_URL_REVOKE_DELAY_MS);
+    this.localObjectUrlTimers.set(uploadSessionId, timer);
+  }
+
+  private clearLocalObjectUrlTimer(uploadSessionId: string): void {
+    const timer = this.localObjectUrlTimers.get(uploadSessionId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.localObjectUrlTimers.delete(uploadSessionId);
   }
 }

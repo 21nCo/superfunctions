@@ -239,6 +239,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       client: {
         uploadFile: async (input) => {
           const manager = new UploadManager(httpClient);
+          manager.bindAbortSignal(input.signal);
           return manager.startUpload(input);
         }
       }
@@ -279,6 +280,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
                 uploadSessionId,
                 fileId: prepared.fileId,
                 policy: prepared.policy,
+                idempotencyKey: prepared.idempotencyKey,
                 fileName: prepared.fileName,
                 size: prepared.size,
                 mimeType: prepared.mimeType,
@@ -334,7 +336,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       const manager = new UploadManager(httpClient, preprocessors);
       return manager.createHandle(
         normalizedInput,
-        () => manager.startUpload(normalizedInput),
+        (handle) => manager.startUpload(normalizedInput, handle),
       ) as UploadHandleWithFileId;
     },
 

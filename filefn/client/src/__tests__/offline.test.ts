@@ -6,6 +6,7 @@ import { OPFSStore } from '../offline/opfs-store.js';
 const stagedUploads = new Map();
 const mockUploadFile = vi.fn().mockResolvedValue({ fileId: 'f1', versionId: 'v1' });
 let lastInitFileId: string | undefined;
+let lastInitIdempotencyKey: string | undefined;
 
 // Mock HttpClient
 vi.mock('../client.js', async (importOriginal) => {
@@ -22,6 +23,7 @@ vi.mock('../client.js', async (importOriginal) => {
             // So we need to mock HttpClient methods that UploadManager calls.
             initUpload: vi.fn().mockImplementation(async (params: { fileId?: string }) => {
                 lastInitFileId = params.fileId;
+                lastInitIdempotencyKey = (params as { idempotencyKey?: string }).idempotencyKey;
                 return {
                     uploadSessionId: 'upl_real', totalParts: 1, chunkSizeBytes: 100
                 };
@@ -87,6 +89,7 @@ describe('Offline Client', () => {
     stagedUploads.clear();
     mockUploadFile.mockClear();
     lastInitFileId = undefined;
+    lastInitIdempotencyKey = undefined;
     
     // Mock navigator
     if (typeof navigator === 'undefined') {
@@ -154,6 +157,31 @@ describe('Offline Client', () => {
 
     expect(result.fileId).toBe(handle.fileId);
     expect(stagedUploads.size).toBe(0);
+  });
+
+  it('persists idempotency keys through offline replay', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    const file = new File(['content'], 'test.txt', { type: 'text/plain' });
+    const handle = client.uploadFile({
+      policy: 'p',
+      file,
+      idempotencyKey: 'idem_001',
+    });
+
+    const donePromise = handle.done();
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    Object.defineProperty(navigator, 'onLine', { value: true });
+    if (onlineCallback) await onlineCallback();
+
+    await donePromise;
+    expect(lastInitIdempotencyKey).toBe('idem_001');
   });
 
   it('TV-CLIENT-002: should expose a pending-local descriptor for staged offline files', async () => {

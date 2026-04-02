@@ -193,6 +193,19 @@ export class UploadManager {
     this.abortController = new AbortController();
   }
 
+  bindAbortSignal(signal: AbortSignal | undefined): void {
+    if (!signal) {
+      return;
+    }
+    if (signal.aborted) {
+      this.abortController.abort();
+      return;
+    }
+    signal.addEventListener('abort', () => {
+      this.abortController.abort();
+    }, { once: true });
+  }
+
   createHandle(
     input: UploadInput,
     startUpload: (handle: UploadHandle) => Promise<UploadResult>,
@@ -230,7 +243,7 @@ export class UploadManager {
     return handle;
   }
 
-  async startUpload(input: UploadInput): Promise<UploadResult> {
+  async startUpload(input: UploadInput, handle?: UploadHandle): Promise<UploadResult> {
     const signal = this.abortController.signal;
     const prepared = await prepareUploadInput(input, [...this.preprocessors, ...(input.preprocessors || [])]);
     this.file = prepared.file;
@@ -283,6 +296,11 @@ export class UploadManager {
       fileSize: prepared.size,
     };
     this.uploadSessionToken = initResponse.uploadSessionToken;
+    if (handle) {
+      handle.uploadSessionId = uploadSessionId;
+      handle.uploadSessionToken = this.uploadSessionToken;
+      handle.fileId = prepared.fileId;
+    }
 
     await this.uploadAllParts(signal);
 

@@ -134,4 +134,68 @@ describe('OfflineSync', () => {
 
     await expect(waitPromise).rejects.toThrow('Aborted');
   });
+
+  it('aborts an in-flight sync without scheduling a retry', async () => {
+    let deleted = false;
+    const pending = {
+      uploadSessionId: 'offline_cancel_live_1',
+      fileId: 'file_cancel_live_1',
+      policy: 'p',
+      idempotencyKey: 'idem_cancel_live_1',
+      fileName: 'cancel.txt',
+      size: 4,
+      mimeType: 'text/plain',
+      fileData: new TextEncoder().encode('test').buffer,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
+    };
+
+    const store = {
+      async listPendingUploads() {
+        return deleted ? [] : [pending.uploadSessionId];
+      },
+      async getPendingUpload() {
+        return deleted ? null : pending;
+      },
+      async deletePendingUpload() {
+        deleted = true;
+      },
+      async incrementRetryCount() {
+        throw new Error('retry count should not increment after abort');
+      },
+    };
+
+    let abortSignal: AbortSignal | undefined;
+    const client = {
+      uploadFile: vi.fn().mockImplementation(async (input: { signal?: AbortSignal }) => {
+        abortSignal = input.signal;
+        return await new Promise((_resolve, reject) => {
+          input.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          }, { once: true });
+        });
+      }),
+    };
+
+    const sync = new OfflineSync({
+      store: store as any,
+      client,
+      retryDelayMs: 25,
+      maxRetries: 2,
+    });
+    sync.setConnectivityChecker({
+      isOnline: () => true,
+      onOnline: () => () => {},
+      onOffline: () => () => {},
+    });
+
+    const syncPromise = sync.syncUpload(pending.uploadSessionId);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(abortSignal).toBeDefined();
+
+    await sync.cancelUpload(pending.uploadSessionId);
+    await expect(syncPromise).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(25);
+    expect(client.uploadFile).toHaveBeenCalledTimes(1);
+  });
 });

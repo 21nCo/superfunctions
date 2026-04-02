@@ -6,6 +6,8 @@ export interface UploadClient {
     file: File;
     metadata?: Record<string, unknown>;
     fileId?: string;
+    idempotencyKey?: string;
+    signal?: AbortSignal;
   }): Promise<{ fileId: string; versionId: string }>;
 }
 
@@ -51,6 +53,7 @@ export class OfflineSync {
   private stopOnlineListener?: () => void;
   private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private cancelledUploads: Set<string> = new Set();
+  private activeSyncControllers: Map<string, AbortController> = new Map();
 
   constructor(config: SyncConfig) {
     this.config = {
@@ -71,11 +74,11 @@ export class OfflineSync {
    */
   startAutoSync(): void {
     this.stopAutoSync();
-    this.stopOnlineListener = this.connectivityChecker.onOnline(async () => {
-      await this.syncAll();
+    this.stopOnlineListener = this.connectivityChecker.onOnline(() => {
+      void this.syncAll().catch(() => {});
     });
     if (this.connectivityChecker.isOnline()) {
-      void this.syncAll();
+      void this.syncAll().catch(() => {});
     }
   }
 
@@ -184,6 +187,10 @@ export class OfflineSync {
           progress.completed += 1;
           this.notifyListeners(uploadSessionId, uploadResult);
         } catch (error) {
+          if (this.cancelledUploads.has(uploadSessionId)) {
+            this.cancelledUploads.delete(uploadSessionId);
+            continue;
+          }
           const err = error instanceof Error ? error : new Error('Unknown error');
           result.failed.push(uploadSessionId);
           progress.failed += 1;
@@ -227,6 +234,8 @@ export class OfflineSync {
     }
 
     try {
+      const controller = new AbortController();
+      this.activeSyncControllers.set(uploadSessionId, controller);
       // Convert ArrayBuffer back to File
       const file = new File([pendingUpload.fileData], pendingUpload.fileName, {
         type: pendingUpload.mimeType,
@@ -238,6 +247,8 @@ export class OfflineSync {
         file,
         metadata: pendingUpload.metadata,
         fileId: pendingUpload.fileId,
+        idempotencyKey: pendingUpload.idempotencyKey,
+        signal: controller.signal,
       });
 
       // Delete from store on success
@@ -245,9 +256,14 @@ export class OfflineSync {
       
       return result;
     } catch (error) {
+      if (this.cancelledUploads.has(uploadSessionId) || (error instanceof DOMException && error.name === 'AbortError')) {
+        throw error;
+      }
       // Increment retry count
       await this.config.store.incrementRetryCount(uploadSessionId);
       throw error;
+    } finally {
+      this.activeSyncControllers.delete(uploadSessionId);
     }
   }
 
@@ -266,6 +282,10 @@ export class OfflineSync {
       const result = await this.syncOne(uploadSessionId);
       this.notifyListeners(uploadSessionId, result);
     } catch (error) {
+      if (this.cancelledUploads.has(uploadSessionId)) {
+        this.cancelledUploads.delete(uploadSessionId);
+        return;
+      }
       const err = error instanceof Error ? error : new Error('Unknown error');
       const pending = await this.config.store.getPendingUpload(uploadSessionId);
       if (pending && pending.retryCount >= this.config.maxRetries) {
@@ -290,6 +310,7 @@ export class OfflineSync {
   async cancelUpload(uploadSessionId: string, reason: Error = new DOMException('Aborted', 'AbortError')): Promise<void> {
     this.cancelledUploads.add(uploadSessionId);
     this.clearRetry(uploadSessionId);
+    this.activeSyncControllers.get(uploadSessionId)?.abort();
     this.notifyListeners(uploadSessionId, reason);
     await this.config.store.deletePendingUpload(uploadSessionId);
   }
@@ -301,7 +322,10 @@ export class OfflineSync {
 
     const timer = setTimeout(() => {
       this.retryTimers.delete(uploadSessionId);
-      void this.syncUpload(uploadSessionId);
+      void this.syncUpload(uploadSessionId).catch((error) => {
+        const err = error instanceof Error ? error : new Error('Unknown error');
+        this.config.onSyncError(err, uploadSessionId);
+      });
     }, this.config.retryDelayMs);
     this.retryTimers.set(uploadSessionId, timer);
   }
