@@ -6,6 +6,7 @@ import {
   supportsProcessor,
   VIDEO_SUPPORTED_MIME_TYPES,
   AUDIO_SUPPORTED_MIME_TYPES,
+  type AudioProcessorProvider,
   type VideoProcessorProvider,
 } from '../src/index.js';
 
@@ -86,9 +87,78 @@ function createMockAudioData(size: number = 500): Uint8Array {
   const header = new TextEncoder().encode('MOCK_AUDIO_DATA');
   data.set(header, 0);
   for (let i = header.length; i < size; i++) {
-    data[i] = Math.floor(Math.random() * 256);
+    data[i] = i % 251;
   }
   return data;
+}
+
+function createMockAudioProvider(): AudioProcessorProvider {
+  return {
+    async transcode(request) {
+      const payloadSize = Math.max(
+        1,
+        Math.floor(
+          request.audioData.length *
+            Math.max(0.2, Math.min(1, Number.parseInt(request.bitrate.replace(/[^0-9]/g, ''), 10) / 320 || 0.4)),
+        ),
+      );
+      const payload = new Uint8Array(payloadSize);
+      payload.set(
+        new TextEncoder().encode(`AUDIO:${request.codec}:${request.bitrate}:${request.sampleRate}:${request.channels}`),
+      );
+      const extensionMap = {
+        mp3: 'mp3',
+        aac: 'm4a',
+        opus: 'opus',
+        vorbis: 'ogg',
+        flac: 'flac',
+      } as const;
+      const mimeTypeMap = {
+        mp3: 'audio/mpeg',
+        aac: 'audio/mp4',
+        opus: 'audio/opus',
+        vorbis: 'audio/ogg',
+        flac: 'audio/flac',
+      } as const;
+      return {
+        data: payload,
+        extension: extensionMap[request.codec],
+        mimeType: mimeTypeMap[request.codec],
+      };
+    },
+    async extractMetadata(request) {
+      return {
+        duration: 245.8,
+        codec: 'aac',
+        bitrate: '192000',
+        sampleRate: 44100,
+        channels: 2,
+        fileSize: request.audioData.length,
+        format: 'mp4',
+        title: 'Audio Track',
+        artist: 'Unknown Artist',
+        album: 'Unknown Album',
+        year: '2024',
+        genre: 'Unknown',
+        creationTime: '2026-04-02T00:00:00.000Z',
+      };
+    },
+    async generateWaveform(request) {
+      const sampleCount = request.samples ?? 100;
+      const samples = Array.from({ length: sampleCount }, (_, index) => {
+        const offset = Math.min(
+          request.audioData.length - 1,
+          Math.floor((index / sampleCount) * request.audioData.length),
+        );
+        return Number(((request.audioData[offset] ?? 0) / 255).toFixed(4));
+      });
+      return {
+        samples,
+        peakAmplitude: Math.max(...samples),
+        duration: 245.8,
+      };
+    },
+  };
 }
 
 describe('Video Processor', () => {
@@ -441,6 +511,7 @@ describe('Audio Processor', () => {
 
     it('should transcode audio by default', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: true,
         transcodeOptions: {
           codec: 'aac',
@@ -485,6 +556,7 @@ describe('Audio Processor', () => {
 
     it('should transcode to MP3', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: true,
         transcodeOptions: {
           codec: 'mp3',
@@ -515,6 +587,7 @@ describe('Audio Processor', () => {
 
     it('should transcode to Opus', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: true,
         transcodeOptions: {
           codec: 'opus',
@@ -545,6 +618,7 @@ describe('Audio Processor', () => {
 
     it('should extract audio metadata', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: false,
         extractMetadata: true,
       });
@@ -583,6 +657,7 @@ describe('Audio Processor', () => {
 
     it('should generate waveform data', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: false,
         generateWaveform: true,
       });
@@ -618,6 +693,7 @@ describe('Audio Processor', () => {
 
     it('should generate deterministic waveform output for the same input', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: false,
         generateWaveform: true,
       });
@@ -642,6 +718,7 @@ describe('Audio Processor', () => {
 
     it('should generate all artifacts when all options enabled', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: true,
         extractMetadata: true,
         generateWaveform: true,
@@ -671,11 +748,13 @@ describe('Audio Processor', () => {
 
     it('should handle different bitrates correctly', async () => {
       const lowBitrate = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: true,
         transcodeOptions: { codec: 'aac', bitrate: '64k' },
       });
 
       const highBitrate = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: true,
         transcodeOptions: { codec: 'aac', bitrate: '256k' },
       });
@@ -716,6 +795,7 @@ describe('Audio Processor', () => {
 
     it('falls back safely when bitrate is malformed', async () => {
       const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
         transcode: true,
         transcodeOptions: { codec: 'aac', bitrate: 'oops' },
       });
@@ -739,7 +819,7 @@ describe('Audio Processor', () => {
     });
 
     it('should handle getData errors gracefully', async () => {
-      const processor = createAudioProcessor();
+      const processor = createAudioProcessor({ provider: createMockAudioProvider() });
       const getData = vi.fn().mockRejectedValue(new Error('Download failed'));
 
       const result = await processor.process(
@@ -757,6 +837,31 @@ describe('Audio Processor', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('Download failed');
       expect(result.artifacts).toHaveLength(0);
+    });
+
+    it('skips loading source bytes when every audio operation is disabled', async () => {
+      const processor = createAudioProcessor({
+        provider: createMockAudioProvider(),
+        transcode: false,
+        extractMetadata: false,
+        generateWaveform: false,
+      });
+      const getData = vi.fn();
+
+      const result = await processor.process(
+        {
+          fileId: 'file_audio_disabled',
+          versionId: 'ver_001',
+          storageKey: 'test/audio.mp3',
+          mimeType: 'audio/mpeg',
+          size: 1000,
+          fileName: 'audio.mp3',
+        },
+        getData,
+      );
+
+      expect(result).toEqual({ success: true, artifacts: [] });
+      expect(getData).not.toHaveBeenCalled();
     });
   });
 });

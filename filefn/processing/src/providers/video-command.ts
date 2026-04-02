@@ -1,6 +1,4 @@
-import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type {
@@ -10,6 +8,7 @@ import type {
   VideoTranscodeRequest,
   VideoTranscodeResult,
 } from '../types.js';
+import { resolveBinaryPath, runBinary, runBinaryCapture, withTempDir } from './command-utils.js';
 
 const RESOLUTION_HEIGHTS: Record<string, number> = {
   '1080p': 1080,
@@ -37,17 +36,6 @@ export interface CommandVideoProviderConfig {
   ffprobePath?: string;
 }
 
-function resolveBinaryPath(configured: string | undefined, envKeys: string[], label: string): string {
-  const fromEnv = envKeys.map((key) => process.env[key]).find(Boolean);
-  const binaryPath = configured ?? fromEnv;
-  if (!binaryPath) {
-    throw new Error(
-      `${label} path is required. Provide it via createCommandVideoProvider(...) or ${envKeys.join(' / ')}.`,
-    );
-  }
-  return binaryPath;
-}
-
 function outputExtensionForInput(mimeType: string): string {
   switch (mimeType) {
     case 'video/webm':
@@ -73,62 +61,6 @@ function validateBitrate(bitrate: string): string {
   return normalized;
 }
 
-async function runBinary(binary: string, args: string[]): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(binary, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(stderr.trim() || `${binary} exited with code ${code ?? 'unknown'}`));
-    });
-  });
-}
-
-async function runBinaryCapture(binary: string, args: string[]): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const child = spawn(binary, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-      reject(new Error(stderr.trim() || `${binary} exited with code ${code ?? 'unknown'}`));
-    });
-  });
-}
-
-async function withTempDir<T>(runner: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), 'filefn-processing-video-'));
-  try {
-    return await runner(dir);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
 
 function coerceDuration(metadata: Record<string, unknown>): number {
   const duration = metadata.duration;
@@ -140,7 +72,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
   const ffprobePath = resolveBinaryPath(config.ffprobePath, ['FILEFN_FFPROBE_PATH', 'FFPROBE_PATH'], 'ffprobe');
 
   async function extractMetadata(request: VideoMetadataRequest): Promise<Record<string, unknown>> {
-    return await withTempDir(async (dir) => {
+    return await withTempDir('filefn-processing-video-', async (dir) => {
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
       await writeFile(inputPath, Buffer.from(request.videoData));
 
@@ -184,17 +116,16 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
   }
 
   async function generatePoster(request: VideoPosterRequest): Promise<Uint8Array> {
-    return await withTempDir(async (dir) => {
+    return await withTempDir('filefn-processing-video-', async (dir) => {
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
       const outputPath = join(dir, `poster.${request.format === 'jpeg' ? 'jpg' : request.format}`);
 
       await writeFile(inputPath, Buffer.from(request.videoData));
 
-      const metadata = await extractMetadata({
+      const duration = request.duration ?? coerceDuration(await extractMetadata({
         input: request.input,
         videoData: request.videoData,
-      });
-      const duration = coerceDuration(metadata);
+      }));
       const safeTimestamp = duration > 0
         ? Math.min(Math.max(request.timestamp, 0), Math.max(duration - 0.05, 0))
         : Math.max(request.timestamp, 0);
@@ -231,7 +162,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
   }
 
   async function transcode(request: VideoTranscodeRequest): Promise<VideoTranscodeResult> {
-    return await withTempDir(async (dir) => {
+    return await withTempDir('filefn-processing-video-', async (dir) => {
       const inputPath = join(dir, `input.${outputExtensionForInput(request.input.mimeType)}`);
       const outputInfo = VIDEO_OUTPUTS[request.codec] ?? VIDEO_OUTPUTS.h264;
       const outputPath = join(dir, `output.${outputInfo.extension}`);
@@ -252,9 +183,19 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         validateBitrate(request.bitrate),
       ];
 
-      if (outputInfo.extension === 'webm') {
+      if (request.includeAudio === false) {
         args.push('-an');
       } else {
+        const defaultAudioCodec = outputInfo.extension === 'webm' ? 'opus' : 'aac';
+        const selectedAudioCodec = request.audioCodec ?? defaultAudioCodec;
+        if (selectedAudioCodec === 'copy') {
+          args.push('-c:a', 'copy');
+        } else {
+          args.push('-c:a', selectedAudioCodec);
+        }
+      }
+
+      if (outputInfo.extension === 'mp4') {
         args.push('-movflags', '+faststart');
       }
 

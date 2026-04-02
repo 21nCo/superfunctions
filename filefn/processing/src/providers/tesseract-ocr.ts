@@ -35,7 +35,7 @@ export function createTesseractJsOCRProvider(): OCRProcessorProvider {
         return {
           text: result.data.text.trim(),
           confidence: result.data.confidence,
-          hocr: result.data.hocr ?? undefined,
+          hocr: result.data.hocr,
         };
       } finally {
         await worker.terminate();

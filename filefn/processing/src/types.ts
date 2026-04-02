@@ -118,6 +118,8 @@ export interface VideoTranscodeOptions {
   resolution?: '1080p' | '720p' | '480p' | '360p';
   bitrate?: string;
   fps?: number;
+  includeAudio?: boolean;
+  audioCodec?: 'aac' | 'opus' | 'copy';
 }
 
 export interface VideoPosterOptions {
@@ -141,6 +143,7 @@ export interface VideoPosterRequest {
   input: ProcessorInput;
   videoData: Uint8Array;
   timestamp: number;
+  duration?: number;
   width: number;
   height: number;
   format: 'jpeg' | 'png' | 'webp';
@@ -154,6 +157,8 @@ export interface VideoTranscodeRequest {
   resolution: '1080p' | '720p' | '480p' | '360p';
   bitrate: string;
   fps: number;
+  includeAudio?: boolean;
+  audioCodec?: 'aac' | 'opus' | 'copy';
 }
 
 export interface VideoMetadataRequest {
@@ -183,7 +188,7 @@ export interface OCRProviderRequest {
 export interface OCRProviderResult {
   text: string;
   confidence: number;
-  hocr?: string;
+  hocr?: string | null;
 }
 
 export interface OCRProcessorProvider {
@@ -202,4 +207,43 @@ export interface AudioConfig {
   transcodeOptions?: AudioTranscodeOptions;
   extractMetadata?: boolean;
   generateWaveform?: boolean;
+  provider?: AudioProcessorProvider;
+}
+
+export interface AudioMetadataRequest {
+  input: ProcessorInput;
+  audioData: Uint8Array;
+}
+
+export interface AudioWaveformRequest {
+  input: ProcessorInput;
+  audioData: Uint8Array;
+  samples?: number;
+}
+
+export interface AudioTranscodeRequest {
+  input: ProcessorInput;
+  audioData: Uint8Array;
+  codec: 'mp3' | 'aac' | 'opus' | 'vorbis' | 'flac';
+  bitrate: string;
+  sampleRate: number;
+  channels: number;
+}
+
+export interface AudioWaveformResult {
+  samples: number[];
+  peakAmplitude: number;
+  duration: number;
+}
+
+export interface AudioTranscodeResult {
+  data: Uint8Array;
+  mimeType: string;
+  extension: string;
+}
+
+export interface AudioProcessorProvider {
+  transcode(request: AudioTranscodeRequest): Promise<AudioTranscodeResult>;
+  extractMetadata(request: AudioMetadataRequest): Promise<Record<string, unknown>>;
+  generateWaveform(request: AudioWaveformRequest): Promise<AudioWaveformResult>;
 }

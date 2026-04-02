@@ -5,7 +5,6 @@ import type { OCRConfig } from '../types.js';
 const SUPPORTED_MIME_TYPES = [
   'image/png',
   'image/jpeg',
-  'image/jpg',
   'image/webp',
   'image/gif',
   'image/tiff',
@@ -70,7 +69,7 @@ export function createOCRProcessor(config: OCRConfig = {}): Processor {
       try {
         const imageData = await getData();
         const artifacts = [];
-        const baseKey = input.storageKey.replace(/\.[^.]+$/, '');
+        const baseKey = input.storageKey.replace(/\.[^/.]+$/, '');
         const runtime = resolveProvider(provider);
         const needsHOCR = outputFormat === 'hocr' || outputFormat === 'all';
         const extracted = await runtime.recognize({
@@ -79,6 +78,7 @@ export function createOCRProcessor(config: OCRConfig = {}): Processor {
           language,
           includeHOCR: needsHOCR,
         });
+        const extractedAt = new Date().toISOString();
 
         if (outputFormat === 'text' || outputFormat === 'all') {
           const textData = new TextEncoder().encode(extracted.text);
@@ -96,7 +96,7 @@ export function createOCRProcessor(config: OCRConfig = {}): Processor {
               originalSize: imageData.length,
               textLength: extracted.text.length,
               confidence: extracted.confidence,
-              extractedAt: new Date().toISOString(),
+              extractedAt,
             },
           });
         }
@@ -107,7 +107,7 @@ export function createOCRProcessor(config: OCRConfig = {}): Processor {
               text: extracted.text,
               language,
               confidence: extracted.confidence,
-              extractedAt: new Date().toISOString(),
+              extractedAt,
             },
             null,
             2,

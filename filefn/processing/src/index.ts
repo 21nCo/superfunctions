@@ -28,7 +28,13 @@ export type {
   VideoPosterRequest,
   VideoProcessorProvider,
   AudioConfig,
+  AudioMetadataRequest,
+  AudioProcessorProvider,
   AudioTranscodeOptions,
+  AudioTranscodeRequest,
+  AudioTranscodeResult,
+  AudioWaveformRequest,
+  AudioWaveformResult,
 } from './types.js';
 
 export {
@@ -67,6 +73,7 @@ export {
   createAudioProcessor,
   AUDIO_SUPPORTED_MIME_TYPES,
 } from './processors/audio.js';
+export { createCommandAudioProvider } from './providers/audio-command.js';
 
 export interface ProcessingPipeline {
   name: string;

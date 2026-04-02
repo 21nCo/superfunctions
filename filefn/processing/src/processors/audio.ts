@@ -1,5 +1,6 @@
 import type {
   AudioConfig,
+  AudioProcessorProvider,
   Processor,
   ProcessorInput,
   ProcessorResult,
@@ -18,12 +19,22 @@ const SUPPORTED_MIME_TYPES = [
   'audio/x-m4a',
 ];
 
+function requireProvider(provider: AudioProcessorProvider | undefined): AudioProcessorProvider {
+  if (!provider) {
+    throw new Error(
+      'Audio processing requires a provider. Pass config.provider.',
+    );
+  }
+  return provider;
+}
+
 export function createAudioProcessor(config: AudioConfig = {}): Processor {
   const {
     transcode = true,
     transcodeOptions = {},
     extractMetadata = false,
     generateWaveform = false,
+    provider,
   } = config;
 
   const {
@@ -47,27 +58,33 @@ export function createAudioProcessor(config: AudioConfig = {}): Processor {
       }
 
       try {
+        if (!transcode && !extractMetadata && !generateWaveform) {
+          return {
+            success: true,
+            artifacts: [],
+          };
+        }
+
+        const runtime = requireProvider(provider);
         const audioData = await getData();
         const artifacts = [];
-        const baseKey = input.storageKey.replace(/\.[^.]+$/, '');
+        const baseKey = input.storageKey.replace(/\.[^/.]+$/, '');
 
         if (transcode) {
-          const transcodedData = await transcodeAudio(
+          const transcoded = await runtime.transcode({
+            input,
             audioData,
             codec,
             bitrate,
             sampleRate,
-            channels
-          );
-
-          const outputExtension = getAudioExtension(codec);
-          const outputMimeType = getAudioMimeType(codec);
+            channels,
+          });
 
           artifacts.push({
             kind: `audio-transcoded-${codec}`,
-            data: transcodedData,
-            mimeType: outputMimeType,
-            storageKey: `${baseKey}-${codec}.${outputExtension}`,
+            data: transcoded.data,
+            mimeType: transcoded.mimeType,
+            storageKey: `${baseKey}-${codec}.${transcoded.extension}`,
             metadata: {
               codec,
               bitrate,
@@ -76,14 +93,17 @@ export function createAudioProcessor(config: AudioConfig = {}): Processor {
               sourceFileId: input.fileId,
               sourceVersionId: input.versionId,
               originalSize: audioData.length,
-              transcodedSize: transcodedData.length,
-              compressionRatio: audioData.length > 0 ? transcodedData.length / audioData.length : 0,
+              transcodedSize: transcoded.data.length,
+              compressionRatio: audioData.length > 0 ? transcoded.data.length / audioData.length : 0,
             },
           });
         }
 
         if (extractMetadata) {
-          const metadata = await extractAudioMetadata(audioData);
+          const metadata = await runtime.extractMetadata({
+            input,
+            audioData,
+          });
           const metadataJson = JSON.stringify(metadata, null, 2);
           const metadataBytes = new TextEncoder().encode(metadataJson);
 
@@ -101,7 +121,10 @@ export function createAudioProcessor(config: AudioConfig = {}): Processor {
         }
 
         if (generateWaveform) {
-          const waveformData = await generateAudioWaveform(audioData);
+          const waveformData = await runtime.generateWaveform({
+            input,
+            audioData,
+          });
           const waveformJson = JSON.stringify(waveformData, null, 2);
           const waveformBytes = new TextEncoder().encode(waveformJson);
 
@@ -132,121 +155,6 @@ export function createAudioProcessor(config: AudioConfig = {}): Processor {
       }
     },
   };
-}
-
-async function transcodeAudio(
-  audioData: Uint8Array,
-  codec: string,
-  bitrate: string,
-  sampleRate: number,
-  channels: number
-): Promise<Uint8Array> {
-  void sampleRate;
-  void channels;
-
-  const bitrateDigits = bitrate.replace(/[^0-9]/g, '');
-  const parsedBitrate = bitrateDigits ? Number.parseInt(bitrateDigits, 10) : Number.NaN;
-  const bitrateNum = Number.isFinite(parsedBitrate) && parsedBitrate > 0 ? parsedBitrate : 128;
-  const compressionFactor = Math.max(0.3, Math.min(0.9, bitrateNum / 320));
-  const targetSize = Math.max(1, Math.floor(audioData.length * compressionFactor));
-  const mockTranscodedData = new Uint8Array(targetSize);
-
-  const header = new TextEncoder().encode(
-    `TRANSCODED_AUDIO:codec=${codec},bitrate=${bitrate},sampleRate=${sampleRate},channels=${channels}\n`
-  );
-  const headerLength = Math.min(header.length, mockTranscodedData.length);
-  mockTranscodedData.set(header.slice(0, headerLength), 0);
-
-  const payloadOffset = headerLength;
-  const remaining = Math.max(0, mockTranscodedData.length - payloadOffset);
-  if (remaining > 0) {
-    const copyLength = Math.min(remaining, audioData.length);
-    mockTranscodedData.set(audioData.slice(0, copyLength), payloadOffset);
-  }
-
-  return mockTranscodedData;
-}
-
-async function extractAudioMetadata(audioData: Uint8Array): Promise<Record<string, unknown>> {
-  void audioData;
-
-  return {
-    duration: 245.8,
-    codec: 'aac',
-    bitrate: '192000',
-    sampleRate: 44100,
-    channels: 2,
-    fileSize: audioData.length,
-    format: 'mp4',
-    title: 'Audio Track',
-    artist: 'Unknown Artist',
-    album: 'Unknown Album',
-    year: 2024,
-    genre: 'Unknown',
-    creationTime: new Date().toISOString(),
-  };
-}
-
-async function generateAudioWaveform(audioData: Uint8Array): Promise<{
-  samples: number[];
-  peakAmplitude: number;
-  duration: number;
-}> {
-  const sampleCount = 100;
-  const samples: number[] = [];
-
-  for (let i = 0; i < sampleCount; i++) {
-    const offset = audioData.length === 0
-      ? 0
-      : Math.min(audioData.length - 1, Math.floor((i / sampleCount) * audioData.length));
-    const sampleByte = audioData[offset] ?? 0;
-    const normalized = sampleByte / 255;
-    const phase = (i / sampleCount) * Math.PI * 4;
-    const amplitude = Math.sin(phase) * 0.5 + (normalized - 0.5);
-    samples.push(parseFloat(Math.max(-1, Math.min(1, amplitude)).toFixed(4)));
-  }
-
-  const peakAmplitude = Math.max(...samples.map(Math.abs));
-
-  return {
-    samples,
-    peakAmplitude,
-    duration: 245.8,
-  };
-}
-
-function getAudioExtension(codec: string): string {
-  switch (codec) {
-    case 'mp3':
-      return 'mp3';
-    case 'aac':
-      return 'm4a';
-    case 'opus':
-      return 'opus';
-    case 'vorbis':
-      return 'ogg';
-    case 'flac':
-      return 'flac';
-    default:
-      return 'm4a';
-  }
-}
-
-function getAudioMimeType(codec: string): string {
-  switch (codec) {
-    case 'mp3':
-      return 'audio/mpeg';
-    case 'aac':
-      return 'audio/mp4';
-    case 'opus':
-      return 'audio/opus';
-    case 'vorbis':
-      return 'audio/ogg';
-    case 'flac':
-      return 'audio/flac';
-    default:
-      return 'audio/mp4';
-  }
 }
 
 export { SUPPORTED_MIME_TYPES as AUDIO_SUPPORTED_MIME_TYPES };
