@@ -9,6 +9,7 @@ import type {
   RenderPlaceholderKind,
   UploadInput,
   UploadHandle,
+  UploadHandleWithFileId,
   UploadResult,
 } from './types.js';
 import type { UploadPreprocessor } from './preprocessing/types.js';
@@ -34,6 +35,7 @@ export type {
   RenderPlaceholderKind,
   UploadInput,
   UploadHandle,
+  UploadHandleWithFileId,
   UploadProgress,
   UploadResult,
   RetryOptions,
@@ -86,11 +88,11 @@ export {
 } from './offline/sync.js';
 
 export interface FileFnClient {
-  uploadFile(input: UploadInput): UploadHandle;
+  uploadFile(input: UploadInput): UploadHandleWithFileId;
   resumeUpload(
     uploadSessionId: string,
     file: Blob,
-    options?: { uploadSessionToken?: string }
+    options?: { uploadSessionToken?: string; fileId?: string }
   ): UploadHandle;
   getFile(fileId: string): Promise<Record<string, unknown>>;
   listArtifacts(fileId: string): Promise<ArtifactDescriptor[]>;
@@ -242,7 +244,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
   }
 
   return {
-    uploadFile(input: UploadInput): UploadHandle {
+    uploadFile(input: UploadInput): UploadHandleWithFileId {
       const normalizedInput: UploadInput = {
         ...input,
         fileId: input.fileId ?? generateFileId(),
@@ -272,7 +274,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
           await offlineStore!.stagePendingUpload(pending);
         })();
         
-        const handle: UploadHandle = {
+      const handle: UploadHandleWithFileId = {
           uploadSessionId,
           fileId: normalizedInput.fileId!,
           abort: () => {
@@ -292,15 +294,23 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
       }
 
       const manager = new UploadManager(httpClient, preprocessors);
-      return manager.createHandle(normalizedInput, () => manager.startUpload(normalizedInput));
+      return manager.createHandle(
+        normalizedInput,
+        () => manager.startUpload(normalizedInput),
+      ) as UploadHandleWithFileId;
     },
 
-    resumeUpload(uploadSessionId: string, file: Blob, options?: { uploadSessionToken?: string }): UploadHandle {
+    resumeUpload(uploadSessionId: string, file: Blob, options?: { uploadSessionToken?: string; fileId?: string }): UploadHandle {
       const manager = new UploadManager(httpClient);
-      const dummyInput: UploadInput = { policy: '', file };
+      const dummyInput: UploadInput = { policy: '', file, fileId: options?.fileId };
       return manager.createHandle(
         dummyInput,
-        () => manager.resumeUpload(uploadSessionId, file, options?.uploadSessionToken)
+        (handle) => manager.resumeUpload(uploadSessionId, file, options?.uploadSessionToken, handle),
+        {
+          uploadSessionId,
+          uploadSessionToken: options?.uploadSessionToken,
+          fileId: options?.fileId,
+        },
       );
     },
 

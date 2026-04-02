@@ -195,18 +195,20 @@ export class UploadManager {
 
   createHandle(
     input: UploadInput,
-    startUpload: () => Promise<UploadResult>,
+    startUpload: (handle: UploadHandle) => Promise<UploadResult>,
+    initialState?: Partial<Pick<UploadHandle, 'uploadSessionId' | 'uploadSessionToken' | 'fileId'>>,
   ): UploadHandle {
     let uploadPromise: Promise<UploadResult> | null = null;
-    const fileId = input.fileId ?? generateFileId();
-    if (!input.fileId) {
+    const isResumedUpload = Boolean(initialState?.uploadSessionId);
+    const fileId = input.fileId ?? (isResumedUpload ? undefined : generateFileId());
+    if (!input.fileId && fileId) {
       input.fileId = fileId;
     }
 
     const handle: UploadHandle = {
-      uploadSessionId: "",
-      uploadSessionToken: undefined,
-      fileId,
+      uploadSessionId: initialState?.uploadSessionId ?? "",
+      uploadSessionToken: initialState?.uploadSessionToken,
+      fileId: initialState?.fileId ?? fileId,
       onProgress: (callback) => {
         this.progressCallbacks.push(callback);
       },
@@ -215,11 +217,12 @@ export class UploadManager {
       },
       done: async () => {
         if (!uploadPromise) {
-          uploadPromise = startUpload();
+          uploadPromise = startUpload(handle);
         }
         const result = await uploadPromise;
         handle.uploadSessionId = this.session?.uploadSessionId || "";
         handle.uploadSessionToken = this.uploadSessionToken;
+        handle.fileId = result.fileId;
         return result;
       },
     };
@@ -307,6 +310,7 @@ export class UploadManager {
     uploadSessionId: string,
     file: Blob,
     uploadSessionToken?: string,
+    handle?: UploadHandle,
   ): Promise<UploadResult> {
     const signal = this.abortController.signal;
     this.file = file;
@@ -324,6 +328,13 @@ export class UploadManager {
       chunkSizeBytes: status.chunkSizeBytes,
       fileSize: status.fileSize,
     };
+    if (handle) {
+      handle.uploadSessionId = uploadSessionId;
+      handle.uploadSessionToken = this.uploadSessionToken;
+      if (status.fileId) {
+        handle.fileId = status.fileId;
+      }
+    }
 
     const recordedParts = status.recordedParts || status.uploadedParts || [];
     this.completedParts = new Set(recordedParts);
@@ -338,6 +349,9 @@ export class UploadManager {
       this.uploadSessionToken,
       signal,
     );
+    if (handle) {
+      handle.fileId = result.fileId;
+    }
     return result;
   }
 
