@@ -10,7 +10,7 @@ DEFAULT_SIZES = [
     ThumbnailSize(name='large', width=600, height=600),
 ]
 
-SUPPORTED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/tiff']
+SUPPORTED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/tiff']
 UNSUPPORTED_MIME_TYPE_ERROR = 'FILEFN_PROCESSING_UNSUPPORTED_MIME_TYPE'
 THUMBNAIL_FAILED_ERROR = 'FILEFN_PROCESSING_THUMBNAIL_FAILED'
 

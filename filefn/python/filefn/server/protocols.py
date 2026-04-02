@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Optional, Protocol, Union
 
 from pydantic import BaseModel
@@ -7,7 +8,7 @@ class StorageObject(BaseModel):
     key: str
     size: int
     etag: str
-    lastModified: Any
+    lastModified: Union[str, datetime]
     metadata: Optional[Dict[str, str]] = None
 
 

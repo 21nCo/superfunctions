@@ -793,14 +793,29 @@ class UploadSessionService:
 
     async def garbage_collect_expired_sessions(self) -> Dict[str, int]:
         now = datetime.now(timezone.utc)
-        sessions = await self.db.find_many(
+        sessions: List[Dict[str, Any]] = []
+        seen_session_ids: set[str] = set()
+        for status in ("pending", "in_progress", "aborted", "expired"):
+            status_rows = await self.db.find_many(
+                model="uploadSessions",
+                where=[{"field": "status", "operator": "eq", "value": status}],
+                namespace=self.namespace,
+            )
+            for row in status_rows:
+                upload_session_id = row.get("uploadSessionId")
+                if not upload_session_id or upload_session_id in seen_session_ids:
+                    continue
+                seen_session_ids.add(upload_session_id)
+                sessions.append(row)
+
+        completed_sessions = await self.db.find_many(
             model="uploadSessions",
-            where=[],
+            where=[{"field": "status", "operator": "eq", "value": "completed"}],
             namespace=self.namespace,
         )
 
         deleted_sessions = 0
-        preserved_completed_sessions = 0
+        preserved_completed_sessions = len(completed_sessions)
 
         for session_data in sessions:
             status = session_data.get("status")
@@ -809,9 +824,6 @@ class UploadSessionService:
                 continue
 
             expires_at = self._as_utc(expires_at_raw)
-            if status == "completed":
-                preserved_completed_sessions += 1
-                continue
             if expires_at > now:
                 continue
 

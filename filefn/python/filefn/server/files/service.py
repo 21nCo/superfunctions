@@ -329,8 +329,18 @@ class FileService:
                     target=storage_target,
                 )
                 return {"url": result["url"], "headers": result.get("headers")}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger_warning = getattr(self.logger, "warning", None)
+                if callable(logger_warning):
+                    logger_warning(
+                        "signed download url generation failed; falling back to proxy",
+                        {
+                            "fileId": file_id,
+                            "versionId": version.versionId,
+                            "storageKey": version.storageKey,
+                            "error": str(exc),
+                        },
+                    )
 
         proxy_url = (
             f"/proxy/files/{file_id}/versions/{version.versionId}/download"

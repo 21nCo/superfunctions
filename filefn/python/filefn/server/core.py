@@ -277,6 +277,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
             db=config.db,
             storage=config.storage,
             policies=policy_registry,
+            logger=config.logger,
             namespace=namespace,
             signed_url_ttl_seconds=signed_url_ttl,
         )

@@ -23,6 +23,7 @@ class SharesServiceConfig(BaseModel):
     db: Any
     storage: Any
     policies: Optional[Any] = None
+    logger: Optional[Any] = None
     namespace: str = "filefn"
     signed_url_ttl_seconds: int = 900
 
@@ -35,6 +36,7 @@ class SharesService:
         self.db = config.db
         self.storage = config.storage
         self.policies = config.policies
+        self.logger = config.logger
         self.namespace = config.namespace
         self.signed_url_ttl_seconds = config.signed_url_ttl_seconds
 
@@ -203,7 +205,18 @@ class SharesService:
                     "fileName": file.name,
                     "mimeType": file.mimeType,
                 }
-            except Exception:
+            except Exception as exc:
+                logger_warning = getattr(self.logger, "warning", None)
+                if callable(logger_warning):
+                    logger_warning(
+                        "share signed download url generation failed; falling back to proxy",
+                        {
+                            "fileId": file.fileId,
+                            "versionId": version.versionId,
+                            "storageKey": version.storageKey,
+                            "error": str(exc),
+                        },
+                    )
                 descriptor = {
                     "url": f"/proxy/share-links/{token}/download",
                     "fileName": file.name,

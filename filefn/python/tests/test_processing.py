@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -9,10 +10,20 @@ import pytest
 
 from filefn.processing import (
     PDF_PREVIEW_SUPPORTED_MIME_TYPES,
+    create_audio_processor,
+    create_image_transform_processor,
+    create_ocr_processor,
     create_pdf_preview_processor,
     create_thumbnail_processor,
+    create_video_processor,
 )
-from filefn.processing.types import PdfPreviewConfig, ThumbnailConfig
+from filefn.processing.types import (
+    ImageTransformConfig,
+    ImageTransformOperation,
+    PdfPreviewConfig,
+    ResizeOptions,
+    ThumbnailConfig,
+)
 from filefn.server import create_event_emitter, create_routed_storage_adapter
 from filefn.server.policies import Policy, create_policy_registry
 from filefn.server.processing.service import (
@@ -242,6 +253,15 @@ def test_processing_public_imports_include_pdf_preview() -> None:
     assert callable(create_pdf_preview_processor)
     assert callable(create_thumbnail_processor)
     assert PDF_PREVIEW_SUPPORTED_MIME_TYPES == ["application/pdf"]
+
+
+def _make_png(width: int = 8, height: int = 8) -> bytes:
+    from PIL import Image
+
+    image = Image.new("RGBA", (width, height), (40, 120, 200, 255))
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
 
 
 @pytest.mark.asyncio
@@ -604,6 +624,84 @@ async def test_thumbnail_placeholder_respects_configured_output_format() -> None
     assert result.success is True
     for artifact in result.artifacts:
         _assert_image_artifact_format_consistency(artifact)
+
+
+@pytest.mark.asyncio
+async def test_image_transform_processor_applies_real_resize_operations() -> None:
+    processor = create_image_transform_processor(
+        ImageTransformConfig(
+            operations=[
+                ImageTransformOperation(
+                    operation="resize",
+                    options=ResizeOptions(width=4, height=4),
+                    suffix="small",
+                )
+            ],
+            outputFormat="png",
+        )
+    )
+
+    async def get_image() -> bytes:
+        return _make_png()
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_img_transform",
+            versionId="ver_img_transform",
+            storageKey="uploads/file_img_transform/ver_img_transform-image.png",
+            mimeType="image/png",
+            size=16,
+            fileName="image.png",
+            tenantId="org_123",
+        ),
+        get_image,
+    )
+
+    try:
+        import PIL  # noqa: F401
+    except Exception:
+        assert result.success is False
+        assert result.error == "FILEFN_PROCESSING_IMAGE_TRANSFORM_FAILED"
+    else:
+        assert result.success is True
+        assert len(result.artifacts) == 1
+        artifact = result.artifacts[0]
+        assert artifact.kind == "image-transform"
+        assert artifact.mimeType == "image/png"
+        assert artifact.storageKey.endswith("-small.png")
+
+
+@pytest.mark.asyncio
+async def test_unavailable_processing_factories_fail_closed_instead_of_returning_fake_artifacts() -> None:
+    input = ProcessorInput(
+        fileId="file_proc_stub",
+        versionId="ver_proc_stub",
+        storageKey="uploads/file_proc_stub/ver_proc_stub.bin",
+        mimeType="image/png",
+        size=8,
+        fileName="placeholder.png",
+        tenantId="org_123",
+    )
+
+    async def get_data() -> bytes:
+        return b"placeholder"
+
+    ocr = await create_ocr_processor().process(input, get_data)
+    video = await create_video_processor().process(
+        input.model_copy(update={"mimeType": "video/mp4", "fileName": "placeholder.mp4"}),
+        get_data,
+    )
+    audio = await create_audio_processor().process(
+        input.model_copy(update={"mimeType": "audio/mpeg", "fileName": "placeholder.mp3"}),
+        get_data,
+    )
+
+    assert ocr.success is False
+    assert ocr.error == "FILEFN_PROCESSING_OCR_PROVIDER_REQUIRED"
+    assert video.success is False
+    assert video.error == "FILEFN_PROCESSING_VIDEO_PROVIDER_REQUIRED"
+    assert audio.success is False
+    assert audio.error == "FILEFN_PROCESSING_AUDIO_PROVIDER_REQUIRED"
 
 
 @pytest.mark.asyncio

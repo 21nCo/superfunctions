@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
-import random
+import secrets
 from typing import Any, Callable, Dict, List, Optional, Protocol, Set
 
 from pydantic import BaseModel
@@ -84,7 +84,7 @@ class FileArtifactRecord(BaseModel):
 
 
 def _generate_id() -> str:
-    return f"art_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 10000)}"
+    return f"art_{secrets.token_urlsafe(12)}"
 
 
 def _supports_processor(processor: Processor, mime_type: str) -> bool:

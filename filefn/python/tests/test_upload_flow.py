@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import base64
 import hashlib
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -258,7 +259,7 @@ class FakeDedup:
         async for chunk in stream:
             chunks.append(chunk)
         payload = b"".join(chunks)
-        checksum = hashlib.sha256(payload).hexdigest()
+        checksum = base64.b64encode(hashlib.sha256(payload).digest()).decode("ascii")
 
         versions = await self.db.find_many("fileVersions", where=[])
         for version in versions:
