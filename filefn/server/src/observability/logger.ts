@@ -36,7 +36,8 @@ function shouldRedactKey(lowerKey: string): boolean {
     lowerKey.includes('token') ||
     lowerKey.includes('secret') ||
     lowerKey.includes('password') ||
-    lowerKey.includes('url') ||
+    lowerKey.includes('signedurl') ||
+    lowerKey.includes('signed_url') ||
     lowerKey.includes('signature') ||
     lowerKey.includes('authorization') ||
     lowerKey.includes('credential') ||
@@ -48,6 +49,9 @@ function redactStringValue(key: string, value: string): string {
   let redacted = value;
   for (const pattern of REDACT_PATTERNS) {
     redacted = redacted.replace(pattern, '[REDACTED]');
+  }
+  if (redacted !== value && /^https?:\/\//i.test(value)) {
+    return '[REDACTED]';
   }
   if (!isSafeValue(key, redacted)) {
     return '[REDACTED]';

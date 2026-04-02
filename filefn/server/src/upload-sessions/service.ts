@@ -121,6 +121,14 @@ function hashUploadSessionToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+function isExpiredAt(expiresAt: string): boolean {
+  const expiresAtMs = Date.parse(expiresAt);
+  if (Number.isNaN(expiresAtMs)) {
+    return true;
+  }
+  return expiresAtMs <= Date.now();
+}
+
 async function forEachBodyChunk(
   body: ReadableStream | Blob | Buffer,
   onChunk: (chunk: Uint8Array) => Promise<void> | void
@@ -498,7 +506,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       headers?: Record<string, string>;
       expiresAt: string;
     }> {
-      void ctx;
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -509,7 +516,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
 
       if (session.uploadMode === 'proxy') {
@@ -562,7 +569,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
 
@@ -649,7 +656,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
 
@@ -710,7 +717,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         if (file) return { fileId: file.fileId, versionId: file.currentVersionId };
         throw errors.uploadAlreadyCompleted();
       }
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
 
       const parts = await db.findMany<{ partNumber: number; etag: string }>({
         model: 'uploadParts',
@@ -775,12 +782,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 const partKey = proxyPartKey(session.storageKey, part.partNumber);
                 const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
                 const reader = readStream.getReader();
-                
-                // Pipe the part to the final file
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    await writer.write(value);
+
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        await writer.write(value);
+                    }
+                } finally {
+                    reader.releaseLock();
                 }
             }
         } finally {

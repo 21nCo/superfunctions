@@ -155,6 +155,16 @@ describe('@filefn/server observability', () => {
 
       expect(redacted.signedUrl).toBe('[REDACTED]');
     });
+
+    it('should preserve non-secret callback urls', () => {
+      const context: LogContext = {
+        callbackUrl: 'https://app.example.com/files/file_123',
+      };
+
+      const redacted = redactSecrets(context);
+
+      expect(redacted.callbackUrl).toBe('https://app.example.com/files/file_123');
+    });
   });
 
   describe('Logger redacts share tokens', () => {
