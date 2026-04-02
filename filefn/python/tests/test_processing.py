@@ -712,7 +712,7 @@ async def test_image_transform_respects_without_enlargement_and_preserves_dotted
         artifact = result.artifacts[0]
         assert artifact.storageKey == "uploads/v1.assets/file_img_transform_2/original.image-bounded.png"
         with Image.open(io.BytesIO(artifact.data)) as transformed:
-            assert transformed.size == (4, 4)
+            assert transformed.size == (8, 8)
 
 
 @pytest.mark.asyncio

@@ -121,7 +121,7 @@ class ImageTransformProcessor:
                     "TIFF": "tiff",
                 }.get(output_format, "png")
 
-                if output_format == "JPEG" and working.mode in ("RGBA", "P"):
+                if output_format == "JPEG" and working.mode not in ("RGB", "L"):
                     working = working.convert("RGB")
 
                 out_buffer = io.BytesIO()
