@@ -544,6 +544,31 @@ async def test_complete_session_validates_uploaded_size_matches_declared_size() 
 
 
 @pytest.mark.asyncio
+async def test_complete_session_uses_high_entropy_version_ids() -> None:
+    service = _make_service()
+
+    first = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="first.png", size=3, mimeType="image/png"),
+        _ctx(),
+    )
+    second = await service.create_session(
+        CreateSessionInput(policy="user-avatar", fileName="second.png", size=3, mimeType="image/png"),
+        _ctx(),
+    )
+
+    await service.record_proxy_part(first["uploadSessionId"], 1, b"abc", _ctx())
+    await service.record_proxy_part(second["uploadSessionId"], 1, b"xyz", _ctx())
+
+    completed_first = await service.complete_session(first["uploadSessionId"], _ctx())
+    completed_second = await service.complete_session(second["uploadSessionId"], _ctx())
+
+    assert completed_first["versionId"].startswith("ver_")
+    assert completed_second["versionId"].startswith("ver_")
+    assert "." not in completed_first["versionId"]
+    assert completed_first["versionId"] != completed_second["versionId"]
+
+
+@pytest.mark.asyncio
 async def test_garbage_collection_removes_expired_sessions_and_preserves_completed() -> None:
     db = FakeDB()
     storage = FakeStorage({"proxyStreamingUpload": True})

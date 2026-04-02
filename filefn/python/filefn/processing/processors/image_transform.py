@@ -1,4 +1,5 @@
 import io
+from pathlib import PurePosixPath
 from typing import Any, Optional
 
 from ..types import (
@@ -41,7 +42,46 @@ class ImageTransformProcessor:
                     if operation.operation == "resize" and isinstance(operation.options, ResizeOptions):
                         width = operation.options.width or working.width
                         height = operation.options.height or working.height
-                        working = working.resize((width, height), Image.Resampling.LANCZOS)
+                        target_size = self._resolve_resize_target(
+                            working.width,
+                            working.height,
+                            width,
+                            height,
+                            operation.options.withoutEnlargement or False,
+                        )
+                        fit = (operation.options.fit or "cover").lower()
+                        if fit == "fill":
+                            working = working.resize(target_size, Image.Resampling.LANCZOS)
+                        elif fit in {"contain", "inside"}:
+                            from PIL import ImageOps
+
+                            working.thumbnail(target_size, Image.Resampling.LANCZOS)
+                            if fit == "contain":
+                                working = ImageOps.pad(
+                                    working,
+                                    target_size,
+                                    method=Image.Resampling.LANCZOS,
+                                )
+                        elif fit == "outside":
+                            from PIL import ImageOps
+
+                            working = ImageOps.fit(
+                                working,
+                                target_size,
+                                method=Image.Resampling.LANCZOS,
+                                bleed=0.0,
+                                centering=(0.5, 0.5),
+                            )
+                        else:
+                            from PIL import ImageOps
+
+                            working = ImageOps.fit(
+                                working,
+                                target_size,
+                                method=Image.Resampling.LANCZOS,
+                                bleed=0.0,
+                                centering=(0.5, 0.5),
+                            )
                     elif operation.operation == "crop" and isinstance(operation.options, CropOptions):
                         box = (
                             operation.options.left,
@@ -90,7 +130,7 @@ class ImageTransformProcessor:
                     save_kwargs["quality"] = self.config.outputQuality
                 working.save(out_buffer, **save_kwargs)
 
-                base_key = input.storageKey.rsplit(".", 1)[0]
+                base_key = self._split_storage_key(input.storageKey)
                 suffix = "-".join(applied) if applied else "transformed"
                 return ProcessorResult(
                     success=True,
@@ -110,6 +150,29 @@ class ImageTransformProcessor:
                 )
         except Exception:
             return ProcessorResult(success=False, artifacts=[], error=IMAGE_TRANSFORM_FAILED_ERROR)
+
+    @staticmethod
+    def _resolve_resize_target(
+        current_width: int,
+        current_height: int,
+        requested_width: int,
+        requested_height: int,
+        without_enlargement: bool,
+    ) -> tuple[int, int]:
+        width = max(1, requested_width)
+        height = max(1, requested_height)
+        if without_enlargement:
+            width = min(width, current_width)
+            height = min(height, current_height)
+        return (width, height)
+
+    @staticmethod
+    def _split_storage_key(storage_key: str) -> str:
+        path = PurePosixPath(storage_key)
+        stem = path.stem
+        if str(path.parent) in ("", "."):
+            return stem
+        return str(path.parent / stem)
 
 
 def create_image_transform_processor(config: ImageTransformConfig) -> Processor:

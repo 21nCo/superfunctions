@@ -672,6 +672,50 @@ async def test_image_transform_processor_applies_real_resize_operations() -> Non
 
 
 @pytest.mark.asyncio
+async def test_image_transform_respects_without_enlargement_and_preserves_dotted_parent_paths() -> None:
+    processor = create_image_transform_processor(
+        ImageTransformConfig(
+            operations=[
+                ImageTransformOperation(
+                    operation="resize",
+                    options=ResizeOptions(width=32, height=32, fit="fill", withoutEnlargement=True),
+                    suffix="bounded",
+                )
+            ],
+            outputFormat="png",
+        )
+    )
+
+    async def get_image() -> bytes:
+        return _make_png()
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_img_transform_2",
+            versionId="ver_img_transform_2",
+            storageKey="uploads/v1.assets/file_img_transform_2/original.image.png",
+            mimeType="image/png",
+            size=16,
+            fileName="image.png",
+            tenantId="org_123",
+        ),
+        get_image,
+    )
+
+    try:
+        from PIL import Image
+    except Exception:
+        assert result.success is False
+        assert result.error == "FILEFN_PROCESSING_IMAGE_TRANSFORM_FAILED"
+    else:
+        assert result.success is True
+        artifact = result.artifacts[0]
+        assert artifact.storageKey == "uploads/v1.assets/file_img_transform_2/original.image-bounded.png"
+        with Image.open(io.BytesIO(artifact.data)) as transformed:
+            assert transformed.size == (4, 4)
+
+
+@pytest.mark.asyncio
 async def test_unavailable_processing_factories_fail_closed_instead_of_returning_fake_artifacts() -> None:
     input = ProcessorInput(
         fileId="file_proc_stub",

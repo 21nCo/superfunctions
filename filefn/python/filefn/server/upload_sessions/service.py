@@ -624,7 +624,7 @@ class UploadSessionService:
 
         now_str = datetime.now(timezone.utc).isoformat()
         file_id = session.fileId
-        version_id = f"ver_{datetime.now(timezone.utc).timestamp()}"
+        version_id = f"ver_{secrets.token_urlsafe(12)}"
         metadata = session_data.get("metadata") or {}
 
         final_storage_key = session.storageKey
