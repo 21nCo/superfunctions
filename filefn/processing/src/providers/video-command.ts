@@ -34,6 +34,8 @@ const VIDEO_OUTPUTS: Record<string, { extension: string; mimeType: string }> = {
 export interface CommandVideoProviderConfig {
   ffmpegPath?: string;
   ffprobePath?: string;
+  ffmpegTimeoutMs?: number;
+  ffprobeTimeoutMs?: number;
 }
 
 function outputExtensionForInput(mimeType: string): string {
@@ -70,6 +72,8 @@ function coerceDuration(metadata: Record<string, unknown>): number {
 export function createCommandVideoProvider(config: CommandVideoProviderConfig = {}): VideoProcessorProvider {
   const ffmpegPath = resolveBinaryPath(config.ffmpegPath, ['FILEFN_FFMPEG_PATH', 'FFMPEG_PATH'], 'ffmpeg');
   const ffprobePath = resolveBinaryPath(config.ffprobePath, ['FILEFN_FFPROBE_PATH', 'FFPROBE_PATH'], 'ffprobe');
+  const ffmpegTimeoutMs = config.ffmpegTimeoutMs ?? 10 * 60 * 1000;
+  const ffprobeTimeoutMs = config.ffprobeTimeoutMs ?? 60 * 1000;
 
   async function extractMetadata(request: VideoMetadataRequest): Promise<Record<string, unknown>> {
     return await withTempDir('filefn-processing-video-', async (dir) => {
@@ -84,7 +88,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
         '-show_streams',
         '-show_format',
         inputPath,
-      ]);
+      ], ffprobeTimeoutMs);
 
       const parsed = JSON.parse(stdout) as {
         streams?: Array<Record<string, unknown>>;
@@ -156,7 +160,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
 
       args.push(outputPath);
 
-      await runBinary(ffmpegPath, args);
+      await runBinary(ffmpegPath, args, ffmpegTimeoutMs);
       return new Uint8Array(await readFile(outputPath));
     });
   }
@@ -201,7 +205,7 @@ export function createCommandVideoProvider(config: CommandVideoProviderConfig = 
 
       args.push(outputPath);
 
-      await runBinary(ffmpegPath, args);
+      await runBinary(ffmpegPath, args, ffmpegTimeoutMs);
 
       return {
         data: new Uint8Array(await readFile(outputPath)),
