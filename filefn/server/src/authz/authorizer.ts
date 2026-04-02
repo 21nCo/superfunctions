@@ -111,7 +111,7 @@ export function createDefaultAuthorizer(config: DefaultAuthorizerConfig): Author
     }
     const expiresAtMs = Date.parse(expiresAt);
     if (Number.isNaN(expiresAtMs)) {
-      return false;
+      return true;
     }
     return expiresAtMs <= Date.now();
   }

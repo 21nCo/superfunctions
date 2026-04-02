@@ -20,7 +20,8 @@ function shouldRedactEventKey(key: string): boolean {
     lowerKey.includes('secret') ||
     lowerKey.includes('password') ||
     lowerKey.includes('signature') ||
-    lowerKey.includes('url') ||
+    lowerKey.includes('signedurl') ||
+    lowerKey.includes('signed_url') ||
     lowerKey.includes('authorization')
   );
 }
@@ -129,6 +130,10 @@ export class FileFnEventEmitter extends EventEmitter {
 
   on<K extends keyof FileFnEventTypes>(event: K, listener: (payload: FileFnEventTypes[K]) => void): this {
     return super.on(event, listener);
+  }
+
+  once<K extends keyof FileFnEventTypes>(event: K, listener: (payload: FileFnEventTypes[K]) => void): this {
+    return super.once(event, listener);
   }
 }
 

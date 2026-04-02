@@ -3,6 +3,7 @@ import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/sto
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
+import type { Logger } from '../observability/logger.js';
 import * as errors from '../errors.js';
 
 export interface Processor {
@@ -55,8 +56,10 @@ export interface ProcessingServiceConfig {
   events: FileFnEventEmitter;
   processors?: Processor[];
   flowFn?: FlowFnProvider;
+  logger?: Logger;
   namespace?: string;
   enabled?: boolean;
+  maxFileBytes?: number;
 }
 
 export interface FileArtifactRecord {
@@ -134,8 +137,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     events,
     processors = [],
     flowFn,
+    logger,
     namespace = 'filefn',
     enabled = true,
+    maxFileBytes = 50 * 1024 * 1024,
   } = config;
 
   const QUEUE_NAME = 'filefn.processing';
@@ -146,13 +151,11 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
 
     const grants: FilePermissionRecord[] = [];
-    if (ctx.principalId) {
-      grants.push(...await db.findMany<FilePermissionRecord>({
-        model: 'filePermissions',
-        where: [{ field: 'userId', operator: 'eq', value: ctx.principalId }],
-        namespace,
-      }));
-    }
+    grants.push(...await db.findMany<FilePermissionRecord>({
+      model: 'filePermissions',
+      where: [{ field: 'userId', operator: 'eq', value: ctx.principalId }],
+      namespace,
+    }));
     if (ctx.tenantId) {
       grants.push(...await db.findMany<FilePermissionRecord>({
         model: 'filePermissions',
@@ -312,13 +315,20 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       setImmediate(async () => {
         try {
           await this.runProcessing(input, ctx);
-        } catch {
+        } catch (error) {
+          logger?.error('processing failed', {
+            requestId: ctx.requestId,
+            fileId: input.fileId,
+            versionId: input.versionId,
+            error: error instanceof Error ? error.stack ?? error.message : String(error),
+          });
           events.emit('processing.failed' as any, {
             type: 'processing.failed',
             timestamp: new Date().toISOString(),
             requestId: ctx.requestId,
             fileId: input.fileId,
             versionId: input.versionId,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       });
@@ -347,6 +357,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
 
       let dataCache: Uint8Array | null = null;
+      // Processing currently reads the source into memory once per run; reject overly large inputs early.
       const getData = async (): Promise<Uint8Array> => {
         if (dataCache) return dataCache;
 
@@ -354,12 +365,20 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           const stream = await storage.openDownloadStream({ key: input.storageKey, target: fileStorageTarget });
           const reader = stream.getReader();
           const chunks: Uint8Array[] = [];
+          let totalLength = 0;
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            if (value) chunks.push(value);
+            if (value) {
+              totalLength += value.length;
+              if (totalLength > maxFileBytes) {
+                throw new Error(
+                  `Processing source exceeds ${maxFileBytes} bytes; increase maxFileBytes or use a streaming-friendly processor.`,
+                );
+              }
+              chunks.push(value);
+            }
           }
-          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
           dataCache = new Uint8Array(totalLength);
           let offset = 0;
           for (const chunk of chunks) {

@@ -119,16 +119,19 @@ export function resolveArtifactStorageTarget(
 }
 
 export function matchesContentType(pattern: string, mimeType: string): boolean {
-  if (pattern === '*/*') {
+  const normalizedPattern = pattern.toLowerCase();
+  const normalizedMimeType = mimeType.toLowerCase();
+
+  if (normalizedPattern === '*/*') {
     return true;
   }
 
-  if (pattern.endsWith('/*')) {
-    const prefix = pattern.slice(0, pattern.length - 1);
-    return mimeType.startsWith(prefix);
+  if (normalizedPattern.endsWith('/*')) {
+    const prefix = normalizedPattern.slice(0, normalizedPattern.length - 1);
+    return normalizedMimeType.startsWith(prefix);
   }
 
-  return pattern === mimeType;
+  return normalizedPattern === normalizedMimeType;
 }
 
 export function createNucleusPolicies(): Policy[] {

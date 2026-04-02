@@ -479,6 +479,21 @@ describe('@filefn/server observability', () => {
       expect((event as any).signedUrl).toBe('[REDACTED]');
       expect((event as any).uploadSessionToken).toBe('[REDACTED]');
     });
+
+    it('should preserve safe callback urls while still redacting signed urls', () => {
+      const event = createUploadStartedEvent({
+        uploadSessionId: 'upl_0002',
+        fileName: 'avatar.png',
+        size: 3,
+        mimeType: 'image/png',
+        policy: 'user-avatar',
+        callbackUrl: 'https://app.example.com/files/file_123',
+        signedUrl: 'https://storage.example.com/download?X-Amz-Signature=secret',
+      } as any, 'req_002');
+
+      expect((event as any).callbackUrl).toBe('https://app.example.com/files/file_123');
+      expect((event as any).signedUrl).toBe('[REDACTED]');
+    });
   });
 
   describe('Integration: Events and Logging', () => {
