@@ -11,14 +11,22 @@ export type {
   PdfPreviewConfig,
   CompressionConfig,
   OCRConfig,
+  OCRProcessorProvider,
+  OCRProviderRequest,
+  OCRProviderResult,
   ImageTransformOperation,
   ImageTransformConfig,
   ResizeOptions,
   CropOptions,
   RotateOptions,
   VideoConfig,
+  VideoMetadataRequest,
   VideoTranscodeOptions,
+  VideoTranscodeRequest,
+  VideoTranscodeResult,
   VideoPosterOptions,
+  VideoPosterRequest,
+  VideoProcessorProvider,
   AudioConfig,
   AudioTranscodeOptions,
 } from './types.js';
@@ -42,6 +50,7 @@ export {
   createOCRProcessor,
   OCR_SUPPORTED_MIME_TYPES,
 } from './processors/ocr.js';
+export { createTesseractJsOCRProvider } from './providers/tesseract-ocr.js';
 
 export {
   createImageTransformProcessor,
@@ -52,6 +61,7 @@ export {
   createVideoProcessor,
   VIDEO_SUPPORTED_MIME_TYPES,
 } from './processors/video.js';
+export { createCommandVideoProvider } from './providers/video-command.js';
 
 export {
   createAudioProcessor,

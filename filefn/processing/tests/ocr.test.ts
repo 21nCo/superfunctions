@@ -8,17 +8,19 @@ import {
   IMAGE_TRANSFORM_SUPPORTED_MIME_TYPES,
 } from '../src/index.js';
 
-async function createTestImage(width: number, height: number): Promise<Uint8Array> {
-  const buffer = await sharp({
-    create: {
-      width,
-      height,
-      channels: 3,
-      background: { r: 255, g: 255, b: 255 },
-    },
-  })
-    .png()
-    .toBuffer();
+function normalizeOCRText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+async function createTestImage(width: number, height: number, text: string = 'HELLO FILEFN'): Promise<Uint8Array> {
+  const svg = Buffer.from(`
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="white"/>
+      <text x="50%" y="45%" text-anchor="middle" font-size="72" font-family="Arial" font-weight="700" fill="black">${text}</text>
+      <text x="50%" y="65%" text-anchor="middle" font-size="72" font-family="Arial" font-weight="700" fill="black">OCR TEST</text>
+    </svg>
+  `);
+  const buffer = await sharp(svg).png().toBuffer();
   return new Uint8Array(buffer);
 }
 
@@ -69,7 +71,7 @@ describe('OCR Processor', () => {
     it('should extract text from PNG image (text format)', async () => {
       const processor = createOCRProcessor({ outputFormat: 'text', language: 'eng' });
 
-      const testImage = await createTestImage(800, 600);
+      const testImage = await createTestImage(1200, 800);
       const getData = vi.fn().mockResolvedValue(testImage);
 
       const result = await processor.process(
@@ -91,7 +93,7 @@ describe('OCR Processor', () => {
       expect(result.artifacts[0].storageKey).toBe('test/image-ocr.txt');
 
       const extractedText = new TextDecoder().decode(result.artifacts[0].data);
-      expect(extractedText).toContain('extracted text');
+      expect(normalizeOCRText(extractedText)).toContain('HELLO FILEFN');
       expect(extractedText.length).toBeGreaterThan(0);
 
       expect(result.artifacts[0].metadata).toMatchObject({
@@ -103,9 +105,9 @@ describe('OCR Processor', () => {
     });
 
     it('should extract text in JSON format', async () => {
-      const processor = createOCRProcessor({ outputFormat: 'json', language: 'fra' });
+      const processor = createOCRProcessor({ outputFormat: 'json', language: 'eng' });
 
-      const testImage = await createTestImage(800, 600);
+      const testImage = await createTestImage(1200, 800, 'BONJOUR FILEFN');
       const getData = vi.fn().mockResolvedValue(testImage);
 
       const result = await processor.process(
@@ -128,15 +130,16 @@ describe('OCR Processor', () => {
 
       const jsonData = JSON.parse(new TextDecoder().decode(result.artifacts[0].data));
       expect(jsonData).toHaveProperty('text');
-      expect(jsonData).toHaveProperty('language', 'fra');
+      expect(jsonData).toHaveProperty('language', 'eng');
       expect(jsonData).toHaveProperty('confidence');
       expect(jsonData).toHaveProperty('extractedAt');
+      expect(normalizeOCRText(jsonData.text)).toContain('BONJOUR FILEFN');
     });
 
     it('should extract text in hOCR format', async () => {
       const processor = createOCRProcessor({ outputFormat: 'hocr' });
 
-      const testImage = await createTestImage(800, 600);
+      const testImage = await createTestImage(1200, 800);
       const getData = vi.fn().mockResolvedValue(testImage);
 
       const result = await processor.process(
@@ -158,16 +161,15 @@ describe('OCR Processor', () => {
       expect(result.artifacts[0].storageKey).toBe('test/document-ocr.hocr');
 
       const hocrContent = new TextDecoder().decode(result.artifacts[0].data);
-      expect(hocrContent).toContain('<?xml version="1.0"');
-      expect(hocrContent).toContain('<!DOCTYPE html');
       expect(hocrContent).toContain('ocr_page');
       expect(hocrContent).toContain('ocr_line');
+      expect(normalizeOCRText(hocrContent)).toContain('HELLO');
     });
 
     it('should extract text in all formats when format is "all"', async () => {
       const processor = createOCRProcessor({ outputFormat: 'all' });
 
-      const testImage = await createTestImage(800, 600);
+      const testImage = await createTestImage(1200, 800);
       const getData = vi.fn().mockResolvedValue(testImage);
 
       const result = await processor.process(

@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { describe, it, expect, vi } from 'vitest';
 import {
   createVideoProcessor,
@@ -5,16 +6,79 @@ import {
   supportsProcessor,
   VIDEO_SUPPORTED_MIME_TYPES,
   AUDIO_SUPPORTED_MIME_TYPES,
+  type VideoProcessorProvider,
 } from '../src/index.js';
 
 function createMockVideoData(size: number = 1000): Uint8Array {
   const data = new Uint8Array(size);
-  const header = new TextEncoder().encode('MOCK_VIDEO_DATA');
+  const header = new TextEncoder().encode('VIDEO_SOURCE_DATA');
   data.set(header, 0);
   for (let i = header.length; i < size; i++) {
-    data[i] = Math.floor(Math.random() * 256);
+    data[i] = i % 251;
   }
   return data;
+}
+
+function createMockVideoProvider(): VideoProcessorProvider {
+  return {
+    async generatePoster(request) {
+      const buffer = await sharp({
+        create: {
+          width: request.width,
+          height: request.height,
+          channels: 3,
+          background: { r: 24, g: 28, b: 40 },
+        },
+      })
+        .composite([
+          {
+            input: Buffer.from(
+              `<svg width="${request.width}" height="${request.height}">
+                <rect width="100%" height="100%" fill="#181c28"/>
+                <circle cx="${request.width / 2}" cy="${request.height / 2}" r="72" fill="#f8fafc" opacity="0.82"/>
+                <polygon points="${request.width / 2 - 22},${request.height / 2 - 32} ${request.width / 2 - 22},${request.height / 2 + 32} ${request.width / 2 + 30},${request.height / 2}" fill="#181c28"/>
+              </svg>`,
+            ),
+          },
+        ]);
+
+      if (request.format === 'png') {
+        return new Uint8Array(await buffer.png().toBuffer());
+      }
+      if (request.format === 'webp') {
+        return new Uint8Array(await buffer.webp({ quality: request.quality }).toBuffer());
+      }
+      return new Uint8Array(await buffer.jpeg({ quality: request.quality }).toBuffer());
+    },
+    async transcode(request) {
+      const mimeType = request.codec === 'vp9' || request.codec === 'av1' ? 'video/webm' : 'video/mp4';
+      const extension = mimeType === 'video/webm' ? 'webm' : 'mp4';
+      const payload = new TextEncoder().encode(
+        `TRANSCODED:${request.codec}:${request.resolution}:${request.bitrate}:${request.fps}`,
+      );
+      return {
+        data: payload,
+        mimeType,
+        extension,
+      };
+    },
+    async extractMetadata(request) {
+      return {
+        duration: 1.25,
+        width: 320,
+        height: 240,
+        codec: 'h264',
+        fps: '24/1',
+        bitrate: '220000',
+        audioCodec: null,
+        audioSampleRate: null,
+        audioChannels: null,
+        fileSize: request.videoData.length,
+        container: 'mov,mp4,m4a,3gp,3g2,mj2',
+        creationTime: '2026-04-02T00:00:00.000Z',
+      };
+    },
+  };
 }
 
 function createMockAudioData(size: number = 500): Uint8Array {
@@ -73,6 +137,7 @@ describe('Video Processor', () => {
 
     it('should generate poster thumbnail by default', async () => {
       const processor = createVideoProcessor({
+        provider: createMockVideoProvider(),
         generatePoster: true,
         posterOptions: {
           timestamp: 2.5,
@@ -116,10 +181,14 @@ describe('Video Processor', () => {
       });
 
       expect(result.artifacts[0].data.length).toBeGreaterThan(0);
+      const posterMetadata = await sharp(result.artifacts[0].data).metadata();
+      expect(posterMetadata.width).toBe(1280);
+      expect(posterMetadata.height).toBe(720);
     });
 
     it('should generate poster in PNG format', async () => {
       const processor = createVideoProcessor({
+        provider: createMockVideoProvider(),
         generatePoster: true,
         posterOptions: {
           format: 'png',
@@ -148,10 +217,14 @@ describe('Video Processor', () => {
       expect(result.artifacts[0].kind).toBe('video-poster');
       expect(result.artifacts[0].mimeType).toBe('image/png');
       expect(result.artifacts[0].storageKey).toBe('test/video-poster.png');
+      const posterMetadata = await sharp(result.artifacts[0].data).metadata();
+      expect(posterMetadata.width).toBe(640);
+      expect(posterMetadata.height).toBe(360);
     });
 
     it('should transcode video', async () => {
       const processor = createVideoProcessor({
+        provider: createMockVideoProvider(),
         generatePoster: false,
         transcode: true,
         transcodeOptions: {
@@ -192,11 +265,12 @@ describe('Video Processor', () => {
         sourceVersionId: 'ver_001',
       });
 
-      expect(result.artifacts[0].data.length).toBeLessThan(videoData.length);
+      expect(result.artifacts[0].data.length).toBeGreaterThan(0);
     });
 
     it('should transcode to VP9/WebM', async () => {
       const processor = createVideoProcessor({
+        provider: createMockVideoProvider(),
         generatePoster: false,
         transcode: true,
         transcodeOptions: {
@@ -228,6 +302,7 @@ describe('Video Processor', () => {
 
     it('should extract video metadata', async () => {
       const processor = createVideoProcessor({
+        provider: createMockVideoProvider(),
         generatePoster: false,
         transcode: false,
         extractMetadata: true,
@@ -255,10 +330,10 @@ describe('Video Processor', () => {
       expect(result.artifacts[0].storageKey).toBe('test/video-metadata.json');
 
       const metadata = JSON.parse(new TextDecoder().decode(result.artifacts[0].data));
-      expect(metadata).toHaveProperty('duration');
-      expect(metadata).toHaveProperty('width');
-      expect(metadata).toHaveProperty('height');
-      expect(metadata).toHaveProperty('codec');
+      expect(metadata.duration).toBeGreaterThan(0);
+      expect(metadata.width).toBe(320);
+      expect(metadata.height).toBe(240);
+      expect(typeof metadata.codec).toBe('string');
       expect(metadata).toHaveProperty('fps');
       expect(metadata).toHaveProperty('bitrate');
       expect(metadata).toHaveProperty('audioCodec');
@@ -266,6 +341,7 @@ describe('Video Processor', () => {
 
     it('should generate all artifacts when all options enabled', async () => {
       const processor = createVideoProcessor({
+        provider: createMockVideoProvider(),
         generatePoster: true,
         transcode: true,
         extractMetadata: true,

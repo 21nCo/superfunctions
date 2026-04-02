@@ -79,6 +79,7 @@ export interface CompressionConfig {
 export interface OCRConfig {
   language?: string;
   outputFormat?: 'text' | 'hocr' | 'json' | 'all';
+  provider?: OCRProcessorProvider;
 }
 
 export type ImageTransformOperation = 'resize' | 'crop' | 'rotate';
@@ -133,6 +134,60 @@ export interface VideoConfig {
   transcode?: boolean;
   transcodeOptions?: VideoTranscodeOptions;
   extractMetadata?: boolean;
+  provider?: VideoProcessorProvider;
+}
+
+export interface VideoPosterRequest {
+  input: ProcessorInput;
+  videoData: Uint8Array;
+  timestamp: number;
+  width: number;
+  height: number;
+  format: 'jpeg' | 'png' | 'webp';
+  quality: number;
+}
+
+export interface VideoTranscodeRequest {
+  input: ProcessorInput;
+  videoData: Uint8Array;
+  codec: 'h264' | 'h265' | 'vp9' | 'av1';
+  resolution: '1080p' | '720p' | '480p' | '360p';
+  bitrate: string;
+  fps: number;
+}
+
+export interface VideoMetadataRequest {
+  input: ProcessorInput;
+  videoData: Uint8Array;
+}
+
+export interface VideoTranscodeResult {
+  data: Uint8Array;
+  mimeType: string;
+  extension: string;
+}
+
+export interface VideoProcessorProvider {
+  generatePoster(request: VideoPosterRequest): Promise<Uint8Array>;
+  transcode(request: VideoTranscodeRequest): Promise<VideoTranscodeResult>;
+  extractMetadata(request: VideoMetadataRequest): Promise<Record<string, unknown>>;
+}
+
+export interface OCRProviderRequest {
+  input: ProcessorInput;
+  imageData: Uint8Array;
+  language: string;
+  includeHOCR: boolean;
+}
+
+export interface OCRProviderResult {
+  text: string;
+  confidence: number;
+  hocr?: string;
+}
+
+export interface OCRProcessorProvider {
+  recognize(request: OCRProviderRequest): Promise<OCRProviderResult>;
 }
 
 export interface AudioTranscodeOptions {
