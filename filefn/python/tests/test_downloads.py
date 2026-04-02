@@ -106,6 +106,28 @@ class FakeDB:
         return deleted
 
 
+class FlakyShareDB(FakeDB):
+    def __init__(self) -> None:
+        super().__init__()
+        self.share_update_conflicts = 1
+
+    async def update(
+        self,
+        model: str,
+        where: List[Dict[str, Any]],
+        data: Dict[str, Any],
+        namespace: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if (
+            model == "fileShares"
+            and self.share_update_conflicts > 0
+            and any(clause.get("field") == "downloads" for clause in where)
+        ):
+            self.share_update_conflicts -= 1
+            return None
+        return await super().update(model=model, where=where, data=data, namespace=namespace)
+
+
 class FakeStorage:
     def __init__(self, with_signing: bool = False) -> None:
         self.with_signing = with_signing
@@ -371,6 +393,38 @@ async def test_signed_share_descriptor_increments_downloads_once() -> None:
     assert descriptor["url"].startswith("https://download.local/")
     share_rows = await db.find_many("fileShares", where=[])
     assert share_rows[0]["downloads"] == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_share_descriptor_retries_download_reservation_conflicts() -> None:
+    db = FlakyShareDB()
+    await _seed_file_rows(db)
+
+    shares_service = create_shares_service(
+        SharesServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=True),
+            namespace="filefn",
+        )
+    )
+    shares_service.storage.capabilities = {"signedDownloadUrls": True}
+
+    create_res = await shares_service.create_share_link(
+        CreateShareLinkInput(fileId="file_0001", versionId="ver_0001", maxDownloads=1),
+        _ctx("user_123"),
+    )
+
+    token = create_res["token"]
+    descriptor = await shares_service.download_via_share_link(token, _ctx(None), is_authenticated=False)
+
+    assert descriptor["url"].startswith("https://download.local/")
+
+    share_rows = await db.find_many("fileShares", where=[])
+    assert share_rows[0]["downloads"] == 1
+
+    with pytest.raises(Exception) as exc_info:
+        await shares_service.download_via_share_link(token, _ctx(None), is_authenticated=False)
+    assert getattr(exc_info.value, "code", "") == "FILEFN_SHARE_DOWNLOADS_EXCEEDED"
 
 
 @pytest.mark.asyncio

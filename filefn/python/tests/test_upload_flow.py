@@ -118,6 +118,16 @@ class FakeStorage:
         self.calls: List[str] = []
         self.name = "fake"
 
+    @staticmethod
+    def _coerce_bytes(data: Any) -> bytes:
+        if isinstance(data, bytes):
+            return data
+        if hasattr(data, "read"):
+            payload = data.read()
+            if isinstance(payload, bytes):
+                return payload
+        return bytes(data)
+
     async def get_object(self, key: str, target: Optional[str] = None) -> Dict[str, Any]:
         data = self.objects[key]
         return {
@@ -131,11 +141,11 @@ class FakeStorage:
     async def put_object(
         self,
         key: str,
-        data: bytes,
+        data: Any,
         metadata: Optional[Dict[str, str]] = None,
         target: Optional[str] = None,
     ) -> Dict[str, Any]:
-        payload = bytes(data)
+        payload = self._coerce_bytes(data)
         self.objects[key] = payload
         if target:
             self.calls.append(f"{self.name}:put:{target}:{key}")
@@ -354,6 +364,7 @@ async def test_status_shape_uses_recorded_parts_canonical_fields() -> None:
     await service.complete_part(session["uploadSessionId"], 1, "etag-1", 3, _ctx())
     status = await service.get_session_status(session["uploadSessionId"], _ctx())
 
+    assert status["fileId"] == session["fileId"]
     assert status["recordedParts"] == [1]
     assert status["chunkSizeBytes"] == 3
     assert status["fileSize"] == 3
@@ -411,8 +422,9 @@ async def test_upload_session_binding_for_authenticated_and_anonymous_flows() ->
 
 
 @pytest.mark.asyncio
-async def test_anonymous_init_replay_returns_original_upload_session_token() -> None:
-    service = _make_service()
+async def test_anonymous_init_replay_rotates_token_and_persists_hash_only() -> None:
+    db = FakeDB()
+    service = _make_service(db=db)
     init = CreateSessionInput(
         policy="user-avatar",
         fileName="anon-replay.png",
@@ -425,7 +437,16 @@ async def test_anonymous_init_replay_returns_original_upload_session_token() -> 
     replay = await service.create_session(init, _ctx(principal_id=None, tenant_id=None))
 
     assert first["uploadSessionId"] == replay["uploadSessionId"]
-    assert first["uploadSessionToken"] == replay["uploadSessionToken"]
+    assert first["uploadSessionToken"] != replay["uploadSessionToken"]
+
+    session_row = await db.find_one(
+        model="uploadSessions",
+        where=[{"field": "uploadSessionId", "operator": "eq", "value": first["uploadSessionId"]}],
+        namespace="filefn",
+    )
+    assert session_row is not None
+    assert session_row["uploadSessionToken"] is None
+    assert session_row["sessionTokenHash"] == service._hash_session_token(replay["uploadSessionToken"])
 
 
 @pytest.mark.asyncio

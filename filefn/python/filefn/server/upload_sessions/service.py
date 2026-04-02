@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import secrets
+from tempfile import SpooledTemporaryFile
 from typing import Any, Dict, List, Optional, Protocol
 
 from pydantic import BaseModel
@@ -97,6 +98,19 @@ class UploadSessionService:
 
     def _hash_session_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    async def _issue_anonymous_session_token(self, upload_session_id: str) -> str:
+        upload_session_token = secrets.token_urlsafe(32)
+        await self.db.update(
+            model="uploadSessions",
+            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+            data={
+                "uploadSessionToken": None,
+                "sessionTokenHash": self._hash_session_token(upload_session_token),
+            },
+            namespace=self.namespace,
+        )
+        return upload_session_token
 
     def _extract_upload_session_token(self, ctx: Any) -> Optional[str]:
         for attr in ("uploadSessionToken", "upload_session_token", "sessionToken", "session_token"):
@@ -211,6 +225,7 @@ class UploadSessionService:
 
                 result = {
                     "uploadSessionId": existing.uploadSessionId,
+                    "fileId": existing.fileId,
                     "uploadMode": existing.uploadMode,
                     "chunkSizeBytes": existing.chunkSizeBytes,
                     "totalParts": existing.totalParts,
@@ -218,18 +233,9 @@ class UploadSessionService:
                     "warnings": [],
                 }
                 if existing.ownerId == "anonymous":
-                    upload_session_token = existing_data.get("uploadSessionToken")
-                    if not upload_session_token:
-                      upload_session_token = secrets.token_urlsafe(32)
-                      await self.db.update(
-                          model="uploadSessions",
-                          where=[{"field": "uploadSessionId", "operator": "eq", "value": existing.uploadSessionId}],
-                          data={
-                              "uploadSessionToken": upload_session_token,
-                              "sessionTokenHash": self._hash_session_token(upload_session_token),
-                          },
-                          namespace=self.namespace,
-                      )
+                    upload_session_token = await self._issue_anonymous_session_token(
+                        existing.uploadSessionId,
+                    )
                     result["uploadSessionToken"] = upload_session_token
                 return result
 
@@ -325,7 +331,7 @@ class UploadSessionService:
                 "metadata": input.metadata or {},
                 "idempotencyKey": input.idempotencyKey,
                 "idempotencyPayloadHash": self._hash_payload(input, ctx) if input.idempotencyKey else None,
-                "uploadSessionToken": upload_session_token,
+                "uploadSessionToken": None,
                 "sessionTokenHash": session_token_hash,
                 "expiresAt": expires_at,
                 "createdAt": now.isoformat(),
@@ -351,6 +357,7 @@ class UploadSessionService:
 
         result: Dict[str, Any] = {
             "uploadSessionId": upload_session_id,
+            "fileId": file_id,
             "uploadMode": upload_mode,
             "chunkSizeBytes": chunk_size_bytes,
             "totalParts": total_parts,
@@ -378,6 +385,7 @@ class UploadSessionService:
 
         return {
             "uploadSessionId": upload_session_id,
+            "fileId": session.fileId,
             "status": session.status,
             "totalParts": session.totalParts,
             "recordedParts": recorded_parts,
@@ -548,20 +556,21 @@ class UploadSessionService:
     async def _finalize_proxy_upload(self, session: UploadSessionRecord, parts: List[Dict[str, Any]]) -> None:
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
-        chunks: List[bytes] = []
         sorted_parts = sorted(parts, key=lambda p: p["partNumber"])
-        for part in sorted_parts:
-            part_key = self._proxy_part_key(session, part["partNumber"])
-            stream = await self.storage.open_download_stream(key=part_key, target=storage_target)
-            async for chunk in stream:
-                chunks.append(chunk)
+        with SpooledTemporaryFile(max_size=8 * 1024 * 1024) as payload:
+            for part in sorted_parts:
+                part_key = self._proxy_part_key(session, part["partNumber"])
+                stream = await self.storage.open_download_stream(key=part_key, target=storage_target)
+                async for chunk in stream:
+                    payload.write(chunk)
 
-        await self.storage.put_object(
-            key=session.storageKey,
-            data=b"".join(chunks),
-            metadata={"contentType": session.mimeType},
-            target=storage_target,
-        )
+            payload.seek(0)
+            await self.storage.put_object(
+                key=session.storageKey,
+                data=payload,
+                metadata={"contentType": session.mimeType},
+                target=storage_target,
+            )
 
         for part in sorted_parts:
             part_key = self._proxy_part_key(session, part["partNumber"])

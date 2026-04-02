@@ -116,14 +116,24 @@ class FakeStorage:
         self.put_calls: List[Dict[str, Any]] = []
         self.name = "fake"
 
+    @staticmethod
+    def _coerce_bytes(data: Any) -> bytes:
+        if isinstance(data, bytes):
+            return data
+        if hasattr(data, "read"):
+            payload = data.read()
+            if isinstance(payload, bytes):
+                return payload
+        return bytes(data)
+
     async def put_object(
         self,
         key: str,
-        data: bytes,
+        data: Any,
         metadata: Optional[Dict[str, str]] = None,
         target: Optional[str] = None,
     ) -> Dict[str, Any]:
-        payload = bytes(data)
+        payload = self._coerce_bytes(data)
         self.objects[key] = payload
         self.put_calls.append({"key": key, "metadata": metadata or {}, "target": target})
         return {
