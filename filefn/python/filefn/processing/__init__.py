@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 from .types import (
     CompressionConfig,
@@ -44,7 +44,7 @@ class _UnavailableProcessor:
         self.supportedMimeTypes = supported_mime_types
         self.error_code = error_code
 
-    async def process(self, input: ProcessorInput, get_data: Callable[[], Any]) -> ProcessorResult:
+    async def process(self, input: ProcessorInput, get_data: Callable[[], Awaitable[bytes]]) -> ProcessorResult:
         return ProcessorResult(success=False, artifacts=[], error=self.error_code)
 
 

@@ -94,7 +94,7 @@ class UploadSessionService:
             "pr": ctx.principalId,
             "tn": ctx.tenantId,
         }
-        return hashlib.md5(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     def _hash_session_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()

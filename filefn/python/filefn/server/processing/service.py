@@ -191,8 +191,8 @@ class ProcessingService:
                         }
                     )
                     return {"enqueued": True, "jobId": result.get("jobId")}
-                except Exception:
-                    raise errors.processing_enqueue_failed()
+                except Exception as exc:
+                    raise errors.processing_enqueue_failed() from exc
 
         task = asyncio.create_task(self._safe_run_processing(ProcessorInput(**input), ctx))
         self._background_tasks.add(task)

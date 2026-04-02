@@ -39,9 +39,9 @@ from filefn.processing.processors.thumbnail import create_thumbnail_processor, T
 # from superfunctions.storage.local import LocalStorageAdapter
 
 async def main():
-    # 1. Initialize Adapters (Examples)
-    # db_adapter = MemoryAdapter()
-    # storage_adapter = LocalStorageAdapter(root_dir="./tmp_storage")
+    # 1. Initialize Adapters (replace these placeholders with real implementations)
+    db_adapter = ...
+    storage_adapter = ...
 
     # 2. Configure FileFn
     config = FileFnConfig(
@@ -112,15 +112,14 @@ print("Upload complete & file created!")
 ```python
 # List files for a specific owner
 files = await filefn.list_files({
-    "ownerId": "user_123",
     "limit": 20
 }, ctx)
 
-for f in files['items']:
+for f in files["files"]:
     print(f"File: {f['name']} ({f['size']} bytes)")
 
 # Get a download URL (Signed URL)
-file_data = await filefn.get_file({"fileId": files['items'][0]['fileId']}, ctx)
+file_data = await filefn.get_file({"fileId": files["files"][0]["fileId"]}, ctx)
 print(f"Download URL: {file_data['downloadUrl']}")
 ```
 
