@@ -41,12 +41,16 @@ export interface ConnectivityChecker {
 type UploadCompletionListener = (result: { fileId: string; versionId: string } | Error) => void;
 
 export class OfflineSync {
+  private static readonly SETTLED_RESULT_TTL_MS = 5 * 60 * 1000;
   private config: Required<SyncConfig>;
   private isSyncing = false;
   private connectivityChecker: ConnectivityChecker;
   private listeners: Map<string, UploadCompletionListener[]> = new Map();
   private settledResults: Map<string, { fileId: string; versionId: string } | Error> = new Map();
+  private settledResultTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private stopOnlineListener?: () => void;
+  private retryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private cancelledUploads: Set<string> = new Set();
 
   constructor(config: SyncConfig) {
     this.config = {
@@ -96,6 +100,8 @@ export class OfflineSync {
   waitForUpload(uploadSessionId: string): Promise<{ fileId: string; versionId: string }> {
     const settled = this.settledResults.get(uploadSessionId);
     if (settled) {
+      this.clearSettledResult(uploadSessionId);
+      this.settledResults.delete(uploadSessionId);
       if (settled instanceof Error) {
         return Promise.reject(settled);
       }
@@ -117,7 +123,14 @@ export class OfflineSync {
   }
 
   private notifyListeners(uploadSessionId: string, result: { fileId: string; versionId: string } | Error) {
+    this.clearRetry(uploadSessionId);
+    this.clearSettledResult(uploadSessionId);
     this.settledResults.set(uploadSessionId, result);
+    const expiry = setTimeout(() => {
+      this.clearSettledResult(uploadSessionId);
+      this.settledResults.delete(uploadSessionId);
+    }, OfflineSync.SETTLED_RESULT_TTL_MS);
+    this.settledResultTimers.set(uploadSessionId, expiry);
     const listeners = this.listeners.get(uploadSessionId);
     if (listeners) {
       listeners.forEach(l => l(result));
@@ -158,6 +171,10 @@ export class OfflineSync {
       };
 
       for (const uploadSessionId of pendingSessionIds) {
+        if (this.cancelledUploads.has(uploadSessionId)) {
+          await this.config.store.deletePendingUpload(uploadSessionId);
+          continue;
+        }
         progress.current = uploadSessionId;
         this.config.onSyncProgress(progress);
 
@@ -171,11 +188,13 @@ export class OfflineSync {
           result.failed.push(uploadSessionId);
           progress.failed += 1;
           this.config.onSyncError(err, uploadSessionId);
-          
+
           // Check if we should notify listeners of failure (max retries reached)
           const pending = await this.config.store.getPendingUpload(uploadSessionId);
           if (pending && pending.retryCount >= this.config.maxRetries) {
-             this.notifyListeners(uploadSessionId, err);
+            this.notifyListeners(uploadSessionId, err);
+          } else if (pending && this.isOnline()) {
+            this.scheduleRetry(uploadSessionId);
           }
         }
 
@@ -236,12 +255,29 @@ export class OfflineSync {
    * Manually trigger sync for a specific upload.
    */
   async syncUpload(uploadSessionId: string): Promise<void> {
+    if (this.cancelledUploads.has(uploadSessionId)) {
+      return;
+    }
     if (!this.isOnline()) {
       throw new Error('Cannot sync while offline');
     }
 
-    const result = await this.syncOne(uploadSessionId);
-    this.notifyListeners(uploadSessionId, result);
+    try {
+      const result = await this.syncOne(uploadSessionId);
+      this.notifyListeners(uploadSessionId, result);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('Unknown error');
+      const pending = await this.config.store.getPendingUpload(uploadSessionId);
+      if (pending && pending.retryCount >= this.config.maxRetries) {
+        this.notifyListeners(uploadSessionId, err);
+        return;
+      }
+      if (pending && this.isOnline()) {
+        this.scheduleRetry(uploadSessionId);
+        return;
+      }
+      this.notifyListeners(uploadSessionId, err);
+    }
   }
 
   /**
@@ -249,6 +285,43 @@ export class OfflineSync {
    */
   setConnectivityChecker(checker: ConnectivityChecker): void {
     this.connectivityChecker = checker;
+  }
+
+  async cancelUpload(uploadSessionId: string, reason: Error = new DOMException('Aborted', 'AbortError')): Promise<void> {
+    this.cancelledUploads.add(uploadSessionId);
+    this.clearRetry(uploadSessionId);
+    this.notifyListeners(uploadSessionId, reason);
+    await this.config.store.deletePendingUpload(uploadSessionId);
+  }
+
+  private scheduleRetry(uploadSessionId: string): void {
+    if (this.retryTimers.has(uploadSessionId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(uploadSessionId);
+      void this.syncUpload(uploadSessionId);
+    }, this.config.retryDelayMs);
+    this.retryTimers.set(uploadSessionId, timer);
+  }
+
+  private clearRetry(uploadSessionId: string): void {
+    const timer = this.retryTimers.get(uploadSessionId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.retryTimers.delete(uploadSessionId);
+  }
+
+  private clearSettledResult(uploadSessionId: string): void {
+    const timer = this.settledResultTimers.get(uploadSessionId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.settledResultTimers.delete(uploadSessionId);
   }
 
   private createDefaultConnectivityChecker(): ConnectivityChecker {

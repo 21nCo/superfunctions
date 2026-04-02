@@ -108,6 +108,10 @@ export interface FileFnClient {
   getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null>;
 }
 
+function createAbortError(): DOMException {
+  return new DOMException('Aborted', 'AbortError');
+}
+
 function createPlaceholderDescriptor(input: {
   fileId: string;
   versionId: string;
@@ -252,44 +256,78 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
 
       if (offlineSync && offlineStore && shouldUseOfflineMode(config.offline?.enabled ?? false)) {
         const uploadSessionId = generateOfflineSessionId();
-        const stagePromise = (async () => {
-          const prepared = await prepareUploadInput(normalizedInput, [
-            ...preprocessors,
-            ...(normalizedInput.preprocessors || []),
-          ]);
-          const fileData = await prepared.file.arrayBuffer();
-          const pending: PendingUpload = {
-            uploadSessionId,
-            fileId: prepared.fileId,
-            policy: prepared.policy,
-            fileName: prepared.fileName,
-            size: prepared.size,
-            mimeType: prepared.mimeType,
-            fileData,
-            localSource: prepared.localSource,
-            metadata: prepared.metadata,
-            createdAt: new Date().toISOString(),
-            retryCount: 0
-          };
-          await offlineStore!.stagePendingUpload(pending);
-        })();
-        
-      const handle: UploadHandleWithFileId = {
+        let aborted = false;
+        let rejectStage: ((reason?: unknown) => void) | undefined;
+        const stagePromise = new Promise<void>((resolve, reject) => {
+          rejectStage = reject;
+          void (async () => {
+            try {
+              const prepared = await prepareUploadInput(normalizedInput, [
+                ...preprocessors,
+                ...(normalizedInput.preprocessors || []),
+              ]);
+              if (aborted) {
+                throw createAbortError();
+              }
+
+              const fileData = await prepared.file.arrayBuffer();
+              if (aborted) {
+                throw createAbortError();
+              }
+
+              const pending: PendingUpload = {
+                uploadSessionId,
+                fileId: prepared.fileId,
+                policy: prepared.policy,
+                fileName: prepared.fileName,
+                size: prepared.size,
+                mimeType: prepared.mimeType,
+                fileData,
+                localSource: prepared.localSource,
+                metadata: prepared.metadata,
+                createdAt: new Date().toISOString(),
+                retryCount: 0
+              };
+              await offlineStore!.stagePendingUpload(pending);
+              if (aborted) {
+                await offlineStore!.deletePendingUpload(uploadSessionId);
+                throw createAbortError();
+              }
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          })();
+        });
+        void stagePromise.catch(() => {});
+
+        const handle: UploadHandleWithFileId = {
           uploadSessionId,
           fileId: normalizedInput.fileId!,
           abort: () => {
-            // Staging abort not implemented
+            if (aborted) {
+              return;
+            }
+            aborted = true;
+            void offlineSync!.cancelUpload(uploadSessionId, createAbortError());
+            rejectStage?.(createAbortError());
           },
           onProgress: (_cb) => {
             // Staging progress not implemented
           },
           done: async () => {
+            if (aborted) {
+              throw createAbortError();
+            }
             await stagePromise;
+            if (aborted) {
+              throw createAbortError();
+            }
             // Wait for sync to complete when online
             return offlineSync!.waitForUpload(uploadSessionId);
           }
         };
-        
+
         return handle;
       }
 
@@ -333,7 +371,7 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     },
 
     async resolveRenderable(input): Promise<RenderDescriptor> {
-      if (input.preferLocal && offlineStore) {
+      if (input.preferLocal && !input.versionId && offlineStore) {
         const pending = await offlineStore.getPendingLocalDescriptor(input.fileId);
         if (pending) {
           return resolvePendingLocalRenderable({ intent: input.intent }, pending);

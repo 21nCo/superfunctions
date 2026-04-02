@@ -180,10 +180,12 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
     return { rawBody: "", parsedBody: undefined, isJson: false };
   }
 
-  async function getHeaders(): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+  async function getHeaders(includeJsonContentType = false): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {};
+
+    if (includeJsonContentType) {
+      headers["Content-Type"] = "application/json";
+    }
 
     if (config.getAuthHeaders) {
       const authHeaders = await config.getAuthHeaders();
@@ -203,7 +205,8 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
   ): Promise<T> {
     return withRetry(
       async () => {
-        const headers = await getHeaders();
+        const hasJsonBody = body !== undefined;
+        const headers = await getHeaders(hasJsonBody);
         if (extraHeaders) {
           Object.assign(headers, extraHeaders);
         }

@@ -230,10 +230,11 @@ export class OPFSStore {
     await this.ensureInitialized();
 
     try {
-      this.revokeLocalObjectUrl(uploadSessionId);
       await this.rootDir!.removeEntry(uploadSessionId, { recursive: true });
     } catch (error) {
       // Ignore errors if directory doesn't exist
+    } finally {
+      this.revokeLocalObjectUrl(uploadSessionId);
     }
   }
 
@@ -241,11 +242,13 @@ export class OPFSStore {
    * Increment retry count for a pending upload.
    */
   async incrementRetryCount(uploadSessionId: string): Promise<void> {
-    const upload = await this.getPendingUpload(uploadSessionId);
-    if (!upload) return;
+    const metadata = await this.readPendingMetadata(uploadSessionId);
+    if (!metadata) return;
 
-    upload.retryCount += 1;
-    await this.stagePendingUpload(upload);
+    await this.writePendingMetadata(uploadSessionId, {
+      ...metadata,
+      retryCount: metadata.retryCount + 1,
+    });
   }
 
   /**
@@ -301,6 +304,21 @@ export class OPFSStore {
     } catch {
       return null;
     }
+  }
+
+  private async writePendingMetadata(
+    uploadSessionId: string,
+    metadata: Omit<PendingUpload, 'fileData'>,
+  ): Promise<void> {
+    await this.ensureInitialized();
+
+    const uploadDir = await this.rootDir!.getDirectoryHandle(uploadSessionId, {
+      create: true,
+    });
+    const metaFileHandle = await uploadDir.getFileHandle('metadata.json', { create: true });
+    const metaWritable = await metaFileHandle.createWritable();
+    await metaWritable.write(JSON.stringify(metadata, null, 2));
+    await metaWritable.close();
   }
 
   private revokeLocalObjectUrl(uploadSessionId: string): void {

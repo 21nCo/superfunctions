@@ -51,6 +51,9 @@ describe('@filefn/client envelope unwrapping', () => {
       // Should NOT have ok, data wrapper
       expect(file.ok).toBeUndefined();
       expect(file.data).toBeUndefined();
+      expect((mockFetch.mock.calls[0]?.[1] as RequestInit)?.headers).not.toMatchObject({
+        'Content-Type': 'application/json',
+      });
     });
 
     it('should unwrap listArtifacts and downloadArtifact envelopes', async () => {

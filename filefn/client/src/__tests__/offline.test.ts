@@ -29,6 +29,21 @@ vi.mock('../client.js', async (importOriginal) => {
             signPart: vi.fn().mockResolvedValue({ url: 'http://upload' }),
             uploadPartToSignedUrl: vi.fn().mockResolvedValue({ recorded: true }),
             completeUpload: vi.fn().mockImplementation(async () => ({ fileId: lastInitFileId || 'f1', versionId: 'v1' })),
+            getRenderDescriptor: vi.fn().mockImplementation(async (fileId: string, options: { intent: string; versionId?: string }) => ({
+                fileId,
+                versionId: options.versionId ?? 'ver_remote',
+                intent: options.intent,
+                state: 'ready',
+                mimeType: 'application/pdf',
+                name: 'remote.pdf',
+                size: 10,
+                source: {
+                    mode: 'artifact',
+                    artifactId: 'art_remote',
+                    artifactKind: 'pdf-preview-page-1-large',
+                    url: '/remote/artifact'
+                }
+            })),
         })
     };
 });
@@ -204,6 +219,49 @@ describe('Offline Client', () => {
       },
       warnings: ['Pending local PDF preview artifact is not available yet.'],
     });
+  });
+
+  it('TV-VIEW-003: should ignore pending-local sources when an explicit version is requested', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    const file = new File(['%PDF-1.4'], 'draft.pdf', { type: 'application/pdf' });
+    const handle = client.uploadFile({ policy: 'p', file });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const descriptor = await client.resolveRenderable({
+      fileId: handle.fileId,
+      versionId: 'ver_remote_1',
+      intent: 'preview',
+      preferLocal: true,
+    });
+
+    expect(descriptor.versionId).toBe('ver_remote_1');
+    expect((descriptor.source as { mode: string }).mode).not.toBe('placeholder');
+  });
+
+  it('TV-CLIENT-OFFLINE-003: aborting an offline upload rejects done() and clears staged data', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    const file = new File(['content'], 'test.txt', { type: 'text/plain' });
+    const handle = client.uploadFile({ policy: 'p', file });
+
+    const donePromise = handle.done();
+    handle.abort();
+
+    await expect(donePromise).rejects.toThrow('Aborted');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stagedUploads.size).toBe(0);
   });
 
   it('TV-CLIENT-OFFLINE-NEG-001: should throw if offline enabled but OPFS unavailable', () => {
