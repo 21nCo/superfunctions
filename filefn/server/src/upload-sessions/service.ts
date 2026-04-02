@@ -410,7 +410,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           uploadSessionId,
           status: 'pending',
           policy: input.policy,
-          fileId: input.fileId || null,
+          fileId,
           fileName: input.fileName,
           mimeType: input.mimeType,
           size: input.size,
@@ -448,7 +448,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         fileName: input.fileName,
         size: input.size,
         uploadMode,
-        fileId: input.fileId,
+        fileId,
       });
 
       return { uploadSessionId, uploadMode, chunkSizeBytes, totalParts, expiresAt, warnings, uploadSessionToken };
@@ -456,6 +456,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
     async getSessionStatus(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{
       uploadSessionId: string;
+      fileId?: string;
       status: string;
       totalParts: number;
       recordedParts: number[];
@@ -487,6 +488,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       return {
         uploadSessionId,
+        fileId: session.fileId ?? undefined,
         status: session.status,
         totalParts: session.totalParts,
         recordedParts,
