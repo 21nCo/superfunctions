@@ -159,6 +159,25 @@ describe('Offline Client', () => {
     expect(stagedUploads.size).toBe(0);
   });
 
+  it('syncs immediately after staging if connectivity already returned', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false });
+
+    const client = createFileFnClient({
+      baseUrl: 'http://test',
+      offline: { enabled: true }
+    });
+
+    const file = new File(['content'], 'test.txt', { type: 'text/plain' });
+    const handle = client.uploadFile({ policy: 'p', file });
+    const donePromise = handle.done();
+
+    Object.defineProperty(navigator, 'onLine', { value: true });
+    const result = await donePromise;
+
+    expect(result.fileId).toBe(handle.fileId);
+    expect(stagedUploads.size).toBe(0);
+  });
+
   it('persists idempotency keys through offline replay', async () => {
     Object.defineProperty(navigator, 'onLine', { value: false });
 

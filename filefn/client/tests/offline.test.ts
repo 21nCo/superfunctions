@@ -332,6 +332,49 @@ describe('OPFSStore', () => {
       expect(retrieved2!.retryCount).toBe(2);
     });
 
+    it('cleans up partial staging directories when metadata write fails', async () => {
+      const store = new OPFSStore();
+      await store.init();
+
+      const rootDir = (store as any).rootDir;
+      const originalGetDirectoryHandle = rootDir.getDirectoryHandle.bind(rootDir);
+      rootDir.getDirectoryHandle = async (name: string, options?: { create?: boolean }) => {
+        const dir = await originalGetDirectoryHandle(name, options);
+        const originalGetFileHandle = dir.getFileHandle.bind(dir);
+        dir.getFileHandle = async (fileName: string, fileOptions?: { create?: boolean }) => {
+          const handle = await originalGetFileHandle(fileName, fileOptions);
+          if (fileName === 'metadata.json') {
+            return {
+              async createWritable() {
+                return {
+                  write: async () => {
+                    throw new Error('metadata write failed');
+                  },
+                  close: async () => {},
+                };
+              },
+            };
+          }
+          return handle;
+        };
+        return dir;
+      };
+
+      const pendingUpload: PendingUpload = {
+        uploadSessionId: 'offline_partial_001',
+        policy: 'test-policy',
+        fileName: 'test.txt',
+        size: 100,
+        mimeType: 'text/plain',
+        fileData: new ArrayBuffer(100),
+        createdAt: new Date().toISOString(),
+        retryCount: 0,
+      };
+
+      await expect(store.stagePendingUpload(pendingUpload)).rejects.toThrow('metadata write failed');
+      expect(await store.listPendingUploads()).toEqual([]);
+    });
+
     it('should calculate total size of pending uploads', async () => {
       const store = new OPFSStore();
       await store.init();

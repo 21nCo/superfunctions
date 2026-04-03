@@ -110,31 +110,34 @@ export class OPFSStore {
       create: true,
     });
 
-    // Store file data
-    const dataFileHandle = await uploadDir.getFileHandle('data.bin', { create: true });
-    const dataWritable = await dataFileHandle.createWritable();
-    await dataWritable.write(upload.fileData);
-    await dataWritable.close();
+    try {
+      const dataFileHandle = await uploadDir.getFileHandle('data.bin', { create: true });
+      const dataWritable = await dataFileHandle.createWritable();
+      await dataWritable.write(upload.fileData);
+      await dataWritable.close();
 
-    // Store metadata
-    const metadata = {
-      uploadSessionId: upload.uploadSessionId,
-      fileId: upload.fileId || upload.uploadSessionId,
-      policy: upload.policy,
-      idempotencyKey: upload.idempotencyKey,
-      fileName: upload.fileName,
-      size: upload.size,
-      mimeType: upload.mimeType,
-      localSource: upload.localSource || deriveFallbackLocalSource(upload),
-      metadata: upload.metadata,
-      createdAt: upload.createdAt,
-      retryCount: upload.retryCount,
-    };
+      const metadata = {
+        uploadSessionId: upload.uploadSessionId,
+        fileId: upload.fileId || upload.uploadSessionId,
+        policy: upload.policy,
+        idempotencyKey: upload.idempotencyKey,
+        fileName: upload.fileName,
+        size: upload.size,
+        mimeType: upload.mimeType,
+        localSource: upload.localSource || deriveFallbackLocalSource(upload),
+        metadata: upload.metadata,
+        createdAt: upload.createdAt,
+        retryCount: upload.retryCount,
+      };
 
-    const metaFileHandle = await uploadDir.getFileHandle('metadata.json', { create: true });
-    const metaWritable = await metaFileHandle.createWritable();
-    await metaWritable.write(JSON.stringify(metadata, null, 2));
-    await metaWritable.close();
+      const metaFileHandle = await uploadDir.getFileHandle('metadata.json', { create: true });
+      const metaWritable = await metaFileHandle.createWritable();
+      await metaWritable.write(JSON.stringify(metadata, null, 2));
+      await metaWritable.close();
+    } catch (error) {
+      await this.rootDir!.removeEntry(upload.uploadSessionId, { recursive: true }).catch(() => {});
+      throw error;
+    }
   }
 
   /**

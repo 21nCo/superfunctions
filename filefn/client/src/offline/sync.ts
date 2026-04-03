@@ -1,4 +1,5 @@
 import type { OPFSStore, PendingUpload } from './opfs-store.js';
+import { isRetryableError } from '../retry.js';
 
 export interface UploadClient {
   uploadFile(input: {
@@ -104,8 +105,6 @@ export class OfflineSync {
   waitForUpload(uploadSessionId: string): Promise<{ fileId: string; versionId: string }> {
     const settled = this.settledResults.get(uploadSessionId);
     if (settled) {
-      this.clearSettledResult(uploadSessionId);
-      this.settledResults.delete(uploadSessionId);
       if (settled instanceof Error) {
         return Promise.reject(settled);
       }
@@ -201,8 +200,10 @@ export class OfflineSync {
           const pending = await this.config.store.getPendingUpload(uploadSessionId);
           if (pending && pending.retryCount >= this.config.maxRetries) {
             this.notifyListeners(uploadSessionId, err);
-          } else if (pending && this.isOnline()) {
+          } else if (pending && this.isOnline() && isRetryableError(err)) {
             this.scheduleRetry(uploadSessionId);
+          } else {
+            this.notifyListeners(uploadSessionId, err);
           }
         }
 
@@ -303,7 +304,7 @@ export class OfflineSync {
         this.notifyListeners(uploadSessionId, err);
         return;
       }
-      if (pending && this.isOnline()) {
+      if (pending && this.isOnline() && isRetryableError(err)) {
         this.scheduleRetry(uploadSessionId);
         return;
       }

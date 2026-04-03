@@ -66,15 +66,13 @@ describe('OfflineSync', () => {
     await vi.advanceTimersByTimeAsync(25);
     const settled = await sync.waitForUpload('offline_retry_1');
     expect(settled).toEqual({ fileId: 'file_retry_1', versionId: 'ver_retry_1' });
-    const secondWait = Promise.race([
-      sync.waitForUpload('offline_retry_1').then(() => 'resolved'),
-      new Promise((resolve) => setTimeout(() => resolve('pending'), 0)),
-    ]);
-    await vi.advanceTimersByTimeAsync(0);
-    await expect(secondWait).resolves.toBe('pending');
+    await expect(sync.waitForUpload('offline_retry_1')).resolves.toEqual({
+      fileId: 'file_retry_1',
+      versionId: 'ver_retry_1',
+    });
   });
 
-  it('consumes settled results on the fast path', async () => {
+  it('keeps settled results available on the fast path until expiry', async () => {
     const sync = new OfflineSync({
       store: {
         async listPendingUploads() { return []; },
@@ -104,12 +102,17 @@ describe('OfflineSync', () => {
       fileId: 'file_done_1',
       versionId: 'ver_done_1',
     });
-    const secondWait = Promise.race([
+    await expect(sync.waitForUpload('offline_done_1')).resolves.toEqual({
+      fileId: 'file_done_1',
+      versionId: 'ver_done_1',
+    });
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    const thirdWait = Promise.race([
       sync.waitForUpload('offline_done_1').then(() => 'resolved'),
       new Promise((resolve) => setTimeout(() => resolve('pending'), 0)),
     ]);
     await vi.advanceTimersByTimeAsync(0);
-    await expect(secondWait).resolves.toBe('pending');
+    await expect(thirdWait).resolves.toBe('pending');
   });
 
   it('rejects waiting uploads after cancellation and removes staged data', async () => {
@@ -255,5 +258,56 @@ describe('OfflineSync', () => {
     release();
     await Promise.all([first, second]);
     expect(client.uploadFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry non-retryable failures', async () => {
+    const pending = {
+      uploadSessionId: 'offline_perm_1',
+      fileId: 'file_perm_1',
+      policy: 'p',
+      fileName: 'perm.txt',
+      size: 4,
+      mimeType: 'text/plain',
+      fileData: new TextEncoder().encode('test').buffer,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
+    };
+
+    const store = {
+      async listPendingUploads() {
+        return [pending.uploadSessionId];
+      },
+      async getPendingUpload() {
+        return pending;
+      },
+      async deletePendingUpload() {
+        return;
+      },
+      async incrementRetryCount() {
+        pending.retryCount += 1;
+      },
+    };
+
+    const authError = new Error('forbidden') as Error & { status?: number };
+    authError.status = 403;
+
+    const sync = new OfflineSync({
+      store: store as any,
+      client: {
+        uploadFile: vi.fn().mockRejectedValue(authError),
+      },
+      retryDelayMs: 25,
+      maxRetries: 2,
+    });
+    sync.setConnectivityChecker({
+      isOnline: () => true,
+      onOnline: () => () => {},
+      onOffline: () => () => {},
+    });
+
+    const result = await sync.syncAll();
+    expect(result.failed).toEqual(['offline_perm_1']);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(pending.retryCount).toBe(1);
   });
 });

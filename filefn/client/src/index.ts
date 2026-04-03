@@ -311,6 +311,9 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
                 await activeOfflineStore.deletePendingUpload(uploadSessionId);
                 throw createAbortError();
               }
+              if (activeOfflineSync.isOnline()) {
+                void activeOfflineSync.syncUpload(uploadSessionId).catch(() => {});
+              }
               resolve();
             } catch (error) {
               reject(error);
