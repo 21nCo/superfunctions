@@ -176,18 +176,40 @@ class FileService:
                 readable.add(grant.get("fileId"))
         return readable
 
-    async def _find_files(self, where: List[Dict[str, Any]]) -> List[FileRecord]:
+    @staticmethod
+    def _list_order_by() -> List[Dict[str, str]]:
+        return [
+            {"field": "updatedAt", "direction": "desc"},
+            {"field": "fileId", "direction": "asc"},
+        ]
+
+    async def _find_files(
+        self,
+        where: List[Dict[str, Any]],
+        *,
+        limit: Optional[int] = None,
+    ) -> List[FileRecord]:
         rows = await self.db.find_many(
             model="files",
             where=where,
+            order_by=self._list_order_by(),
+            limit=limit,
             namespace=self.namespace,
         )
         return [FileRecord(**item) for item in rows]
 
-    async def _list_accessible_files_default(self, ctx: FileProviderContext) -> List[FileRecord]:
+    async def _list_accessible_files_default(
+        self,
+        ctx: FileProviderContext,
+        *,
+        source_limit: Optional[int] = None,
+    ) -> List[FileRecord]:
         files_by_id: Dict[str, FileRecord] = {}
 
-        for file in await self._find_files([{"field": "visibility", "operator": "eq", "value": Visibility.PUBLIC.value}]):
+        for file in await self._find_files(
+            [{"field": "visibility", "operator": "eq", "value": Visibility.PUBLIC.value}],
+            limit=source_limit,
+        ):
             files_by_id[file.fileId] = file
 
         if ctx.tenantId:
@@ -195,12 +217,16 @@ class FileService:
                 [
                     {"field": "visibility", "operator": "eq", "value": Visibility.SHARED.value},
                     {"field": "tenantId", "operator": "eq", "value": ctx.tenantId},
-                ]
+                ],
+                limit=source_limit,
             ):
                 files_by_id[file.fileId] = file
 
         if ctx.principalId:
-            for file in await self._find_files([{"field": "ownerId", "operator": "eq", "value": ctx.principalId}]):
+            for file in await self._find_files(
+                [{"field": "ownerId", "operator": "eq", "value": ctx.principalId}],
+                limit=source_limit,
+            ):
                 files_by_id[file.fileId] = file
 
             granted_file_ids = await self._get_readable_grant_file_ids(ctx)
@@ -272,7 +298,8 @@ class FileService:
         limit = min(100, max(1, requested))
 
         if isinstance(self.authorizer, DefaultAuthorizer):
-            accessible_files = await self._list_accessible_files_default(ctx)
+            source_limit = None if options.get("cursor") else (limit + 1)
+            accessible_files = await self._list_accessible_files_default(ctx, source_limit=source_limit)
         else:
             all_files_data = await self.db.find_many(
                 model="files",

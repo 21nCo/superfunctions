@@ -274,6 +274,16 @@ def _make_jpeg(width: int = 8, height: int = 8) -> bytes:
     return out.getvalue()
 
 
+def _make_animated_gif() -> bytes:
+    from PIL import Image
+
+    first = Image.new("RGBA", (4, 4), (255, 0, 0, 255))
+    second = Image.new("RGBA", (4, 4), (0, 0, 255, 255))
+    out = io.BytesIO()
+    first.save(out, format="GIF", save_all=True, append_images=[second], loop=0, duration=50)
+    return out.getvalue()
+
+
 @pytest.mark.asyncio
 async def test_processing_uses_put_object_and_creates_artifacts() -> None:
     db = FakeDB()
@@ -819,6 +829,47 @@ async def test_image_transform_rotate_supports_grayscale_background_fill() -> No
         with Image.open(io.BytesIO(artifact.data)) as transformed:
             assert transformed.mode == "L"
             assert transformed.size == (2, 4)
+
+
+@pytest.mark.asyncio
+async def test_image_transform_rejects_multi_frame_inputs() -> None:
+    processor = create_image_transform_processor(
+        ImageTransformConfig(
+            operations=[
+                ImageTransformOperation(
+                    operation="resize",
+                    options=ResizeOptions(width=2, height=2),
+                    suffix="small",
+                )
+            ],
+            outputFormat="gif",
+        )
+    )
+
+    async def get_image() -> bytes:
+        return _make_animated_gif()
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_img_transform_multi",
+            versionId="ver_img_transform_multi",
+            storageKey="uploads/file_img_transform_multi/original.gif",
+            mimeType="image/gif",
+            size=16,
+            fileName="image.gif",
+            tenantId="org_123",
+        ),
+        get_image,
+    )
+
+    try:
+        import PIL  # noqa: F401
+    except Exception:
+        assert result.success is False
+        assert result.error == "FILEFN_PROCESSING_IMAGE_TRANSFORM_FAILED"
+    else:
+        assert result.success is False
+        assert result.error == "FILEFN_PROCESSING_IMAGE_TRANSFORM_FAILED"
 
 
 @pytest.mark.asyncio

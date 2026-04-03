@@ -33,6 +33,8 @@ class ImageTransformProcessor:
 
             source_data = await get_data()
             with Image.open(io.BytesIO(source_data)) as img:
+                if getattr(img, "n_frames", 1) > 1:
+                    return ProcessorResult(success=False, artifacts=[], error=IMAGE_TRANSFORM_FAILED_ERROR)
                 source_format = img.format
                 working = img.copy()
                 applied = []

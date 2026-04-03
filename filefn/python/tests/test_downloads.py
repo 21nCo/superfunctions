@@ -56,7 +56,7 @@ class FakeDB:
         limit: Optional[int] = None,
         namespace: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        self.find_many_calls.append({"model": model, "where": where})
+        self.find_many_calls.append({"model": model, "where": where, "order_by": order_by, "limit": limit})
         rows = [dict(row) for row in self._table(model) if self._matches(row, where)]
 
         if order_by:
@@ -323,6 +323,15 @@ async def test_version_aware_get_file_and_list_files_are_deterministic() -> None
     assert [file["fileId"] for file in second_page["files"]] == ["file_0002"]
     assert not any(
         call["model"] == "files" and call["where"] == []
+        for call in db.find_many_calls
+    )
+    assert any(
+        call["model"] == "files"
+        and call["limit"] == 2
+        and call["order_by"] == [
+            {"field": "updatedAt", "direction": "desc"},
+            {"field": "fileId", "direction": "asc"},
+        ]
         for call in db.find_many_calls
     )
 
