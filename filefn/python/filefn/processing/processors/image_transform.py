@@ -33,6 +33,7 @@ class ImageTransformProcessor:
 
             source_data = await get_data()
             with Image.open(io.BytesIO(source_data)) as img:
+                source_format = img.format
                 working = img.copy()
                 applied = []
 
@@ -91,18 +92,10 @@ class ImageTransformProcessor:
                         )
                         working = working.crop(box)
                     elif operation.operation == "rotate" and isinstance(operation.options, RotateOptions):
-                        background = operation.options.background
-                        fillcolor = None
-                        if background is not None:
-                            fillcolor = (
-                                background.get("r", 0),
-                                background.get("g", 0),
-                                background.get("b", 0),
-                                background.get("alpha", 255),
-                            )
+                        working, fillcolor = self._resolve_rotate_fillcolor(working, operation.options.background)
                         working = working.rotate(operation.options.angle, expand=True, fillcolor=fillcolor)
 
-                output_format = (self.config.outputFormat or working.format or "PNG").upper()
+                output_format = (self.config.outputFormat or source_format or "PNG").upper()
                 if output_format == "JPG":
                     output_format = "JPEG"
 
@@ -173,6 +166,33 @@ class ImageTransformProcessor:
         if str(path.parent) in ("", "."):
             return stem
         return str(path.parent / stem)
+
+    @staticmethod
+    def _resolve_rotate_fillcolor(image: Any, background: Optional[dict[str, Any]]) -> tuple[Any, Any]:
+        if background is None:
+            return image, None
+
+        red = int(background.get("r", 0))
+        green = int(background.get("g", 0))
+        blue = int(background.get("b", 0))
+        alpha = int(background.get("alpha", 255))
+        grayscale = int(round((0.299 * red) + (0.587 * green) + (0.114 * blue)))
+        mode = image.mode
+
+        if mode in ("RGBA", "RGBa"):
+            return image, (red, green, blue, alpha)
+        if mode in ("RGB", "YCbCr"):
+            return image, (red, green, blue)
+        if mode == "LA":
+            return image, (grayscale, alpha)
+        if mode in ("L", "1"):
+            return image, grayscale
+        if mode in ("CMYK",):
+            return image.convert("RGBA"), (red, green, blue, alpha)
+        if mode in ("P", "PA"):
+            return image.convert("RGBA"), (red, green, blue, alpha)
+
+        return image.convert("RGBA"), (red, green, blue, alpha)
 
 
 def create_image_transform_processor(config: ImageTransformConfig) -> Processor:

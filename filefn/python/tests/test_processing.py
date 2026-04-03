@@ -22,6 +22,7 @@ from filefn.processing.types import (
     ImageTransformOperation,
     PdfPreviewConfig,
     ResizeOptions,
+    RotateOptions,
     ThumbnailConfig,
 )
 from filefn.server import create_event_emitter, create_routed_storage_adapter
@@ -261,6 +262,15 @@ def _make_png(width: int = 8, height: int = 8) -> bytes:
     image = Image.new("RGBA", (width, height), (40, 120, 200, 255))
     out = io.BytesIO()
     image.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _make_jpeg(width: int = 8, height: int = 8) -> bytes:
+    from PIL import Image
+
+    image = Image.new("RGB", (width, height), (180, 140, 80))
+    out = io.BytesIO()
+    image.save(out, format="JPEG")
     return out.getvalue()
 
 
@@ -713,6 +723,102 @@ async def test_image_transform_respects_without_enlargement_and_preserves_dotted
         assert artifact.storageKey == "uploads/v1.assets/file_img_transform_2/original.image-bounded.png"
         with Image.open(io.BytesIO(artifact.data)) as transformed:
             assert transformed.size == (8, 8)
+
+
+@pytest.mark.asyncio
+async def test_image_transform_defaults_to_source_format_when_output_format_is_omitted() -> None:
+    processor = create_image_transform_processor(
+        ImageTransformConfig(
+            operations=[
+                ImageTransformOperation(
+                    operation="resize",
+                    options=ResizeOptions(width=4, height=4),
+                    suffix="small",
+                )
+            ],
+        )
+    )
+
+    async def get_image() -> bytes:
+        return _make_jpeg()
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_img_transform_3",
+            versionId="ver_img_transform_3",
+            storageKey="uploads/file_img_transform_3/original.photo.jpg",
+            mimeType="image/jpeg",
+            size=16,
+            fileName="image.jpg",
+            tenantId="org_123",
+        ),
+        get_image,
+    )
+
+    try:
+        from PIL import Image
+    except Exception:
+        assert result.success is False
+        assert result.error == "FILEFN_PROCESSING_IMAGE_TRANSFORM_FAILED"
+    else:
+        assert result.success is True
+        artifact = result.artifacts[0]
+        assert artifact.mimeType == "image/jpeg"
+        assert artifact.storageKey.endswith("-small.jpg")
+        with Image.open(io.BytesIO(artifact.data)) as transformed:
+            assert transformed.format == "JPEG"
+
+
+@pytest.mark.asyncio
+async def test_image_transform_rotate_supports_grayscale_background_fill() -> None:
+    processor = create_image_transform_processor(
+        ImageTransformConfig(
+            operations=[
+                ImageTransformOperation(
+                    operation="rotate",
+                    options=RotateOptions(
+                        angle=90,
+                        background={"r": 255, "g": 0, "b": 0, "alpha": 255},
+                    ),
+                    suffix="rotated",
+                )
+            ],
+            outputFormat="png",
+        )
+    )
+
+    async def get_image() -> bytes:
+        from PIL import Image
+
+        image = Image.new("L", (4, 2), 32)
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        return out.getvalue()
+
+    result = await processor.process(
+        ProcessorInput(
+            fileId="file_img_transform_4",
+            versionId="ver_img_transform_4",
+            storageKey="uploads/file_img_transform_4/original.png",
+            mimeType="image/png",
+            size=8,
+            fileName="image.png",
+            tenantId="org_123",
+        ),
+        get_image,
+    )
+
+    try:
+        from PIL import Image
+    except Exception:
+        assert result.success is False
+        assert result.error == "FILEFN_PROCESSING_IMAGE_TRANSFORM_FAILED"
+    else:
+        assert result.success is True
+        artifact = result.artifacts[0]
+        with Image.open(io.BytesIO(artifact.data)) as transformed:
+            assert transformed.mode == "L"
+            assert transformed.size == (2, 4)
 
 
 @pytest.mark.asyncio
