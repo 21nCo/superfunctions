@@ -612,7 +612,13 @@ private func waitForBridgeEvent(named eventName: String, sink: LockedBridgeSink)
         }
         try await Task.sleep(nanoseconds: 20_000_000)
     }
-    Issue.record("Timed out waiting for bridge event \(eventName)")
+    throw NSError(
+        domain: "FileFnBridgeHostTests",
+        code: 1,
+        userInfo: [
+            NSLocalizedDescriptionKey: "Timed out waiting for bridge event \(eventName). Events: \(sink.events())",
+        ]
+    )
 }
 
 private func bridgeRequestBody(_ request: URLRequest) throws -> [String: Any] {

@@ -52,6 +52,7 @@ struct FileFnBridgeSecurityTests {
             "authOwner": .string("native"),
             "uploadOwner": .string("native"),
             "Authorization": .string("Bearer bridge-auth-token"),
+            "Proxy-Authorization": .string("Bearer bridge-proxy-token"),
             "x-upload-session-token": .string("test-upload-token-001"),
         ]))
 
@@ -59,8 +60,32 @@ struct FileFnBridgeSecurityTests {
             "authOwner": .string("native"),
             "uploadOwner": .string("native"),
             "Authorization": .string("[REDACTED]"),
+            "Proxy-Authorization": .string("[REDACTED]"),
             "x-upload-session-token": .string("[REDACTED]"),
         ]))
+    }
+
+    @Test
+    func failureEnvelopesRedactSensitiveMessageAndDetails() throws {
+        let response = FileFnBridgeResponseEnvelope.failure(
+            id: "bridge_req_failure_001",
+            error: FileFnBridgeError(
+                code: "FILEFN_CLIENT_ERROR",
+                message: "Unable to read /private/var/mobile/Containers/Data/Application/UUID/tmp/avatar.png",
+                details: [
+                    "bodySnippet": .string("https://storage.example.com/upload?X-Amz-Signature=secret"),
+                    "Authorization": .string("Bearer bridge-auth-token"),
+                ]
+            )
+        )
+
+        let object = try securityBridgePayloadValue(fileFnBridgeFoundationObject(from: response))
+        let error = try #require(object["error"] as? [String: Any])
+        let details = try #require(error["details"] as? [String: Any])
+
+        #expect(error["message"] as? String == "Sensitive bridge error redacted")
+        #expect(details["bodySnippet"] as? String == "https://storage.example.com/upload?[REDACTED_QUERY]")
+        #expect(details["Authorization"] as? String == "[REDACTED]")
     }
 
     @Test
@@ -147,7 +172,7 @@ struct FileFnBridgeSecurityTests {
     }
 
     @Test
-    func bridgeEventEmitterRedactsSecretsAndAbsolutePaths() {
+    func bridgeEventEmitterRedactsSecretsAndAbsolutePaths() throws {
         let emitter = FileFnBridgeEventEmitter()
         var captured: FileFnBridgeEventEnvelope?
         emitter.setSink { event in
@@ -166,7 +191,7 @@ struct FileFnBridgeSecurityTests {
             ])
         )
 
-        let payload = try? #require(captured?.payload)
+        let payload = try #require(captured?.payload)
         #expect(payload == .object([
             "Authorization": .string("[REDACTED]"),
             "uploadSessionToken": .string("[REDACTED]"),

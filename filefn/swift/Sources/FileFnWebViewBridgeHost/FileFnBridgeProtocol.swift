@@ -140,7 +140,7 @@ public struct FileFnBridgeResponseEnvelope: Codable, Sendable, Equatable {
     }
 
     public static func failure(id: String, error: FileFnBridgeError) -> Self {
-        Self(id: id, ok: false, result: nil, error: error)
+        Self(id: id, ok: false, result: nil, error: fileFnBridgeSanitize(error))
     }
 }
 
@@ -338,6 +338,16 @@ func fileFnBridgeSanitize(_ value: FileFnJSONValue) -> FileFnJSONValue {
     }
 }
 
+func fileFnBridgeSanitize(_ error: FileFnBridgeError) -> FileFnBridgeError {
+    FileFnBridgeError(
+        code: error.code,
+        message: fileFnBridgeSanitizeErrorMessage(error.message),
+        details: Dictionary(uniqueKeysWithValues: error.details.map { key, value in
+            (key, fileFnBridgeSanitizeEntry(key: key, value: value))
+        })
+    )
+}
+
 private func fileFnBridgeSanitizeEntry(key: String, value: FileFnJSONValue) -> FileFnJSONValue {
     let normalizedKey = key
         .replacingOccurrences(of: "_", with: "")
@@ -364,12 +374,7 @@ private func fileFnBridgeSanitizeEntry(key: String, value: FileFnJSONValue) -> F
 }
 
 private func fileFnBridgeIsSecretKey(_ normalizedKey: String) -> Bool {
-    switch normalizedKey {
-    case "authorization", "proxyauthorization", "uploadsessiontoken", "xuploadsessiontoken":
-        return true
-    default:
-        return false
-    }
+    normalizedKey.hasSuffix("authorization") || normalizedKey.contains("uploadsessiontoken")
 }
 
 private func fileFnBridgeSanitizeString(_ value: String) -> String {
@@ -387,6 +392,25 @@ private func fileFnBridgeSanitizeString(_ value: String) -> String {
 
     if value.hasPrefix("/") {
         return URL(fileURLWithPath: value).lastPathComponent
+    }
+
+    return value
+}
+
+private func fileFnBridgeSanitizeErrorMessage(_ value: String) -> String {
+    let sanitized = fileFnBridgeSanitizeString(value)
+    if sanitized != value {
+        return sanitized
+    }
+
+    let lowercased = value.lowercased()
+    if lowercased.contains("file://")
+        || value.contains("/private/")
+        || lowercased.contains("x-amz-signature=")
+        || lowercased.contains("upload-session-token")
+        || lowercased.contains("authorization")
+    {
+        return "Sensitive bridge error redacted"
     }
 
     return value

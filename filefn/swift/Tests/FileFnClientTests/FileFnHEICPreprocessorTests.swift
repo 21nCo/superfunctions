@@ -136,12 +136,25 @@ struct FileFnHEICPreprocessorTests {
         try Data("heic-bytes".utf8).write(to: sourceURL)
 
         final class RequestCounter: @unchecked Sendable {
-            var count = 0
+            private let lock = NSLock()
+            private var value = 0
+
+            func increment() {
+                lock.lock()
+                value += 1
+                lock.unlock()
+            }
+
+            func load() -> Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return value
+            }
         }
         let counter = RequestCounter()
 
         let client = try makeFileFnTestClient(host: host) { request in
-            counter.count += 1
+            counter.increment()
             Issue.record("Unexpected request \(request.httpMethod ?? "nil") \(request.url?.absoluteString ?? "nil")")
             return makeJSONResponse(
                 request: request,
@@ -180,7 +193,7 @@ struct FileFnHEICPreprocessorTests {
             }
         }
 
-        #expect(counter.count == 0)
+        #expect(counter.load() == 0)
     }
 
     @Test

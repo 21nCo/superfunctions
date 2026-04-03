@@ -27,6 +27,7 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
 
     private let deliveryLock = NSLock()
     private weak var currentWebView: WKWebView?
+    private var messagePipeline: Task<Void, Never>?
     nonisolated(unsafe) private var testingSink: ((Any) -> Void)?
 
     public init(
@@ -60,8 +61,8 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
 
     public func attach(to userContentController: WKUserContentController) {
         userContentController.add(self, name: configuration.handlerName)
-        Task {
-            await dispatcher.resetHandshake()
+        enqueueMessageWork { [self] in
+            await self.dispatcher.resetHandshake()
         }
     }
 
@@ -74,8 +75,8 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
         deliveryLock.lock()
         currentWebView = nil
         deliveryLock.unlock()
-        Task {
-            await dispatcher.resetHandshake()
+        enqueueMessageWork { [self] in
+            await self.dispatcher.resetHandshake()
         }
     }
 
@@ -94,7 +95,7 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
 
         let shouldResetHandshake = previousWebView !== message.webView
 
-        Task { [weak self] in
+        enqueueMessageWork { [weak self] in
             guard let self else { return }
             if shouldResetHandshake {
                 await self.dispatcher.resetHandshake()
@@ -104,6 +105,18 @@ public final class FileFnWKWebViewBridgeHost: NSObject, WKScriptMessageHandler, 
                 self.deliver(response, preferredWebView: message.webView)
             }
         }
+    }
+
+    private func enqueueMessageWork(_ operation: @escaping @Sendable () async -> Void) {
+        deliveryLock.lock()
+        let previousTask = messagePipeline
+        let nextTask = Task { [weak self] in
+            _ = await previousTask?.result
+            guard self != nil else { return }
+            await operation()
+        }
+        messagePipeline = nextTask
+        deliveryLock.unlock()
     }
 
     nonisolated func handleMessageForTesting(_ rawMessage: Any) async -> FileFnBridgeResponseEnvelope {

@@ -69,6 +69,8 @@ struct FileFnSecretRedactionTests {
 
         let store = FileFnFileSystemUploadStateStore(rootDirectory: rootDirectory)
         let secretStore = FileFnSecretRedactionSecretStore()
+        // Tokens are stored separately via FileFnSecretStore, not embedded in snapshots.
+        // This test documents that snapshot persistence preserves that architectural separation.
         try await secretStore.storeUploadSessionToken("test-upload-token-001", uploadID: "bg_001")
         #expect(try await secretStore.loadUploadSessionToken(uploadID: "bg_001") == "test-upload-token-001")
         let snapshot = FileFnBackgroundUploadSnapshot(
@@ -93,7 +95,7 @@ struct FileFnSecretRedactionTests {
 
         try await store.saveSnapshot(snapshot)
         let snapshotURL = rootDirectory.appendingPathComponent("snapshots", isDirectory: true).appendingPathComponent("bg_001.json", isDirectory: false)
-        let contents = try String(contentsOf: snapshotURL)
+        let contents = try String(contentsOf: snapshotURL, encoding: .utf8)
 
         #expect(contents.contains("test-upload-token-001") == false)
         #expect(contents.contains("Authorization") == false)
