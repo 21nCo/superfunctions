@@ -47,6 +47,23 @@ private func securityBridgePayloadValue(_ object: Any) throws -> [String: Any] {
 
 struct FileFnBridgeSecurityTests {
     @Test
+    func bridgeSanitizerPreservesHandshakeOwnershipFields() {
+        let sanitized = fileFnBridgeSanitize(.object([
+            "authOwner": .string("native"),
+            "uploadOwner": .string("native"),
+            "Authorization": .string("Bearer bridge-auth-token"),
+            "x-upload-session-token": .string("test-upload-token-001"),
+        ]))
+
+        #expect(sanitized == .object([
+            "authOwner": .string("native"),
+            "uploadOwner": .string("native"),
+            "Authorization": .string("[REDACTED]"),
+            "x-upload-session-token": .string("[REDACTED]"),
+        ]))
+    }
+
+    @Test
     func nativeAssetPreviewURLIsOpaqueAndDoesNotExposeFilesystemPaths() async throws {
         let rootDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("filefn-bridge-preview-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)

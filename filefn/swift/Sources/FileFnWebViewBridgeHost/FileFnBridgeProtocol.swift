@@ -343,10 +343,7 @@ private func fileFnBridgeSanitizeEntry(key: String, value: FileFnJSONValue) -> F
         .replacingOccurrences(of: "_", with: "")
         .replacingOccurrences(of: "-", with: "")
         .lowercased()
-    if normalizedKey == "authorization"
-        || normalizedKey.contains("uploadsessiontoken")
-        || normalizedKey.contains("auth")
-    {
+    if fileFnBridgeIsSecretKey(normalizedKey) {
         return .string("[REDACTED]")
     }
 
@@ -363,6 +360,15 @@ private func fileFnBridgeSanitizeEntry(key: String, value: FileFnJSONValue) -> F
         return .object(sanitized)
     default:
         return value
+    }
+}
+
+private func fileFnBridgeIsSecretKey(_ normalizedKey: String) -> Bool {
+    switch normalizedKey {
+    case "authorization", "proxyauthorization", "uploadsessiontoken", "xuploadsessiontoken":
+        return true
+    default:
+        return false
     }
 }
 
