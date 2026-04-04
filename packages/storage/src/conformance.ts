@@ -10,23 +10,8 @@ export interface ConformanceResult {
   failed: string[];
 }
 
-export interface ConformanceTestContext {
-  testKey: string;
-  testData: Uint8Array;
-  testContentType: string;
-}
-
-function createDefaultContext(): ConformanceTestContext {
-  return {
-    testKey: `conformance-test-${Date.now()}`,
-    testData: new Uint8Array([1, 2, 3, 4]),
-    testContentType: 'application/octet-stream',
-  };
-}
-
 export async function runConformanceTests(
-  adapter: StorageAdapter,
-  _ctx: ConformanceTestContext = createDefaultContext()
+  adapter: StorageAdapter
 ): Promise<ConformanceResult> {
   const passed: string[] = [];
   const failed: string[] = [];

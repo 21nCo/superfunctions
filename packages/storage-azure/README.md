@@ -13,20 +13,20 @@ npm install @superfunctions/storage-azure
 ```typescript
 import { createAzureStorageAdapter } from '@superfunctions/storage-azure';
 
-const adapter = createAzureStorageAdapter({
+const connectionStringAdapter = createAzureStorageAdapter({
   containerName: 'my-container',
   connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING,
 });
 
 // Or use account name and key
-const adapter = createAzureStorageAdapter({
+const accountKeyAdapter = createAzureStorageAdapter({
   containerName: 'my-container',
   accountName: 'myaccount',
   accountKey: process.env.AZURE_STORAGE_ACCOUNT_KEY,
 });
 
 // Or use SAS token
-const adapter = createAzureStorageAdapter({
+const sasTokenAdapter = createAzureStorageAdapter({
   containerName: 'my-container',
   accountName: 'myaccount',
   sasToken: process.env.AZURE_STORAGE_SAS_TOKEN,

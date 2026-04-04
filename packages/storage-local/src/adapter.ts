@@ -1,6 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, unlink, realpath } from 'node:fs/promises';
-import { dirname, join, normalize, resolve, isAbsolute } from 'node:path';
+import { mkdir, lstat, stat, unlink, realpath } from 'node:fs/promises';
+import { dirname, join, normalize, resolve, isAbsolute, relative } from 'node:path';
 import type { StorageAdapter, StorageAdapterCapabilities, StorageObjectStat } from '@superfunctions/storage';
 import { createNotFoundError } from '@superfunctions/storage/internal/errors';
 
@@ -33,6 +33,11 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
     proxyStreamingDownload: true,
   };
 
+  function isWithinRoot(root: string, candidate: string): boolean {
+    const rel = relative(root, candidate);
+    return rel !== '..' && !rel.startsWith(`..${'/'}`) && !rel.startsWith(`..${'\\'}`) && !isAbsolute(rel);
+  }
+
   function validateKey(key: string): void {
     if (!key || key.length === 0) {
       throw new Error('Invalid key: key cannot be empty');
@@ -61,7 +66,7 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
 
     const resolved = join(normalizedRoot, normalize(key));
 
-    if (!resolved.startsWith(normalizedRoot + '/') && resolved !== normalizedRoot) {
+    if (!isWithinRoot(normalizedRoot, resolved)) {
       throw new Error('Invalid key: path traversal detected');
     }
 
@@ -72,7 +77,7 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
     try {
       const real = await realpath(filePath);
       const root = await getResolvedRoot();
-      if (!real.startsWith(root + '/') && real !== root) {
+      if (!isWithinRoot(root, real)) {
         throw new Error('Invalid key: path traversal detected via symlink');
       }
     } catch (err: unknown) {
@@ -133,8 +138,18 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
 
       const dirRealPath = await realpath(dir);
       const root = await getResolvedRoot();
-      if (!dirRealPath.startsWith(root + '/') && dirRealPath !== root) {
+      if (!isWithinRoot(root, dirRealPath)) {
         throw new Error('Invalid key: path traversal detected via symlink');
+      }
+      try {
+        const fileStats = await lstat(filePath);
+        if (fileStats.isSymbolicLink()) {
+          throw new Error('Invalid key: upload target cannot be a symlink');
+        }
+      } catch (err: unknown) {
+        if (!(err instanceof Error && 'code' in err && err.code === 'ENOENT')) {
+          throw err;
+        }
       }
 
       const nodeStream = createWriteStream(filePath);
@@ -147,8 +162,20 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
             if (ok) {
               resolve();
             } else {
-              nodeStream.once('drain', resolve);
-              nodeStream.once('error', reject);
+              const cleanup = () => {
+                nodeStream.off('drain', onDrain);
+                nodeStream.off('error', onError);
+              };
+              const onDrain = () => {
+                cleanup();
+                resolve();
+              };
+              const onError = (err: Error) => {
+                cleanup();
+                reject(err);
+              };
+              nodeStream.once('drain', onDrain);
+              nodeStream.once('error', onError);
             }
           });
         },
@@ -201,12 +228,14 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         : undefined;
 
       const nodeStream = createReadStream(filePath, options);
+      nodeStream.pause();
 
       return new ReadableStream({
         start(controller) {
           nodeStream.on('data', (chunk: Buffer | string) => {
             const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
             controller.enqueue(new Uint8Array(buffer));
+            nodeStream.pause();
           });
           nodeStream.on('end', () => {
             controller.close();
@@ -214,6 +243,9 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
           nodeStream.on('error', (err) => {
             controller.error(err);
           });
+        },
+        pull() {
+          nodeStream.resume();
         },
         cancel() {
           nodeStream.destroy();

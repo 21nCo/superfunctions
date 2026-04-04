@@ -25,7 +25,9 @@ export function createMinIOStorageAdapter(config: MinIOStorageConfig): StorageAd
 
   const protocol = useSSL ? 'https' : 'http';
   const portSuffix = port ? `:${port}` : '';
-  const fullEndpoint = endpoint.startsWith('http') ? endpoint : `${protocol}://${endpoint}${portSuffix}`;
+  const fullEndpoint = endpoint.startsWith('http://') || endpoint.startsWith('https://')
+    ? endpoint
+    : `${protocol}://${endpoint}${portSuffix}`;
 
   const client = new S3Client({
     region,

@@ -1,8 +1,8 @@
+import { PassThrough } from 'node:stream';
 import {
   BlobServiceClient,
   StorageSharedKeyCredential,
   ContainerClient,
-  BlockBlobClient,
   BlobSASPermissions,
   generateBlobSASQueryParameters,
   SASProtocol,
@@ -78,13 +78,6 @@ function generateBlockId(partNumber: number): string {
   // Use padded part number for block ID
   const blockIdStr = `block-${String(partNumber).padStart(6, '0')}`;
   return Buffer.from(blockIdStr).toString('base64');
-}
-
-function parseBlockId(blockId: string): number {
-  // Decode block ID to extract part number
-  const decoded = Buffer.from(blockId, 'base64').toString('utf-8');
-  const match = decoded.match(/block-(\d+)/);
-  return match ? parseInt(match[1], 10) : 0;
 }
 
 export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAdapter {
@@ -273,15 +266,8 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
 
       // In Azure, the etag from each part is actually the blockId we generated
       // Sort parts and commit blocks
-      const sortedParts = input.parts.sort((a, b) => a.partNumber - b.partNumber);
-      const blockList = sortedParts.map(p => {
-        // The etag should be the blockId we generated
-        // If client recorded blockId as etag, use it; otherwise regenerate
-        const blockId = p.etag.startsWith('block-') || p.etag.match(/^[A-Za-z0-9+/=]+$/)
-          ? p.etag
-          : generateBlockId(p.partNumber);
-        return blockId;
-      });
+      const sortedParts = [...input.parts].sort((a, b) => a.partNumber - b.partNumber);
+      const blockList = sortedParts.map((part) => generateBlockId(part.partNumber));
 
       await blockBlobClient.commitBlockList(blockList);
     },
@@ -293,25 +279,42 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
 
     async openUploadStream(input: { key: string; contentType?: string }): Promise<WritableStream> {
       const blockBlobClient = containerClient.getBlockBlobClient(input.key);
-
-      let buffer: Buffer[] = [];
+      const stream = new PassThrough();
+      const uploadPromise = blockBlobClient.uploadStream(stream, 4 * 1024 * 1024, 5, {
+        blobHTTPHeaders: {
+          blobContentType: input.contentType,
+        },
+      });
 
       return new WritableStream({
         async write(chunk) {
           const buf = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
-          buffer.push(buf);
+          if (stream.write(buf)) {
+            return;
+          }
+          await new Promise<void>((resolve, reject) => {
+            const cleanup = () => {
+              stream.off('drain', onDrain);
+              stream.off('error', onError);
+            };
+            const onDrain = () => {
+              cleanup();
+              resolve();
+            };
+            const onError = (err: Error) => {
+              cleanup();
+              reject(err);
+            };
+            stream.once('drain', onDrain);
+            stream.once('error', onError);
+          });
         },
         async close() {
-          const content = Buffer.concat(buffer);
-          await blockBlobClient.upload(content, content.length, {
-            blobHTTPHeaders: {
-              blobContentType: input.contentType,
-            },
-          });
-          buffer = [];
+          stream.end();
+          await uploadPromise;
         },
-        abort() {
-          buffer = [];
+        abort(reason) {
+          stream.destroy(reason instanceof Error ? reason : new Error(String(reason)));
         },
       });
     },

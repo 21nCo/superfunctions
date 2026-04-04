@@ -46,14 +46,14 @@ interface TokenBucketState {
   lastRefill: number;
 }
 
-function createInMemoryKVStore(): KVStoreAdapter {
+function createInMemoryKVStore(now: () => number): KVStoreAdapter {
   const store = new Map<string, { value: string; expiresAt?: number }>();
 
   return {
     async get(key: string): Promise<string | null> {
       const entry = store.get(key);
       if (!entry) return null;
-      if (entry.expiresAt && Date.now() > entry.expiresAt) {
+      if (entry.expiresAt && now() > entry.expiresAt) {
         store.delete(key);
         return null;
       }
@@ -62,7 +62,7 @@ function createInMemoryKVStore(): KVStoreAdapter {
     async set(input: { key: string; value: string; ttlSeconds?: number }): Promise<void> {
       store.set(input.key, {
         value: input.value,
-        expiresAt: input.ttlSeconds ? Date.now() + input.ttlSeconds * 1000 : undefined,
+        expiresAt: input.ttlSeconds ? now() + input.ttlSeconds * 1000 : undefined,
       });
     },
     async delete(key: string): Promise<void> {
@@ -75,7 +75,7 @@ function isAdapter(p: unknown): p is Adapter {
   return !!p && typeof p === 'object' && 'findOne' in p && 'create' in p;
 }
 
-function ensureKV(p: Adapter | KVStoreAdapter): KVStoreAdapter {
+function ensureKV(p: Adapter | KVStoreAdapter, now: () => number): KVStoreAdapter {
   if (isAdapter(p)) {
     return {
       async get(key: string) {
@@ -84,7 +84,7 @@ function ensureKV(p: Adapter | KVStoreAdapter): KVStoreAdapter {
           where: [{ field: 'key', operator: 'eq', value: key }],
         });
         if (!res) return null;
-        if (res.expiresAt && new Date(res.expiresAt).getTime() < Date.now()) {
+        if (res.expiresAt && new Date(res.expiresAt).getTime() < now()) {
           await p.delete({ model: 'rate_limits', where: [{ field: 'key', operator: 'eq', value: key }] });
           return null;
         }
@@ -92,7 +92,7 @@ function ensureKV(p: Adapter | KVStoreAdapter): KVStoreAdapter {
       },
       async set(input) {
         const expiresAt = input.ttlSeconds
-          ? new Date(Date.now() + input.ttlSeconds * 1000).toISOString()
+          ? new Date(now() + input.ttlSeconds * 1000).toISOString()
           : undefined;
         await p.upsert({
           model: 'rate_limits',
@@ -136,16 +136,16 @@ async function setState(
 }
 
 export function createRateLimiter(config: RateLimitConfig): RateLimiter {
+  const now = config.now ?? Date.now;
   const {
     windowMs,
     maxRequests,
     keyPrefix = 'ratelimit:',
-    persistence = createInMemoryKVStore(),
+    persistence = createInMemoryKVStore(now),
     algorithm = 'fixed-window',
-    now = () => Date.now(),
   } = config;
 
-  const kv = ensureKV(persistence);
+  const kv = ensureKV(persistence, now);
   const keyLocks = new Map<string, Promise<void>>();
 
   async function withKeyLock<T>(key: string, work: () => Promise<T>): Promise<T> {

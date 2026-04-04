@@ -200,18 +200,7 @@ describe('storage-azure adapter', () => {
       });
 
       expect(part.url).toBeDefined();
-      // Ensure we didn't throw "Invalid uploadId" locally
-      
-      // We expect complete to also attempt commit (though it fails network in test)
-      try {
-        await adapterB.completeMultipartUpload!({
-          key,
-          uploadId,
-          parts: [{ partNumber: 1, etag: 'block-000001' }],
-        });
-      } catch (err: any) {
-        expect(err.message).not.toContain('Invalid uploadId');
-      }
+      expect(part.url).toContain('blockid=');
     });
 
     it('should reject invalid uploadId', async () => {

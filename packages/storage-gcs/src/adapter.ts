@@ -131,8 +131,20 @@ export function createGCSStorageAdapter(config: GCSStorageConfig): StorageAdapte
             if (ok) {
               resolve();
             } else {
-              gcstream.once('drain', resolve);
-              gcstream.once('error', reject);
+              const cleanup = () => {
+                gcstream.off('drain', onDrain);
+                gcstream.off('error', onError);
+              };
+              const onDrain = () => {
+                cleanup();
+                resolve();
+              };
+              const onError = (err: Error) => {
+                cleanup();
+                reject(err);
+              };
+              gcstream.once('drain', onDrain);
+              gcstream.once('error', onError);
             }
           });
         },
