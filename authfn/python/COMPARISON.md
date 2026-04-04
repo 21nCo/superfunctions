@@ -5,7 +5,7 @@ This document compares the current TypeScript authfn package split with the Pyth
 ## Architecture Comparison
 
 ### TypeScript Structure
-```
+```text
 authfn/
 ├── core/             # Server/runtime implementation
 │   ├── src/
