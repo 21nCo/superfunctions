@@ -1,0 +1,41 @@
+import { describe, expect, it } from 'vitest';
+import {
+  err,
+  normalizeLegacyEnvelope,
+  ok,
+  toLegacyDataEnvelope,
+  toLegacyResultEnvelope,
+} from '../index.js';
+
+describe('envelope', () => {
+  it('returns canonical ok/data/meta shape', () => {
+    const result = ok({ x: 1 }, { timestamp: '2026-03-12T00:00:00.000Z' });
+    expect(result).toEqual({
+      ok: true,
+      data: { x: 1 },
+      meta: { timestamp: '2026-03-12T00:00:00.000Z' },
+    });
+  });
+
+  it('returns INVALID_ENVELOPE_ERROR_SHAPE when retryable/status are missing', () => {
+    const result = err({ code: 'BAD_REQUEST', message: 'x', status: 400 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_ENVELOPE_ERROR_SHAPE');
+    }
+  });
+
+  it('normalizes legacy {ok,result} and {ok,data} envelopes', () => {
+    const resultEnvelope = normalizeLegacyEnvelope({ ok: true, result: { a: 1 } }, { timestamp: 't1' });
+    const dataEnvelope = normalizeLegacyEnvelope({ ok: true, data: { a: 2 } }, { timestamp: 't2' });
+
+    expect(resultEnvelope.ok && resultEnvelope.data).toEqual({ a: 1 });
+    expect(dataEnvelope.ok && dataEnvelope.data).toEqual({ a: 2 });
+  });
+
+  it('converts canonical envelope back to legacy variants', () => {
+    const canonical = ok({ y: 2 }, { timestamp: '2026-03-12T00:00:00.000Z' });
+    expect(toLegacyDataEnvelope(canonical)).toEqual({ ok: true, data: { y: 2 } });
+    expect(toLegacyResultEnvelope(canonical)).toEqual({ ok: true, result: { y: 2 } });
+  });
+});

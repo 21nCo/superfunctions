@@ -1,0 +1,172 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+export type SignatureEncoding = 'hex' | 'base64';
+
+export type WebhookSignatureOptions = {
+  algorithm?: 'sha256' | 'sha1' | 'sha512';
+  encoding?: SignatureEncoding;
+  prefix?: string;
+};
+
+export function signWebhookPayload(
+  payload: string,
+  secret: string,
+  options: WebhookSignatureOptions = {}
+): string {
+  const algorithm = options.algorithm ?? 'sha256';
+  const encoding = options.encoding ?? 'hex';
+  const digest = createHmac(algorithm, secret).update(payload, 'utf8').digest(encoding);
+  const prefix = options.prefix ?? '';
+  return `${prefix}${digest}`;
+}
+
+export function verifyWebhookSignature(
+  payload: string,
+  providedSignature: string,
+  secret: string,
+  options: WebhookSignatureOptions = {}
+): boolean {
+  const algorithm = options.algorithm ?? 'sha256';
+  const encoding = options.encoding ?? 'hex';
+  const prefix = options.prefix ?? '';
+
+  if (prefix && !providedSignature.startsWith(prefix)) {
+    return false;
+  }
+
+  const providedDigest = prefix ? providedSignature.slice(prefix.length) : providedSignature;
+  const expectedDigest = createHmac(algorithm, secret).update(payload, 'utf8').digest(encoding);
+
+  const providedBuffer = decodeSignature(providedDigest, encoding);
+  const expectedBuffer = decodeSignature(expectedDigest, encoding);
+
+  if (!providedBuffer || !expectedBuffer) {
+    return false;
+  }
+
+  if (providedBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
+export type WebhookDeliveryInput = {
+  url: string;
+  payload: unknown;
+  secret?: string;
+  signatureHeader?: string;
+  headers?: Record<string, string>;
+  method?: 'POST' | 'PUT';
+};
+
+export type WebhookDeliveryAttempt = {
+  attempt: number;
+  ok: boolean;
+  status?: number;
+  error?: string;
+};
+
+export type WebhookDeliveryResult = {
+  ok: boolean;
+  attempts: WebhookDeliveryAttempt[];
+  responseStatus?: number;
+};
+
+export type WebhookDeliveryOptions = {
+  fetch?: typeof globalThis.fetch;
+  maxRetries?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+};
+
+export async function deliverWebhook(
+  input: WebhookDeliveryInput,
+  options: WebhookDeliveryOptions = {}
+): Promise<WebhookDeliveryResult> {
+  const fetchFn = options.fetch ?? globalThis.fetch;
+  const maxRetries = Math.max(1, options.maxRetries ?? 3);
+  const initialDelayMs = Math.max(0, options.initialDelayMs ?? 1000);
+  const maxDelayMs = Math.max(initialDelayMs, options.maxDelayMs ?? 30_000);
+
+  const payloadString = JSON.stringify(input.payload);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(input.headers ?? {}),
+  };
+
+  if (input.secret) {
+    headers[input.signatureHeader ?? 'X-Webhook-Signature'] = signWebhookPayload(payloadString, input.secret);
+  }
+
+  const attempts: WebhookDeliveryAttempt[] = [];
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetchFn(input.url, {
+        method: input.method ?? 'POST',
+        headers,
+        body: payloadString,
+      });
+
+      if (response.ok) {
+        attempts.push({
+          attempt,
+          ok: true,
+          status: response.status,
+        });
+
+        return {
+          ok: true,
+          attempts,
+          responseStatus: response.status,
+        };
+      }
+
+      attempts.push({
+        attempt,
+        ok: false,
+        status: response.status,
+        error: `HTTP ${response.status}`,
+      });
+    } catch (error) {
+      attempts.push({
+        attempt,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (attempt < maxRetries) {
+      const delay = Math.min(maxDelayMs, initialDelayMs * attempt);
+      await sleep(delay);
+    }
+  }
+
+  return {
+    ok: false,
+    attempts,
+    responseStatus: attempts[attempts.length - 1]?.status,
+  };
+}
+
+function decodeSignature(value: string, encoding: SignatureEncoding): Buffer | null {
+  if (encoding === 'hex') {
+    if (value.length === 0 || value.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(value)) {
+      return null;
+    }
+
+    return Buffer.from(value, 'hex');
+  }
+
+  try {
+    const decoded = Buffer.from(value, 'base64');
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
