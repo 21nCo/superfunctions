@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { NotFoundError, type Adapter } from '@superfunctions/db';
+import type { Adapter } from '@superfunctions/db';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import {
   authFnPasswordPlugin,
@@ -56,29 +56,9 @@ function createPrismaStyleUpdateWrapper(base: Adapter): Adapter {
     async update(params) {
       if (
         params.model === 'two_factor_enrollments'
-        && params.where.some((clause) => clause.field === 'lastUsedCounter')
+        && 'lastUsedCounter' in params.data
       ) {
-        const affected = await base.updateMany({
-          model: params.model,
-          where: params.where,
-          data: params.data,
-          namespace: params.namespace
-        });
-        if (affected === 0) {
-          throw new NotFoundError(params.model, params.where);
-        }
-
-        const updated = await base.findOne({
-          model: params.model,
-          where: params.where,
-          select: params.select,
-          namespace: params.namespace
-        });
-        if (!updated) {
-          throw new NotFoundError(params.model, params.where);
-        }
-
-        return updated;
+        throw new Error('two-factor replay protection must not rely on adapter.update re-read semantics');
       }
 
       return base.update(params);
@@ -88,7 +68,7 @@ function createPrismaStyleUpdateWrapper(base: Adapter): Adapter {
 
 function cookieHeaderFromSetCookies(setCookies: string[]): string {
   return setCookies
-    .map((cookie) => cookie.slice(0, cookie.indexOf(';')))
+    .map((cookie) => cookie.split(';', 1)[0])
     .join('; ');
 }
 
@@ -313,7 +293,7 @@ describe('@authfn/core two factor plugin', () => {
     expect((await postDisable.json()).data.session.methods).toEqual(['password']);
   });
 
-  it('accepts valid TOTP codes when adapters re-read updates with stale compare-and-set filters', async () => {
+  it('accepts valid TOTP codes without relying on adapter update re-read semantics', async () => {
     const clock = createClock();
     const twoFactorConfig = createTwoFactorPluginConfig(clock);
     const config: AuthFnConfig = {

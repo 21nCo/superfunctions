@@ -83,7 +83,7 @@ function normalizeEnvelopeError(
       message: error.message,
       retryable: error.retryable,
       details: isRecord(error.details) ? error.details : undefined,
-      status: typeof error.status === 'number' ? error.status : 500
+      status: normalizeHttpStatus(error.status)
     };
   }
 
@@ -108,6 +108,15 @@ function isAuthFnErrorLike(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeHttpStatus(status: unknown): number {
+  return typeof status === 'number'
+    && Number.isInteger(status)
+    && status >= 200
+    && status <= 599
+    ? status
+    : 500;
 }
 
 function jsonWithHeaders(
