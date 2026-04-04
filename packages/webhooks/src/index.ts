@@ -104,6 +104,18 @@ export async function deliverWebhook(
       ],
     };
   }
+  if (typeof payloadString !== 'string') {
+    return {
+      ok: false,
+      attempts: [
+        {
+          attempt: 1,
+          ok: false,
+          error: 'Webhook payload must be JSON-serializable',
+        },
+      ],
+    };
+  }
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(input.headers ?? {}),
@@ -174,11 +186,17 @@ function decodeSignature(value: string, encoding: SignatureEncoding): Buffer | n
   }
 
   try {
-    const decoded = Buffer.from(value, 'base64');
-    if (decoded.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
       return null;
     }
-    return decoded.toString('base64') === value ? decoded : null;
+    const paddedValue = `${value}${'='.repeat((4 - (value.length % 4 || 4)) % 4)}`;
+    const decoded = Buffer.from(paddedValue, 'base64');
+    if (decoded.length === 0) {
+      return null;
+    }
+    const normalizedInput = value.replace(/=+$/, '');
+    const normalizedDecoded = decoded.toString('base64').replace(/=+$/, '');
+    return normalizedDecoded === normalizedInput ? decoded : null;
   } catch {
     return null;
   }

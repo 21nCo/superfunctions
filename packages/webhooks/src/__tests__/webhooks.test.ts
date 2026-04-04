@@ -20,6 +20,20 @@ describe('webhooks package exports', () => {
     expect(verifyWebhookSignature(payload, signature, secret)).toBe(false);
   });
 
+  it('accepts canonical base64 signatures with or without padding', () => {
+    const payload = '{"ok":true}';
+    const secret = 'secret';
+    const signature = signWebhookPayload(payload, secret, { encoding: 'base64' });
+
+    expect(verifyWebhookSignature(payload, signature, secret, { encoding: 'base64' })).toBe(true);
+    expect(
+      verifyWebhookSignature(payload, signature.replace(/=+$/, ''), secret, { encoding: 'base64' })
+    ).toBe(true);
+    expect(
+      verifyWebhookSignature(payload, `${signature}!!`, secret, { encoding: 'base64' })
+    ).toBe(false);
+  });
+
   it('delivers payload with bounded retries and returns structured attempts', async () => {
     let attempt = 0;
     const fetchMock = vi.fn().mockImplementation(async () => {
@@ -51,5 +65,23 @@ describe('webhooks package exports', () => {
     expect(result.attempts[0]).toMatchObject({ attempt: 1, ok: false, status: 500 });
     expect(result.attempts[2]).toMatchObject({ attempt: 3, ok: true, status: 200 });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns a structured failure when JSON serialization yields undefined', async () => {
+    const result = await deliverWebhook({
+      url: 'https://example.com/hook',
+      payload: undefined,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      attempts: [
+        {
+          attempt: 1,
+          ok: false,
+          error: 'Webhook payload must be JSON-serializable',
+        },
+      ],
+    });
   });
 });

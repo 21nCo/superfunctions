@@ -56,12 +56,27 @@ export function err(
   input: {
     code: string;
     message: string;
-    status: number;
-    retryable: boolean;
+    status?: number;
+    retryable?: boolean;
     details?: Record<string, unknown>;
   },
   options?: { timestamp?: string }
 ): ErrorEnvelope {
+  if (!isValidErrorShape(input)) {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_ENVELOPE_ERROR_SHAPE',
+        message: 'Canonical error envelopes require numeric status and boolean retryable',
+        status: 500,
+        retryable: false,
+      },
+      meta: {
+        timestamp: options?.timestamp ?? new Date().toISOString(),
+      },
+    };
+  }
+
   return {
     ok: false,
     error: {
