@@ -13,6 +13,27 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
   const credentials = options.credentials ?? 'include';
   const cookieAccessor = options.cookieAccessor ?? defaultCookieAccessor;
   const cookiePrefix = options.cookiePrefix?.trim();
+  const buildTransportError = (error: unknown): AuthFnErrorEnvelope => ({
+    ok: false,
+    error: {
+      code: 'AUTHFN_NETWORK_ERROR',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'AuthFn request failed before a response was received',
+      retryable: true,
+      details:
+        error instanceof Error
+          ? {
+              name: error.name,
+              stack: error.stack
+            }
+          : {
+              cause: error
+            }
+    },
+    requestId: 'authfn-transport-error'
+  });
 
   return {
     requestJson: async <T>(request: RequestOptions): Promise<T | AuthFnErrorEnvelope> => {
@@ -33,12 +54,17 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         }
       }
 
-      const response = await fetchImpl(`${baseUrl}${request.path}`, {
-        method: request.method,
-        headers,
-        credentials,
-        body: request.body !== undefined ? JSON.stringify(request.body) : undefined
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(`${baseUrl}${request.path}`, {
+          method: request.method,
+          headers,
+          credentials,
+          body: request.body !== undefined ? JSON.stringify(request.body) : undefined
+        });
+      } catch (error) {
+        return buildTransportError(error);
+      }
 
       if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
         return {

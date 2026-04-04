@@ -62,6 +62,33 @@ describe('@authfn/client social flows', () => {
     });
   });
 
+  it('requests json callback mode by default for browser-safe redirects', async () => {
+    let receivedCallbackMode: unknown;
+    const auth = createAuthFn(createConfig());
+
+    const client = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async (input, init) => {
+        const body = init?.body ? JSON.parse(String(init.body)) : null;
+        receivedCallbackMode = body?.callbackMode;
+        return auth.router.handle(
+          new Request(typeof input === 'string' ? input : input.toString(), {
+            method: init?.method,
+            headers: init?.headers,
+            body: init?.body
+          })
+        );
+      }
+    });
+
+    const started = await client.startSocialSignIn({
+      provider: 'google'
+    });
+
+    expect(started.ok).toBe(true);
+    expect(receivedCallbackMode).toBe('json');
+  });
+
   it('normalizes bare redirect responses into a success envelope', async () => {
     const client = createAuthFnClient({
       baseUrl: 'https://account.example.com/auth',

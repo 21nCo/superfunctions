@@ -61,6 +61,28 @@ describe('@authfn/client otp flows', () => {
     expect(result.error.details?.status).toBe(500);
   });
 
+  it('normalizes rejected fetch calls into an error envelope', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () => {
+        throw new Error('socket closed');
+      }
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('rejected fetch should return an error envelope');
+    }
+    expect(result.error.code).toBe('AUTHFN_NETWORK_ERROR');
+    expect(result.error.message).toBe('socket closed');
+    expect(result.error.details?.name).toBe('Error');
+  });
+
   it('supports verify-email, otp sign-in, and reset-password completion', async () => {
     const codes = new Map<string, string>();
     const provider = {
