@@ -14,6 +14,7 @@ export interface OAuthHttpErrorOptions {
   status?: number;
   retryable?: boolean;
   details?: Record<string, unknown>;
+  cause?: unknown;
 }
 
 export class OAuthHttpError extends Error {
@@ -21,6 +22,7 @@ export class OAuthHttpError extends Error {
   readonly status?: number;
   readonly retryable: boolean;
   readonly details?: Record<string, unknown>;
+  readonly cause?: unknown;
 
   constructor(message: string, options: OAuthHttpErrorOptions) {
     super(message);
@@ -29,6 +31,7 @@ export class OAuthHttpError extends Error {
     this.status = options.status;
     this.retryable = options.retryable ?? false;
     this.details = options.details;
+    this.cause = options.cause;
   }
 }
 
@@ -59,6 +62,7 @@ export function secretResolutionFailedError(
     code: "OAUTH_SECRET_RESOLUTION_FAILED",
     status: 500,
     retryable: false,
+    cause,
     details: {
       providerId: context.provider.id,
       operation: context.operation,

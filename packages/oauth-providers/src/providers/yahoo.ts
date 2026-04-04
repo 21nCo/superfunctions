@@ -29,6 +29,9 @@ export const yahooProviderPolicy: ProviderPolicyDefinition = {
     "mail.read.metadata": {
       allowedScopes: ["mail-r", "openid", "email", "profile"]
     },
+    "mail.read.fullbody": {
+      allowedScopes: ["mail-r", "openid", "email", "profile"]
+    },
     "mail.send": {
       allowedScopes: ["mail-w", "openid", "email", "profile"]
     },

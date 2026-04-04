@@ -189,12 +189,12 @@ export async function disconnectWithRevoke(
       code: "INTERNAL_ERROR",
       status: 502,
       retryable: false,
+      cause: revokeError,
       details: {
         remoteRevokeAttempted: true,
         localTokenDeleted,
         connectionDeleted,
-        revokeErrorCode: revokeError.code,
-        revokeMessage: revokeError.message
+        revokeErrorCode: revokeError.code
       }
     });
   }
@@ -338,7 +338,9 @@ function createAuthHeaders(
     params.set("client_secret", credentials.clientSecret);
   } else {
     params.set("client_id", credentials.clientId);
-    const auth = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`, "utf8").toString("base64");
+    const authUser = encodeURIComponent(credentials.clientId);
+    const authPassword = encodeURIComponent(credentials.clientSecret);
+    const auth = Buffer.from(`${authUser}:${authPassword}`, "utf8").toString("base64");
     headers.authorization = `Basic ${auth}`;
   }
 
@@ -488,7 +490,8 @@ function ensureOAuthHttpError(error: unknown): OAuthHttpError {
   return new OAuthHttpError(error instanceof Error ? error.message : "OAuth HTTP request failed", {
     code: "INTERNAL_ERROR",
     status: 500,
-    retryable: false
+    retryable: false,
+    cause: error
   });
 }
 

@@ -190,6 +190,15 @@ export class ProviderPolicyRegistry {
       });
     }
 
+    const restrictedScope = input.requestedScopes.find((scope) => featurePolicy.restrictedScopes?.includes(scope));
+    if (restrictedScope) {
+      throw new ProviderPolicyError("OAUTH_SCOPE_DISALLOWED", "requested scope requires additional approval", {
+        providerId: input.providerId,
+        feature: input.feature,
+        scope: restrictedScope
+      });
+    }
+
     const consentRecord: ConsentRecord = {
       consentId: this.idGenerator("consent"),
       tenantId: input.tenantId,

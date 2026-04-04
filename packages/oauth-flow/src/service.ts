@@ -633,6 +633,18 @@ class DefaultOAuthFlowService implements OAuthFlowService {
       const tokenRecord = await this.getTokenSetByConnection(input.connectionId);
       const revokeRemote = input.revokeRemote ?? false;
 
+      if (tokenRecord && tokenRecord.record.providerId !== input.providerId) {
+        throw new OAuthFlowError("OAUTH_CALLBACK_MISMATCH", "provider mismatch for disconnect", {
+          status: 400,
+          retryable: false,
+          details: {
+            expectedProviderId: tokenRecord.record.providerId,
+            receivedProviderId: input.providerId,
+            connectionId: input.connectionId
+          }
+        });
+      }
+
       let revokeError: OAuthFlowError | null = null;
       if (revokeRemote && provider.revocationUrl && tokenRecord) {
         remoteRevokeAttempted = true;

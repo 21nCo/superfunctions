@@ -236,6 +236,9 @@ function validatePersistTokenSetInput(input: PersistTokenSetInput): void {
 }
 
 function assertIsoTimestamp(fieldName: string, value: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) {
+    throw new TokenVaultError("VALIDATION_ERROR", `${fieldName} must be a valid ISO-8601 timestamp`);
+  }
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) {
     throw new TokenVaultError("VALIDATION_ERROR", `${fieldName} must be a valid ISO-8601 timestamp`);
