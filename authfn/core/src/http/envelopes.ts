@@ -113,7 +113,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeHttpStatus(status: unknown): number {
   return typeof status === 'number'
     && Number.isInteger(status)
-    && status >= 200
+    && status >= 400
     && status <= 599
     ? status
     : 500;

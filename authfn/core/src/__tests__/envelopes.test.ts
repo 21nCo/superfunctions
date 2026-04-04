@@ -63,6 +63,33 @@ describe('@authfn/core envelopes', () => {
     });
   });
 
+  it('falls back to 500 when a foreign authfn-shaped error carries a no-body status', async () => {
+    const request = new Request('https://account.example.com/auth/session');
+    const response = jsonError(request, {
+      code: 'AUTHFN_VALIDATION_ERROR',
+      message: 'Email is invalid',
+      retryable: false,
+      status: 204,
+      details: {
+        field: 'email'
+      }
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'AUTHFN_VALIDATION_ERROR',
+        message: 'Email is invalid',
+        retryable: false,
+        details: {
+          field: 'email'
+        }
+      },
+      requestId: expect.any(String)
+    });
+  });
+
   it('still sanitizes oauth-shaped errors through the mapper', async () => {
     const request = new Request('https://account.example.com/auth/session');
     const response = jsonError(request, {
