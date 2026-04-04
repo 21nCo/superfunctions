@@ -15,5 +15,11 @@ export function createAuthFnClientContext(client: AuthFnClient): { client: AuthF
 }
 
 export function getAuthFnClientContext(): { client: AuthFnClient } {
-  return getContext(AUTHFN_CLIENT_CONTEXT);
+  const value = getContext<{ client: AuthFnClient } | undefined>(AUTHFN_CLIENT_CONTEXT);
+  if (!value) {
+    throw new Error(
+      '@authfn/svelte: AuthFn client context is not set. Call createAuthFnClientContext() in a parent component first.'
+    );
+  }
+  return value;
 }
