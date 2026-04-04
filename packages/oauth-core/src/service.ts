@@ -299,10 +299,10 @@ function resolveStateSubject(state: OAuthStateRecord): OAuthIntentSubject {
     };
   }
 
-  if (state.intentId || state.regionId || state.returnTo || state.metadata) {
+  if (state.intentId) {
     return {
       kind: "browser-auth",
-      intentId: state.intentId ?? "",
+      intentId: state.intentId,
       tenantId: state.tenantId,
       regionId: state.regionId,
       returnTo: state.returnTo,

@@ -97,6 +97,44 @@ describe("oauth-http token client", () => {
     expect(params.get("client_secret")).toBeNull();
   });
 
+  it("percent-encodes client_secret_basic credentials and redacts token payloads from error details", async () => {
+    let capturedInit: RequestInitLike | null = null;
+    const fetcher: OAuthFetchLike = async (_url, init) => {
+      capturedInit = init;
+      return createResponse({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          refresh_token: "rt_secret",
+          id_token: "id_secret"
+        })
+      });
+    };
+
+    const client = new DefaultOAuthTokenHttpClient({ fetcher });
+    await expect(
+      client.exchangeToken({
+        provider: {
+          ...googleProvider,
+          tokenAuthMethod: "client_secret_basic"
+        },
+        grantType: "authorization_code",
+        clientId: "client:id",
+        clientSecret: "secret+value",
+        code: "code-basic",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+      details: {
+        parsedBodyKeys: ["refresh_token", "id_token"]
+      }
+    });
+
+    const encodedCredentials = Buffer.from("client%3Aid:secret%2Bvalue").toString("base64");
+    expect(capturedInit?.headers.authorization).toBe(`Basic ${encodedCredentials}`);
+  });
+
   it("resolves client secrets at runtime for Apple-compatible providers", async () => {
     let capturedInit: RequestInitLike | null = null;
     const fetcher: OAuthFetchLike = async (_url, init) => {

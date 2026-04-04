@@ -70,6 +70,11 @@ export class MemoryTokenVault implements TokenVault {
   private readonly tokenByConnection = new Map<string, string>();
 
   async put(record: TokenRecord): Promise<void> {
+    const previousRecord = this.tokensById.get(record.tokenId);
+    if (previousRecord && previousRecord.connectionId !== record.connectionId) {
+      this.tokenByConnection.delete(previousRecord.connectionId);
+    }
+
     const existingTokenId = this.tokenByConnection.get(record.connectionId);
     if (existingTokenId && existingTokenId !== record.tokenId) {
       this.tokensById.delete(existingTokenId);
@@ -91,6 +96,14 @@ export class MemoryTokenVault implements TokenVault {
     }
 
     const record = this.tokensById.get(tokenId);
+    if (!record) {
+      this.tokenByConnection.delete(connectionId);
+      return null;
+    }
+    if (record.connectionId !== connectionId) {
+      this.tokenByConnection.delete(connectionId);
+      return null;
+    }
     return record ? cloneTokenRecord(record) : null;
   }
 

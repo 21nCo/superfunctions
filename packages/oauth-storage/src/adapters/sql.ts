@@ -209,17 +209,40 @@ export class SqlOAuthStateStore implements OAuthStateStore {
   async consume(stateId: string, consumedAt: string): Promise<OAuthStateRecord | null> {
     const rows = await this.client.query<OAuthStateRow>(
       `
+      SELECT ${STATE_COLUMNS}
+      FROM ${this.tableName}
+      WHERE state_id = ?
+        AND consumed_at IS NULL
+        AND expires_at > ?
+      LIMIT 1
+      `,
+      [stateId, consumedAt]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+
+    const result = await this.client.execute(
+      `
       UPDATE ${this.tableName}
       SET consumed_at = ?
       WHERE state_id = ?
         AND consumed_at IS NULL
         AND expires_at > ?
-      RETURNING ${STATE_COLUMNS}
       `,
       [consumedAt, stateId, consumedAt]
     );
 
-    return rows[0] ? mapStateRow(rows[0]) : null;
+    if ((result.rowsAffected ?? 0) === 0) {
+      return null;
+    }
+
+    return mapStateRow({
+      ...row,
+      consumed_at: consumedAt
+    });
   }
 
   async deleteExpired(before: string): Promise<number> {

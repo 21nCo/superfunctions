@@ -74,6 +74,8 @@ export async function consumeStateOrThrow(
     existing = await stateStore.get(stateId);
   } catch (error) {
     throw new OAuthCoreError("OAUTH_STATE_INVALID", "OAuth state could not be validated", {
+      status: 500,
+      retryable: true,
       details: {
         stateId,
         cause: error instanceof Error ? error.message : String(error)

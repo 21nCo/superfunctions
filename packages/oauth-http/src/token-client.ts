@@ -380,7 +380,7 @@ function normalizeTokenResponse(parsedBody: unknown): OAuthTokenEndpointResponse
       code: "OAUTH_TOKEN_EXCHANGE_FAILED",
       status: 502,
       retryable: false,
-      details: { parsedBody: payload }
+      details: { parsedBodyKeys: Object.keys(payload).slice(0, 10) }
     });
   }
 

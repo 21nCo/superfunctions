@@ -244,4 +244,27 @@ describe("oauth-router route factories", () => {
     ]);
     expect(connectionRoutes.map((route) => route.meta?.auth?.mode)).toEqual(["hybrid", "none", "hybrid"]);
   });
+
+  it("derives callback redirectUri from the current request URL when none is provided explicitly", async () => {
+    const { service, handleCallback } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("https://app.example/auth/social/callback/google?code=code_03&state=st_03")
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleCallback).toHaveBeenCalledWith({
+      providerId: "google",
+      code: "code_03",
+      state: "st_03",
+      redirectUri: "https://app.example/auth/social/callback/google",
+      requestId: undefined
+    });
+  });
 });

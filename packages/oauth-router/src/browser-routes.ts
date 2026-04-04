@@ -76,7 +76,10 @@ export function createOAuthBrowserRoutes(config: OAuthBrowserRouteConfig): Route
           providerId: context.params.provider,
           code: asRequiredString(resolvedInput.code ?? url.searchParams.get("code"), "code"),
           state: asRequiredString(resolvedInput.state ?? url.searchParams.get("state"), "state"),
-          redirectUri: asRequiredString(resolvedInput.redirectUri ?? url.searchParams.get("redirectUri"), "redirectUri"),
+          redirectUri:
+            resolvedInput.redirectUri ??
+            url.searchParams.get("redirectUri") ??
+            `${url.origin}${url.pathname}`,
           requestId
         });
 
