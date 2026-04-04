@@ -89,6 +89,22 @@ struct FileFnBridgeSecurityTests {
     }
 
     @Test
+    func failureEnvelopesRedactCamelCaseUploadSessionTokenMentions() throws {
+        let response = FileFnBridgeResponseEnvelope.failure(
+            id: "bridge_req_failure_002",
+            error: FileFnBridgeError(
+                code: "FILEFN_CLIENT_ERROR",
+                message: "uploadSessionToken=test-bridge-upload-token"
+            )
+        )
+
+        let object = try securityBridgePayloadValue(fileFnBridgeFoundationObject(from: response))
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(error["message"] as? String == "Sensitive bridge error redacted")
+    }
+
+    @Test
     func nativeAssetPreviewURLIsOpaqueAndDoesNotExposeFilesystemPaths() async throws {
         let rootDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("filefn-bridge-preview-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)

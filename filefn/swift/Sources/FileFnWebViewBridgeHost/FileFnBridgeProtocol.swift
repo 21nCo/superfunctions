@@ -305,7 +305,12 @@ func fileFnBridgeFoundationObject<T: Encodable>(from value: T) throws -> Any {
 
 func fileFnBridgeReceiveInvocation(for jsonObject: Any) throws -> String {
     let data = try JSONSerialization.data(withJSONObject: jsonObject)
-    let json = String(decoding: data, as: UTF8.self)
+    guard let json = String(data: data, encoding: .utf8) else {
+        throw FileFnBridgeError(
+            code: "BRIDGE_INVALID_REQUEST",
+            message: "Failed to encode bridge response"
+        )
+    }
     return "window.__filefnBridgeReceive__(\(json));"
 }
 
@@ -325,6 +330,8 @@ func fileFnBridgeSanitize(_ value: FileFnJSONValue) -> FileFnJSONValue {
     switch value {
     case .string(let stringValue):
         return .string(fileFnBridgeSanitizeString(stringValue))
+    case .number, .bool, .null:
+        return value
     case .array(let values):
         return .array(values.map(fileFnBridgeSanitize))
     case .object(let object):
@@ -333,8 +340,6 @@ func fileFnBridgeSanitize(_ value: FileFnJSONValue) -> FileFnJSONValue {
             sanitized[key] = fileFnBridgeSanitizeEntry(key: key, value: nestedValue)
         }
         return .object(sanitized)
-    default:
-        return value
     }
 }
 
@@ -360,6 +365,8 @@ private func fileFnBridgeSanitizeEntry(key: String, value: FileFnJSONValue) -> F
     switch value {
     case .string(let stringValue):
         return .string(fileFnBridgeSanitizeString(stringValue))
+    case .number, .bool, .null:
+        return value
     case .array(let values):
         return .array(values.map { fileFnBridgeSanitizeEntry(key: key, value: $0) })
     case .object(let object):
@@ -368,8 +375,6 @@ private func fileFnBridgeSanitizeEntry(key: String, value: FileFnJSONValue) -> F
             sanitized[nestedKey] = fileFnBridgeSanitizeEntry(key: nestedKey, value: nestedValue)
         }
         return .object(sanitized)
-    default:
-        return value
     }
 }
 
@@ -408,6 +413,7 @@ private func fileFnBridgeSanitizeErrorMessage(_ value: String) -> String {
         || lowercased.contains("/private/")
         || lowercased.contains("x-amz-signature=")
         || lowercased.contains("upload-session-token")
+        || lowercased.contains("uploadsessiontoken")
         || lowercased.contains("authorization")
     {
         return "Sensitive bridge error redacted"
