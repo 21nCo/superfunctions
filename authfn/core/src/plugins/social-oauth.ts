@@ -908,7 +908,7 @@ function appendSessionHandoffToReturnTarget(
   issued: Awaited<ReturnType<typeof issueSession>>
 ): string {
   const url = new URL(returnTo);
-  const fragment = new URLSearchParams();
+  const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
   fragment.set('token', issued.sessionToken);
   fragment.set('sessionId', issued.session.id);
   if (issued.session.expiresAt) {
