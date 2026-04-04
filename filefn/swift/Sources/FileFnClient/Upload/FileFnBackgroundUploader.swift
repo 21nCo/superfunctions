@@ -64,38 +64,51 @@ public actor FileFnBackgroundUploader {
             idempotencyKey: idempotencyKey
         )
 
-        if let token = session.uploadSessionToken {
-            try await configuration.secretStore.storeUploadSessionToken(token, uploadID: uploadID)
+        let snapshot: FileFnBackgroundUploadSnapshot
+        do {
+            if let token = session.uploadSessionToken {
+                try await configuration.secretStore.storeUploadSessionToken(token, uploadID: uploadID)
+            }
+
+            let chunkFiles = try createChunkFiles(
+                sourceURL: preparedUpload.fileURL,
+                uploadID: uploadID,
+                fileSize: preparedUpload.fileSize,
+                chunkSizeBytes: session.chunkSizeBytes
+            )
+
+            guard chunkFiles.count == session.totalParts else {
+                throw FileFnClientError.invalidResponse(
+                    reason: "Chunk plan did not match server-declared totalParts",
+                    requestId: nil
+                )
+            }
+
+            let now = fileFnISO8601Timestamp()
+            snapshot = FileFnBackgroundUploadSnapshot(
+                uploadID: uploadID,
+                fileId: fileId,
+                idempotencyKey: idempotencyKey,
+                policy: request.policy,
+                fileName: preparedUpload.fileName,
+                mimeType: preparedUpload.mimeType,
+                metadata: preparedUpload.metadata,
+                uploadSessionId: session.uploadSessionId,
+                totalParts: session.totalParts,
+                chunkSizeBytes: session.chunkSizeBytes,
+                fileSize: preparedUpload.fileSize,
+                completedParts: [],
+                chunkFileNames: chunkFiles,
+                requiresUploadSessionToken: session.uploadSessionToken != nil,
+                status: .running,
+                createdAt: now,
+                updatedAt: now
+            )
+            try await configuration.stateStore.saveSnapshot(snapshot)
+        } catch {
+            try? await cleanup(uploadID: uploadID)
+            throw error
         }
-
-        let chunkFiles = try createChunkFiles(
-            sourceURL: preparedUpload.fileURL,
-            uploadID: uploadID,
-            fileSize: preparedUpload.fileSize,
-            chunkSizeBytes: session.chunkSizeBytes
-        )
-
-        let now = fileFnISO8601Timestamp()
-        let snapshot = FileFnBackgroundUploadSnapshot(
-            uploadID: uploadID,
-            fileId: fileId,
-            idempotencyKey: idempotencyKey,
-            policy: request.policy,
-            fileName: preparedUpload.fileName,
-            mimeType: preparedUpload.mimeType,
-            metadata: preparedUpload.metadata,
-            uploadSessionId: session.uploadSessionId,
-            totalParts: session.totalParts,
-            chunkSizeBytes: session.chunkSizeBytes,
-            fileSize: preparedUpload.fileSize,
-            completedParts: [],
-            chunkFileNames: chunkFiles,
-            requiresUploadSessionToken: session.uploadSessionToken != nil,
-            status: .running,
-            createdAt: now,
-            updatedAt: now
-        )
-        try await configuration.stateStore.saveSnapshot(snapshot)
         startUpload(snapshot: snapshot, reconcileWithServer: false)
         return snapshot
     }

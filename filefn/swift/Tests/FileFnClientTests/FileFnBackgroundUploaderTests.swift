@@ -16,6 +16,10 @@ private actor FileFnInMemorySecretStore: FileFnSecretStore {
     func deleteUploadSessionToken(uploadID: String) async throws {
         tokens.removeValue(forKey: uploadID)
     }
+
+    func storedUploadIDs() async -> [String] {
+        Array(tokens.keys).sorted()
+    }
 }
 
 private final class FileFnBlockingGate: @unchecked Sendable {
@@ -67,6 +71,89 @@ struct FileFnBackgroundUploaderTests {
                     policy: "text-upload"
                 )
             )
+        }
+    }
+
+    @Test
+    func enqueueFailsWhenChunkPlanDoesNotMatchServerDeclaredTotalParts() async throws {
+        let host = "background-upload-enqueue-chunk-mismatch.example.test"
+        defer { FileFnMockURLProtocol.unregister(host: host) }
+
+        let rootDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("filefn-bg-chunk-mismatch-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let stateStore = FileFnFileSystemUploadStateStore(rootDirectory: rootDirectory)
+        let secretStore = FileFnInMemorySecretStore()
+        let configuration = FileFnBackgroundUploadConfiguration(
+            workingDirectory: rootDirectory,
+            stateStore: stateStore,
+            secretStore: secretStore
+        )
+
+        let sourceURL = rootDirectory.appendingPathComponent("mismatch.txt")
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        try Data("hello-world".utf8).write(to: sourceURL)
+
+        let client = try makeFileFnTestClient(host: host) { request in
+            switch (request.httpMethod, request.url?.path) {
+            case ("POST", "/filefn/upload/init"):
+                return makeJSONResponse(
+                    request: request,
+                    status: 200,
+                    body: """
+                    {
+                      "ok": true,
+                      "data": {
+                        "uploadSessionId": "upl_chunk_mismatch_001",
+                        "uploadSessionToken": "upls_chunk_mismatch_001",
+                        "uploadMode": "proxy",
+                        "chunkSizeBytes": 4,
+                        "totalParts": 2,
+                        "expiresAt": "2026-03-29T12:00:00Z"
+                      }
+                    }
+                    """
+                )
+            default:
+                Issue.record("Unexpected request \(request.httpMethod ?? "nil") \(request.url?.absoluteString ?? "nil")")
+                return makeJSONResponse(
+                    request: request,
+                    status: 500,
+                    body: #"{"ok":false,"error":{"code":"TEST_UNEXPECTED","message":"Unexpected request"}}"#
+                )
+            }
+        }
+
+        let uploader = FileFnBackgroundUploader(client: client, configuration: configuration)
+
+        do {
+            _ = try await uploader.enqueue(
+                FileFnForegroundUploadRequest(
+                    source: .fileURL(sourceURL),
+                    policy: "text-upload"
+                )
+            )
+            Issue.record("Expected enqueue to fail when the chunk plan does not match totalParts")
+        } catch {
+            #expect(
+                error as? FileFnClientError ==
+                .invalidResponse(
+                    reason: "Chunk plan did not match server-declared totalParts",
+                    requestId: nil
+                )
+            )
+        }
+
+        #expect(try await stateStore.loadSnapshots() == [])
+        #expect(await secretStore.storedUploadIDs() == [])
+
+        let uploadsDirectory = rootDirectory.appendingPathComponent("uploads", isDirectory: true)
+        if FileManager.default.fileExists(atPath: uploadsDirectory.path) {
+            let uploadEntries = try FileManager.default.contentsOfDirectory(
+                at: uploadsDirectory,
+                includingPropertiesForKeys: nil
+            )
+            #expect(uploadEntries == [])
         }
     }
 
