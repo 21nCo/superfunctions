@@ -106,6 +106,10 @@ public actor FileFnBackgroundUploader {
             )
             try await configuration.stateStore.saveSnapshot(snapshot)
         } catch {
+            _ = try? await client.abortUpload(
+                uploadSessionId: session.uploadSessionId,
+                uploadSessionToken: session.uploadSessionToken
+            )
             try? await cleanup(uploadID: uploadID)
             throw error
         }

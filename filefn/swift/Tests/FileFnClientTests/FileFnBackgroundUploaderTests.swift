@@ -94,6 +94,20 @@ struct FileFnBackgroundUploaderTests {
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         try Data("hello-world".utf8).write(to: sourceURL)
 
+        final class AbortRecorder: @unchecked Sendable {
+            private let lock = NSLock()
+            private(set) var abortedUploadSessionIDs: [String] = []
+            private(set) var abortTokens: [String?] = []
+
+            func recordAbort(uploadSessionId: String, token: String?) {
+                lock.lock()
+                abortedUploadSessionIDs.append(uploadSessionId)
+                abortTokens.append(token)
+                lock.unlock()
+            }
+        }
+        let abortRecorder = AbortRecorder()
+
         let client = try makeFileFnTestClient(host: host) { request in
             switch (request.httpMethod, request.url?.path) {
             case ("POST", "/filefn/upload/init"):
@@ -113,6 +127,16 @@ struct FileFnBackgroundUploaderTests {
                       }
                     }
                     """
+                )
+            case ("POST", "/filefn/upload/upl_chunk_mismatch_001/abort"):
+                abortRecorder.recordAbort(
+                    uploadSessionId: "upl_chunk_mismatch_001",
+                    token: request.value(forHTTPHeaderField: "x-upload-session-token")
+                )
+                return makeJSONResponse(
+                    request: request,
+                    status: 200,
+                    body: #"{"ok":true,"data":{"aborted":true}}"#
                 )
             default:
                 Issue.record("Unexpected request \(request.httpMethod ?? "nil") \(request.url?.absoluteString ?? "nil")")
@@ -146,6 +170,8 @@ struct FileFnBackgroundUploaderTests {
 
         #expect(try await stateStore.loadSnapshots() == [])
         #expect(await secretStore.storedUploadIDs() == [])
+        #expect(abortRecorder.abortedUploadSessionIDs == ["upl_chunk_mismatch_001"])
+        #expect(abortRecorder.abortTokens == ["upls_chunk_mismatch_001"])
 
         let uploadsDirectory = rootDirectory.appendingPathComponent("uploads", isDirectory: true)
         if FileManager.default.fileExists(atPath: uploadsDirectory.path) {
