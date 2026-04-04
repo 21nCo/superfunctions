@@ -40,7 +40,7 @@ export function errorEnvelope(
   requestId: string,
   error: AuthFnError | unknown
 ): AuthFnErrorEnvelope {
-  const authError = isAuthFnError(error) ? error : toAuthFnError(error);
+  const authError = toAuthFnError(error);
 
   return {
     ok: false,
@@ -91,8 +91,4 @@ function jsonWithHeaders(
     ...init,
     headers
   });
-}
-
-function isAuthFnError(value: unknown): value is AuthFnError {
-  return typeof value === 'object' && value !== null && 'code' in value && 'status' in value && 'retryable' in value;
 }

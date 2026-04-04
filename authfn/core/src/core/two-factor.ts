@@ -1,4 +1,7 @@
 import {
+  NotFoundError,
+} from '@superfunctions/db';
+import {
   createHmac,
   randomBytes,
   timingSafeEqual
@@ -472,27 +475,51 @@ async function verifyTwoFactorTotp(
 ): Promise<void> {
   const now = resolveNow(pluginConfig);
   const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
-  const matchedCounter = verifyTotpCode(
-    secret,
-    normalizeTwoFactorCode(code),
-    pluginConfig,
-    now,
-    enrollment.lastUsedCounter ?? null
-  );
-  if (matchedCounter === null) {
-    throw new AuthFnTwoFactorInvalidCodeError('Two-factor authentication code is invalid', {
-      userId: enrollment.userId
-    });
+  const normalizedCode = normalizeTwoFactorCode(code);
+  let currentEnrollment: AuthFnTwoFactorEnrollmentRecord = enrollment;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const matchedCounter = verifyTotpCode(
+      secret,
+      normalizedCode,
+      pluginConfig,
+      now,
+      currentEnrollment.lastUsedCounter ?? null
+    );
+    if (matchedCounter === null) {
+      break;
+    }
+
+    try {
+      await config.database.update<AuthFnTwoFactorEnrollmentRecord>({
+        model: 'two_factor_enrollments',
+        where: [
+          { field: 'id', operator: 'eq', value: currentEnrollment.id },
+          {
+            field: 'lastUsedCounter',
+            operator: 'eq',
+            value: currentEnrollment.lastUsedCounter ?? null,
+            connector: 'AND'
+          }
+        ],
+        data: {
+          lastUsedCounter: matchedCounter,
+          updatedAt: now
+        },
+        namespace: namespace(config)
+      });
+      return;
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) {
+        throw error;
+      }
+
+      currentEnrollment = await requireTwoFactorEnrollment(config, enrollment.userId);
+    }
   }
 
-  await config.database.update<AuthFnTwoFactorEnrollmentRecord>({
-    model: 'two_factor_enrollments',
-    where: [{ field: 'id', operator: 'eq', value: enrollment.id }],
-    data: {
-      lastUsedCounter: matchedCounter,
-      updatedAt: now
-    },
-    namespace: namespace(config)
+  throw new AuthFnTwoFactorInvalidCodeError('Two-factor authentication code is invalid', {
+    userId: enrollment.userId
   });
 }
 
