@@ -125,4 +125,68 @@ describe('@authfn/svelte session store', () => {
 
     expect(get(store)?.id).toBe('sess_newer');
   });
+
+  it('returns the current store state when an older refresh resolves late', async () => {
+    let callCount = 0;
+    let resolveStale: ((value: any) => void) | undefined;
+    const store = createAuthFnSessionStore({
+      async getSession() {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            ok: true,
+            data: {
+              session: null
+            },
+            requestId: 'req_initial'
+          };
+        }
+
+        if (callCount === 2) {
+          return await new Promise((resolve) => {
+            resolveStale = resolve;
+          }) as never;
+        }
+
+        return {
+          ok: true,
+          data: {
+            session: {
+              id: 'sess_current',
+              type: 'session',
+              actorType: 'user',
+              actorId: 'user_1',
+              resourceIds: [],
+              methods: ['password']
+            }
+          },
+          requestId: 'req_current'
+        };
+      }
+    } as any);
+
+    const firstRefresh = store.refresh();
+    const secondResult = await store.refresh();
+
+    resolveStale?.({
+      ok: true,
+      data: {
+        session: {
+          id: 'sess_stale',
+          type: 'session',
+          actorType: 'user',
+          actorId: 'user_1',
+          resourceIds: [],
+          methods: ['password']
+        }
+      },
+      requestId: 'req_stale'
+    });
+
+    const firstResult = await firstRefresh;
+
+    expect(secondResult?.id).toBe('sess_current');
+    expect(firstResult?.id).toBe('sess_current');
+    expect(get(store)?.id).toBe('sess_current');
+  });
 });
