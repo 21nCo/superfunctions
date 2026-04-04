@@ -75,4 +75,54 @@ describe('@authfn/svelte session store', () => {
     store.clear();
     expect(get(store)).toBeNull();
   });
+
+  it('does not let an older refresh overwrite a newer session state', async () => {
+    let resolveFirst: ((value: any) => void) | undefined;
+    const store = createAuthFnSessionStore({
+      async getSession() {
+        if (!resolveFirst) {
+          return await new Promise((resolve) => {
+            resolveFirst = resolve;
+          }) as never;
+        }
+
+        return {
+          ok: true,
+          data: {
+            session: {
+              id: 'sess_newer',
+              type: 'session',
+              actorType: 'user',
+              actorId: 'user_1',
+              resourceIds: [],
+              methods: ['password']
+            }
+          },
+          requestId: 'req_newer'
+        };
+      }
+    } as any);
+
+    const firstRefresh = store.refresh();
+    const secondRefresh = store.refresh();
+    await secondRefresh;
+
+    resolveFirst?.({
+      ok: true,
+      data: {
+        session: {
+          id: 'sess_older',
+          type: 'session',
+          actorType: 'user',
+          actorId: 'user_1',
+          resourceIds: [],
+          methods: ['password']
+        }
+      },
+      requestId: 'req_older'
+    });
+    await firstRefresh;
+
+    expect(get(store)?.id).toBe('sess_newer');
+  });
 });
