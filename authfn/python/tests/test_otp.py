@@ -203,8 +203,13 @@ async def test_max_attempts_locks_on_configured_limit() -> None:
     await service.send_challenge("sign-in", "ada@example.com")
     with pytest.raises(OtpInvalidError):
         await service.verify_challenge("sign-in", "ada@example.com", "000000")
+    stored = db.storage["otp_challenges"][0]
+    assert stored["attemptCount"] == 1
     with pytest.raises(OtpInvalidError):
         await service.verify_challenge("sign-in", "ada@example.com", "000000")
+    assert stored["attemptCount"] == 2
+    with pytest.raises(OtpInvalidError):
+        await service.verify_challenge("sign-in", "ada@example.com", "731942")
 
 
 @pytest.mark.asyncio

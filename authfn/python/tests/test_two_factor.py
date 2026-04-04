@@ -29,6 +29,7 @@ from authfn.plugins.two_factor import (
     TwoFactorService,
     authfn_two_factor_plugin,
 )
+from authfn.types import ValidationError
 
 TEST_2FA_KEY = b"authfn-python-two-factor-test-key"
 
@@ -238,7 +239,7 @@ async def test_two_factor_requires_explicit_encryption_key_resolver() -> None:
         TwoFactorPluginConfig(),
     )
 
-    with pytest.raises(Exception) as error:
+    with pytest.raises(ValidationError) as error:
         await service.enroll(user_id="user_1", primary_email="ada@example.com")
 
     assert "encryption_key_resolver" in str(error.value)

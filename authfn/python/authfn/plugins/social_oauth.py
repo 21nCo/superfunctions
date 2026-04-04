@@ -244,7 +244,7 @@ class DbEncryptedTokenVault:
             data={
                 "encrypted_payload": rotated,
                 "key_ref": new_key_ref,
-                "updated_at": self.now().isoformat() + "Z",
+                "updated_at": self.now().isoformat(),
             },
             namespace=self.config.namespace,
         )
