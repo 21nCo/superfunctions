@@ -7,7 +7,7 @@ import hashlib
 import json
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -66,6 +66,10 @@ SOCIAL_PROVIDER_IDS = ("google", "apple", "github")
 DEFAULT_STATE_TTL_SECONDS = 600
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @dataclass
 class SocialProviderConfig:
     client_id: Optional[str] = None
@@ -89,7 +93,7 @@ class SocialProviderConfig:
 class SocialOAuthPluginConfig:
     providers: Dict[str, SocialProviderConfig] = field(default_factory=dict)
     fetcher: Optional[Any] = None
-    now: Callable[[], datetime] = datetime.utcnow
+    now: Callable[[], datetime] = _utcnow
     state_ttl_seconds: int = DEFAULT_STATE_TTL_SECONDS
     encryption_key_ref: str = "oauth-default"
 
@@ -1390,6 +1394,8 @@ def _state_from_row(row: Dict[str, Any]) -> OAuthStateRecord:
                 "providerId": row["provider_id"],
                 "redirectUri": row["redirect_uri"],
                 "requestedScopes": _parse_json_array(row.get("requested_scopes")) or [],
+                "codeVerifier": row.get("code_verifier"),
+                "nonce": row.get("nonce"),
                 "subject": subject_payload or None,
                 "createdAt": row["created_at"],
                 "expiresAt": row["expires_at"],

@@ -30,6 +30,8 @@ from authfn.plugins.two_factor import (
     authfn_two_factor_plugin,
 )
 
+TEST_2FA_KEY = b"authfn-python-two-factor-test-key"
+
 
 class MockDatabaseAdapter:
     def __init__(self) -> None:
@@ -169,6 +171,7 @@ async def test_enroll_confirm_challenge_recovery_and_disable() -> None:
             issuer="authfn-tests",
             now=lambda: now,
             recovery_code_count=3,
+            encryption_key_resolver=lambda _key_ref: TEST_2FA_KEY,
         ),
     )
 
@@ -176,6 +179,7 @@ async def test_enroll_confirm_challenge_recovery_and_disable() -> None:
     assert enrolled["secret"]
     assert len(enrolled["recoveryCodes"]) == 3
     assert db.storage["two_factor_enrollments"][0]["secretEncrypted"] != enrolled["secret"]
+    assert db.storage["two_factor_recovery_codes"][0]["codeHash"].startswith("pbkdf2-sha256$")
 
     await service.confirm(
         user_id="user_1",
@@ -225,3 +229,16 @@ async def test_enroll_confirm_challenge_recovery_and_disable() -> None:
     )
     assert disabled == {"disabled": True}
     assert await service.begin_sign_in_challenge(user_id="user_1", primary_method="password") is None
+
+
+@pytest.mark.asyncio
+async def test_two_factor_requires_explicit_encryption_key_resolver() -> None:
+    service = TwoFactorService(
+        AuthFnConfig(database=MockDatabaseAdapter(), namespace="authfn"),
+        TwoFactorPluginConfig(),
+    )
+
+    with pytest.raises(Exception) as error:
+        await service.enroll(user_id="user_1", primary_email="ada@example.com")
+
+    assert "encryption_key_resolver" in str(error.value)
