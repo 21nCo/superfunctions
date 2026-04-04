@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { AuthFnErrorEnvelope, AuthFnSuccessEnvelope } from '../types.js';
+import type { AuthFnError, AuthFnErrorEnvelope, AuthFnSuccessEnvelope } from '../types.js';
 import { toAuthFnError } from '../core/errors.js';
 
 const requestIds = new WeakMap<Request, string>();
@@ -38,9 +38,9 @@ export function successEnvelope<TData>(
 
 export function errorEnvelope(
   requestId: string,
-  error: unknown
+  error: AuthFnError | unknown
 ): AuthFnErrorEnvelope {
-  const authError = toAuthFnError(error);
+  const authError = isAuthFnError(error) ? error : toAuthFnError(error);
 
   return {
     ok: false,
@@ -91,4 +91,8 @@ function jsonWithHeaders(
     ...init,
     headers
   });
+}
+
+function isAuthFnError(value: unknown): value is AuthFnError {
+  return typeof value === 'object' && value !== null && 'code' in value && 'status' in value && 'retryable' in value;
 }

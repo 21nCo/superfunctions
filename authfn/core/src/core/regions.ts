@@ -38,11 +38,11 @@ export function getMultiRegionPluginConfig(
   return null;
 }
 
-export async function resolveMultiRegionRuntimeOverride(
+export function resolveMultiRegionRuntimeOverride(
   config: Pick<AuthFnConfig, 'plugins'>,
   request: Request,
   baseRuntime: AuthFnRuntimeResolution
-): Promise<Partial<AuthFnRuntimeResolution> | null> {
+): Partial<AuthFnRuntimeResolution> | null {
   const pluginConfig = getMultiRegionPluginConfig(config);
   if (!pluginConfig) {
     return null;

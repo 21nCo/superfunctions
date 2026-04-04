@@ -126,6 +126,7 @@ export async function createTwoFactorEnrollment(
     id: existing?.id ?? createIdentifier('tfa'),
     userId: user.id,
     secretEncrypted: encryptedSecret,
+    lastUsedCounter: null,
     confirmedAt: null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now
@@ -137,6 +138,7 @@ export async function createTwoFactorEnrollment(
       where: [{ field: 'id', operator: 'eq', value: existing.id }],
       data: {
         secretEncrypted: encryptedSecret,
+        lastUsedCounter: null,
         confirmedAt: null,
         updatedAt: now
       },
@@ -468,12 +470,30 @@ async function verifyTwoFactorTotp(
   code: string,
   pluginConfig: TwoFactorPluginConfig
 ): Promise<void> {
+  const now = resolveNow(pluginConfig);
   const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
-  if (!verifyTotpCode(secret, normalizeTwoFactorCode(code), pluginConfig, resolveNow(pluginConfig))) {
+  const matchedCounter = verifyTotpCode(
+    secret,
+    normalizeTwoFactorCode(code),
+    pluginConfig,
+    now,
+    enrollment.lastUsedCounter ?? null
+  );
+  if (matchedCounter === null) {
     throw new AuthFnTwoFactorInvalidCodeError('Two-factor authentication code is invalid', {
       userId: enrollment.userId
     });
   }
+
+  await config.database.update<AuthFnTwoFactorEnrollmentRecord>({
+    model: 'two_factor_enrollments',
+    where: [{ field: 'id', operator: 'eq', value: enrollment.id }],
+    data: {
+      lastUsedCounter: matchedCounter,
+      updatedAt: now
+    },
+    namespace: namespace(config)
+  });
 }
 
 async function encryptSecret(
@@ -564,8 +584,9 @@ function verifyTotpCode(
   secret: string,
   code: string,
   pluginConfig: TwoFactorPluginConfig,
-  now: Date
-): boolean {
+  now: Date,
+  lastUsedCounter: number | null
+): number | null {
   const digits = pluginConfig.digits ?? DEFAULT_DIGITS;
   const periodSeconds = pluginConfig.periodSeconds ?? DEFAULT_PERIOD_SECONDS;
   const window = pluginConfig.window ?? DEFAULT_WINDOW;
@@ -573,13 +594,18 @@ function verifyTotpCode(
   const key = decodeBase32(secret);
 
   for (let offset = -window; offset <= window; offset += 1) {
-    const generated = generateTotp(key, counter + offset, digits);
+    const candidateCounter = counter + offset;
+    if (lastUsedCounter !== null && candidateCounter <= lastUsedCounter) {
+      continue;
+    }
+
+    const generated = generateTotp(key, candidateCounter, digits);
     if (safeCompareString(generated, code)) {
-      return true;
+      return candidateCounter;
     }
   }
 
-  return false;
+  return null;
 }
 
 function generateTotp(key: Buffer, counter: number, digits: number): string {

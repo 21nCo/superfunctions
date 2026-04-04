@@ -15,7 +15,17 @@ const TEST_NOW = new Date('2026-03-22T00:00:00.000Z');
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const TEST_2FA_KEY = Buffer.alloc(32, 7);
 
-function createConfig(): AuthFnConfig {
+function createClock(start: Date = TEST_NOW) {
+  let current = new Date(start);
+  return {
+    now: () => new Date(current),
+    advanceSeconds: (seconds: number) => {
+      current = new Date(current.getTime() + (seconds * 1000));
+    }
+  };
+}
+
+function createConfig(clock = createClock()): AuthFnConfig {
   return {
     database: memoryAdapter({ debug: false }),
     namespace: 'authfn',
@@ -23,7 +33,7 @@ function createConfig(): AuthFnConfig {
       authFnPasswordPlugin(),
       authFnTwoFactorPlugin({
         issuer: 'authfn-tests',
-        now: () => TEST_NOW,
+        now: clock.now,
         recoveryCodeCount: 3,
         encryptionKeyResolver: () => TEST_2FA_KEY
       })
@@ -76,7 +86,8 @@ function generateTotp(secret: string, now: Date = TEST_NOW, digits = 6, periodSe
 
 describe('@authfn/core two factor plugin', () => {
   it('enrolls, confirms, gates password sign-in, satisfies challenges, and supports disable', async () => {
-    const config = createConfig();
+    const clock = createClock();
+    const config = createConfig(clock);
     const auth = createAuthFn(config);
 
     const signUp = await auth.router.handle(
@@ -120,7 +131,7 @@ describe('@authfn/core two factor plugin', () => {
           'x-authfn-csrf': csrfToken!
         },
         body: JSON.stringify({
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -144,13 +155,14 @@ describe('@authfn/core two factor plugin', () => {
     expect(gatedBody.error.code).toBe('AUTHFN_2FA_REQUIRED');
     expect(gated.headers.getSetCookie()).toHaveLength(0);
 
+    clock.advanceSeconds(30);
     const challenge = await auth.router.handle(
       new Request('https://account.example.com/auth/2fa/challenge', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           challengeId: gatedBody.error.details.challengeId,
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -159,6 +171,19 @@ describe('@authfn/core two factor plugin', () => {
     const challengeBody = await challenge.json();
     expect(challengeBody.data.twoFactorSatisfied).toBe(true);
     expect(challengeBody.data.session.methods).toEqual(['password', 'two-factor']);
+
+    const replayedChallenge = await auth.router.handle(
+      new Request('https://account.example.com/auth/2fa/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: gatedBody.error.details.challengeId,
+          code: generateTotp(enrollBody.data.secret, clock.now())
+        })
+      })
+    );
+    expect(replayedChallenge.status).toBe(400);
+    expect((await replayedChallenge.json()).error.code).toBe('AUTHFN_2FA_INVALID_CODE');
 
     const gatedForRecovery = await auth.router.handle(
       new Request('https://account.example.com/auth/sign-in/password', {
@@ -208,6 +233,7 @@ describe('@authfn/core two factor plugin', () => {
     expect(recoveryReuse.status).toBe(400);
     expect((await recoveryReuse.json()).error.code).toBe('AUTHFN_2FA_INVALID_CODE');
 
+    clock.advanceSeconds(30);
     const currentCookieHeader = cookieHeaderFromSetCookies(challenge.headers.getSetCookie());
     const currentCsrf = challenge.headers.getSetCookie()
       .find((cookie) => cookie.startsWith('authfn.csrf='))
@@ -221,7 +247,7 @@ describe('@authfn/core two factor plugin', () => {
           'x-authfn-csrf': currentCsrf!
         },
         body: JSON.stringify({
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -243,7 +269,8 @@ describe('@authfn/core two factor plugin', () => {
   });
 
   it('supports confirming and satisfying 2fa with deterministic recovery/session helpers', async () => {
-    const config = createConfig();
+    const clock = createClock();
+    const config = createConfig(clock);
     const auth = createAuthFn(config);
     const user = await createUser(config, {
       primaryEmail: 'bea@example.com'
@@ -278,7 +305,7 @@ describe('@authfn/core two factor plugin', () => {
           'x-authfn-csrf': issued.csrfToken
         },
         body: JSON.stringify({
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -293,7 +320,7 @@ describe('@authfn/core two factor plugin', () => {
         authFnPasswordPlugin(),
         authFnTwoFactorPlugin({
           issuer: 'authfn-tests',
-          now: () => TEST_NOW,
+          now: createClock().now,
           encryptionKeyResolver: () => TEST_2FA_KEY
         })
       ]

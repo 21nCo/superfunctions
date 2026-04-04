@@ -20,6 +20,16 @@ const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const TEST_NOW = new Date('2026-03-22T00:00:00.000Z');
 const TEST_2FA_KEY = Buffer.alloc(32, 11);
 
+function createClock(start: Date = TEST_NOW) {
+  let current = new Date(start);
+  return {
+    now: () => new Date(current),
+    advanceSeconds: (seconds: number) => {
+      current = new Date(current.getTime() + (seconds * 1000));
+    }
+  };
+}
+
 function createIdToken(claims: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
@@ -132,6 +142,7 @@ describe('@authfn/core integration browser flows', () => {
   it('covers password, otp, social, 2fa, api keys, region lookup, sign-out, openapi, and observability in one deployment', async () => {
     const otpCodes = new Map<string, string>();
     const events: AuthFnEvent[] = [];
+    const clock = createClock();
     const auditTrapPlugin: AuthFnPlugin = {
       name: 'auditTrap',
       hooks: {
@@ -189,11 +200,11 @@ describe('@authfn/core integration browser flows', () => {
           }
         }),
         authFnApiKeyPlugin({
-          now: () => TEST_NOW
+          now: clock.now
         }),
         authFnTwoFactorPlugin({
           issuer: 'authfn-tests',
-          now: () => TEST_NOW,
+          now: clock.now,
           recoveryCodeCount: 3,
           encryptionKeyResolver: () => TEST_2FA_KEY
         }),
@@ -324,7 +335,7 @@ describe('@authfn/core integration browser flows', () => {
         'x-authfn-csrf': readCookie(cookieJar.header(), 'authfn-eu.csrf')!
       },
       body: {
-        code: generateTotp(enrollmentBody.data.secret)
+        code: generateTotp(enrollmentBody.data.secret, clock.now())
       }
     });
     expect(confirm.status).toBe(200);
@@ -358,11 +369,12 @@ describe('@authfn/core integration browser flows', () => {
     }
     expect(gated.error.code).toBe('AUTHFN_2FA_REQUIRED');
 
+    clock.advanceSeconds(30);
     const challengeComplete = await dispatch('https://eu.account.example.com/auth/2fa/challenge', {
         method: 'POST',
       body: {
         challengeId: gated.error.details?.challengeId,
-        code: generateTotp(enrollmentBody.data.secret)
+        code: generateTotp(enrollmentBody.data.secret, clock.now())
       }
     });
     expect(challengeComplete.status).toBe(200);
