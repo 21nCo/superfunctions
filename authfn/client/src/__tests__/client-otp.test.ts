@@ -109,6 +109,76 @@ describe('@authfn/client otp flows', () => {
     expect(result.requestId).toBe('req_invalid');
   });
 
+  it('rejects malformed error envelopes that omit required fields', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response(JSON.stringify({
+          ok: false,
+          error: {
+            code: 'AUTHFN_INVALID_CREDENTIALS'
+          },
+          requestId: 'req_malformed'
+        }), {
+          status: 401,
+          headers: {
+            'content-type': 'application/json',
+            'x-request-id': 'req_malformed'
+          }
+        })
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('malformed error envelopes should be rejected');
+    }
+    expect(result.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(result.requestId).toBe('req_malformed');
+  });
+
+  it('does not throw when csrf cookie encoding is malformed', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      cookieAccessor: () => 'authfn.session=session-token; authfn.csrf=bad%zzvalue',
+      fetch: async (_input, init) => {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            receivedCsrf: new Headers(init?.headers).get('x-authfn-csrf')
+          },
+          requestId: 'req_cookie'
+        }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json'
+          }
+        });
+      }
+    });
+
+    const result = await client.requestJson<{
+      ok: true;
+      data: { receivedCsrf: string | null };
+      requestId: string;
+    }>({
+      method: 'POST',
+      path: '/sign-out',
+      body: {},
+      csrf: true
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error('malformed cookie values should not break requestJson');
+    }
+    expect(result.data.receivedCsrf).toBe('bad%zzvalue');
+  });
+
   it('supports verify-email, otp sign-in, and reset-password completion', async () => {
     const codes = new Map<string, string>();
     const provider = {

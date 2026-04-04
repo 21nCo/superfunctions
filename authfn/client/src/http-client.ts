@@ -158,7 +158,16 @@ function isAuthFnEnvelope(value: unknown): value is { ok: boolean; requestId: st
   }
 
   const error = candidate.error;
-  return typeof error === 'object' && error !== null && typeof (error as Record<string, unknown>).code === 'string';
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+
+  const envelopeError = error as Record<string, unknown>;
+  return (
+    typeof envelopeError.code === 'string'
+    && typeof envelopeError.message === 'string'
+    && typeof envelopeError.retryable === 'boolean'
+  );
 }
 
 function defaultCookieAccessor(): string | undefined {
@@ -192,7 +201,12 @@ function readCookieValue(cookieHeader: string | undefined, name: string): string
   for (const part of cookieHeader.split(';')) {
     const [rawName, ...valueParts] = part.trim().split('=');
     if (rawName === name) {
-      return decodeURIComponent(valueParts.join('='));
+      const rawValue = valueParts.join('=');
+      try {
+        return decodeURIComponent(rawValue);
+      } catch {
+        return rawValue;
+      }
     }
   }
 
