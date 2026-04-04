@@ -405,7 +405,7 @@ private func fileFnBridgeSanitizeErrorMessage(_ value: String) -> String {
 
     let lowercased = value.lowercased()
     if lowercased.contains("file://")
-        || value.contains("/private/")
+        || lowercased.contains("/private/")
         || lowercased.contains("x-amz-signature=")
         || lowercased.contains("upload-session-token")
         || lowercased.contains("authorization")
