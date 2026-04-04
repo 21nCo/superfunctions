@@ -1,13 +1,17 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { NotFoundError, type Adapter } from '@superfunctions/db';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import {
   authFnPasswordPlugin,
   authFnTwoFactorPlugin,
+  confirmTwoFactorEnrollment,
   createAuthFn,
+  createTwoFactorEnrollment,
   createUser,
   issueSession,
   issueSessionCookies,
+  verifyTwoFactorCode,
   type AuthFnConfig
 } from '../index.js';
 
@@ -26,18 +30,59 @@ function createClock(start: Date = TEST_NOW) {
 }
 
 function createConfig(clock = createClock()): AuthFnConfig {
+  const twoFactorConfig = createTwoFactorPluginConfig(clock);
   return {
     database: memoryAdapter({ debug: false }),
     namespace: 'authfn',
     plugins: [
       authFnPasswordPlugin(),
-      authFnTwoFactorPlugin({
-        issuer: 'authfn-tests',
-        now: clock.now,
-        recoveryCodeCount: 3,
-        encryptionKeyResolver: () => TEST_2FA_KEY
-      })
+      authFnTwoFactorPlugin(twoFactorConfig)
     ]
+  };
+}
+
+function createTwoFactorPluginConfig(clock: ReturnType<typeof createClock>) {
+  return {
+    issuer: 'authfn-tests',
+    now: clock.now,
+    recoveryCodeCount: 3,
+    encryptionKeyResolver: () => TEST_2FA_KEY
+  };
+}
+
+function createPrismaStyleUpdateWrapper(base: Adapter): Adapter {
+  return {
+    ...base,
+    async update(params) {
+      if (
+        params.model === 'two_factor_enrollments'
+        && params.where.some((clause) => clause.field === 'lastUsedCounter')
+      ) {
+        const affected = await base.updateMany({
+          model: params.model,
+          where: params.where,
+          data: params.data,
+          namespace: params.namespace
+        });
+        if (affected === 0) {
+          throw new NotFoundError(params.model, params.where);
+        }
+
+        const updated = await base.findOne({
+          model: params.model,
+          where: params.where,
+          select: params.select,
+          namespace: params.namespace
+        });
+        if (!updated) {
+          throw new NotFoundError(params.model, params.where);
+        }
+
+        return updated;
+      }
+
+      return base.update(params);
+    }
   };
 }
 
@@ -266,6 +311,47 @@ describe('@authfn/core two factor plugin', () => {
     );
     expect(postDisable.status).toBe(200);
     expect((await postDisable.json()).data.session.methods).toEqual(['password']);
+  });
+
+  it('accepts valid TOTP codes when adapters re-read updates with stale compare-and-set filters', async () => {
+    const clock = createClock();
+    const twoFactorConfig = createTwoFactorPluginConfig(clock);
+    const config: AuthFnConfig = {
+      database: createPrismaStyleUpdateWrapper(memoryAdapter({ debug: false })),
+      namespace: 'authfn',
+      plugins: [
+        authFnPasswordPlugin(),
+        authFnTwoFactorPlugin(twoFactorConfig)
+      ]
+    };
+
+    const user = await createUser(config, {
+      primaryEmail: 'adapter-compat@example.com'
+    });
+    const created = await createTwoFactorEnrollment(config, user, twoFactorConfig);
+
+    await expect(
+      confirmTwoFactorEnrollment(
+        config,
+        user.id,
+        generateTotp(created.secret, clock.now()),
+        twoFactorConfig
+      )
+    ).resolves.toMatchObject({
+      userId: user.id
+    });
+
+    clock.advanceSeconds(30);
+    await expect(
+      verifyTwoFactorCode(
+        config,
+        user.id,
+        generateTotp(created.secret, clock.now()),
+        twoFactorConfig
+      )
+    ).resolves.toEqual({
+      usedRecoveryCode: false
+    });
   });
 
   it('supports confirming and satisfying 2fa with deterministic recovery/session helpers', async () => {

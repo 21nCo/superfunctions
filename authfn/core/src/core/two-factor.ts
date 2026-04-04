@@ -491,7 +491,7 @@ async function verifyTwoFactorTotp(
     }
 
     try {
-      await config.database.update<AuthFnTwoFactorEnrollmentRecord>({
+      const affected = await config.database.updateMany({
         model: 'two_factor_enrollments',
         where: [
           { field: 'id', operator: 'eq', value: currentEnrollment.id },
@@ -508,6 +508,17 @@ async function verifyTwoFactorTotp(
         },
         namespace: namespace(config)
       });
+      if (affected === 0) {
+        throw new NotFoundError('two_factor_enrollments', [
+          { field: 'id', operator: 'eq', value: currentEnrollment.id },
+          {
+            field: 'lastUsedCounter',
+            operator: 'eq',
+            value: currentEnrollment.lastUsedCounter ?? null,
+            connector: 'AND'
+          }
+        ]);
+      }
       return;
     } catch (error) {
       if (!(error instanceof NotFoundError)) {

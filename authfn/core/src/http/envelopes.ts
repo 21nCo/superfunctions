@@ -40,7 +40,7 @@ export function errorEnvelope(
   requestId: string,
   error: AuthFnError | unknown
 ): AuthFnErrorEnvelope {
-  const authError = toAuthFnError(error);
+  const authError = normalizeEnvelopeError(error);
 
   return {
     ok: false,
@@ -68,10 +68,46 @@ export function jsonError(
   error: unknown
 ): Response {
   const requestId = resolveRequestId(request);
-  const authError = toAuthFnError(error);
+  const authError = normalizeEnvelopeError(error);
   return jsonWithHeaders(errorEnvelope(requestId, authError), requestId, {
     status: authError.status
   });
+}
+
+function normalizeEnvelopeError(
+  error: AuthFnError | unknown
+): Pick<AuthFnError, 'code' | 'message' | 'retryable' | 'details' | 'status'> {
+  if (isAuthFnErrorLike(error)) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      details: isRecord(error.details) ? error.details : undefined,
+      status: typeof error.status === 'number' ? error.status : 500
+    };
+  }
+
+  return toAuthFnError(error);
+}
+
+function isAuthFnErrorLike(
+  error: unknown
+): error is Pick<AuthFnError, 'code' | 'message' | 'retryable' | 'details' | 'status'> {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  return typeof candidate.code === 'string'
+    && candidate.code.startsWith('AUTHFN_')
+    && typeof candidate.message === 'string'
+    && typeof candidate.retryable === 'boolean'
+    && (candidate.details === undefined || isRecord(candidate.details))
+    && (candidate.status === undefined || typeof candidate.status === 'number');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function jsonWithHeaders(
