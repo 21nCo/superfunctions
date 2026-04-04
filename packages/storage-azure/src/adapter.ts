@@ -285,7 +285,6 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
           blobContentType: input.contentType,
         },
       });
-
       return new WritableStream({
         async write(chunk) {
           const buf = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
@@ -315,6 +314,7 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
         },
         abort(reason) {
           stream.destroy(reason instanceof Error ? reason : new Error(String(reason)));
+          void uploadPromise.catch(() => undefined);
         },
       });
     },

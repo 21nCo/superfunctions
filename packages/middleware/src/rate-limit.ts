@@ -46,7 +46,7 @@ interface TokenBucketState {
   lastRefill: number;
 }
 
-function createInMemoryKVStore(now: () => number): KVStoreAdapter {
+function createInMemoryKVStore(now: () => number = Date.now): KVStoreAdapter {
   const store = new Map<string, { value: string; expiresAt?: number }>();
 
   return {
