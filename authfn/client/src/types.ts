@@ -146,7 +146,7 @@ export interface AuthFnClient {
   startSocialSignIn(input: {
     provider: AuthFnSocialProviderId;
     returnTo?: string;
-    callbackMode?: 'redirect' | 'json';
+    callbackMode?: 'json';
   }): Promise<AuthFnSuccessEnvelope<{
     provider: AuthFnSocialProviderId;
     redirectTo: string;

@@ -74,8 +74,8 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
         method: 'POST',
         path: '/social/start',
         body: {
-          callbackMode: 'json',
-          ...input
+          ...input,
+          callbackMode: 'json'
         }
       }),
     disconnectSocialAccount: (input) =>

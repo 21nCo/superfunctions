@@ -68,12 +68,18 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
 
       if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
         return {
-          ok: true,
-          data: {
-            redirectTo: response.headers.get('location')!
+          ok: false,
+          error: {
+            code: 'AUTHFN_REDIRECT_REQUIRES_NAVIGATION',
+            message: 'Browser clients must use JSON callback mode or navigate directly for redirect-based auth flows',
+            retryable: false,
+            details: {
+              status: response.status,
+              redirectTo: response.headers.get('location')
+            }
           },
           requestId: response.headers.get('x-request-id') ?? 'authfn-redirect'
-        } as T;
+        };
       }
 
       const raw = await response.text();
@@ -101,7 +107,22 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       }
 
       try {
-        return JSON.parse(raw) as T | AuthFnErrorEnvelope;
+        const parsed = JSON.parse(raw) as unknown;
+        if (!isAuthFnEnvelope(parsed)) {
+          return {
+            ok: false,
+            error: {
+              code: 'AUTHFN_INTERNAL_ERROR',
+              message: `AuthFn returned an invalid JSON envelope (${response.status})`,
+              retryable: response.status >= 500,
+              details: {
+                status: response.status
+              }
+            },
+            requestId: response.headers.get('x-request-id') ?? 'authfn-invalid-envelope'
+          };
+        }
+        return parsed as T | AuthFnErrorEnvelope;
       } catch {
         return {
           ok: false,
@@ -120,6 +141,24 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       }
     }
   };
+}
+
+function isAuthFnEnvelope(value: unknown): value is { ok: boolean; requestId: string } {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.ok !== 'boolean' || typeof candidate.requestId !== 'string') {
+    return false;
+  }
+
+  if (candidate.ok) {
+    return 'data' in candidate;
+  }
+
+  const error = candidate.error;
+  return typeof error === 'object' && error !== null && typeof (error as Record<string, unknown>).code === 'string';
 }
 
 function defaultCookieAccessor(): string | undefined {

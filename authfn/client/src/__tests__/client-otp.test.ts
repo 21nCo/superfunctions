@@ -83,6 +83,32 @@ describe('@authfn/client otp flows', () => {
     expect(result.error.details?.name).toBe('Error');
   });
 
+  it('treats invalid json payloads as envelope failures', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response(JSON.stringify({ redirectTo: 'https://app.example.com/post-auth' }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'x-request-id': 'req_invalid'
+          }
+        })
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('invalid JSON payload should be rejected');
+    }
+    expect(result.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(result.requestId).toBe('req_invalid');
+  });
+
   it('supports verify-email, otp sign-in, and reset-password completion', async () => {
     const codes = new Map<string, string>();
     const provider = {
