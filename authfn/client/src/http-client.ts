@@ -52,6 +52,21 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
 
       const raw = await response.text();
       if (!raw) {
+        if (!response.ok) {
+          return {
+            ok: false,
+            error: {
+              code: 'AUTHFN_INTERNAL_ERROR',
+              message: `AuthFn returned an empty error response (${response.status})`,
+              retryable: response.status >= 500,
+              details: {
+                status: response.status
+              }
+            },
+            requestId: response.headers.get('x-request-id') ?? 'authfn-empty'
+          };
+        }
+
         return {
           ok: true,
           data: {} as Record<string, never>,

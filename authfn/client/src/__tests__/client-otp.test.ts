@@ -8,6 +8,7 @@ import {
   type AuthFnDeliveryRequest
 } from '@authfn/core';
 import { createAuthFnClient } from '../index.js';
+import { createAuthFnHttpClient } from '../http-client.js';
 
 function createCookieJar() {
   const values = new Map<string, string>();
@@ -35,6 +36,31 @@ function createCookieJar() {
 }
 
 describe('@authfn/client otp flows', () => {
+  it('treats empty error responses as failures', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response(null, {
+          status: 500,
+          headers: {
+            'x-request-id': 'req_empty'
+          }
+        })
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('empty 500 response should be treated as an error');
+    }
+    expect(result.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(result.error.details?.status).toBe(500);
+  });
+
   it('supports verify-email, otp sign-in, and reset-password completion', async () => {
     const codes = new Map<string, string>();
     const provider = {
