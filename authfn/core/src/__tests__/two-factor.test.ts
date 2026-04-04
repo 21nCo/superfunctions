@@ -13,6 +13,7 @@ import {
 
 const TEST_NOW = new Date('2026-03-22T00:00:00.000Z');
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const TEST_2FA_KEY = Buffer.alloc(32, 7);
 
 function createConfig(): AuthFnConfig {
   return {
@@ -23,7 +24,8 @@ function createConfig(): AuthFnConfig {
       authFnTwoFactorPlugin({
         issuer: 'authfn-tests',
         now: () => TEST_NOW,
-        recoveryCodeCount: 3
+        recoveryCodeCount: 3,
+        encryptionKeyResolver: () => TEST_2FA_KEY
       })
     ]
   };
@@ -291,7 +293,8 @@ describe('@authfn/core two factor plugin', () => {
         authFnPasswordPlugin(),
         authFnTwoFactorPlugin({
           issuer: 'authfn-tests',
-          now: () => TEST_NOW
+          now: () => TEST_NOW,
+          encryptionKeyResolver: () => TEST_2FA_KEY
         })
       ]
     });
@@ -322,5 +325,52 @@ describe('@authfn/core two factor plugin', () => {
     );
     expect(enroll.status).toBe(200);
     expect((await enroll.json()).data.recoveryCodes).toHaveLength(10);
+  });
+
+  it('requires an explicit two-factor encryption key resolver', async () => {
+    const auth = createAuthFn({
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn',
+      plugins: [
+        authFnPasswordPlugin(),
+        authFnTwoFactorPlugin({
+          issuer: 'authfn-tests',
+          now: () => TEST_NOW
+        })
+      ]
+    });
+
+    const signUp = await auth.router.handle(
+      new Request('https://account.example.com/auth/sign-up/password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'ada@example.com',
+          password: 'Sup3rSecurePassphrase!'
+        })
+      })
+    );
+    const signUpCookies = signUp.headers.getSetCookie();
+    const cookieHeader = cookieHeaderFromSetCookies(signUpCookies);
+    const csrfToken = signUpCookies
+      .find((cookie) => cookie.startsWith('authfn.csrf='))
+      ?.slice('authfn.csrf='.length, signUpCookies.find((cookie) => cookie.startsWith('authfn.csrf='))?.indexOf(';') ?? -1);
+
+    const enroll = await auth.router.handle(
+      new Request('https://account.example.com/auth/2fa/enroll', {
+        method: 'POST',
+        headers: {
+          cookie: cookieHeader,
+          'x-authfn-csrf': csrfToken!
+        }
+      })
+    );
+
+    expect(enroll.status).toBe(400);
+    expect(await enroll.json()).toMatchObject({
+      error: {
+        code: 'AUTHFN_CONFIG_INVALID'
+      }
+    });
   });
 });

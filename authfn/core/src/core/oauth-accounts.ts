@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { AuthFnConfig, AuthFnSocialProfile, AuthFnSocialProviderId } from '../types.js';
 import { AuthFnNotFoundError } from './errors.js';
 
@@ -154,6 +155,5 @@ function namespace(config: Pick<AuthFnConfig, 'namespace'>): string {
 }
 
 function createIdentifier(prefix: string): string {
-  const random = Math.random().toString(36).slice(2, 12);
-  return `${prefix}_${random}`;
+  return `${prefix}_${randomBytes(8).toString('hex')}`;
 }

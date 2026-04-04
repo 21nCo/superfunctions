@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { Adapter, TableSchema } from '@superfunctions/db';
 import type { Route } from '@superfunctions/http';
 import {
@@ -907,11 +908,13 @@ function appendSessionHandoffToReturnTarget(
   issued: Awaited<ReturnType<typeof issueSession>>
 ): string {
   const url = new URL(returnTo);
-  url.searchParams.set('token', issued.sessionToken);
-  url.searchParams.set('sessionId', issued.session.id);
+  const fragment = new URLSearchParams();
+  fragment.set('token', issued.sessionToken);
+  fragment.set('sessionId', issued.session.id);
   if (issued.session.expiresAt) {
-    url.searchParams.set('expiresAt', issued.session.expiresAt.toISOString());
+    fragment.set('expiresAt', issued.session.expiresAt.toISOString());
   }
+  url.hash = fragment.toString();
   return url.toString();
 }
 
@@ -993,8 +996,7 @@ function createConnectionId(providerId: AuthFnSocialProviderId, userId: string):
 }
 
 function createIdentifier(prefix: string): string {
-  const random = Math.random().toString(36).slice(2, 12);
-  return `${prefix}_${random}`;
+  return `${prefix}_${randomBytes(8).toString('hex')}`;
 }
 
 function buildHookContext(

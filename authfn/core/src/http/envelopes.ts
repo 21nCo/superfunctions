@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { AuthFnErrorEnvelope, AuthFnSuccessEnvelope } from '../types.js';
 import { toAuthFnError } from '../core/errors.js';
 
@@ -21,8 +22,7 @@ export function resolveRequestId(request: Request): string {
 }
 
 export function createRequestId(): string {
-  const random = Math.random().toString(36).slice(2, 12);
-  return `req_${random}`;
+  return `req_${randomBytes(8).toString('hex')}`;
 }
 
 export function successEnvelope<TData>(

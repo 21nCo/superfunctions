@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
-import { createAuthFnClient } from '../../../client/src/index.js';
+import { createAuthFnClient } from '@authfn/client';
 import {
   authFnApiKeyPlugin,
   authFnEmailOtpPlugin,
@@ -18,6 +18,7 @@ import {
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const TEST_NOW = new Date('2026-03-22T00:00:00.000Z');
+const TEST_2FA_KEY = Buffer.alloc(32, 11);
 
 function createIdToken(claims: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
@@ -193,7 +194,8 @@ describe('@authfn/core integration browser flows', () => {
         authFnTwoFactorPlugin({
           issuer: 'authfn-tests',
           now: () => TEST_NOW,
-          recoveryCodeCount: 3
+          recoveryCodeCount: 3,
+          encryptionKeyResolver: () => TEST_2FA_KEY
         }),
         authFnMultiRegionPlugin({
           regions: [

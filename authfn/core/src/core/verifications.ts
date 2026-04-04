@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import type {
   AuthFnConfig,
   AuthFnDeliveryProvider,
@@ -214,7 +214,7 @@ export async function verifyOtpChallenge(
     });
   }
 
-  if (challenge.codeHash !== hashSecret(input.code)) {
+  if (!safeCompareHex(challenge.codeHash, hashSecret(input.code))) {
     await incrementAttemptCount(config, challenge.id, nextAttemptCount, now);
     throw new AuthFnOtpInvalidError('OTP code is invalid', {
       challengeId: challenge.id,
@@ -385,7 +385,13 @@ function createChallengeId(): string {
 }
 
 function resolveCodeGenerator(options: OtpRuntimeOptions): () => string {
-  return options.codeGenerator ?? (() => String(Math.floor(100000 + Math.random() * 900000)));
+  return options.codeGenerator ?? (() => String(randomInt(100000, 1000000)));
+}
+
+function safeCompareHex(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, 'hex');
+  const rightBuffer = Buffer.from(right, 'hex');
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function resolveNow(options: OtpRuntimeOptions): Date {

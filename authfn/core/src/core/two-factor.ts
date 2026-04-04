@@ -1,5 +1,4 @@
 import {
-  createHash,
   createHmac,
   randomBytes,
   timingSafeEqual
@@ -16,6 +15,7 @@ import type {
 } from '../types.js';
 import type { TwoFactorPluginConfig } from '../plugin-types.js';
 import {
+  AuthFnConfigError,
   AuthFnConflictError,
   AuthFnNotFoundError,
   AuthFnTwoFactorInvalidCodeError,
@@ -498,16 +498,24 @@ function createSecretCipher(
   config: Pick<AuthFnConfig, 'namespace'>,
   pluginConfig: TwoFactorPluginConfig
 ): AesGcmTokenCipher {
+  const resolver = pluginConfig.encryptionKeyResolver;
+  if (!resolver) {
+    throw new AuthFnConfigError('Two-factor encryptionKeyResolver must be configured', {
+      keyRef: pluginConfig.encryptionKeyRef ?? DEFAULT_ENCRYPTION_KEY_REF,
+      namespace: namespace(config)
+    });
+  }
+
   return new AesGcmTokenCipher(async (keyRef) => {
-    const resolved = await pluginConfig.encryptionKeyResolver?.(keyRef);
+    const resolved = await resolver(keyRef);
     if (resolved) {
       return resolved;
     }
 
-    const namespaceValue = namespace(config);
-    return createHash('sha256')
-      .update(`${namespaceValue}:${keyRef}:two-factor`)
-      .digest();
+    throw new AuthFnConfigError('Two-factor encryptionKeyResolver must be configured', {
+      keyRef,
+      namespace: namespace(config)
+    });
   });
 }
 
