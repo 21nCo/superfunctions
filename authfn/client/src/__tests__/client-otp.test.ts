@@ -6,7 +6,7 @@ import {
   createAuthFn,
   type AuthFnConfig,
   type AuthFnDeliveryRequest
-} from '../../../core/src/index.js';
+} from '@authfn/core';
 import { createAuthFnClient } from '../index.js';
 
 function createCookieJar() {

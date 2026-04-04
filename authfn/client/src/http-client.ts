@@ -41,10 +41,42 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
       });
 
       if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
-        return { redirectTo: response.headers.get('location')! } as T;
+        return {
+          ok: true,
+          data: {
+            redirectTo: response.headers.get('location')!
+          },
+          requestId: response.headers.get('x-request-id') ?? 'authfn-redirect'
+        } as T;
       }
 
-      return response.json() as Promise<T | AuthFnErrorEnvelope>;
+      const raw = await response.text();
+      if (!raw) {
+        return {
+          ok: true,
+          data: {} as Record<string, never>,
+          requestId: response.headers.get('x-request-id') ?? 'authfn-empty'
+        } as T;
+      }
+
+      try {
+        return JSON.parse(raw) as T | AuthFnErrorEnvelope;
+      } catch {
+        return {
+          ok: false,
+          error: {
+            code: 'AUTHFN_INTERNAL_ERROR',
+            message: response.ok
+              ? 'AuthFn returned a non-JSON response'
+              : `AuthFn returned a non-JSON error response (${response.status})`,
+            retryable: response.status >= 500,
+            details: {
+              status: response.status
+            }
+          },
+          requestId: response.headers.get('x-request-id') ?? 'authfn-non-json'
+        };
+      }
     }
   };
 }
@@ -60,12 +92,12 @@ function readCookiePrefix(cookieHeader: string | undefined): string {
   }
 
   for (const part of cookieHeader.split(';')) {
-    const trimmed = part.trim();
-    if (trimmed.startsWith('__Secure-') && trimmed.endsWith('.session')) {
-      return trimmed.slice('__Secure-'.length, -'.session'.length);
+    const [rawName] = part.trim().split('=');
+    if (rawName.startsWith('__Secure-') && rawName.endsWith('.session')) {
+      return rawName.slice('__Secure-'.length, -'.session'.length);
     }
-    if (trimmed.endsWith('.session')) {
-      return trimmed.slice(0, -'.session'.length);
+    if (rawName.endsWith('.session')) {
+      return rawName.slice(0, -'.session'.length);
     }
   }
 

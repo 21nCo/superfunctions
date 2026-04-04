@@ -8,7 +8,7 @@ import {
   authFnTwoFactorPlugin,
   createAuthFn,
   type AuthFnConfig
-} from '../../../core/src/index.js';
+} from '@authfn/core';
 import { createAuthFnClient } from '../index.js';
 
 const TEST_NOW = new Date('2026-03-25T00:00:00.000Z');

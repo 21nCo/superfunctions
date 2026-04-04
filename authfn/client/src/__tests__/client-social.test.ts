@@ -4,7 +4,7 @@ import {
   authFnSocialOAuthPlugin,
   createAuthFn,
   type AuthFnConfig
-} from '../../../core/src/index.js';
+} from '@authfn/core';
 import { createAuthFnClient } from '../index.js';
 
 function createConfig(): AuthFnConfig {
@@ -60,5 +60,30 @@ describe('@authfn/client social flows', () => {
       stateId: expect.any(String),
       expiresAt: expect.any(String)
     });
+  });
+
+  it('normalizes bare redirect responses into a success envelope', async () => {
+    const client = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response(null, {
+          status: 303,
+          headers: {
+            location: 'https://app.example.com/post-auth',
+            'x-request-id': 'req_redirect'
+          }
+        })
+    });
+
+    const started = await client.startSocialSignIn({
+      provider: 'google'
+    });
+
+    expect(started.ok).toBe(true);
+    if (!started.ok) {
+      throw new Error('redirect response should be normalized');
+    }
+    expect(started.data.redirectTo).toBe('https://app.example.com/post-auth');
+    expect(started.requestId).toBe('req_redirect');
   });
 });
