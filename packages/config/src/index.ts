@@ -8,6 +8,26 @@ export class ConfigError extends Error {
   }
 }
 
+function validateIntValue(
+  key: string,
+  value: number,
+  options: { min?: number; max?: number }
+): number {
+  if (!Number.isInteger(value)) {
+    throw new ConfigError('ENV_VALUE_INVALID', `${key} must be an integer`);
+  }
+
+  if (options.min !== undefined && value < options.min) {
+    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be >= ${options.min}`);
+  }
+
+  if (options.max !== undefined && value > options.max) {
+    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be <= ${options.max}`);
+  }
+
+  return value;
+}
+
 export function readIntEnv(
   key: string,
   options: { defaultValue: number; min?: number; max?: number; env?: NodeJS.ProcessEnv }
@@ -15,23 +35,15 @@ export function readIntEnv(
   const env = options.env ?? process.env;
   const raw = env[key];
   if (raw === undefined || raw === '') {
-    return options.defaultValue;
+    return validateIntValue(key, options.defaultValue, options);
   }
 
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
+  const normalized = raw.trim();
+  if (!/^-?\d+$/.test(normalized)) {
     throw new ConfigError('ENV_VALUE_INVALID', `${key} must be an integer`);
   }
 
-  if (options.min !== undefined && parsed < options.min) {
-    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be >= ${options.min}`);
-  }
-
-  if (options.max !== undefined && parsed > options.max) {
-    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be <= ${options.max}`);
-  }
-
-  return parsed;
+  return validateIntValue(key, Number.parseInt(normalized, 10), options);
 }
 
 export function readIntEnvOrDefault(

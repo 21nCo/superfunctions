@@ -54,6 +54,14 @@ export interface FlowFnQueueAdapterConfig {
   fetch?: typeof globalThis.fetch;
 }
 
+function encodeQueueName(queueName: string): string {
+  const normalized = queueName.trim();
+  if (!normalized || normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
+    throw new Error('FLOWFN_QUEUE_NAME_INVALID');
+  }
+  return encodeURIComponent(normalized);
+}
+
 export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly fetcher: typeof globalThis.fetch;
 
@@ -62,7 +70,8 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   }
 
   async enqueue(queueName: string, payload: TPayload): Promise<void> {
-    const response = await this.fetcher(`${this.config.baseUrl}/queues/${queueName}/enqueue`, {
+    const encodedQueueName = encodeQueueName(queueName);
+    const response = await this.fetcher(`${this.config.baseUrl}/queues/${encodedQueueName}/enqueue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -77,7 +86,8 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   }
 
   async dequeue(queueName: string): Promise<TPayload | null> {
-    const response = await this.fetcher(`${this.config.baseUrl}/queues/${queueName}/dequeue`, {
+    const encodedQueueName = encodeQueueName(queueName);
+    const response = await this.fetcher(`${this.config.baseUrl}/queues/${encodedQueueName}/dequeue`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
@@ -97,24 +107,18 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   }
 
   async dequeueMatching(queueName: string, matcher: (payload: TPayload) => boolean): Promise<TPayload | null> {
-    const queued = this.peek(queueName);
-    for (const payload of queued) {
-      if (matcher(payload)) {
-        const claimed = await this.dequeue(queueName);
-        if (claimed) {
-          return claimed;
-        }
-      }
-    }
-
-    return null;
+    void matcher;
+    encodeQueueName(queueName);
+    throw new Error('FLOWFN_QUEUE_MATCHING_UNSUPPORTED');
   }
 
-  peek(_queueName: string): TPayload[] {
-    return [];
+  peek(queueName: string): TPayload[] {
+    encodeQueueName(queueName);
+    throw new Error('FLOWFN_QUEUE_PEEK_UNSUPPORTED');
   }
 
-  size(_queueName: string): number {
-    return 0;
+  size(queueName: string): number {
+    encodeQueueName(queueName);
+    throw new Error('FLOWFN_QUEUE_SIZE_UNSUPPORTED');
   }
 }

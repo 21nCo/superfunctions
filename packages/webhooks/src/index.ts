@@ -89,7 +89,21 @@ export async function deliverWebhook(
   const initialDelayMs = Math.max(0, options.initialDelayMs ?? 1000);
   const maxDelayMs = Math.max(initialDelayMs, options.maxDelayMs ?? 30_000);
 
-  const payloadString = JSON.stringify(input.payload);
+  let payloadString: string;
+  try {
+    payloadString = JSON.stringify(input.payload);
+  } catch (error) {
+    return {
+      ok: false,
+      attempts: [
+        {
+          attempt: 1,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
+  }
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(input.headers ?? {}),
@@ -138,7 +152,7 @@ export async function deliverWebhook(
     }
 
     if (attempt < maxRetries) {
-      const delay = Math.min(maxDelayMs, initialDelayMs * attempt);
+      const delay = Math.min(maxDelayMs, initialDelayMs * 2 ** (attempt - 1));
       await sleep(delay);
     }
   }
@@ -161,7 +175,10 @@ function decodeSignature(value: string, encoding: SignatureEncoding): Buffer | n
 
   try {
     const decoded = Buffer.from(value, 'base64');
-    return decoded.length > 0 ? decoded : null;
+    if (decoded.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+      return null;
+    }
+    return decoded.toString('base64') === value ? decoded : null;
   } catch {
     return null;
   }
