@@ -6,17 +6,27 @@ export interface QueueAdapter<TPayload> {
   size(queueName: string): number;
 }
 
+function normalizeQueueName(queueName: string): string {
+  const normalized = queueName.trim();
+  if (!normalized || normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
+    throw new Error('FLOWFN_QUEUE_NAME_INVALID');
+  }
+  return normalized;
+}
+
 export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly queues = new Map<string, TPayload[]>();
 
   async enqueue(queueName: string, payload: TPayload): Promise<void> {
-    const queue = this.queues.get(queueName) ?? [];
+    const normalizedQueueName = normalizeQueueName(queueName);
+    const queue = this.queues.get(normalizedQueueName) ?? [];
     queue.push(payload);
-    this.queues.set(queueName, queue);
+    this.queues.set(normalizedQueueName, queue);
   }
 
   async dequeue(queueName: string): Promise<TPayload | null> {
-    const queue = this.queues.get(queueName);
+    const normalizedQueueName = normalizeQueueName(queueName);
+    const queue = this.queues.get(normalizedQueueName);
     if (!queue || queue.length === 0) {
       return null;
     }
@@ -25,7 +35,8 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   }
 
   async dequeueMatching(queueName: string, matcher: (payload: TPayload) => boolean): Promise<TPayload | null> {
-    const queue = this.queues.get(queueName);
+    const normalizedQueueName = normalizeQueueName(queueName);
+    const queue = this.queues.get(normalizedQueueName);
     if (!queue || queue.length === 0) {
       return null;
     }
@@ -40,11 +51,13 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   }
 
   peek(queueName: string): TPayload[] {
-    return [...(this.queues.get(queueName) ?? [])];
+    const normalizedQueueName = normalizeQueueName(queueName);
+    return [...(this.queues.get(normalizedQueueName) ?? [])];
   }
 
   size(queueName: string): number {
-    return this.queues.get(queueName)?.length ?? 0;
+    const normalizedQueueName = normalizeQueueName(queueName);
+    return this.queues.get(normalizedQueueName)?.length ?? 0;
   }
 }
 
@@ -55,11 +68,7 @@ export interface FlowFnQueueAdapterConfig {
 }
 
 function encodeQueueName(queueName: string): string {
-  const normalized = queueName.trim();
-  if (!normalized || normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
-    throw new Error('FLOWFN_QUEUE_NAME_INVALID');
-  }
-  return encodeURIComponent(normalized);
+  return encodeURIComponent(normalizeQueueName(queueName));
 }
 
 export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {

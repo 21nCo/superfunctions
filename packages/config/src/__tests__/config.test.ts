@@ -32,8 +32,23 @@ describe('config', () => {
     ).toBe(1000);
   });
 
+  it('validates the default used by readIntEnvOrDefault', () => {
+    expect(() =>
+      readIntEnvOrDefault('RECFN_RATE_LIMIT_WINDOW_MS', {
+        env: { RECFN_RATE_LIMIT_WINDOW_MS: '-1' },
+        defaultValue: 50,
+        min: 100,
+      })
+    ).toThrowError(ConfigError);
+  });
+
   it('reads strings and booleans', () => {
     expect(readStringEnv('A', { env: { A: 'value' }, defaultValue: 'x' })).toBe('value');
     expect(readBooleanEnv('B', { env: { B: 'true' }, defaultValue: false })).toBe(true);
+  });
+
+  it('uses the default for empty string values when empty strings are not allowed', () => {
+    expect(readStringEnv('A', { env: { A: '' }, defaultValue: 'fallback' })).toBe('fallback');
+    expect(readStringEnv('A', { env: { A: '' }, defaultValue: 'fallback', allowEmpty: true })).toBe('');
   });
 });

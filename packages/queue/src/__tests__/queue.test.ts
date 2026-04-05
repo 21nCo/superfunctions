@@ -17,6 +17,23 @@ describe('queue adapters', () => {
     expect(await queue.dequeue('q')).toBeNull();
   });
 
+  it('normalizes queue names consistently in memory adapter', async () => {
+    const queue = new MemoryQueueAdapter<string>();
+
+    await queue.enqueue(' jobs ', 'a');
+
+    expect(queue.peek('jobs')).toEqual(['a']);
+    expect(queue.size(' jobs ')).toBe(1);
+    expect(await queue.dequeue('jobs')).toBe('a');
+  });
+
+  it('rejects invalid queue names in memory adapter', async () => {
+    const queue = new MemoryQueueAdapter<string>();
+
+    await expect(queue.enqueue('../jobs', 'a')).rejects.toThrow('FLOWFN_QUEUE_NAME_INVALID');
+    expect(() => queue.peek('')).toThrow('FLOWFN_QUEUE_NAME_INVALID');
+  });
+
   it('flowfn adapter sends authenticated enqueue/dequeue requests', async () => {
     const calls: Array<{ url: string; method: string; auth?: string }> = [];
 

@@ -52,8 +52,11 @@ export function readIntEnvOrDefault(
 ): number {
   try {
     return readIntEnv(key, options);
-  } catch {
-    return options.defaultValue;
+  } catch (error) {
+    if (!(error instanceof ConfigError)) {
+      throw error;
+    }
+    return validateIntValue(key, options.defaultValue, options);
   }
 }
 
@@ -63,7 +66,7 @@ export function readStringEnv(
 ): string {
   const env = options.env ?? process.env;
   const raw = env[key];
-  if (raw === undefined) {
+  if (raw === undefined || (!options.allowEmpty && raw === '')) {
     return options.defaultValue;
   }
 
