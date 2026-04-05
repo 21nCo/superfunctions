@@ -181,8 +181,21 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         },
         close() {
           return new Promise((resolve, reject) => {
-            nodeStream.end(() => resolve());
-            nodeStream.once('error', reject);
+            const cleanup = () => {
+              nodeStream.off('finish', onFinish);
+              nodeStream.off('error', onError);
+            };
+            const onFinish = () => {
+              cleanup();
+              resolve(undefined);
+            };
+            const onError = (err: Error) => {
+              cleanup();
+              reject(err);
+            };
+            nodeStream.once('finish', onFinish);
+            nodeStream.once('error', onError);
+            nodeStream.end();
           });
         },
         abort(reason) {

@@ -13,6 +13,11 @@ export interface S3StorageConfig {
 
 export function createS3StorageAdapter(config: S3StorageConfig): StorageAdapter {
   const { bucket, region, accessKeyId, secretAccessKey, endpoint, forcePathStyle } = config;
+  const hasAccessKeyId = accessKeyId !== undefined;
+  const hasSecretAccessKey = secretAccessKey !== undefined;
+  if (hasAccessKeyId !== hasSecretAccessKey) {
+    throw new Error('S3 storage config requires both accessKeyId and secretAccessKey when using static credentials');
+  }
 
   const client = new S3Client({
     region,
