@@ -66,15 +66,19 @@ export function readStringEnv(
 ): string {
   const env = options.env ?? process.env;
   const raw = env[key];
+  const validateStringValue = (value: string): string => {
+    if (!options.allowEmpty && value.trim().length === 0) {
+      throw new ConfigError('ENV_VALUE_INVALID', `${key} must not be empty`);
+    }
+
+    return value;
+  };
+
   if (raw === undefined || (!options.allowEmpty && raw === '')) {
-    return options.defaultValue;
+    return validateStringValue(options.defaultValue);
   }
 
-  if (!options.allowEmpty && raw.trim().length === 0) {
-    throw new ConfigError('ENV_VALUE_INVALID', `${key} must not be empty`);
-  }
-
-  return raw;
+  return validateStringValue(raw);
 }
 
 export function readBooleanEnv(

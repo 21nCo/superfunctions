@@ -51,4 +51,14 @@ describe('config', () => {
     expect(readStringEnv('A', { env: { A: '' }, defaultValue: 'fallback' })).toBe('fallback');
     expect(readStringEnv('A', { env: { A: '' }, defaultValue: 'fallback', allowEmpty: true })).toBe('');
   });
+
+  it('validates default string values when empty strings are not allowed', () => {
+    expect(() =>
+      readStringEnv('A', {
+        env: {},
+        defaultValue: '',
+        allowEmpty: false,
+      })
+    ).toThrowError(ConfigError);
+  });
 });

@@ -84,4 +84,53 @@ describe('webhooks package exports', () => {
       ],
     });
   });
+
+  it('does not retry non-transient HTTP failures', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 400 }));
+
+    const result = await deliverWebhook(
+      {
+        url: 'https://example.com/hook',
+        payload: { hello: 'world' },
+      },
+      {
+        fetch: fetchMock as unknown as typeof globalThis.fetch,
+        maxRetries: 3,
+        initialDelayMs: 1,
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.attempts).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts a hanging attempt using the configured per-attempt timeout', async () => {
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      });
+    });
+
+    const result = await deliverWebhook(
+      {
+        url: 'https://example.com/hook',
+        payload: { hello: 'world' },
+      },
+      {
+        fetch: fetchMock as unknown as typeof globalThis.fetch,
+        maxRetries: 1,
+        perAttemptTimeoutMs: 5,
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.attempts[0]).toMatchObject({
+      attempt: 1,
+      ok: false,
+      error: 'The operation was aborted.',
+    });
+  });
 });

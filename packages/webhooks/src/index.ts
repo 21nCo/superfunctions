@@ -78,6 +78,7 @@ export type WebhookDeliveryOptions = {
   maxRetries?: number;
   initialDelayMs?: number;
   maxDelayMs?: number;
+  perAttemptTimeoutMs?: number;
 };
 
 export async function deliverWebhook(
@@ -88,6 +89,7 @@ export async function deliverWebhook(
   const maxRetries = Math.max(1, options.maxRetries ?? 3);
   const initialDelayMs = Math.max(0, options.initialDelayMs ?? 1000);
   const maxDelayMs = Math.max(initialDelayMs, options.maxDelayMs ?? 30_000);
+  const perAttemptTimeoutMs = Math.max(0, options.perAttemptTimeoutMs ?? 15_000);
 
   let payloadString: string;
   try {
@@ -128,12 +130,21 @@ export async function deliverWebhook(
   const attempts: WebhookDeliveryAttempt[] = [];
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const controller = typeof AbortController === 'function' ? new AbortController() : undefined;
+    if (controller && perAttemptTimeoutMs > 0) {
+      timeoutId = setTimeout(() => controller.abort(), perAttemptTimeoutMs);
+    }
     try {
       const response = await fetchFn(input.url, {
         method: input.method ?? 'POST',
         headers,
         body: payloadString,
+        signal: controller?.signal,
       });
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
 
       if (response.ok) {
         attempts.push({
@@ -155,12 +166,31 @@ export async function deliverWebhook(
         status: response.status,
         error: `HTTP ${response.status}`,
       });
+
+      if (attempt >= maxRetries || !shouldRetryWebhookStatus(response.status)) {
+        return {
+          ok: false,
+          attempts,
+          responseStatus: response.status,
+        };
+      }
     } catch (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       attempts.push({
         attempt,
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
+
+      if (attempt >= maxRetries || !shouldRetryWebhookError(error)) {
+        return {
+          ok: false,
+          attempts,
+          responseStatus: attempts[attempts.length - 1]?.status,
+        };
+      }
     }
 
     if (attempt < maxRetries) {
@@ -204,4 +234,16 @@ function decodeSignature(value: string, encoding: SignatureEncoding): Buffer | n
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRetryWebhookStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+function shouldRetryWebhookError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return true;
+  }
+
+  return error.name === 'AbortError' || !('status' in error);
 }
