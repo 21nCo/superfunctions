@@ -128,9 +128,76 @@ class SQLAlchemyAdapter:
             return query
         return query.where(where_clause)
 
+    def _project_row(self, row: Dict[str, Any], select_fields: Optional[List[str]]) -> Dict[str, Any]:
+        if not select_fields:
+            return row
+        return {field: row.get(field) for field in select_fields}
+
     def _apply_select(self, table: Table, params: FindOneParams | FindManyParams) -> Any:
         columns = [getattr(table.c, field) for field in params.select] if params.select else [table]
         return select(*columns).select_from(table)
+
+    def _build_data_where_clause(self, table: Table, data: Dict[str, Any]) -> Any:
+        conditions = [getattr(table.c, key) == value for key, value in data.items() if hasattr(table.c, key)]
+        if not conditions:
+            return None
+        return and_(*conditions) if len(conditions) > 1 else conditions[0]
+
+    def _fetch_one_by_clause(
+        self,
+        connection: Any,
+        table: Table,
+        where_clause: Any,
+        select_fields: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if where_clause is None:
+            return None
+
+        query = self._apply_where(
+            select(*[getattr(table.c, field) for field in select_fields]).select_from(table)
+            if select_fields
+            else select(table),
+            where_clause,
+        )
+        row = connection.execute(query).fetchone()
+        return dict(row._mapping) if row else None
+
+    def _fetch_one_by_primary_key(
+        self,
+        connection: Any,
+        table: Table,
+        row_data: Dict[str, Any],
+        select_fields: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        primary_key_columns = list(table.primary_key.columns)
+        if not primary_key_columns:
+            return None
+
+        conditions = []
+        for column in primary_key_columns:
+            value = row_data.get(column.name)
+            if value is None:
+                return None
+            conditions.append(column == value)
+
+        where_clause = and_(*conditions) if len(conditions) > 1 else conditions[0]
+        return self._fetch_one_by_clause(connection, table, where_clause, select_fields)
+
+    def _coerce_params(self, param_type: Any, params: Any = None, kwargs: Optional[Dict[str, Any]] = None) -> Any:
+        kwargs = kwargs or {}
+        if params is not None and kwargs:
+            raise TypeError("Pass either a params object or keyword arguments, not both")
+        if params is None:
+            if not kwargs:
+                raise TypeError(f"{param_type.__name__} params are required")
+            return param_type(**kwargs)
+        if isinstance(params, param_type):
+            return params
+        if isinstance(params, dict):
+            return param_type(**params)
+        if hasattr(params, "model_dump"):
+            return param_type(**params.model_dump())
+        raise TypeError(f"Unsupported params type for {param_type.__name__}")
 
     async def _create(self, params: CreateParams, connection=None) -> Dict[str, Any]:
         """Create a single record."""
@@ -138,11 +205,27 @@ class SQLAlchemyAdapter:
             table = self._get_table(params.model, params.namespace)
             conn = connection
             if conn is not None:
-                conn.execute(insert(table).values(**params.data))
-                row = conn.execute(
-                    self._apply_where(select(table), self._build_where_clause(table, [WhereClause(field=key, operator=Operator.EQ, value=value) for key, value in params.data.items()]))
-                ).fetchone()
-                return dict(row._mapping) if row else params.data
+                result = conn.execute(insert(table).values(**params.data))
+                inserted = None
+                inserted_primary_key = list(getattr(result, "inserted_primary_key", ()) or [])
+                if inserted_primary_key:
+                    inserted = self._fetch_one_by_primary_key(
+                        conn,
+                        table,
+                        {
+                            column.name: value
+                            for column, value in zip(table.primary_key.columns, inserted_primary_key)
+                        },
+                        params.select,
+                    )
+                if inserted is None:
+                    inserted = self._fetch_one_by_clause(
+                        conn,
+                        table,
+                        self._build_data_where_clause(table, params.data),
+                        params.select,
+                    )
+                return inserted if inserted is not None else self._project_row(dict(params.data), params.select)
 
             with self.engine.begin() as managed_conn:
                 return await self._create(params, managed_conn)
@@ -156,8 +239,8 @@ class SQLAlchemyAdapter:
         except Exception as e:
             raise QueryFailedError(f"Create failed: {str(e)}", cause=e)
 
-    async def create(self, params: CreateParams) -> Dict[str, Any]:
-        return await self._create(params)
+    async def create(self, params: Optional[CreateParams] = None, **kwargs: Any) -> Dict[str, Any]:
+        return await self._create(self._coerce_params(CreateParams, params, kwargs))
 
     async def _find_one(self, params: FindOneParams, connection=None) -> Optional[Dict[str, Any]]:
         """Find a single record."""
@@ -177,8 +260,8 @@ class SQLAlchemyAdapter:
         except Exception as e:
             raise QueryFailedError(f"FindOne failed: {str(e)}", cause=e)
 
-    async def find_one(self, params: FindOneParams) -> Optional[Dict[str, Any]]:
-        return await self._find_one(params)
+    async def find_one(self, params: Optional[FindOneParams] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return await self._find_one(self._coerce_params(FindOneParams, params, kwargs))
 
     async def _find_many(self, params: FindManyParams, connection=None) -> List[Dict[str, Any]]:
         """Find multiple records."""
@@ -220,13 +303,16 @@ class SQLAlchemyAdapter:
 
             conn = connection
             if conn is not None:
+                existing = self._fetch_one_by_clause(conn, table, where_clause)
+                if existing is None:
+                    raise NotFoundError("Record not found for update")
                 result = conn.execute(update(table).where(where_clause).values(**params.data))
                 if result.rowcount == 0:
-                    raise NotFoundError(f"Record not found for update")
-                row = conn.execute(self._apply_where(select(table), where_clause)).fetchone()
-                if not row:
-                    raise NotFoundError(f"Record not found for update")
-                return dict(row._mapping)
+                    raise NotFoundError("Record not found for update")
+                refreshed = self._fetch_one_by_primary_key(conn, table, existing, params.select)
+                if refreshed is not None:
+                    return refreshed
+                return self._project_row({**existing, **params.data}, params.select)
 
             with self.engine.begin() as managed_conn:
                 return await self._update(params, managed_conn)
@@ -238,8 +324,8 @@ class SQLAlchemyAdapter:
         except Exception as e:
             raise QueryFailedError(f"Update failed: {str(e)}", cause=e)
 
-    async def update(self, params: UpdateParams) -> Dict[str, Any]:
-        return await self._update(params)
+    async def update(self, params: Optional[UpdateParams] = None, **kwargs: Any) -> Dict[str, Any]:
+        return await self._update(self._coerce_params(UpdateParams, params, kwargs))
 
     async def _delete(self, params: DeleteParams, connection=None) -> None:
         """Delete a single record."""
@@ -262,41 +348,54 @@ class SQLAlchemyAdapter:
         except Exception as e:
             raise QueryFailedError(f"Delete failed: {str(e)}", cause=e)
 
-    async def delete(self, params: DeleteParams) -> None:
-        await self._delete(params)
+    async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
+        await self._delete(self._coerce_params(DeleteParams, params, kwargs))
 
-    async def create_many(self, params: CreateManyParams) -> List[Dict[str, Any]]:
+    async def create_many(self, params: Optional[CreateManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
         """Create multiple records."""
+        normalized = self._coerce_params(CreateManyParams, params, kwargs)
         try:
-            table = self._get_table(params.model, params.namespace)
-            
             with self.engine.begin() as conn:
-                conn.execute(insert(table).values(params.data))
-                return list(params.data)
+                created_rows: List[Dict[str, Any]] = []
+                for row in normalized.data:
+                    created_rows.append(
+                        await self._create(
+                            CreateParams(
+                                model=normalized.model,
+                                data=row,
+                                select=normalized.select,
+                                namespace=normalized.namespace,
+                            ),
+                            conn,
+                        )
+                    )
+                return created_rows
         
         except IntegrityError as e:
             raise ConstraintViolationError(str(e), cause=e)
         except Exception as e:
             raise QueryFailedError(f"CreateMany failed: {str(e)}", cause=e)
 
-    async def update_many(self, params: UpdateManyParams) -> int:
+    async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
         """Update multiple records."""
+        normalized = self._coerce_params(UpdateManyParams, params, kwargs)
         try:
-            table = self._get_table(params.model, params.namespace)
-            where_clause = self._build_where_clause(table, params.where)
+            table = self._get_table(normalized.model, normalized.namespace)
+            where_clause = self._build_where_clause(table, normalized.where)
             
             with self.engine.begin() as conn:
-                result = conn.execute(update(table).where(where_clause).values(**params.data))
+                result = conn.execute(update(table).where(where_clause).values(**normalized.data))
                 return result.rowcount
         
         except Exception as e:
             raise QueryFailedError(f"UpdateMany failed: {str(e)}", cause=e)
 
-    async def delete_many(self, params: DeleteManyParams) -> int:
+    async def delete_many(self, params: Optional[DeleteManyParams] = None, **kwargs: Any) -> int:
         """Delete multiple records."""
+        normalized = self._coerce_params(DeleteManyParams, params, kwargs)
         try:
-            table = self._get_table(params.model, params.namespace)
-            where_clause = self._build_where_clause(table, params.where)
+            table = self._get_table(normalized.model, normalized.namespace)
+            where_clause = self._build_where_clause(table, normalized.where)
             
             with self.engine.begin() as conn:
                 result = conn.execute(delete(table).where(where_clause))
@@ -305,35 +404,58 @@ class SQLAlchemyAdapter:
         except Exception as e:
             raise QueryFailedError(f"DeleteMany failed: {str(e)}", cause=e)
 
-    async def upsert(self, params: UpsertParams) -> Dict[str, Any]:
+    async def upsert(self, params: Optional[UpsertParams] = None, **kwargs: Any) -> Dict[str, Any]:
         """Upsert a record."""
+        normalized = self._coerce_params(UpsertParams, params, kwargs)
         # Try to find existing record
         existing = await self.find_one(
-            FindOneParams(model=params.model, where=params.where, namespace=params.namespace)
+            FindOneParams(
+                model=normalized.model,
+                where=normalized.where,
+                select=normalized.select,
+                namespace=normalized.namespace,
+            )
         )
         
         if existing:
             return await self.update(
                 UpdateParams(
-                    model=params.model,
-                    where=params.where,
-                    data=params.update,
-                    namespace=params.namespace,
+                    model=normalized.model,
+                    where=normalized.where,
+                    data=normalized.update,
+                    select=normalized.select,
+                    namespace=normalized.namespace,
                 )
             )
-        else:
+        try:
             return await self.create(
-                CreateParams(model=params.model, data=params.create, namespace=params.namespace)
+                CreateParams(
+                    model=normalized.model,
+                    data=normalized.create,
+                    select=normalized.select,
+                    namespace=normalized.namespace,
+                )
+            )
+        except DuplicateKeyError:
+            return await self.update(
+                UpdateParams(
+                    model=normalized.model,
+                    where=normalized.where,
+                    data=normalized.update,
+                    select=normalized.select,
+                    namespace=normalized.namespace,
+                )
             )
 
-    async def count(self, params: CountParams) -> int:
+    async def count(self, params: Optional[CountParams] = None, **kwargs: Any) -> int:
         """Count records."""
+        normalized = self._coerce_params(CountParams, params, kwargs)
         try:
-            table = self._get_table(params.model, params.namespace)
+            table = self._get_table(normalized.model, normalized.namespace)
             query = select(func.count()).select_from(table)
             
-            if params.where:
-                where_clause = self._build_where_clause(table, params.where)
+            if normalized.where:
+                where_clause = self._build_where_clause(table, normalized.where)
                 query = query.where(where_clause)
             
             with self.engine.connect() as conn:
@@ -412,20 +534,20 @@ class SQLAlchemyTransactionAdapter:
         """Rollback the transaction."""
         self.connection.rollback()
 
-    async def create(self, params: CreateParams) -> Dict[str, Any]:
-        return await self.parent._create(params, self.connection)
+    async def create(self, params: Optional[CreateParams] = None, **kwargs: Any) -> Dict[str, Any]:
+        return await self.parent._create(self.parent._coerce_params(CreateParams, params, kwargs), self.connection)
 
-    async def find_one(self, params: FindOneParams) -> Optional[Dict[str, Any]]:
-        return await self.parent._find_one(params, self.connection)
+    async def find_one(self, params: Optional[FindOneParams] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return await self.parent._find_one(self.parent._coerce_params(FindOneParams, params, kwargs), self.connection)
 
-    async def find_many(self, params: FindManyParams) -> List[Dict[str, Any]]:
-        return await self.parent._find_many(params, self.connection)
+    async def find_many(self, params: Optional[FindManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
+        return await self.parent._find_many(self.parent._coerce_params(FindManyParams, params, kwargs), self.connection)
 
-    async def update(self, params: UpdateParams) -> Dict[str, Any]:
-        return await self.parent._update(params, self.connection)
+    async def update(self, params: Optional[UpdateParams] = None, **kwargs: Any) -> Dict[str, Any]:
+        return await self.parent._update(self.parent._coerce_params(UpdateParams, params, kwargs), self.connection)
 
-    async def delete(self, params: DeleteParams) -> None:
-        await self.parent._delete(params, self.connection)
+    async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
+        await self.parent._delete(self.parent._coerce_params(DeleteParams, params, kwargs), self.connection)
 
 
 def create_adapter(engine: Engine, namespace_prefix: str = "") -> Adapter:
