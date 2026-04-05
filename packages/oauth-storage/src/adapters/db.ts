@@ -505,7 +505,11 @@ function parseSubject(raw: unknown): OAuthStoredSubject {
 
 function parseJsonValue<T>(raw: unknown): T {
   if (typeof raw === "string") {
-    return JSON.parse(raw) as T;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      throw new OAuthDbAdapterError("INTERNAL_ERROR", "persisted JSON value must be valid JSON");
+    }
   }
 
   return raw as T;
