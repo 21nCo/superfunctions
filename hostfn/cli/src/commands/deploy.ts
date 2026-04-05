@@ -404,6 +404,12 @@ async function deploySingleService(
         bundleSpinner.text = 'Bundling workspace dependencies...';
         await workspaceManager.bundleWorkspaceDependencies(sourceDir, bundleDir);
         
+        // Rewrite package.json to use file: references for workspace deps
+        workspaceManager.rewritePackageJson(sourceDir, bundleDir);
+
+        bundleSpinner.text = 'Generating lockfile...';
+        await workspaceManager.generateLockfile(bundleDir);
+        
         bundleSpinner.succeed('Workspace dependencies bundled');
         Logger.br();
         
@@ -435,65 +441,31 @@ async function deploySingleService(
       });
       
       syncSpinner.succeed('Files copied successfully');
-      
-      // Copy workspace dependencies if they exist
-      if (bundleDir) {
-        const bundledNodeModules = join(bundleDir, 'node_modules');
-        const { existsSync } = await import('fs');
-        
-        if (existsSync(bundledNodeModules)) {
-          const uploadSpinner = ora('Copying workspace dependencies...').start();
-          cpSync(bundledNodeModules, join(remoteDir, 'node_modules'), { recursive: true });
-          uploadSpinner.succeed('Workspace dependencies copied');
-        }
-      }
     } else {
       // Remote mode: use rsync
       const syncSpinner = ora('Syncing files to server...').start();
+
+      // When syncing a workspace bundle, anchor 'dist' to root (/dist) so it only
+      // excludes the service's own dist folder and not workspace deps' compiled output
+      // (e.g. __workspace__/@21n/email/dist which is needed for type declarations).
+      const rawExcludes = config.sync?.exclude || [
+        'node_modules', '.git', 'dist', '.env', '*.log',
+      ];
+      const syncExcludes = bundleDir
+        ? rawExcludes.map(p => p === 'dist' ? '/dist' : p)
+        : rawExcludes;
       
       await FileSync.sync(
         actualSourceDir,
         remoteDir,
         host,
         {
-          exclude: config.sync?.exclude || [
-            'node_modules',
-            '.git',
-            'dist',
-            '.env',
-            '*.log',
-          ],
+          exclude: syncExcludes,
           verbose: false,
         }
       );
 
       syncSpinner.succeed('Files synced successfully');
-      
-      // Upload bundled workspace dependencies if they exist (before npm install)
-      if (bundleDir) {
-        const bundledNodeModules = join(bundleDir, 'node_modules');
-        const { existsSync } = await import('fs');
-        
-        if (existsSync(bundledNodeModules)) {
-          Logger.section('Uploading Workspace Dependencies');
-          Logger.br();
-          
-          const uploadSpinner = ora('Uploading bundled workspace dependencies...').start();
-          
-          await FileSync.sync(
-            bundledNodeModules,
-            join(remoteDir, 'node_modules'),
-            host,
-            {
-              exclude: [],
-              verbose: false,
-            }
-          );
-          
-          uploadSpinner.succeed('Workspace dependencies uploaded');
-          Logger.br();
-        }
-      }
     }
     
     Logger.br();
@@ -504,19 +476,27 @@ async function deploySingleService(
 
     // Install dependencies
     const installSpinner = ora('Installing dependencies...').start();
-    
+
     // Check if package-lock.json exists, use npm ci if available, otherwise npm install
     const lockFileCheck = await ssh.exec(
       'test -f package-lock.json && echo "exists"',
       { cwd: remoteDir, streaming: false }
     );
     const hasLockFile = lockFileCheck.stdout.trim() === 'exists';
-    
+
     // If build command exists, install all dependencies (including dev); otherwise production only
     const needsDevDeps = !!config.build?.command;
-    const installCmd = hasLockFile 
-      ? (needsDevDeps ? 'npm ci --install-links' : 'npm ci --production --install-links')
-      : (needsDevDeps ? 'npm install --install-links' : 'npm install --production --install-links');
+    const hasWorkspaceDeps = !!bundleDir;
+
+    // --ignore-scripts: prevents postinstall scripts running on the server
+    // (avoids platform-specific binary issues like esbuild in drizzle-kit).
+    // npm ci: used when a lockfile is present (workspace bundles always have one,
+    // generated locally). npm ci is fast (cache extraction, no resolution) and
+    // deletes+reinstalls node_modules cleanly — no stale state possible.
+    const useCi = hasLockFile;
+    const installCmd = useCi
+      ? (needsDevDeps ? 'npm ci --install-links --ignore-scripts' : 'npm ci --production --install-links --ignore-scripts')
+      : (needsDevDeps ? 'npm install --install-links --ignore-scripts' : 'npm install --production --install-links --ignore-scripts');
     
     const installResult = await ssh.exec(
       installCmd,
@@ -525,7 +505,8 @@ async function deploySingleService(
     
     if (installResult.exitCode !== 0) {
       installSpinner.fail('Dependency installation failed');
-      throw new Error(`${installCmd} failed: ${installResult.stderr}`);
+      const errorOutput = installResult.stderr || installResult.stdout;
+      throw new Error(`${installCmd} failed: ${errorOutput}`);
     }
     installSpinner.succeed('Dependencies installed');
 

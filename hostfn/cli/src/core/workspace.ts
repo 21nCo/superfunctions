@@ -95,8 +95,11 @@ export class WorkspaceManager {
 
     Logger.info(`Bundling ${workspaceDeps.length} workspace dependencies...`);
 
-    const nodeModulesDir = join(targetDir, 'node_modules');
-    mkdirSync(nodeModulesDir, { recursive: true });
+    // Store workspace deps in __workspace__/ (not node_modules/) so they are:
+    // 1. Included in the main rsync (not excluded like node_modules)
+    // 2. Not wiped out when npm ci/install cleans node_modules
+    const workspaceDir = join(targetDir, '__workspace__');
+    mkdirSync(workspaceDir, { recursive: true });
     
     for (const depName of workspaceDeps) {
       const depPath = this.workspacePackages.get(depName);
@@ -113,7 +116,7 @@ export class WorkspaceManager {
         }
       }
 
-      const targetDepDir = join(nodeModulesDir, depName);
+      const targetDepDir = join(workspaceDir, depName);
       
       mkdirSync(dirname(targetDepDir), { recursive: true });
 
@@ -130,6 +133,75 @@ export class WorkspaceManager {
     }
   }
 
+  async generateLockfile(targetDir: string): Promise<void> {
+    const { execSync } = await import('child_process');
+    const pkgJsonPath = join(targetDir, 'package.json');
+
+    // Temporarily pin direct dependencies to their exact resolved versions from the
+    // root monorepo lockfile. Without this, `npm install --package-lock-only` would
+    // re-resolve all dependencies from the npm registry and may pick up newer
+    // (potentially breaking) versions (e.g. better-auth 1.3.x → 1.5.x).
+    //
+    // We pin direct deps only (not transitive). Overriding transitive deps causes
+    // EUSAGE errors from `npm ci` because the lockfile's transitive versions may no
+    // longer match what the pinned direct dep's own package.json requires.
+    let originalPkgJson: string | null = null;
+    if (this.workspaceRoot) {
+      const rootLockfilePath = join(this.workspaceRoot, 'package-lock.json');
+      if (existsSync(rootLockfilePath)) {
+        try {
+          const rootLockfile = JSON.parse(readFileSync(rootLockfilePath, 'utf-8'));
+          originalPkgJson = readFileSync(pkgJsonPath, 'utf-8');
+          const pkg = JSON.parse(originalPkgJson);
+
+          // Build a lookup from package name → resolved version in the root lockfile.
+          // Skip npm alias packages (where the lockfile entry's `name` field differs
+          // from the path-derived name, e.g. `string-width-cjs` → `string-width`).
+          const rootVersions: Record<string, string> = {};
+          for (const [pkgPath, pkgEntry] of Object.entries(
+            (rootLockfile.packages || {}) as Record<string, { version?: string; name?: string }>
+          )) {
+            const match = pkgPath.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)$/);
+            if (match && pkgEntry.version) {
+              const pkgName = match[1];
+              if (pkgEntry.name !== undefined && pkgEntry.name !== pkgName) continue;
+              rootVersions[pkgName] = pkgEntry.version;
+            }
+          }
+
+          // Replace semver ranges in direct deps with the exact resolved version.
+          // This prevents npm from upgrading direct deps when generating the lockfile.
+          for (const depGroup of ['dependencies', 'devDependencies'] as const) {
+            for (const depName of Object.keys(pkg[depGroup] || {})) {
+              const exactVersion = rootVersions[depName];
+              if (exactVersion) {
+                pkg[depGroup]![depName] = exactVersion;
+              }
+            }
+          }
+
+          writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2));
+        } catch {
+          originalPkgJson = null; // Fall through without pinning
+        }
+      }
+    }
+
+    try {
+      execSync('npm install --package-lock-only --ignore-scripts', {
+        cwd: targetDir,
+        stdio: 'ignore',
+      });
+    } finally {
+      // Restore package.json without overrides. The server uses `npm ci` which
+      // reads the lockfile directly and ignores overrides, so the overrides
+      // only need to be present during lockfile generation.
+      if (originalPkgJson !== null) {
+        writeFileSync(pkgJsonPath, originalPkgJson);
+      }
+    }
+  }
+
   rewritePackageJson(servicePath: string, targetDir: string): void {
     const workspaceDeps = this.getWorkspaceDependencies(servicePath);
     
@@ -143,7 +215,7 @@ export class WorkspaceManager {
     if (pkg.dependencies) {
       for (const depName of workspaceDeps) {
         if (pkg.dependencies[depName]) {
-          pkg.dependencies[depName] = `file:./node_modules/${depName}`;
+          pkg.dependencies[depName] = `file:./__workspace__/${depName}`;
         }
       }
     }
