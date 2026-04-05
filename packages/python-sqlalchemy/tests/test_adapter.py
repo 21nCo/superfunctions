@@ -105,3 +105,12 @@ async def test_update_many_requires_where_clause(adapter) -> None:
 
     with pytest.raises(QueryFailedError, match="update_many requires a where clause"):
         await adapter.update_many(model="users", where=None, data={"name": "Updated"})
+
+
+@pytest.mark.asyncio
+async def test_find_many_rejects_unknown_where_fields(adapter) -> None:
+    with pytest.raises(QueryFailedError, match="Unknown field in where clause"):
+        await adapter.find_many(
+            model="users",
+            where=[WhereClause(field="missing", operator=Operator.EQ, value="x")],
+        )

@@ -78,6 +78,9 @@ class SQLAlchemyAdapter:
         
         conditions = []
         for clause in where:
+            if not hasattr(table.c, clause.field):
+                raise QueryFailedError(f"Unknown field in where clause: {clause.field}")
+
             column = getattr(table.c, clause.field)
             
             if clause.operator == Operator.EQ:
@@ -110,6 +113,8 @@ class SQLAlchemyAdapter:
                 conditions.append(column.startswith(clause.value))
             elif clause.operator == Operator.ENDS_WITH:
                 conditions.append(column.endswith(clause.value))
+            else:
+                raise QueryFailedError(f"Unsupported operator in where clause: {clause.operator}")
         
         return and_(*conditions) if len(conditions) > 1 else conditions[0]
 
@@ -337,7 +342,7 @@ class SQLAlchemyAdapter:
             if conn is not None:
                 result = conn.execute(delete(table).where(where_clause))
                 if result.rowcount == 0:
-                    raise NotFoundError(f"Record not found for deletion")
+                    raise NotFoundError("Record not found for deletion")
 
             else:
                 with self.engine.begin() as managed_conn:
