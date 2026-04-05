@@ -21,10 +21,19 @@
   { "slug": "superfunctions-extfn-cli", "path": "extfn/cli", "name": "@superfunctions/extfn-cli" },
   { "slug": "superfunctions-extfn-svelte", "path": "extfn/svelte", "name": "@superfunctions/extfn-svelte" },
   { "slug": "superfunctions-extfn-vite", "path": "extfn/vite", "name": "@superfunctions/extfn-vite" },
+  { "slug": "superfunctions-files", "path": "packages/files", "name": "@superfunctions/files" },
   { "slug": "superfunctions-http", "path": "packages/http", "name": "@superfunctions/http" },
   { "slug": "superfunctions-http-express", "path": "packages/http-express", "name": "@superfunctions/http-express" },
   { "slug": "superfunctions-http-fastify", "path": "packages/http-fastify", "name": "@superfunctions/http-fastify" },
   { "slug": "superfunctions-http-hono", "path": "packages/http-hono", "name": "@superfunctions/http-hono" },
   { "slug": "superfunctions-http-next", "path": "packages/http-next", "name": "@superfunctions/http-next" },
-  { "slug": "superfunctions-http-sveltekit", "path": "packages/http-sveltekit", "name": "@superfunctions/http-sveltekit" }
+  { "slug": "superfunctions-http-sveltekit", "path": "packages/http-sveltekit", "name": "@superfunctions/http-sveltekit" },
+  { "slug": "superfunctions-middleware", "path": "packages/middleware", "name": "@superfunctions/middleware" },
+  { "slug": "superfunctions-storage", "path": "packages/storage", "name": "@superfunctions/storage" },
+  { "slug": "superfunctions-storage-azure", "path": "packages/storage-azure", "name": "@superfunctions/storage-azure" },
+  { "slug": "superfunctions-storage-gcs", "path": "packages/storage-gcs", "name": "@superfunctions/storage-gcs" },
+  { "slug": "superfunctions-storage-local", "path": "packages/storage-local", "name": "@superfunctions/storage-local" },
+  { "slug": "superfunctions-storage-minio", "path": "packages/storage-minio", "name": "@superfunctions/storage-minio" },
+  { "slug": "superfunctions-storage-r2", "path": "packages/storage-r2", "name": "@superfunctions/storage-r2" },
+  { "slug": "superfunctions-storage-s3", "path": "packages/storage-s3", "name": "@superfunctions/storage-s3" }
 ]
