@@ -15,7 +15,13 @@ for path in (PACKAGE_ROOT, PYTHON_CORE_ROOT):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from superfunctions.db import DuplicateKeyError, Operator, QueryFailedError, WhereClause  # noqa: E402
+from superfunctions.db import (  # noqa: E402
+    ConstraintViolationError,
+    DuplicateKeyError,
+    Operator,
+    QueryFailedError,
+    WhereClause,
+)
 from superfunctions_sqlalchemy import create_adapter  # noqa: E402
 
 
@@ -113,4 +119,33 @@ async def test_find_many_rejects_unknown_where_fields(adapter) -> None:
         await adapter.find_many(
             model="users",
             where=[WhereClause(field="missing", operator=Operator.EQ, value="x")],
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_touches_only_one_row_when_where_matches_multiple(adapter) -> None:
+    await adapter.create(model="users", data={"email": "a@example.com", "name": "same"})
+    await adapter.create(model="users", data={"email": "b@example.com", "name": "same"})
+
+    updated = await adapter.update(
+        model="users",
+        where=[WhereClause(field="name", operator=Operator.EQ, value="same")],
+        data={"name": "changed"},
+    )
+
+    assert updated["name"] == "changed"
+    rows = await adapter.find_many(model="users", where=[])
+    assert sorted(row["name"] for row in rows) == ["changed", "same"]
+
+
+@pytest.mark.asyncio
+async def test_create_many_preserves_constraint_errors(adapter) -> None:
+    await adapter.create(model="users", data={"email": "dupe@example.com", "name": "Alice"})
+
+    with pytest.raises((DuplicateKeyError, ConstraintViolationError)):
+        await adapter.create_many(
+            model="users",
+            data=[
+                {"email": "dupe@example.com", "name": "Bob"},
+            ],
         )

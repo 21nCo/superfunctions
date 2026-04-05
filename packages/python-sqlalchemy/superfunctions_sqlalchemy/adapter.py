@@ -61,7 +61,7 @@ class SQLAlchemyAdapter:
             joins=True,
             full_text_search=False,
             json_operations=True,
-            schema_management=True,
+            schema_management=False,
             migration_support=False,
             batch_operations=True,
         )
@@ -188,6 +188,20 @@ class SQLAlchemyAdapter:
         where_clause = and_(*conditions) if len(conditions) > 1 else conditions[0]
         return self._fetch_one_by_clause(connection, table, where_clause, select_fields)
 
+    def _build_primary_key_where_clause(self, table: Table, row_data: Dict[str, Any]) -> Any:
+        primary_key_columns = list(table.primary_key.columns)
+        if not primary_key_columns:
+            return None
+
+        conditions = []
+        for column in primary_key_columns:
+            value = row_data.get(column.name)
+            if value is None:
+                return None
+            conditions.append(column == value)
+
+        return and_(*conditions) if len(conditions) > 1 else conditions[0]
+
     def _coerce_params(self, param_type: Any, params: Any = None, kwargs: Optional[Dict[str, Any]] = None) -> Any:
         kwargs = kwargs or {}
         if params is not None and kwargs:
@@ -280,10 +294,10 @@ class SQLAlchemyAdapter:
                     column = getattr(table.c, order.field)
                     query = query.order_by(column.desc() if order.direction == "desc" else column)
             
-            if params.limit:
+            if params.limit is not None:
                 query = query.limit(params.limit)
             
-            if params.offset:
+            if params.offset is not None:
                 query = query.offset(params.offset)
 
             conn = connection
@@ -311,7 +325,8 @@ class SQLAlchemyAdapter:
                 existing = self._fetch_one_by_clause(conn, table, where_clause)
                 if existing is None:
                     raise NotFoundError("Record not found for update")
-                result = conn.execute(update(table).where(where_clause).values(**params.data))
+                target_where_clause = self._build_primary_key_where_clause(table, existing) or where_clause
+                result = conn.execute(update(table).where(target_where_clause).values(**params.data))
                 if result.rowcount == 0:
                     raise NotFoundError("Record not found for update")
                 refreshed = self._fetch_one_by_primary_key(conn, table, existing, params.select)
@@ -340,7 +355,11 @@ class SQLAlchemyAdapter:
 
             conn = connection
             if conn is not None:
-                result = conn.execute(delete(table).where(where_clause))
+                existing = self._fetch_one_by_clause(conn, table, where_clause)
+                if existing is None:
+                    raise NotFoundError("Record not found for deletion")
+                target_where_clause = self._build_primary_key_where_clause(table, existing) or where_clause
+                result = conn.execute(delete(table).where(target_where_clause))
                 if result.rowcount == 0:
                     raise NotFoundError("Record not found for deletion")
 
@@ -376,6 +395,8 @@ class SQLAlchemyAdapter:
                     )
                 return created_rows
         
+        except (DuplicateKeyError, ConstraintViolationError, ConnectionError, QueryFailedError):
+            raise
         except IntegrityError as e:
             raise ConstraintViolationError(str(e), cause=e)
         except Exception as e:
