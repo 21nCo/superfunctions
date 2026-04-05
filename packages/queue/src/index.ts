@@ -65,6 +65,7 @@ export interface FlowFnQueueAdapterConfig {
   baseUrl: string;
   apiKey: string;
   fetch?: typeof globalThis.fetch;
+  timeoutMs?: number;
 }
 
 function encodeQueueName(queueName: string): string {
@@ -73,14 +74,16 @@ function encodeQueueName(queueName: string): string {
 
 export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly fetcher: typeof globalThis.fetch;
+  private readonly timeoutMs: number;
 
   constructor(private readonly config: FlowFnQueueAdapterConfig) {
     this.fetcher = config.fetch ?? globalThis.fetch;
+    this.timeoutMs = Math.max(0, config.timeoutMs ?? 15_000);
   }
 
   async enqueue(queueName: string, payload: TPayload): Promise<void> {
     const encodedQueueName = encodeQueueName(queueName);
-    const response = await this.fetcher(`${this.config.baseUrl}/queues/${encodedQueueName}/enqueue`, {
+    const response = await this.fetchWithTimeout(`${this.config.baseUrl}/queues/${encodedQueueName}/enqueue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -96,7 +99,7 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
 
   async dequeue(queueName: string): Promise<TPayload | null> {
     const encodedQueueName = encodeQueueName(queueName);
-    const response = await this.fetcher(`${this.config.baseUrl}/queues/${encodedQueueName}/dequeue`, {
+    const response = await this.fetchWithTimeout(`${this.config.baseUrl}/queues/${encodedQueueName}/dequeue`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
@@ -129,5 +132,22 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   size(queueName: string): number {
     encodeQueueName(queueName);
     throw new Error('FLOWFN_QUEUE_SIZE_UNSUPPORTED');
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = typeof AbortController === 'function' ? new AbortController() : undefined;
+    const timeoutId =
+      controller && this.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
+
+    try {
+      return await this.fetcher(url, {
+        ...init,
+        signal: controller?.signal,
+      });
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 }

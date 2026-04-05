@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FlowFnQueueAdapter, MemoryQueueAdapter } from '../index.js';
 
 describe('queue adapters', () => {
@@ -73,5 +73,22 @@ describe('queue adapters', () => {
     expect(calls[1].url).toContain('/queues/jobs/dequeue');
     expect(calls[0].auth).toBe('Bearer flowfn-key');
     expect(calls[1].auth).toBe('Bearer flowfn-key');
+  });
+
+  it('flowfn adapter aborts stalled requests using timeoutMs', async () => {
+    const adapter = new FlowFnQueueAdapter<{ id: string }>({
+      baseUrl: 'https://flowfn.example.com',
+      apiKey: 'flowfn-key',
+      timeoutMs: 5,
+      fetch: (async (_url, init) => {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          });
+        });
+      }) as typeof globalThis.fetch,
+    });
+
+    await expect(adapter.enqueue('jobs', { id: 'job_1' })).rejects.toThrow('The operation was aborted.');
   });
 });
