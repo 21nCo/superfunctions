@@ -267,4 +267,23 @@ describe("oauth-router route factories", () => {
       requestId: undefined
     });
   });
+
+  it("rejects explicitly empty callback redirectUri values", async () => {
+    const { service } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never,
+      resolveCallbackInput: async () => ({
+        code: "code_04",
+        state: "st_04",
+        redirectUri: ""
+      })
+    });
+    const router = createRouter({ routes });
+
+    await expect(
+      router.handle(new Request("https://app.example/auth/social/callback/google"))
+    ).rejects.toThrow("redirectUri");
+  });
 });

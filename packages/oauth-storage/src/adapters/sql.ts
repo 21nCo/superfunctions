@@ -690,7 +690,7 @@ function mapRevocationFailureRow(row: RevocationFailureRow): OAuthRevocationFail
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
     tokenId: row.token_id ?? undefined,
-    tokenTypeHint: row.token_type_hint as "access_token" | "refresh_token" | undefined,
+    tokenTypeHint: (row.token_type_hint ?? undefined) as "access_token" | "refresh_token" | undefined,
     errorCode: row.error_code,
     errorMessage: row.error_message,
     retryable: row.retryable,

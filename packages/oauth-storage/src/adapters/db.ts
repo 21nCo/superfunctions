@@ -1,3 +1,4 @@
+import { NotFoundError } from "@superfunctions/db";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type {
   OAuthConsentRecord,
@@ -154,8 +155,11 @@ export class DbAdapterOAuthStateStore implements OAuthStateStore {
       });
 
       return mapStateRowToRecord(updated);
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return null;
+      }
+      throw error;
     }
   }
 

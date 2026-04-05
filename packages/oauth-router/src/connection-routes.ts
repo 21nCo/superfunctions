@@ -64,10 +64,12 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
           providerId: context.params.provider,
           code: asRequiredString(resolvedInput.code ?? url.searchParams.get("code"), "code"),
           state: asRequiredString(resolvedInput.state ?? url.searchParams.get("state"), "state"),
-          redirectUri:
+          redirectUri: asRequiredString(
             resolvedInput.redirectUri ??
-            url.searchParams.get("redirectUri") ??
-            `${url.origin}${url.pathname}`,
+              url.searchParams.get("redirectUri") ??
+              `${url.origin}${url.pathname}`,
+            "redirectUri"
+          ),
           requestId
         });
 

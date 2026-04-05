@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
+import { QueryFailedError } from "@superfunctions/db";
 import {
   DbAdapterOAuthConsentStore,
   DbAdapterOAuthRevocationFailureStore,
@@ -233,6 +234,38 @@ describe("oauth-storage db adapter bridge", () => {
     expect((await stateStore.get("st_json_1"))?.requestedScopes).toEqual(["openid", "profile"]);
     expect((await consentStore.get("consent_json_1"))?.metadata).toEqual({ mode: "parsed" });
     expect((await revocationFailureStore.get("revfail_json_1"))?.metadata).toEqual({ reason: "parsed" });
+  });
+
+  it("rethrows unexpected adapter failures during state consumption", async () => {
+    const adapter = memoryAdapter();
+    await adapter.initialize();
+
+    const stateStore = new DbAdapterOAuthStateStore(adapter);
+    await stateStore.put({
+      stateId: "st_db_error",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_db_error"
+      },
+      redirectUri: "https://app.example/callback",
+      requestedScopes: ["openid"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-01T00:10:00.000Z"
+    });
+
+    const failingAdapter: Adapter = {
+      ...adapter,
+      update: async () => {
+        throw new QueryFailedError("db unavailable");
+      }
+    };
+
+    await expect(
+      new DbAdapterOAuthStateStore(failingAdapter).consume("st_db_error", "2026-01-01T00:01:00.000Z")
+    ).rejects.toMatchObject({
+      message: "db unavailable"
+    });
   });
 
   it("rejects invalid parsed JSON values from adapters deterministically", async () => {
