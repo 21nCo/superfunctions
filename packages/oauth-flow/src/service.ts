@@ -520,7 +520,7 @@ class DefaultOAuthFlowService implements OAuthFlowService {
       this.emitEvent({
         name: "oauth.flow.callback.failed",
         requestId,
-        providerId,
+        providerId: providerId ?? input.providerId ?? "unknown",
         at: this.now().toISOString(),
         ok: false,
         subjectKind: subjectPreview?.kind,
@@ -545,6 +545,18 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         throw new OAuthFlowError("OAUTH_TOKEN_REFRESH_FAILED", "OAuth token record not found for connection", {
           status: 404,
           retryable: false
+        });
+      }
+
+      if (existing.record.providerId !== input.providerId) {
+        throw new OAuthFlowError("OAUTH_CALLBACK_MISMATCH", "provider mismatch for refresh", {
+          status: 400,
+          retryable: false,
+          details: {
+            expectedProviderId: existing.record.providerId,
+            receivedProviderId: input.providerId,
+            connectionId: input.connectionId
+          }
         });
       }
 

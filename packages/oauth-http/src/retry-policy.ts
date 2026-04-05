@@ -39,7 +39,7 @@ export function decideRetry(
 
   const retryAfterMs = parseRetryAfter(input.retryAfterHeader);
   if (retryAfterMs !== null) {
-    return { retry: true, delayMs: Math.min(policy.maxDelayMs, retryAfterMs) };
+    return { retry: true, delayMs: retryAfterMs };
   }
 
   const exponentialDelay = Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** (input.attempt - 1));

@@ -304,7 +304,7 @@ describe("oauth-http token client", () => {
     expect(response.accessToken).toBe("at_after_retry");
   });
 
-  it("clamps Retry-After delays to the configured maximum", async () => {
+  it("honors server-provided Retry-After delays even when they exceed the local backoff ceiling", async () => {
     const sleep = vi.fn(async () => undefined);
     let calls = 0;
     const fetcher: OAuthFetchLike = async () => {
@@ -346,7 +346,7 @@ describe("oauth-http token client", () => {
       redirectUri: "https://app/callback"
     });
 
-    expect(sleep).toHaveBeenCalledWith(5_000);
+    expect(sleep).toHaveBeenCalledWith(120_000);
   });
 
   it("maps refresh endpoint failures to OAUTH_TOKEN_REFRESH_FAILED", async () => {
