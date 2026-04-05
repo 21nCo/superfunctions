@@ -214,7 +214,7 @@ class SQLAlchemyAdapter:
                         table,
                         {
                             column.name: value
-                            for column, value in zip(table.primary_key.columns, inserted_primary_key)
+                            for column, value in zip(table.primary_key.columns, inserted_primary_key, strict=True)
                         },
                         params.select,
                     )
@@ -292,8 +292,8 @@ class SQLAlchemyAdapter:
         except Exception as e:
             raise QueryFailedError(f"FindMany failed: {str(e)}", cause=e)
 
-    async def find_many(self, params: FindManyParams) -> List[Dict[str, Any]]:
-        return await self._find_many(params)
+    async def find_many(self, params: Optional[FindManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
+        return await self._find_many(self._coerce_params(FindManyParams, params, kwargs))
 
     async def _update(self, params: UpdateParams, connection=None) -> Dict[str, Any]:
         """Update a single record."""
@@ -382,11 +382,15 @@ class SQLAlchemyAdapter:
         try:
             table = self._get_table(normalized.model, normalized.namespace)
             where_clause = self._build_where_clause(table, normalized.where)
+            if where_clause is None:
+                raise QueryFailedError("UpdateMany failed: update_many requires a where clause")
             
             with self.engine.begin() as conn:
                 result = conn.execute(update(table).where(where_clause).values(**normalized.data))
                 return result.rowcount
         
+        except QueryFailedError:
+            raise
         except Exception as e:
             raise QueryFailedError(f"UpdateMany failed: {str(e)}", cause=e)
 
@@ -396,11 +400,15 @@ class SQLAlchemyAdapter:
         try:
             table = self._get_table(normalized.model, normalized.namespace)
             where_clause = self._build_where_clause(table, normalized.where)
+            if where_clause is None:
+                raise QueryFailedError("DeleteMany failed: delete_many requires a where clause")
             
             with self.engine.begin() as conn:
                 result = conn.execute(delete(table).where(where_clause))
                 return result.rowcount
         
+        except QueryFailedError:
+            raise
         except Exception as e:
             raise QueryFailedError(f"DeleteMany failed: {str(e)}", cause=e)
 

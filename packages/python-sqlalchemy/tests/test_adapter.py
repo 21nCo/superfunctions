@@ -15,7 +15,7 @@ for path in (PACKAGE_ROOT, PYTHON_CORE_ROOT):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-from superfunctions.db import DuplicateKeyError, Operator, WhereClause  # noqa: E402
+from superfunctions.db import DuplicateKeyError, Operator, QueryFailedError, WhereClause  # noqa: E402
 from superfunctions_sqlalchemy import create_adapter  # noqa: E402
 
 
@@ -86,3 +86,22 @@ async def test_upsert_retries_update_after_duplicate_create(adapter, monkeypatch
     )
 
     assert result == {"id": 1, "email": "after@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_find_many_supports_keyword_args(adapter) -> None:
+    await adapter.create(model="users", data={"email": "alice@example.com", "name": "Alice"})
+    rows = await adapter.find_many(
+        model="users",
+        where=[WhereClause(field="email", operator=Operator.EQ, value="alice@example.com")],
+    )
+
+    assert [row["email"] for row in rows] == ["alice@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_update_many_requires_where_clause(adapter) -> None:
+    await adapter.create(model="users", data={"email": "alice@example.com", "name": "Alice"})
+
+    with pytest.raises(QueryFailedError, match="update_many requires a where clause"):
+        await adapter.update_many(model="users", where=None, data={"name": "Updated"})
