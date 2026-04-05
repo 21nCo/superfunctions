@@ -145,7 +145,7 @@ export class SqlOAuthStateStore implements OAuthStateStore {
 
   constructor(client: SqlClient, tableName = "oauth_states") {
     this.client = client;
-    this.tableName = tableName;
+    this.tableName = validateSqlIdentifier(tableName, "tableName");
   }
 
   async put(record: OAuthStateRecord): Promise<void> {
@@ -257,7 +257,7 @@ export class SqlTokenVault implements TokenVault {
 
   constructor(client: SqlClient, tableName = "oauth_tokens") {
     this.client = client;
-    this.tableName = tableName;
+    this.tableName = validateSqlIdentifier(tableName, "tableName");
   }
 
   async put(record: TokenRecord): Promise<void> {
@@ -320,10 +320,12 @@ export class SqlTokenVault implements TokenVault {
   }
 
   async rotateKey(tokenId: string, newKeyRef: string): Promise<void> {
-    await this.client.execute(
-      `UPDATE ${this.tableName} SET key_ref = ?, updated_at = ? WHERE token_id = ?`,
-      [newKeyRef, new Date().toISOString(), tokenId]
-    );
+    const existing = await this.get(tokenId);
+    if (!existing || existing.keyRef === newKeyRef) {
+      return;
+    }
+
+    throw new Error("Token key rotation requires re-encryption; use EncryptedTokenVault.rotateKey");
   }
 
   async deleteByConnection(connectionId: string): Promise<void> {
@@ -337,7 +339,7 @@ export class SqlOAuthConsentStore implements OAuthConsentStore {
 
   constructor(client: SqlClient, tableName = "oauth_consents") {
     this.client = client;
-    this.tableName = tableName;
+    this.tableName = validateSqlIdentifier(tableName, "tableName");
   }
 
   async put(record: OAuthConsentRecord): Promise<void> {
@@ -409,7 +411,7 @@ export class SqlOAuthRevocationFailureStore implements OAuthRevocationFailureSto
 
   constructor(client: SqlClient, tableName = "oauth_revocation_failures") {
     this.client = client;
-    this.tableName = tableName;
+    this.tableName = validateSqlIdentifier(tableName, "tableName");
   }
 
   async put(record: OAuthRevocationFailureRecord): Promise<void> {
@@ -562,9 +564,14 @@ export function getOAuthStorageSchema(
   consentTable = "oauth_consents",
   revocationFailureTable = "oauth_revocation_failures"
 ): ReadonlyArray<string> {
+  const safeStateTable = validateSqlIdentifier(stateTable, "stateTable");
+  const safeTokenTable = validateSqlIdentifier(tokenTable, "tokenTable");
+  const safeConsentTable = validateSqlIdentifier(consentTable, "consentTable");
+  const safeRevocationFailureTable = validateSqlIdentifier(revocationFailureTable, "revocationFailureTable");
+
   return [
     `
-    CREATE TABLE IF NOT EXISTS ${stateTable} (
+    CREATE TABLE IF NOT EXISTS ${safeStateTable} (
       state_id TEXT PRIMARY KEY,
       provider_id TEXT NOT NULL,
       subject_kind TEXT NOT NULL,
@@ -580,11 +587,11 @@ export function getOAuthStorageSchema(
     )
     `,
     `
-    CREATE INDEX IF NOT EXISTS idx_${stateTable}_expires_at
-    ON ${stateTable}(expires_at)
+    CREATE INDEX IF NOT EXISTS idx_${safeStateTable}_expires_at
+    ON ${safeStateTable}(expires_at)
     `,
     `
-    CREATE TABLE IF NOT EXISTS ${tokenTable} (
+    CREATE TABLE IF NOT EXISTS ${safeTokenTable} (
       token_id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
@@ -598,11 +605,11 @@ export function getOAuthStorageSchema(
     )
     `,
     `
-    CREATE INDEX IF NOT EXISTS idx_${tokenTable}_connection
-    ON ${tokenTable}(connection_id)
+    CREATE INDEX IF NOT EXISTS idx_${safeTokenTable}_connection
+    ON ${safeTokenTable}(connection_id)
     `,
     `
-    CREATE TABLE IF NOT EXISTS ${consentTable} (
+    CREATE TABLE IF NOT EXISTS ${safeConsentTable} (
       consent_id TEXT PRIMARY KEY,
       provider_id TEXT NOT NULL,
       subject_kind TEXT NOT NULL,
@@ -615,11 +622,11 @@ export function getOAuthStorageSchema(
     )
     `,
     `
-    CREATE INDEX IF NOT EXISTS idx_${consentTable}_provider_subject
-    ON ${consentTable}(provider_id, subject_key)
+    CREATE INDEX IF NOT EXISTS idx_${safeConsentTable}_provider_subject
+    ON ${safeConsentTable}(provider_id, subject_key)
     `,
     `
-    CREATE TABLE IF NOT EXISTS ${revocationFailureTable} (
+    CREATE TABLE IF NOT EXISTS ${safeRevocationFailureTable} (
       failure_id TEXT PRIMARY KEY,
       provider_id TEXT NOT NULL,
       subject_kind TEXT NOT NULL,
@@ -635,8 +642,8 @@ export function getOAuthStorageSchema(
     )
     `,
     `
-    CREATE INDEX IF NOT EXISTS idx_${revocationFailureTable}_provider_subject
-    ON ${revocationFailureTable}(provider_id, subject_key)
+    CREATE INDEX IF NOT EXISTS idx_${safeRevocationFailureTable}_provider_subject
+    ON ${safeRevocationFailureTable}(provider_id, subject_key)
     `
   ];
 }
@@ -648,7 +655,7 @@ function mapStateRow(row: OAuthStateRow): OAuthStateRecord {
     providerId: row.provider_id,
     subject,
     redirectUri: row.redirect_uri,
-    requestedScopes: JSON.parse(row.requested_scopes) as string[],
+    requestedScopes: parseStringArray(row.requested_scopes, "requested_scopes"),
     codeVerifier: row.code_verifier ?? undefined,
     nonce: row.nonce ?? undefined,
     createdAt: row.created_at,
@@ -677,10 +684,10 @@ function mapConsentRow(row: ConsentRow): OAuthConsentRecord {
     consentId: row.consent_id,
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
-    scopes: JSON.parse(row.scope_set) as string[],
+    scopes: parseStringArray(row.scope_set, "scope_set"),
     grantedAt: row.granted_at,
     updatedAt: row.updated_at,
-    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+    metadata: row.metadata ? parseRecord(row.metadata, "metadata") : undefined
   };
 }
 
@@ -690,17 +697,70 @@ function mapRevocationFailureRow(row: RevocationFailureRow): OAuthRevocationFail
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
     tokenId: row.token_id ?? undefined,
-    tokenTypeHint: (row.token_type_hint ?? undefined) as "access_token" | "refresh_token" | undefined,
+    tokenTypeHint: parseTokenTypeHint(row.token_type_hint),
     errorCode: row.error_code,
     errorMessage: row.error_message,
-    retryable: row.retryable,
+    retryable: parseRetryable(row.retryable),
     occurredAt: row.occurred_at,
-    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+    metadata: row.metadata ? parseRecord(row.metadata, "metadata") : undefined
   };
 }
 
 function parseSubject(raw: string): OAuthStoredSubject {
-  const subject = JSON.parse(raw) as OAuthStoredSubject;
+  const subject = parseJsonValue<OAuthStoredSubject>(raw, "subject_payload");
   validateOAuthStoredSubject(subject);
   return cloneOAuthStoredSubject(subject);
+}
+
+function parseJsonValue<T>(raw: string, fieldName: string): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new Error(`${fieldName} must be valid JSON`);
+  }
+}
+
+function parseStringArray(raw: string, fieldName: string): string[] {
+  const value = parseJsonValue<unknown>(raw, fieldName);
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${fieldName} must be an array of strings`);
+  }
+  return [...value];
+}
+
+function parseRecord(raw: string, fieldName: string): Record<string, unknown> {
+  const value = parseJsonValue<unknown>(raw, fieldName);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  return { ...value };
+}
+
+function parseTokenTypeHint(value: string | null): "access_token" | "refresh_token" | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  if (value === "access_token" || value === "refresh_token") {
+    return value;
+  }
+  throw new Error("token_type_hint must be access_token or refresh_token");
+}
+
+function parseRetryable(value: boolean): boolean;
+function parseRetryable(value: number): boolean;
+function parseRetryable(value: boolean | number): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 0 || value === 1) {
+    return value === 1;
+  }
+  throw new Error("retryable must be a boolean or 0/1");
+}
+
+function validateSqlIdentifier(value: string, fieldName: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(`${fieldName} must contain only letters, numbers, and underscores`);
+  }
+  return value;
 }

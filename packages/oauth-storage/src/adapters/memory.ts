@@ -109,15 +109,11 @@ export class MemoryTokenVault implements TokenVault {
 
   async rotateKey(tokenId: string, newKeyRef: string): Promise<void> {
     const existing = this.tokensById.get(tokenId);
-    if (!existing) {
+    if (!existing || existing.keyRef === newKeyRef) {
       return;
     }
 
-    this.tokensById.set(tokenId, {
-      ...existing,
-      keyRef: newKeyRef,
-      updatedAt: new Date().toISOString()
-    });
+    throw new Error("Token key rotation requires re-encryption; use EncryptedTokenVault.rotateKey");
   }
 
   async deleteByConnection(connectionId: string): Promise<void> {

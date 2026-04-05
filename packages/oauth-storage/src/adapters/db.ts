@@ -209,18 +209,15 @@ export class DbAdapterTokenVault implements TokenVault {
   }
 
   async rotateKey(tokenId: string, newKeyRef: string): Promise<void> {
-    try {
-      await this.adapter.update({
-        model: this.model,
-        where: [{ field: "token_id", operator: "eq", value: tokenId }],
-        data: {
-          key_ref: newKeyRef,
-          updated_at: new Date().toISOString()
-        }
-      });
-    } catch {
+    const existing = await this.get(tokenId);
+    if (!existing || existing.keyRef === newKeyRef) {
       return;
     }
+
+    throw new OAuthDbAdapterError(
+      "INTERNAL_ERROR",
+      "Token key rotation requires re-encryption; use EncryptedTokenVault.rotateKey"
+    );
   }
 
   async deleteByConnection(connectionId: string): Promise<void> {

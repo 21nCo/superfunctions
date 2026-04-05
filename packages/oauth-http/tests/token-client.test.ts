@@ -196,6 +196,34 @@ describe("oauth-http token client", () => {
     });
   });
 
+  it("does not leak resolver failure messages into structured error details", async () => {
+    const client = new DefaultOAuthTokenHttpClient({
+      fetcher: async () => {
+        throw new Error("should not call fetch");
+      }
+    });
+
+    await expect(
+      client.exchangeToken({
+        provider: googleProvider,
+        grantType: "authorization_code",
+        clientId: "client-id",
+        clientSecretResolver: async () => {
+          throw new Error("kms://secret?token=top-secret");
+        },
+        code: "code-secret-error",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_SECRET_RESOLUTION_FAILED",
+      details: {
+        providerId: "google",
+        operation: "exchange",
+        hasResolver: true
+      }
+    });
+  });
+
   it("fails with OAUTH_RUNTIME_CONFIG_INVALID when no client secret path is configured", async () => {
     const fetcher: OAuthFetchLike = async () => {
       throw new Error("should not call fetch");
@@ -274,6 +302,51 @@ describe("oauth-http token client", () => {
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(7000);
     expect(response.accessToken).toBe("at_after_retry");
+  });
+
+  it("clamps Retry-After delays to the configured maximum", async () => {
+    const sleep = vi.fn(async () => undefined);
+    let calls = 0;
+    const fetcher: OAuthFetchLike = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return createResponse({
+          status: 429,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "rate_limited" }),
+          headers: { "retry-after": "120" }
+        });
+      }
+
+      return createResponse({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ access_token: "at_after_retry", token_type: "bearer" })
+      });
+    };
+
+    const client = new DefaultOAuthTokenHttpClient({
+      fetcher,
+      sleep,
+      retryPolicy: {
+        maxAttempts: 3,
+        baseDelayMs: 250,
+        maxDelayMs: 5_000,
+        jitterRatio: 0,
+        random: () => 0
+      }
+    });
+
+    await client.exchangeToken({
+      provider: googleProvider,
+      grantType: "authorization_code",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      code: "code-retry",
+      redirectUri: "https://app/callback"
+    });
+
+    expect(sleep).toHaveBeenCalledWith(5_000);
   });
 
   it("maps refresh endpoint failures to OAUTH_TOKEN_REFRESH_FAILED", async () => {

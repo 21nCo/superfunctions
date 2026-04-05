@@ -67,8 +67,7 @@ export function secretResolutionFailedError(
       providerId: context.provider.id,
       operation: context.operation,
       grantType: context.grantType,
-      hasResolver: true,
-      causeMessage: cause instanceof Error ? cause.message : undefined
+      hasResolver: true
     }
   });
 }
@@ -85,10 +84,18 @@ export function normalizeOAuthErrorBody(rawBody: unknown): { message: string; de
     asString(payload.error) ??
     asString(payload.detail) ??
     "OAuth provider request failed";
+  const details = Object.fromEntries(
+    Object.entries({
+      error: asString(payload.error),
+      error_description: asString(payload.error_description),
+      error_uri: asString(payload.error_uri),
+      detail: asString(payload.detail)
+    }).filter(([, value]) => value !== undefined)
+  );
 
   return {
     message: description,
-    details: payload
+    details: Object.keys(details).length > 0 ? details : undefined
   };
 }
 

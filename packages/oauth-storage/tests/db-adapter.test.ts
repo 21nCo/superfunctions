@@ -67,9 +67,10 @@ describe("oauth-storage db adapter bridge", () => {
     const tokenByConnection = await tokenVault.getByConnection("conn_db_1");
     expect(tokenByConnection?.tokenId).toBe("tok_db_1");
 
-    await tokenVault.rotateKey("tok_db_1", "kms_2");
-    const rotated = await tokenVault.get("tok_db_1");
-    expect(rotated?.keyRef).toBe("kms_2");
+    await expect(tokenVault.rotateKey("tok_db_1", "kms_2")).rejects.toThrowError(
+      "Token key rotation requires re-encryption"
+    );
+    expect((await tokenVault.get("tok_db_1"))?.keyRef).toBe("kms_1");
 
     await consentStore.put({
       consentId: "consent_db_1",

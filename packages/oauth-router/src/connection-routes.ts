@@ -47,7 +47,7 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
         const input = await config.resolveStartInput(request, context);
         const result = await config.flowService.start({
           ...input,
-          requestId
+          requestId: requestId ?? input.requestId
         });
         return Response.json(result);
       }
@@ -164,15 +164,43 @@ function asRequiredString(value: string | null | undefined, field: string): stri
 async function parseDisconnectBody(
   request: Request
 ): Promise<Omit<OAuthFlowDisconnectInput, "providerId" | "requestId">> {
-  const body = (await request.json()) as {
+  const body = (await parseJsonBody(request)) as {
     connectionId?: string;
-    revokeRemote?: boolean;
-    tokenTypeHint?: "access_token" | "refresh_token";
+    revokeRemote?: unknown;
+    tokenTypeHint?: unknown;
   };
 
   return {
     connectionId: asRequiredString(body.connectionId, "connectionId"),
-    revokeRemote: body.revokeRemote,
-    tokenTypeHint: body.tokenTypeHint
+    revokeRemote: asOptionalBoolean(body.revokeRemote, "revokeRemote"),
+    tokenTypeHint: asTokenTypeHint(body.tokenTypeHint)
   };
+}
+
+async function parseJsonBody(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new Error("disconnect body must be valid JSON");
+  }
+}
+
+function asOptionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`${field} must be a boolean`);
+  }
+  return value;
+}
+
+function asTokenTypeHint(value: unknown): "access_token" | "refresh_token" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "access_token" || value === "refresh_token") {
+    return value;
+  }
+  throw new Error("tokenTypeHint must be access_token or refresh_token");
 }

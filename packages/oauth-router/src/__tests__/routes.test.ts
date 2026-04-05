@@ -245,6 +245,37 @@ describe("oauth-router route factories", () => {
     expect(connectionRoutes.map((route) => route.meta?.auth?.mode)).toEqual(["hybrid", "none", "hybrid"]);
   });
 
+  it("preserves resolver-provided requestId when the start header is absent", async () => {
+    const { service, start } = createFlowServiceMocks();
+    const routes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async () => ({
+        providerId: "google",
+        tenantId: "tenant_1",
+        userId: "user_1",
+        redirectUri: "https://app.example/callback",
+        requestId: "req_from_resolver"
+      })
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/oauth/connections/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "req_from_resolver"
+      })
+    );
+  });
+
   it("derives callback redirectUri from the current request URL when none is provided explicitly", async () => {
     const { service, handleCallback } = createFlowServiceMocks();
     const routes = createOAuthBrowserRoutes({
@@ -285,5 +316,29 @@ describe("oauth-router route factories", () => {
     await expect(
       router.handle(new Request("https://app.example/auth/social/callback/google"))
     ).rejects.toThrow("redirectUri");
+  });
+
+  it("rejects invalid disconnect payload fields before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    await expect(
+      router.handle(
+        new Request("http://localhost/oauth/connections/disconnect/google", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            connectionId: "conn_01",
+            revokeRemote: "false"
+          })
+        })
+      )
+    ).rejects.toThrow("revokeRemote");
+    expect(disconnect).not.toHaveBeenCalled();
   });
 });

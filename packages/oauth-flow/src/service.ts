@@ -433,29 +433,21 @@ class DefaultOAuthFlowService implements OAuthFlowService {
 
   async handleCallback(input: OAuthFlowCallbackInput): Promise<OAuthFlowCallbackResult> {
     const requestId = input.requestId ?? randomUUID();
-    const statePreview = await this.config.stateStore.get(input.state);
-    const providerId = input.providerId ?? statePreview?.providerId;
-    const subjectPreview = statePreview ? toFlowSubject(statePreview) : undefined;
-
-    if (!providerId) {
-      const error = new OAuthFlowError("OAUTH_STATE_INVALID", "OAuth state is invalid or expired", {
-        status: 400,
-        retryable: false
-      });
-      this.emitEvent({
-        name: "oauth.flow.callback.failed",
-        requestId,
-        providerId: input.providerId ?? "unknown",
-        at: this.now().toISOString(),
-        ok: false,
-        subjectKind: subjectPreview?.kind,
-        connectionId: subjectPreview?.connectionId,
-        errorCode: error.code
-      });
-      throw error;
-    }
+    let providerId = input.providerId;
+    let subjectPreview: OAuthFlowSubject | undefined;
 
     try {
+      const statePreview = await this.config.stateStore.get(input.state);
+      providerId = input.providerId ?? statePreview?.providerId;
+      subjectPreview = statePreview ? toFlowSubject(statePreview) : undefined;
+
+      if (!providerId) {
+        throw new OAuthFlowError("OAUTH_STATE_INVALID", "OAuth state is invalid or expired", {
+          status: 400,
+          retryable: false
+        });
+      }
+
       const tokenSet = await this.coreService.handleCallback({
         providerId,
         code: input.code,
