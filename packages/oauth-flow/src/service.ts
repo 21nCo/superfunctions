@@ -665,7 +665,12 @@ class DefaultOAuthFlowService implements OAuthFlowService {
           prompt: undefined,
           loginHint: undefined
         });
-        const tokenToRevoke = tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken;
+        const tokenToRevoke =
+          input.tokenTypeHint === "access_token"
+            ? tokenRecord.tokenSet.accessToken ?? tokenRecord.tokenSet.refreshToken
+            : input.tokenTypeHint === "refresh_token"
+              ? tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken
+              : tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken;
         try {
           await revokeToken({
             provider,

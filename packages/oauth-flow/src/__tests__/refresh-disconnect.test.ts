@@ -518,4 +518,23 @@ describe("oauth-flow refresh/disconnect lifecycle", () => {
       })
     );
   });
+
+  it("disconnect() honors tokenTypeHint when choosing which token to revoke", async () => {
+    const { service, tokenHttpClient } = createHarness();
+    await seedConnection(service, "conn_8");
+
+    await service.disconnect({
+      connectionId: "conn_8",
+      providerId: "google",
+      revokeRemote: true,
+      tokenTypeHint: "access_token",
+    });
+
+    expect(tokenHttpClient.revokeToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: "access-old",
+        tokenTypeHint: "access_token",
+      })
+    );
+  });
 });
