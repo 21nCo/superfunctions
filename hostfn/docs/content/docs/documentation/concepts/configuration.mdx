@@ -69,16 +69,16 @@ The application name. Used to derive the remote directory (`/var/www/{name}-{env
 
 ### `runtime` (required)
 
-The application runtime. Currently supported values:
+The application runtime. Currently, HostFn executes the `nodejs` runtime. Other values are reserved in the schema for future adapters:
 
 | Value | Description |
 |---|---|
 | `nodejs` | Node.js application |
-| `python` | Python (planned) |
-| `go` | Go (planned) |
-| `ruby` | Ruby (planned) |
-| `rust` | Rust (planned) |
-| `docker` | Docker (planned) |
+| `python` | Planned |
+| `go` | Planned |
+| `ruby` | Planned |
+| `rust` | Planned |
+| `docker` | Planned |
 
 ### `version` (required)
 
@@ -176,11 +176,11 @@ Controls post-deployment health verification.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `path` | `string` | `"/health"` | HTTP path to check |
-| `timeout` | `number` | `60` | Overall timeout in seconds |
+| `timeout` | `number` | `60` | Per-attempt curl timeout in seconds |
 | `retries` | `number` | `10` | Number of health check attempts |
 | `interval` | `number` | `3` | Seconds between retries |
 
-HostFn uses `curl` on the server to check `http://localhost:{port}{path}`. A `200-299` status code is considered healthy.
+HostFn uses `curl --max-time {timeout} -sf` on the server to check `http://localhost:{port}{path}`. Success follows curl's `-f` exit-code behavior rather than an explicit `200-299` status check in HostFn itself.
 
 ## Environment Variables Configuration
 

@@ -49,7 +49,7 @@ HostFn backs up the files needed to restore a working deployment:
 
 Items that are **not** backed up:
 
-- `node_modules/` -- too large; dependencies are reinstalled on rollback if needed
+- `node_modules/` -- too large; rollback restores `dist/` only, so reinstall dependencies manually if your deployment state changed
 - `.env` files -- environment variables are managed separately
 - Nginx configuration -- server configuration is independent of deployments
 

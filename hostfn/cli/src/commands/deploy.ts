@@ -16,6 +16,14 @@ import { HostfnConfig, EnvironmentConfig } from '../config/schema.js';
 import { PM2Manager } from '../runtimes/nodejs/pm2.js';
 import { WorkspaceManager } from '../core/workspace.js';
 
+function matchesLocalExclude(relativePath: string, pattern: string): boolean {
+  if (pattern.startsWith('/')) {
+    return relativePath.startsWith(pattern);
+  }
+
+  return relativePath.includes(pattern);
+}
+
 interface DeployOptions {
   host?: string;
   ci: boolean;
@@ -408,7 +416,7 @@ async function deploySingleService(
         workspaceManager.rewritePackageJson(sourceDir, bundleDir);
 
         bundleSpinner.text = 'Generating lockfile...';
-        await workspaceManager.generateLockfile(bundleDir);
+        await workspaceManager.generateLockfile(bundleDir, sourceDir);
         
         bundleSpinner.succeed('Workspace dependencies bundled');
         Logger.br();
@@ -424,19 +432,22 @@ async function deploySingleService(
     if (options.local) {
       // Local mode: copy files directly
       const syncSpinner = ora('Copying files locally...').start();
+      const rawExcludes = config.sync?.exclude || [
+        'node_modules',
+        '.git',
+        'dist',
+        '.env',
+        '*.log',
+      ];
+      const localExcludes = bundleDir
+        ? rawExcludes.map((pattern) => pattern === 'dist' ? '/dist' : pattern)
+        : rawExcludes;
       
       cpSync(actualSourceDir, remoteDir, {
         recursive: true,
         filter: (src) => {
           const relativePath = src.replace(actualSourceDir, '');
-          const excludePatterns = config.sync?.exclude || [
-            'node_modules',
-            '.git',
-            'dist',
-            '.env',
-            '*.log',
-          ];
-          return !excludePatterns.some(pattern => relativePath.includes(pattern));
+          return !localExcludes.some((pattern) => matchesLocalExclude(relativePath, pattern));
         },
       });
       
@@ -488,15 +499,21 @@ async function deploySingleService(
     const needsDevDeps = !!config.build?.command;
     const hasWorkspaceDeps = !!bundleDir;
 
-    // --ignore-scripts: prevents postinstall scripts running on the server
-    // (avoids platform-specific binary issues like esbuild in drizzle-kit).
+    // --ignore-scripts is only applied to workspace bundles, where we already
+    // generated a lockfile locally and want to avoid server-side postinstall hooks
+    // mutating the bundled workspace tree.
     // npm ci: used when a lockfile is present (workspace bundles always have one,
     // generated locally). npm ci is fast (cache extraction, no resolution) and
     // deletes+reinstalls node_modules cleanly — no stale state possible.
     const useCi = hasLockFile;
+    const ignoreScriptsFlag = hasWorkspaceDeps ? ' --ignore-scripts' : '';
     const installCmd = useCi
-      ? (needsDevDeps ? 'npm ci --install-links --ignore-scripts' : 'npm ci --production --install-links --ignore-scripts')
-      : (needsDevDeps ? 'npm install --install-links --ignore-scripts' : 'npm install --production --install-links --ignore-scripts');
+      ? (needsDevDeps
+          ? `npm ci --install-links${ignoreScriptsFlag}`
+          : `npm ci --production --install-links${ignoreScriptsFlag}`)
+      : (needsDevDeps
+          ? `npm install --install-links${ignoreScriptsFlag}`
+          : `npm install --production --install-links${ignoreScriptsFlag}`);
     
     const installResult = await ssh.exec(
       installCmd,
@@ -665,8 +682,9 @@ EOF`);
 
     const healthSpinner = ora('Waiting for service to be ready...').start();
     const healthPath = config.health?.path || '/health';
+    const timeout = config.health?.timeout || 60;
     const retries = config.health?.retries || 10;
-    const interval = config.health?.interval || 3000;
+    const interval = config.health?.interval || 3;
     
     let healthy = false;
     for (let i = 0; i < retries; i++) {
@@ -674,7 +692,7 @@ EOF`);
       
       // Check health via SSH using curl on localhost
       const healthCheckResult = await ssh.exec(
-        `curl -sf http://localhost:${envConfig.port}${healthPath}`,
+        `curl --max-time ${timeout} -sf http://localhost:${envConfig.port}${healthPath}`,
         { cwd: remoteDir, streaming: false }
       );
       
@@ -685,7 +703,7 @@ EOF`);
       }
       
       if (i < retries - 1) {
-        await new Promise(resolve => setTimeout(resolve, interval));
+        await new Promise(resolve => setTimeout(resolve, interval * 1000));
       }
     }
     

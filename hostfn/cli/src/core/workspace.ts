@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, cpSync, mkdirSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, relative, sep } from 'path';
 import { Logger } from '../utils/logger.js';
 
 interface PackageJson {
@@ -133,7 +133,7 @@ export class WorkspaceManager {
     }
   }
 
-  async generateLockfile(targetDir: string): Promise<void> {
+  async generateLockfile(targetDir: string, servicePath?: string): Promise<void> {
     const { execSync } = await import('child_process');
     const pkgJsonPath = join(targetDir, 'package.json');
 
@@ -154,26 +154,17 @@ export class WorkspaceManager {
           originalPkgJson = readFileSync(pkgJsonPath, 'utf-8');
           const pkg = JSON.parse(originalPkgJson);
 
-          // Build a lookup from package name → resolved version in the root lockfile.
-          // Skip npm alias packages (where the lockfile entry's `name` field differs
-          // from the path-derived name, e.g. `string-width-cjs` → `string-width`).
-          const rootVersions: Record<string, string> = {};
-          for (const [pkgPath, pkgEntry] of Object.entries(
-            (rootLockfile.packages || {}) as Record<string, { version?: string; name?: string }>
-          )) {
-            const match = pkgPath.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)$/);
-            if (match && pkgEntry.version) {
-              const pkgName = match[1];
-              if (pkgEntry.name !== undefined && pkgEntry.name !== pkgName) continue;
-              rootVersions[pkgName] = pkgEntry.version;
-            }
-          }
-
           // Replace semver ranges in direct deps with the exact resolved version.
           // This prevents npm from upgrading direct deps when generating the lockfile.
           for (const depGroup of ['dependencies', 'devDependencies'] as const) {
             for (const depName of Object.keys(pkg[depGroup] || {})) {
-              const exactVersion = rootVersions[depName];
+              const declaredVersion = pkg[depGroup]![depName];
+              const exactVersion = this.getResolvedVersionForDependency(
+                rootLockfile.packages || {},
+                servicePath,
+                depName,
+                declaredVersion,
+              );
               if (exactVersion) {
                 pkg[depGroup]![depName] = exactVersion;
               }
@@ -248,5 +239,88 @@ export class WorkspaceManager {
 
   isInWorkspace(): boolean {
     return this.workspaceRoot !== null;
+  }
+
+  private getResolvedVersionForDependency(
+    lockfilePackages: Record<string, { version?: string; name?: string }>,
+    servicePath: string | undefined,
+    depName: string,
+    declaredRange: string,
+  ): string | null {
+    const candidatePaths = this.getDependencyCandidatePaths(servicePath, depName);
+
+    for (const candidatePath of candidatePaths) {
+      const pkgEntry = lockfilePackages[candidatePath];
+      if (!pkgEntry?.version) continue;
+      if (pkgEntry.name !== undefined && pkgEntry.name !== depName) continue;
+      if (!this.isResolvedVersionCompatible(declaredRange, pkgEntry.version)) continue;
+      return pkgEntry.version;
+    }
+
+    return null;
+  }
+
+  private getDependencyCandidatePaths(servicePath: string | undefined, depName: string): string[] {
+    const candidates: string[] = [];
+
+    if (this.workspaceRoot && servicePath) {
+      const relativeServicePath = relative(this.workspaceRoot, servicePath).split(sep).join('/');
+      if (relativeServicePath && relativeServicePath !== '.') {
+        candidates.push(`${relativeServicePath}/node_modules/${depName}`);
+      }
+    }
+
+    candidates.push(`node_modules/${depName}`);
+    return candidates;
+  }
+
+  private isResolvedVersionCompatible(declaredRange: string, resolvedVersion: string): boolean {
+    const normalizedRange = declaredRange.startsWith('workspace:')
+      ? declaredRange.slice('workspace:'.length)
+      : declaredRange;
+
+    if (normalizedRange === '' || normalizedRange === '*') {
+      return true;
+    }
+
+    const resolved = this.parseVersion(resolvedVersion);
+    const expected = this.parseVersion(normalizedRange.replace(/^[~^]/, ''));
+    if (!resolved || !expected) {
+      return false;
+    }
+
+    if (normalizedRange.startsWith('^')) {
+      return resolved.major === expected.major && this.compareVersions(resolved, expected) >= 0;
+    }
+
+    if (normalizedRange.startsWith('~')) {
+      return (
+        resolved.major === expected.major &&
+        resolved.minor === expected.minor &&
+        this.compareVersions(resolved, expected) >= 0
+      );
+    }
+
+    return this.compareVersions(resolved, expected) === 0;
+  }
+
+  private parseVersion(version: string): { major: number; minor: number; patch: number } | null {
+    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+    if (!match) return null;
+
+    return {
+      major: Number(match[1]),
+      minor: Number(match[2]),
+      patch: Number(match[3]),
+    };
+  }
+
+  private compareVersions(
+    left: { major: number; minor: number; patch: number },
+    right: { major: number; minor: number; patch: number },
+  ): number {
+    if (left.major !== right.major) return left.major - right.major;
+    if (left.minor !== right.minor) return left.minor - right.minor;
+    return left.patch - right.patch;
   }
 }

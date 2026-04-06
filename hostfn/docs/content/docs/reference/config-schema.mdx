@@ -173,7 +173,7 @@ Controls post-deployment health check behavior. If omitted, defaults are used.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `path` | `string` | No | `"/health"` | HTTP path to check on the application (e.g., `"/health"`, `"/api/status"`). |
-| `timeout` | `number` | No | `60` | Overall timeout in seconds. |
+| `timeout` | `number` | No | `60` | Per-attempt curl timeout in seconds. |
 | `retries` | `number` | No | `10` | Number of health check attempts before declaring failure. |
 | `interval` | `number` | No | `3` | Seconds to wait between health check attempts. |
 
@@ -192,7 +192,7 @@ Declares which environment variables the application expects. Used by `hostfn en
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `required` | `string[]` | No | `[]` | Environment variables that must be set. Deployment warnings if missing. |
+| `required` | `string[]` | No | `[]` | Environment variables that must be set. `hostfn env validate` exits with an error if any are missing. |
 | `optional` | `string[]` | No | `[]` | Environment variables that may be set. Informational only. |
 
 ## Sync

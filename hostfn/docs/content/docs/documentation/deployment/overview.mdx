@@ -1,11 +1,11 @@
 ---
 title: Deployment Overview
-description: Understand HostFn's 7-phase deployment lifecycle, from pre-flight checks to cleanup, with automatic rollback on failure.
+description: Understand HostFn's 8-phase deployment lifecycle, from pre-flight checks to cleanup, with automatic rollback on failure.
 ---
 
-HostFn deploys your application through a structured 7-phase lifecycle. Each phase has a clear responsibility, and if anything fails after a backup has been created, HostFn automatically rolls back to the previous working deployment.
+HostFn deploys your application through a structured 8-phase lifecycle. Each phase has a clear responsibility, and if anything fails after a backup has been created, HostFn automatically rolls back to the previous working deployment.
 
-## The 7-Phase Deployment Lifecycle
+## The 8-Phase Deployment Lifecycle
 
 Every `hostfn deploy` execution follows this sequence:
 
@@ -65,7 +65,7 @@ HostFn installs dependencies and runs your build command on the server.
 
 ### Phase 5: Backup
 
-Before the PM2 process is modified, HostFn creates a timestamped backup of the current deployment's `dist/` directory and `package.json`. Backups are stored at `/var/www/{name}-{env}/backups/`.
+Before the PM2 process is modified, HostFn creates a timestamped backup of the current deployment's `dist/` directory and best-effort copies `package.json`. Backups are stored at `/var/www/{name}-{env}/backups/`.
 
 If this is the first deployment (no existing `dist/` directory), the backup step is skipped.
 
@@ -86,7 +86,7 @@ After the service is started, HostFn polls the health endpoint using `curl` on t
 curl -sf http://localhost:{port}{healthPath}
 ```
 
-The check retries up to `health.retries` times (default: 10) with `health.interval` seconds (default: 3) between attempts. A `2xx` response means the service is healthy.
+The check retries up to `health.retries` times (default: 10) with `health.interval` seconds (default: 3) between attempts. Each curl request also uses `health.timeout` as its per-attempt timeout. Success follows curl's `-f` exit-code behavior.
 
 If all retries are exhausted without a healthy response, the deployment is considered failed and triggers an automatic rollback.
 
@@ -124,7 +124,7 @@ Rollback only applies when there is a previous deployment to restore. First-time
 
 ## Deployment Lock
 
-HostFn uses a lock file on the server to prevent concurrent deployments to the same application and environment. If another deployment is already in progress, the lock acquisition will fail and the deployment will abort. The lock is always released in the `finally` block, even if the deployment fails.
+HostFn uses a lock file on the server to prevent concurrent deployments to the same application and environment. If another deployment is already in progress, the lock acquisition will fail and the deployment will abort. The lock is released in the `finally` block whenever the deploy process can still run cleanup.
 
 ## Typical Deployment Output
 

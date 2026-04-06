@@ -195,7 +195,7 @@ jobs:
 
 ### Deploy on Changed Paths
 
-To deploy services only when their code changes, use path filters:
+To deploy services only when their code changes, use workflow path filters or a changed-files action instead of checking `github.event.head_commit.modified` directly:
 
 ```yaml title=".github/workflows/deploy-on-change.yml"
 name: Deploy Changed Services
@@ -205,9 +205,26 @@ on:
     branches: [main]
 
 jobs:
-  deploy-account:
+  changes:
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'services/account/')
+    outputs:
+      account: ${{ steps.filter.outputs.account }}
+      auth: ${{ steps.filter.outputs.auth }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            account:
+              - 'services/account/**'
+            auth:
+              - 'services/auth/**'
+
+  deploy-account:
+    needs: changes
+    runs-on: ubuntu-latest
+    if: needs.changes.outputs.account == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -221,8 +238,9 @@ jobs:
         run: hostfn deploy production --ci --service account
 
   deploy-auth:
+    needs: changes
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'services/auth/')
+    if: needs.changes.outputs.auth == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
