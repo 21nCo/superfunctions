@@ -133,4 +133,38 @@ describe('webhooks package exports', () => {
       error: 'The operation was aborted.',
     });
   });
+
+  it('canonicalizes content-type and signature headers before delivery', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      return {
+        ok: true,
+        status: 200,
+        headers: init?.headers,
+      } as Response;
+    });
+
+    await deliverWebhook(
+      {
+        url: 'https://example.com/hook',
+        payload: { hello: 'world' },
+        secret: 'whsec_test',
+        signatureHeader: 'X-Webhook-Signature',
+        headers: {
+          'content-type': 'application/cloudevents+json',
+          'x-webhook-signature': 'stale-signature',
+        },
+      },
+      {
+        fetch: fetchMock as unknown as typeof globalThis.fetch,
+      }
+    );
+
+    const sentHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(sentHeaders).toMatchObject({
+      'Content-Type': 'application/cloudevents+json',
+      'X-Webhook-Signature': expect.any(String),
+    });
+    expect(Object.keys(sentHeaders)).not.toContain('content-type');
+    expect(Object.keys(sentHeaders)).not.toContain('x-webhook-signature');
+  });
 });

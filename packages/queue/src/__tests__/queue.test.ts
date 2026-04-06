@@ -91,4 +91,25 @@ describe('queue adapters', () => {
 
     await expect(adapter.enqueue('jobs', { id: 'job_1' })).rejects.toThrow('The operation was aborted.');
   });
+
+  it('flowfn adapter normalizes a trailing slash in baseUrl', async () => {
+    const calls: string[] = [];
+    const adapter = new FlowFnQueueAdapter<{ id: string }>({
+      baseUrl: 'https://flowfn.example.com/',
+      apiKey: 'flowfn-key',
+      fetch: (async (url) => {
+        calls.push(String(url));
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({}),
+        } as Response;
+      }) as typeof globalThis.fetch,
+    });
+
+    await adapter.enqueue('jobs', { id: 'job_1' });
+
+    expect(calls).toEqual(['https://flowfn.example.com/queues/jobs/enqueue']);
+  });
 });

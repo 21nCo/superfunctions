@@ -81,6 +81,19 @@ export type WebhookDeliveryOptions = {
   perAttemptTimeoutMs?: number;
 };
 
+function findHeaderKey(headers: Record<string, string>, headerName: string): string | undefined {
+  const target = headerName.toLowerCase();
+  return Object.keys(headers).find((key) => key.toLowerCase() === target);
+}
+
+function setCanonicalHeader(headers: Record<string, string>, headerName: string, value: string): void {
+  const existingKey = findHeaderKey(headers, headerName);
+  if (existingKey && existingKey !== headerName) {
+    delete headers[existingKey];
+  }
+  headers[headerName] = value;
+}
+
 export async function deliverWebhook(
   input: WebhookDeliveryInput,
   options: WebhookDeliveryOptions = {}
@@ -118,13 +131,20 @@ export async function deliverWebhook(
       ],
     };
   }
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(input.headers ?? {}),
-  };
+  const headers: Record<string, string> = { ...(input.headers ?? {}) };
+
+  if (!findHeaderKey(headers, 'Content-Type')) {
+    headers['Content-Type'] = 'application/json';
+  } else {
+    setCanonicalHeader(headers, 'Content-Type', headers[findHeaderKey(headers, 'Content-Type')] ?? 'application/json');
+  }
 
   if (input.secret) {
-    headers[input.signatureHeader ?? 'X-Webhook-Signature'] = signWebhookPayload(payloadString, input.secret);
+    setCanonicalHeader(
+      headers,
+      input.signatureHeader ?? 'X-Webhook-Signature',
+      signWebhookPayload(payloadString, input.secret)
+    );
   }
 
   const attempts: WebhookDeliveryAttempt[] = [];

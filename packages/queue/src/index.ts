@@ -68,6 +68,10 @@ export interface FlowFnQueueAdapterConfig {
   timeoutMs?: number;
 }
 
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '');
+}
+
 function encodeQueueName(queueName: string): string {
   return encodeURIComponent(normalizeQueueName(queueName));
 }
@@ -75,15 +79,17 @@ function encodeQueueName(queueName: string): string {
 export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly fetcher: typeof globalThis.fetch;
   private readonly timeoutMs: number;
+  private readonly baseUrl: string;
 
   constructor(private readonly config: FlowFnQueueAdapterConfig) {
     this.fetcher = config.fetch ?? globalThis.fetch;
     this.timeoutMs = Math.max(0, config.timeoutMs ?? 15_000);
+    this.baseUrl = normalizeBaseUrl(config.baseUrl);
   }
 
   async enqueue(queueName: string, payload: TPayload): Promise<void> {
     const encodedQueueName = encodeQueueName(queueName);
-    const response = await this.fetchWithTimeout(`${this.config.baseUrl}/queues/${encodedQueueName}/enqueue`, {
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/queues/${encodedQueueName}/enqueue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -99,7 +105,7 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
 
   async dequeue(queueName: string): Promise<TPayload | null> {
     const encodedQueueName = encodeQueueName(queueName);
-    const response = await this.fetchWithTimeout(`${this.config.baseUrl}/queues/${encodedQueueName}/dequeue`, {
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/queues/${encodedQueueName}/dequeue`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
