@@ -86,11 +86,17 @@ function findHeaderKey(headers: Record<string, string>, headerName: string): str
   return Object.keys(headers).find((key) => key.toLowerCase() === target);
 }
 
-function setCanonicalHeader(headers: Record<string, string>, headerName: string, value: string): void {
-  const existingKey = findHeaderKey(headers, headerName);
-  if (existingKey && existingKey !== headerName) {
-    delete headers[existingKey];
+function deleteHeaderVariants(headers: Record<string, string>, headerName: string): void {
+  const target = headerName.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === target) {
+      delete headers[key];
+    }
   }
+}
+
+function setCanonicalHeader(headers: Record<string, string>, headerName: string, value: string): void {
+  deleteHeaderVariants(headers, headerName);
   headers[headerName] = value;
 }
 
@@ -133,11 +139,12 @@ export async function deliverWebhook(
   }
   const headers: Record<string, string> = { ...(input.headers ?? {}) };
 
-  if (!findHeaderKey(headers, 'Content-Type')) {
-    headers['Content-Type'] = 'application/json';
-  } else {
-    setCanonicalHeader(headers, 'Content-Type', headers[findHeaderKey(headers, 'Content-Type')] ?? 'application/json');
-  }
+  const existingContentType = headers[findHeaderKey(headers, 'Content-Type') ?? ''] ?? undefined;
+  const normalizedContentType =
+    typeof existingContentType === 'string' && existingContentType.toLowerCase().includes('json')
+      ? existingContentType
+      : 'application/json';
+  setCanonicalHeader(headers, 'Content-Type', normalizedContentType);
 
   if (input.secret) {
     setCanonicalHeader(

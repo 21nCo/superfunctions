@@ -151,7 +151,9 @@ describe('webhooks package exports', () => {
         signatureHeader: 'X-Webhook-Signature',
         headers: {
           'content-type': 'application/cloudevents+json',
+          'Content-Type': 'application/problem+json',
           'x-webhook-signature': 'stale-signature',
+          'X-WEBHOOK-SIGNATURE': 'staler-signature',
         },
       },
       {
@@ -164,7 +166,35 @@ describe('webhooks package exports', () => {
       'Content-Type': 'application/cloudevents+json',
       'X-Webhook-Signature': expect.any(String),
     });
-    expect(Object.keys(sentHeaders)).not.toContain('content-type');
-    expect(Object.keys(sentHeaders)).not.toContain('x-webhook-signature');
+    expect(Object.keys(sentHeaders).filter((key) => key.toLowerCase() === 'content-type')).toEqual(['Content-Type']);
+    expect(Object.keys(sentHeaders).filter((key) => key.toLowerCase() === 'x-webhook-signature')).toEqual([
+      'X-Webhook-Signature',
+    ]);
+  });
+
+  it('forces application/json when caller supplies a non-json content type', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      return {
+        ok: true,
+        status: 200,
+        headers: init?.headers,
+      } as Response;
+    });
+
+    await deliverWebhook(
+      {
+        url: 'https://example.com/hook',
+        payload: { hello: 'world' },
+        headers: {
+          'content-type': 'text/plain',
+        },
+      },
+      {
+        fetch: fetchMock as unknown as typeof globalThis.fetch,
+      }
+    );
+
+    const sentHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(sentHeaders['Content-Type']).toBe('application/json');
   });
 });
