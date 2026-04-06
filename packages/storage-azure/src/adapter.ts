@@ -65,12 +65,14 @@ function decodeUploadId(uploadId: string): AzureMultipartUploadId {
       };
     }
   } catch {
-    if (decoded.length > 0) {
-      return {
-        key: decoded,
-        sessionId: uploadId,
-      };
-    }
+    // Fall through to support legacy uploadIds that were just base64(key).
+  }
+
+  if (decoded.length > 0) {
+    return {
+      key: decoded,
+      sessionId: uploadId,
+    };
   }
 
   throw new Error('Invalid Azure multipart uploadId');
@@ -202,7 +204,9 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
 
       const url = `${blockBlobClient.url}?${sasToken}`;
 
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = {
+        'x-ms-blob-type': 'BlockBlob',
+      };
       if (input.constraints?.contentType) {
         headers['x-ms-blob-content-type'] = input.constraints.contentType;
       }

@@ -124,6 +124,26 @@ describe('storage-azure adapter', () => {
 
       expect(first.uploadId).not.toBe(second.uploadId);
     });
+
+    it('still accepts legacy base64(key) uploadIds even when the key is valid JSON', async () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        accountKey: 'dGVzdGtleQ==',
+      });
+
+      const key = 'null';
+      const legacyUploadId = Buffer.from(key).toString('base64');
+
+      const part = await adapter.signMultipartUploadPartUrl!({
+        key,
+        uploadId: legacyUploadId,
+        partNumber: 1,
+        expiresInSeconds: 900,
+      });
+
+      expect(part.url).toContain('blockid=');
+    });
   });
 
   describe('signed URL methods', () => {
@@ -151,6 +171,23 @@ describe('storage-azure adapter', () => {
           expiresInSeconds: 900,
         });
       }).rejects.toThrow('SAS URL generation requires accountName and credential (accountKey)');
+    });
+
+    it('returns the required blob type header for signed uploads', async () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        accountKey: 'dGVzdGtleQ==',
+      });
+
+      const result = await adapter.signUploadUrl!({
+        key: 'test.txt',
+        expiresInSeconds: 900,
+      });
+
+      expect(result.headers).toMatchObject({
+        'x-ms-blob-type': 'BlockBlob',
+      });
     });
 
     it('disables signed-url capabilities when only a SAS token is configured', () => {
