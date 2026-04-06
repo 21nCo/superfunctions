@@ -341,4 +341,28 @@ describe("oauth-router route factories", () => {
     ).rejects.toThrow("revokeRemote");
     expect(disconnect).not.toHaveBeenCalled();
   });
+
+  it("rejects invalid browser disconnect payload fields before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    await expect(
+      router.handle(
+        new Request("http://localhost/auth/social/disconnect/google", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            connectionId: "conn_01",
+            tokenTypeHint: "bad_hint"
+          })
+        })
+      )
+    ).rejects.toThrow("tokenTypeHint");
+    expect(disconnect).not.toHaveBeenCalled();
+  });
 });
