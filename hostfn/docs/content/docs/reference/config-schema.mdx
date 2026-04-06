@@ -118,7 +118,7 @@ The `environments` object maps environment names (e.g., `"production"`, `"stagin
 | `server` | `string` | Yes | -- | SSH connection string. Format: `user@host` or `user@host:port`. |
 | `port` | `number` | Yes | -- | Port the application listens on. Must be a positive integer. |
 | `instances` | `number \| "max"` | No | `1` | Number of PM2 cluster instances. Set to `"max"` to use all available CPU cores. |
-| `domain` | `string \| string[]` | No | -- | Domain name(s) for Nginx reverse proxy and SSL certificates. Can be a single string or an array of strings. |
+| `domain` | `string \| string[]` | No | -- | Domain name(s) for Nginx reverse proxy and SSL certificates. It can be a single string or an array of strings. |
 | `sslEmail` | `string` | No | -- | Email address for Let's Encrypt certificate registration. Required if using SSL. |
 
 ## Build
@@ -263,7 +263,7 @@ For monorepo deployments, the `services` object defines individual services with
 |---|---|---|---|---|
 | `port` | `number` | Yes | -- | Port this service listens on. Must be a positive integer. |
 | `path` | `string` | Yes | -- | Path to the service within the monorepo (relative to project root). |
-| `domain` | `string \| string[]` | No | -- | Domain name(s) for this service. Can be a single string or array. |
+| `domain` | `string \| string[]` | No | -- | Domain name(s) for this service. It can be a single string or an array. |
 | `exposePath` | `string` | No | -- | Nginx path prefix for this service (e.g., `"/api"`, `"/docs"`). |
 | `server` | `string` | No | Environment server | Override server for this service. Defaults to the environment's `server` field. |
 | `instances` | `number \| "max"` | No | -- | PM2 cluster instances for this service. |

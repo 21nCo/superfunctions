@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, cpSync, mkdirSync } from 'fs';
 import { join, dirname, resolve, relative, sep } from 'path';
+import { valid, validRange, satisfies } from 'semver';
 import { Logger } from '../utils/logger.js';
 
 interface PackageJson {
@@ -214,7 +215,7 @@ export class WorkspaceManager {
     if (pkg.devDependencies) {
       for (const depName of workspaceDeps) {
         if (pkg.devDependencies[depName]) {
-          delete pkg.devDependencies[depName];
+          pkg.devDependencies[depName] = `file:./__workspace__/${depName}`;
         }
       }
     }
@@ -283,44 +284,13 @@ export class WorkspaceManager {
       return true;
     }
 
-    const resolved = this.parseVersion(resolvedVersion);
-    const expected = this.parseVersion(normalizedRange.replace(/^[~^]/, ''));
-    if (!resolved || !expected) {
+    const validResolvedVersion = valid(resolvedVersion);
+    const validResolvedRange = validRange(normalizedRange);
+
+    if (!validResolvedVersion || !validResolvedRange) {
       return false;
     }
 
-    if (normalizedRange.startsWith('^')) {
-      return resolved.major === expected.major && this.compareVersions(resolved, expected) >= 0;
-    }
-
-    if (normalizedRange.startsWith('~')) {
-      return (
-        resolved.major === expected.major &&
-        resolved.minor === expected.minor &&
-        this.compareVersions(resolved, expected) >= 0
-      );
-    }
-
-    return this.compareVersions(resolved, expected) === 0;
-  }
-
-  private parseVersion(version: string): { major: number; minor: number; patch: number } | null {
-    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
-    if (!match) return null;
-
-    return {
-      major: Number(match[1]),
-      minor: Number(match[2]),
-      patch: Number(match[3]),
-    };
-  }
-
-  private compareVersions(
-    left: { major: number; minor: number; patch: number },
-    right: { major: number; minor: number; patch: number },
-  ): number {
-    if (left.major !== right.major) return left.major - right.major;
-    if (left.minor !== right.minor) return left.minor - right.minor;
-    return left.patch - right.patch;
+    return satisfies(validResolvedVersion, validResolvedRange);
   }
 }

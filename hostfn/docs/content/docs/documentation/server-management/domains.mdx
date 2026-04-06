@@ -159,7 +159,7 @@ Log in to your DNS provider and create an **A record** pointing your domain to t
 |---|---|---|---|
 | A | `api.example.com` | `203.0.113.10` | 300 |
 
-For bare domains (e.g., `example.com`), some providers require an **ALIAS** or **ANAME** record instead of a regular A record. Check your DNS provider's documentation.
+For bare domains (e.g., `example.com`) pointing directly to a server IP, use an **A** record. ALIAS or ANAME records are only relevant when your DNS provider asks you to point the apex at another hostname instead of an IP.
 
 ### Step 3: Create Records for All Domains
 

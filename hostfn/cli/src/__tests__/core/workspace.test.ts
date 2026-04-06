@@ -38,6 +38,7 @@ describe('WorkspaceManager.generateLockfile', () => {
         dependencies: {
           commander: '^12.0.0',
           chalk: '^5.0.0',
+          'zero-lib': '^0.2.3',
         },
       }, null, 2),
     );
@@ -52,6 +53,8 @@ describe('WorkspaceManager.generateLockfile', () => {
           'node_modules/commander': { version: '4.1.1', name: 'commander' },
           'services/api/node_modules/commander': { version: '12.1.0', name: 'commander' },
           'node_modules/chalk': { version: '5.3.0', name: 'chalk' },
+          'node_modules/zero-lib': { version: '0.5.0', name: 'zero-lib' },
+          'services/api/node_modules/zero-lib': { version: '0.2.8', name: 'zero-lib' },
         },
       }, null, 2),
     );
@@ -63,6 +66,7 @@ describe('WorkspaceManager.generateLockfile', () => {
         dependencies: {
           commander: '^12.0.0',
           chalk: '^5.0.0',
+          'zero-lib': '^0.2.3',
         },
       }, null, 2),
     );
@@ -78,6 +82,7 @@ describe('WorkspaceManager.generateLockfile', () => {
       const pinnedPackageJson = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf-8'));
       expect(pinnedPackageJson.dependencies.commander).toBe('12.1.0');
       expect(pinnedPackageJson.dependencies.chalk).toBe('5.3.0');
+      expect(pinnedPackageJson.dependencies['zero-lib']).toBe('0.2.8');
     });
 
     const manager = new WorkspaceManager();
@@ -95,5 +100,81 @@ describe('WorkspaceManager.generateLockfile', () => {
     const restoredPackageJson = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf-8'));
     expect(restoredPackageJson.dependencies.commander).toBe('^12.0.0');
     expect(restoredPackageJson.dependencies.chalk).toBe('^5.0.0');
+    expect(restoredPackageJson.dependencies['zero-lib']).toBe('^0.2.3');
+  });
+});
+
+describe('WorkspaceManager.rewritePackageJson', () => {
+  let rootDir: string;
+  let serviceDir: string;
+  let toolingDir: string;
+  let targetDir: string;
+
+  beforeEach(async () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'hostfn-workspace-root-'));
+    serviceDir = join(rootDir, 'services', 'api');
+    toolingDir = join(rootDir, 'services', 'tooling');
+    targetDir = mkdtempSync(join(tmpdir(), 'hostfn-workspace-target-'));
+
+    mkdirSync(serviceDir, { recursive: true });
+    mkdirSync(toolingDir, { recursive: true });
+
+    writeFileSync(
+      join(rootDir, 'package.json'),
+      JSON.stringify({
+        private: true,
+        workspaces: ['services/*'],
+      }, null, 2),
+    );
+
+    writeFileSync(
+      join(toolingDir, 'package.json'),
+      JSON.stringify({
+        name: '@hostfn/tooling',
+        version: '1.0.0',
+      }, null, 2),
+    );
+
+    writeFileSync(
+      join(serviceDir, 'package.json'),
+      JSON.stringify({
+        name: '@hostfn/api',
+        dependencies: {
+          '@hostfn/tooling': 'workspace:*',
+        },
+        devDependencies: {
+          '@hostfn/tooling': 'workspace:*',
+        },
+      }, null, 2),
+    );
+
+    writeFileSync(
+      join(targetDir, 'package.json'),
+      JSON.stringify({
+        name: '@hostfn/api',
+        dependencies: {
+          '@hostfn/tooling': 'workspace:*',
+        },
+        devDependencies: {
+          '@hostfn/tooling': 'workspace:*',
+        },
+      }, null, 2),
+    );
+  });
+
+  afterEach(() => {
+    rmSync(rootDir, { recursive: true, force: true });
+    rmSync(targetDir, { recursive: true, force: true });
+  });
+
+  it('preserves workspace devDependencies as file references in the deployment bundle', async () => {
+    const manager = new WorkspaceManager();
+    await manager.detectWorkspace(serviceDir);
+
+    manager.rewritePackageJson(serviceDir, targetDir);
+
+    const rewrittenPackageJson = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf-8'));
+    expect(rewrittenPackageJson.dependencies['@hostfn/tooling']).toBe('file:./__workspace__/@hostfn/tooling');
+    expect(rewrittenPackageJson.devDependencies['@hostfn/tooling']).toBe('file:./__workspace__/@hostfn/tooling');
   });
 });

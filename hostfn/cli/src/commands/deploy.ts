@@ -16,14 +16,6 @@ import { HostfnConfig, EnvironmentConfig } from '../config/schema.js';
 import { PM2Manager } from '../runtimes/nodejs/pm2.js';
 import { WorkspaceManager } from '../core/workspace.js';
 
-function matchesLocalExclude(relativePath: string, pattern: string): boolean {
-  if (pattern.startsWith('/')) {
-    return relativePath.startsWith(pattern);
-  }
-
-  return relativePath.includes(pattern);
-}
-
 interface DeployOptions {
   host?: string;
   ci: boolean;
@@ -318,8 +310,16 @@ async function deploySingleService(
     Logger.section('Pre-flight Checks');
     Logger.br();
 
-    // For local mode, skip rsync and SSH connection
+    // Local mode still relies on rsync so include the same pre-flight check.
     if (options.local) {
+      const rsyncSpinner = ora('Checking rsync availability...').start();
+      const hasRsync = await FileSync.isRsyncAvailable();
+      if (!hasRsync) {
+        rsyncSpinner.fail('rsync not installed');
+        throw new Error('rsync is required for deployment. Please install it first.');
+      }
+      rsyncSpinner.succeed('rsync available');
+
       const localSpinner = ora('Initializing local deployment...').start();
       ssh = new LocalExecutor();
       localSpinner.succeed('Local mode ready');
@@ -430,7 +430,8 @@ async function deploySingleService(
     Logger.br();
 
     if (options.local) {
-      // Local mode: copy files directly
+      // Local mode: use rsync locally so include/exclude behavior stays aligned
+      // with the remote deploy path.
       const syncSpinner = ora('Copying files locally...').start();
       const rawExcludes = config.sync?.exclude || [
         'node_modules',
@@ -442,13 +443,11 @@ async function deploySingleService(
       const localExcludes = bundleDir
         ? rawExcludes.map((pattern) => pattern === 'dist' ? '/dist' : pattern)
         : rawExcludes;
-      
-      cpSync(actualSourceDir, remoteDir, {
-        recursive: true,
-        filter: (src) => {
-          const relativePath = src.replace(actualSourceDir, '');
-          return !localExcludes.some((pattern) => matchesLocalExclude(relativePath, pattern));
-        },
+
+      await FileSync.syncLocal(actualSourceDir, remoteDir, {
+        exclude: localExcludes,
+        include: config.sync?.include,
+        verbose: false,
       });
       
       syncSpinner.succeed('Files copied successfully');
@@ -472,6 +471,7 @@ async function deploySingleService(
         host,
         {
           exclude: syncExcludes,
+          include: config.sync?.include,
           verbose: false,
         }
       );
@@ -495,37 +495,39 @@ async function deploySingleService(
     );
     const hasLockFile = lockFileCheck.stdout.trim() === 'exists';
 
-    // If build command exists, install all dependencies (including dev); otherwise production only
-    const needsDevDeps = !!config.build?.command;
-    const hasWorkspaceDeps = !!bundleDir;
+    const nodeModulesMode =
+      config.build?.nodeModules ?? (config.build?.command ? 'all' : 'production');
 
-    // --ignore-scripts is only applied to workspace bundles, where we already
-    // generated a lockfile locally and want to avoid server-side postinstall hooks
-    // mutating the bundled workspace tree.
     // npm ci: used when a lockfile is present (workspace bundles always have one,
     // generated locally). npm ci is fast (cache extraction, no resolution) and
     // deletes+reinstalls node_modules cleanly — no stale state possible.
     const useCi = hasLockFile;
-    const ignoreScriptsFlag = hasWorkspaceDeps ? ' --ignore-scripts' : '';
-    const installCmd = useCi
-      ? (needsDevDeps
-          ? `npm ci --install-links${ignoreScriptsFlag}`
-          : `npm ci --production --install-links${ignoreScriptsFlag}`)
-      : (needsDevDeps
-          ? `npm install --install-links${ignoreScriptsFlag}`
-          : `npm install --production --install-links${ignoreScriptsFlag}`);
-    
-    const installResult = await ssh.exec(
-      installCmd,
-      { cwd: remoteDir, streaming: false }
-    );
-    
-    if (installResult.exitCode !== 0) {
-      installSpinner.fail('Dependency installation failed');
-      const errorOutput = installResult.stderr || installResult.stdout;
-      throw new Error(`${installCmd} failed: ${errorOutput}`);
+    const installCmd =
+      nodeModulesMode === 'none'
+        ? null
+        : useCi
+          ? (nodeModulesMode === 'all'
+              ? 'npm ci --install-links'
+              : 'npm ci --production --install-links')
+          : (nodeModulesMode === 'all'
+              ? 'npm install --install-links'
+              : 'npm install --production --install-links');
+
+    if (installCmd) {
+      const installResult = await ssh.exec(
+        installCmd,
+        { cwd: remoteDir, streaming: false }
+      );
+
+      if (installResult.exitCode !== 0) {
+        installSpinner.fail('Dependency installation failed');
+        const errorOutput = installResult.stderr || installResult.stdout;
+        throw new Error(`${installCmd} failed: ${errorOutput}`);
+      }
+      installSpinner.succeed('Dependencies installed');
+    } else {
+      installSpinner.info('Skipping dependency installation (build.nodeModules=none)');
     }
-    installSpinner.succeed('Dependencies installed');
 
     // Build application
     if (config.build?.command) {

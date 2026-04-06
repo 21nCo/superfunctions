@@ -37,7 +37,7 @@ HostFn expects the SSH private key to be **base64-encoded** in the `HOSTFN_SSH_K
 To encode your SSH key:
 
 ```bash
-cat ~/.ssh/id_rsa | base64
+base64 < ~/.ssh/id_rsa | tr -d '\n'
 ```
 
 Copy the output and store it as a secret in your CI platform (e.g., GitHub Actions secret named `SSH_PRIVATE_KEY`).
@@ -107,7 +107,7 @@ Add the following secrets in your repository settings (Settings > Secrets and va
 
 | Secret Name | Value |
 |---|---|
-| `SSH_PRIVATE_KEY` | Base64-encoded SSH private key (`cat ~/.ssh/id_rsa \| base64`) |
+| `SSH_PRIVATE_KEY` | Base64-encoded SSH private key (`base64 < ~/.ssh/id_rsa \| tr -d '\\n'`) |
 
 If your key has a passphrase, also add:
 

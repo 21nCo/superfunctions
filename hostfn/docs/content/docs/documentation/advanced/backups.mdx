@@ -7,16 +7,17 @@ HostFn creates a timestamped backup before each deployment, giving you a safety 
 
 ## How Backups Work
 
-During every deployment, HostFn creates a backup of the current `dist/` directory and `package.json` before replacing them with the new build. This happens in **Phase 4** of the deployment pipeline, after the build completes but before the PM2 process is restarted.
+During every deployment, HostFn creates a backup of the current `dist/` directory and `package.json` before replacing them with the new build. This happens in the backup phase of the deployment pipeline, after the build completes but before the PM2 process is restarted.
 
 ```
 Phase 1: Pre-flight Checks
 Phase 2: File Sync
 Phase 3: Remote Build
-Phase 4: Create Backup     ← backup happens here
-Phase 5: PM2 Deployment
-Phase 6: Health Check
-Phase 7: Cleanup
+Phase 4: Install Dependencies
+Phase 5: Create Backup     ← backup happens here
+Phase 6: PM2 Deployment
+Phase 7: Health Check
+Phase 8: Cleanup
 ```
 
 ## Backup Storage Location
