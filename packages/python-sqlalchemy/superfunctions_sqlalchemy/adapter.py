@@ -1,5 +1,6 @@
 """SQLAlchemy adapter implementation."""
 
+import inspect
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -509,7 +510,8 @@ class SQLAlchemyAdapter:
         with self.engine.begin() as conn:
             # Create transaction adapter
             trx_adapter = SQLAlchemyTransactionAdapter(conn, self)
-            return await callback(trx_adapter)
+            result = callback(trx_adapter)
+            return await result if inspect.isawaitable(result) else result
 
     async def initialize(self) -> None:
         """Initialize the adapter."""

@@ -166,3 +166,10 @@ async def test_create_many_preserves_constraint_errors(adapter) -> None:
                 {"email": "dupe@example.com", "name": "Bob"},
             ],
         )
+
+
+@pytest.mark.asyncio
+async def test_transaction_accepts_sync_callbacks(adapter) -> None:
+    result = await adapter.transaction(lambda trx: "ok")
+
+    assert result == "ok"
