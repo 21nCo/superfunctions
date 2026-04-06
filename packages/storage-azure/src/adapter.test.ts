@@ -103,7 +103,26 @@ describe('storage-azure adapter', () => {
         contentType: 'application/octet-stream',
       });
 
-      expect(result.uploadId).toBe(Buffer.from(key).toString('base64'));
+      const decoded = JSON.parse(Buffer.from(result.uploadId, 'base64').toString('utf8')) as {
+        key: string;
+        sessionId: string;
+      };
+
+      expect(decoded.key).toBe(key);
+      expect(decoded.sessionId).toEqual(expect.any(String));
+    });
+
+    it('should generate unique uploadIds per multipart session for the same key', async () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        accountKey: 'dGVzdGtleQ==',
+      });
+
+      const first = await adapter.createMultipartUpload!({ key: 'test-file.bin' });
+      const second = await adapter.createMultipartUpload!({ key: 'test-file.bin' });
+
+      expect(first.uploadId).not.toBe(second.uploadId);
     });
   });
 
@@ -132,6 +151,20 @@ describe('storage-azure adapter', () => {
           expiresInSeconds: 900,
         });
       }).rejects.toThrow('SAS URL generation requires accountName and credential (accountKey)');
+    });
+
+    it('disables signed-url capabilities when only a SAS token is configured', () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        sasToken: '?existing-token',
+      });
+
+      expect(adapter.capabilities).toMatchObject({
+        signedUploadUrls: false,
+        signedDownloadUrls: false,
+        multipart: false,
+      });
     });
   });
 

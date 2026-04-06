@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import {
   BlobServiceClient,
@@ -26,6 +27,53 @@ export interface AzureStorageConfig {
   accountKey?: string;
   sasToken?: string;
   endpoint?: string;
+}
+
+type AzureMultipartUploadId = {
+  key: string;
+  sessionId: string;
+};
+
+function normalizeSasToken(sasToken: string): string {
+  return sasToken.replace(/^\?+/, '');
+}
+
+function encodeUploadId(key: string): string {
+  return Buffer.from(
+    JSON.stringify({
+      key,
+      sessionId: randomUUID(),
+    } satisfies AzureMultipartUploadId),
+    'utf8'
+  ).toString('base64');
+}
+
+function decodeUploadId(uploadId: string): AzureMultipartUploadId {
+  const decoded = Buffer.from(uploadId, 'base64').toString('utf8');
+
+  try {
+    const parsed = JSON.parse(decoded) as Partial<AzureMultipartUploadId>;
+    if (
+      typeof parsed.key === 'string' &&
+      parsed.key.length > 0 &&
+      typeof parsed.sessionId === 'string' &&
+      parsed.sessionId.length > 0
+    ) {
+      return {
+        key: parsed.key,
+        sessionId: parsed.sessionId,
+      };
+    }
+  } catch {
+    if (decoded.length > 0) {
+      return {
+        key: decoded,
+        sessionId: uploadId,
+      };
+    }
+  }
+
+  throw new Error('Invalid Azure multipart uploadId');
 }
 
 function createContainerClient(config: AzureStorageConfig): {
@@ -64,7 +112,7 @@ function createContainerClient(config: AzureStorageConfig): {
 
   if (accountName && sasToken) {
     const blobServiceClient = new BlobServiceClient(
-      `${endpoint || `https://${accountName}.blob.core.windows.net`}?${sasToken}`
+      `${endpoint || `https://${accountName}.blob.core.windows.net`}?${normalizeSasToken(sasToken)}`
     );
     const containerClient = blobServiceClient.getContainerClient(containerName);
     return { containerClient, accountName };
@@ -73,20 +121,20 @@ function createContainerClient(config: AzureStorageConfig): {
   throw new Error('Azure storage config requires either connectionString or (accountName + accountKey) or (accountName + sasToken)');
 }
 
-function generateBlockId(partNumber: number): string {
-  // Azure block IDs must be base64-encoded and consistent length
-  // Use padded part number for block ID
-  const blockIdStr = `block-${String(partNumber).padStart(6, '0')}`;
-  return Buffer.from(blockIdStr).toString('base64');
+function generateBlockId(uploadId: string, partNumber: number): string {
+  return createHash('sha256')
+    .update(`${uploadId}:${String(partNumber).padStart(6, '0')}`, 'utf8')
+    .digest('base64');
 }
 
 export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAdapter {
   const { containerClient, credential, accountName } = createContainerClient(config);
+  const supportsSignedUrls = Boolean(credential && accountName);
 
   const capabilities: StorageAdapterCapabilities = {
-    signedUploadUrls: true,
-    signedDownloadUrls: true,
-    multipart: true,
+    signedUploadUrls: supportsSignedUrls,
+    signedDownloadUrls: supportsSignedUrls,
+    multipart: supportsSignedUrls,
     proxyStreamingUpload: true,
     proxyStreamingDownload: true,
   };
@@ -201,8 +249,7 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
       contentType?: string;
       metadata?: Record<string, string>;
     }): Promise<{ uploadId: string }> {
-      // Stateless: uploadId encodes the key
-      const uploadId = Buffer.from(input.key).toString('base64');
+      const uploadId = encodeUploadId(input.key);
       return { uploadId };
     },
 
@@ -218,13 +265,13 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
       }
 
       // Verify uploadId matches key (stateless check)
-      const decodedKey = Buffer.from(input.uploadId, 'base64').toString('utf-8');
-      if (decodedKey !== input.key) {
+      const decodedUpload = decodeUploadId(input.uploadId);
+      if (decodedUpload.key !== input.key) {
         throw new Error(`Invalid uploadId for key: ${input.key}`);
       }
 
       const blockBlobClient = containerClient.getBlockBlobClient(input.key);
-      const blockId = generateBlockId(input.partNumber);
+      const blockId = generateBlockId(input.uploadId, input.partNumber);
 
       const startsOn = new Date();
       const expiresOn = new Date(startsOn.getTime() + input.expiresInSeconds * 1000);
@@ -257,8 +304,8 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
       assertMultipartParts(input.parts);
 
       // Verify uploadId
-      const decodedKey = Buffer.from(input.uploadId, 'base64').toString('utf-8');
-      if (decodedKey !== input.key) {
+      const decodedUpload = decodeUploadId(input.uploadId);
+      if (decodedUpload.key !== input.key) {
         throw new Error(`Invalid uploadId for key: ${input.key}`);
       }
 
@@ -267,7 +314,7 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
       // In Azure, the etag from each part is actually the blockId we generated
       // Sort parts and commit blocks
       const sortedParts = [...input.parts].sort((a, b) => a.partNumber - b.partNumber);
-      const blockList = sortedParts.map((part) => generateBlockId(part.partNumber));
+      const blockList = sortedParts.map((part) => generateBlockId(input.uploadId, part.partNumber));
 
       await blockBlobClient.commitBlockList(blockList);
     },
