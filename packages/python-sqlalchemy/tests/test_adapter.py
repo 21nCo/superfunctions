@@ -106,6 +106,23 @@ async def test_find_many_supports_keyword_args(adapter) -> None:
 
 
 @pytest.mark.asyncio
+async def test_find_many_respects_or_connectors(adapter) -> None:
+    await adapter.create(model="users", data={"email": "alice@example.com", "name": "Alice"})
+    await adapter.create(model="users", data={"email": "bob@example.com", "name": "Bob"})
+    await adapter.create(model="users", data={"email": "cara@example.com", "name": "Cara"})
+
+    rows = await adapter.find_many(
+        model="users",
+        where=[
+            WhereClause(field="email", operator=Operator.EQ, value="alice@example.com"),
+            WhereClause(field="email", operator=Operator.EQ, value="bob@example.com", connector="OR"),
+        ],
+    )
+
+    assert sorted(row["email"] for row in rows) == ["alice@example.com", "bob@example.com"]
+
+
+@pytest.mark.asyncio
 async def test_update_many_requires_where_clause(adapter) -> None:
     await adapter.create(model="users", data={"email": "alice@example.com", "name": "Alice"})
 

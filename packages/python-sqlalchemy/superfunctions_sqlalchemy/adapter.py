@@ -75,14 +75,14 @@ class SQLAlchemyAdapter:
         """Build SQLAlchemy where clause from WhereClause list."""
         if not where:
             return None
-        
+
         conditions = []
         for clause in where:
             if not hasattr(table.c, clause.field):
                 raise QueryFailedError(f"Unknown field in where clause: {clause.field}")
 
             column = getattr(table.c, clause.field)
-            
+
             if clause.operator == Operator.EQ:
                 conditions.append(column == clause.value)
             elif clause.operator == Operator.NE:
@@ -115,8 +115,13 @@ class SQLAlchemyAdapter:
                 conditions.append(column.endswith(clause.value))
             else:
                 raise QueryFailedError(f"Unsupported operator in where clause: {clause.operator}")
-        
-        return and_(*conditions) if len(conditions) > 1 else conditions[0]
+
+        combined = conditions[0]
+        for i in range(1, len(conditions)):
+            connector = getattr(where[i], "connector", "AND") or "AND"
+            combined = or_(combined, conditions[i]) if connector == "OR" else and_(combined, conditions[i])
+
+        return combined
 
     def _get_table(self, model: str, namespace: Optional[str] = None) -> Table:
         """Get or reflect table from database."""
