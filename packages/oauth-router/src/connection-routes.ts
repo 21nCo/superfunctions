@@ -1,3 +1,4 @@
+import { BadRequestError } from "@superfunctions/http";
 import type { AuthRouteMeta, HttpRouteMeta, OpenApiRouteMeta, Route, RouteContext } from "@superfunctions/http";
 import type {
   OAuthFlowCallbackInput,
@@ -156,7 +157,7 @@ function joinPath(basePath: string, suffix: string): string {
 
 function asRequiredString(value: string | null | undefined, field: string): string {
   if (!value || value.length === 0) {
-    throw new Error(`${field} is required`);
+    throw new BadRequestError(`${field} is required`, "OAUTH_ROUTE_INVALID_INPUT");
   }
   return value;
 }
@@ -181,7 +182,7 @@ async function parseJsonBody(request: Request): Promise<unknown> {
   try {
     return await request.json();
   } catch {
-    throw new Error("disconnect body must be valid JSON");
+    throw new BadRequestError("disconnect body must be valid JSON", "OAUTH_ROUTE_INVALID_INPUT");
   }
 }
 
@@ -190,7 +191,7 @@ function asOptionalBoolean(value: unknown, field: string): boolean | undefined {
     return undefined;
   }
   if (typeof value !== "boolean") {
-    throw new Error(`${field} must be a boolean`);
+    throw new BadRequestError(`${field} must be a boolean`, "OAUTH_ROUTE_INVALID_INPUT");
   }
   return value;
 }
@@ -202,5 +203,5 @@ function asTokenTypeHint(value: unknown): "access_token" | "refresh_token" | und
   if (value === "access_token" || value === "refresh_token") {
     return value;
   }
-  throw new Error("tokenTypeHint must be access_token or refresh_token");
+  throw new BadRequestError("tokenTypeHint must be access_token or refresh_token", "OAUTH_ROUTE_INVALID_INPUT");
 }
