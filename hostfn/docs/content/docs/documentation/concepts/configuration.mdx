@@ -140,7 +140,7 @@ Controls how your application is built on the server.
 
 If `build` is omitted, HostFn skips the build step and installs only production dependencies.
 
-When a `build.command` is present, HostFn installs **all** dependencies (including devDependencies) first so the build can succeed, then the PM2 process runs from the built output.
+When `build.nodeModules` is omitted, HostFn defaults to installing **all** dependencies when `build.command` is present. Set `nodeModules` to `"production"` or `"none"` to override that behavior.
 
 ## Start Configuration
 

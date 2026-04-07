@@ -436,9 +436,14 @@ async function deploySingleService(
       const rawExcludes = config.sync?.exclude || [
         'node_modules',
         '.git',
+        '.github',
         'dist',
+        'build',
         '.env',
+        '.env.*',
         '*.log',
+        '.turbo',
+        '.wrangler',
       ];
       const localExcludes = bundleDir
         ? rawExcludes.map((pattern) => (pattern === 'dist' || pattern === 'build') ? `/${pattern}` : pattern)
@@ -459,7 +464,7 @@ async function deploySingleService(
       // excludes the service's own dist folder and not workspace deps' compiled output
       // (e.g. __workspace__/@21n/email/dist which is needed for type declarations).
       const rawExcludes = config.sync?.exclude || [
-        'node_modules', '.git', 'dist', '.env', '*.log',
+        'node_modules', '.git', '.github', 'dist', 'build', '.env', '.env.*', '*.log', '.turbo', '.wrangler',
       ];
       const syncExcludes = bundleDir
         ? rawExcludes.map(p => (p === 'dist' || p === 'build') ? `/${p}` : p)
