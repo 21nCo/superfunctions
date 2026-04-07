@@ -31,7 +31,7 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
       return null;
     }
 
-    return queue.shift() ?? null;
+    return queue.shift() as TPayload;
   }
 
   async dequeueMatching(queueName: string, matcher: (payload: TPayload) => boolean): Promise<TPayload | null> {
@@ -47,7 +47,7 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
     }
 
     const [payload] = queue.splice(index, 1);
-    return payload ?? null;
+    return payload as TPayload;
   }
 
   peek(queueName: string): TPayload[] {
@@ -121,7 +121,7 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
     }
 
     const data = (await response.json()) as { payload?: TPayload };
-    return data.payload ?? null;
+    return 'payload' in data ? (data.payload as TPayload) : null;
   }
 
   async dequeueMatching(queueName: string, matcher: (payload: TPayload) => boolean): Promise<TPayload | null> {

@@ -17,6 +17,15 @@ describe('queue adapters', () => {
     expect(await queue.dequeue('q')).toBeNull();
   });
 
+  it('memory queue preserves undefined payloads', async () => {
+    const queue = new MemoryQueueAdapter<string | undefined>();
+
+    await queue.enqueue('q', undefined);
+
+    expect(await queue.dequeue('q')).toBeUndefined();
+    expect(await queue.dequeue('q')).toBeNull();
+  });
+
   it('normalizes queue names consistently in memory adapter', async () => {
     const queue = new MemoryQueueAdapter<string>();
 
@@ -73,6 +82,23 @@ describe('queue adapters', () => {
     expect(calls[1].url).toContain('/queues/jobs/dequeue');
     expect(calls[0].auth).toBe('Bearer flowfn-key');
     expect(calls[1].auth).toBe('Bearer flowfn-key');
+  });
+
+  it('flowfn adapter preserves an explicit undefined payload', async () => {
+    const adapter = new FlowFnQueueAdapter<string | undefined>({
+      baseUrl: 'https://flowfn.example.com',
+      apiKey: 'flowfn-key',
+      fetch: (async (_url) => {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({ payload: undefined }),
+        } as Response;
+      }) as typeof globalThis.fetch,
+    });
+
+    expect(await adapter.dequeue('jobs')).toBeUndefined();
   });
 
   it('flowfn adapter aborts stalled requests using timeoutMs', async () => {
