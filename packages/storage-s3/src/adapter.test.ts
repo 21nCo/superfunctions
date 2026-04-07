@@ -58,6 +58,17 @@ describe('storage-s3 adapter', () => {
         })
       ).toThrow('S3 storage config requires both accessKeyId and secretAccessKey when using static credentials');
     });
+
+    it('rejects empty static credentials instead of silently falling back', () => {
+      expect(() =>
+        createS3StorageAdapter({
+          bucket: 'my-bucket',
+          region: 'us-east-1',
+          accessKeyId: '',
+          secretAccessKey: '',
+        })
+      ).toThrow('S3 storage config requires non-empty accessKeyId and secretAccessKey when using static credentials');
+    });
   });
 
   describe('multipart methods', () => {
