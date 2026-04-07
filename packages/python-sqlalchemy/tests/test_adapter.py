@@ -40,6 +40,21 @@ def adapter():
     return create_adapter(engine)
 
 
+@pytest.fixture()
+def weird_adapter():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata = MetaData()
+    Table(
+        "weird",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=True),
+        Column("keys", String),
+        Column("values", String),
+    )
+    metadata.create_all(engine)
+    return create_adapter(engine)
+
+
 @pytest.mark.asyncio
 async def test_create_and_create_many_support_keyword_args_and_return_inserted_rows(adapter) -> None:
     created = await adapter.create(model="users", data={"email": "alice@example.com", "name": "Alice"})
@@ -173,3 +188,16 @@ async def test_transaction_accepts_sync_callbacks(adapter) -> None:
     result = await adapter.transaction(lambda trx: "ok")
 
     assert result == "ok"
+
+
+@pytest.mark.asyncio
+async def test_field_lookups_use_column_keys_for_reserved_names(weird_adapter) -> None:
+    await weird_adapter.create(model="weird", data={"keys": "alpha", "values": "one"})
+
+    rows = await weird_adapter.find_many(
+        model="weird",
+        where=[WhereClause(field="keys", operator=Operator.EQ, value="alpha")],
+        select=["keys", "values"],
+    )
+
+    assert rows == [{"keys": "alpha", "values": "one"}]

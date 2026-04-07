@@ -79,10 +79,7 @@ class SQLAlchemyAdapter:
 
         conditions = []
         for clause in where:
-            if not hasattr(table.c, clause.field):
-                raise QueryFailedError(f"Unknown field in where clause: {clause.field}")
-
-            column = getattr(table.c, clause.field)
+            column = self._get_column(table, clause.field, "where clause")
 
             if clause.operator == Operator.EQ:
                 conditions.append(column == clause.value)
@@ -139,17 +136,23 @@ class SQLAlchemyAdapter:
             return query
         return query.where(where_clause)
 
+    def _get_column(self, table: Table, field: str, context: str) -> Any:
+        try:
+            return table.c[field]
+        except KeyError as exc:
+            raise QueryFailedError(f"Unknown field in {context}: {field}") from exc
+
     def _project_row(self, row: Dict[str, Any], select_fields: Optional[List[str]]) -> Dict[str, Any]:
         if not select_fields:
             return row
         return {field: row.get(field) for field in select_fields}
 
     def _apply_select(self, table: Table, params: FindOneParams | FindManyParams) -> Any:
-        columns = [getattr(table.c, field) for field in params.select] if params.select else [table]
+        columns = [self._get_column(table, field, "select projection") for field in params.select] if params.select else [table]
         return select(*columns).select_from(table)
 
     def _build_data_where_clause(self, table: Table, data: Dict[str, Any]) -> Any:
-        conditions = [getattr(table.c, key) == value for key, value in data.items() if hasattr(table.c, key)]
+        conditions = [self._get_column(table, key, "data lookup") == value for key, value in data.items() if key in table.c]
         if not conditions:
             return None
         return and_(*conditions) if len(conditions) > 1 else conditions[0]
@@ -165,7 +168,7 @@ class SQLAlchemyAdapter:
             return None
 
         query = self._apply_where(
-            select(*[getattr(table.c, field) for field in select_fields]).select_from(table)
+            select(*[self._get_column(table, field, "select projection") for field in select_fields]).select_from(table)
             if select_fields
             else select(table),
             where_clause,
@@ -297,7 +300,7 @@ class SQLAlchemyAdapter:
             
             if params.order_by:
                 for order in params.order_by:
-                    column = getattr(table.c, order.field)
+                    column = self._get_column(table, order.field, "order by")
                     query = query.order_by(column.desc() if order.direction == "desc" else column)
             
             if params.limit is not None:
