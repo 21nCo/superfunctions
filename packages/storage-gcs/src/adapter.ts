@@ -122,10 +122,18 @@ export function createGCSStorageAdapter(config: GCSStorageConfig): StorageAdapte
           contentType: input.contentType,
         },
       });
+      let streamError: Error | null = null;
+      gcstream.on('error', (err) => {
+        streamError = err;
+      });
 
       return new WritableStream({
         write(chunk) {
           return new Promise((resolve, reject) => {
+            if (streamError) {
+              reject(streamError);
+              return;
+            }
             const buffer = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
             const ok = gcstream.write(buffer);
             if (ok) {
@@ -150,6 +158,10 @@ export function createGCSStorageAdapter(config: GCSStorageConfig): StorageAdapte
         },
         close() {
           return new Promise((resolve, reject) => {
+            if (streamError) {
+              reject(streamError);
+              return;
+            }
             const cleanup = () => {
               gcstream.off('finish', onFinish);
               gcstream.off('error', onError);

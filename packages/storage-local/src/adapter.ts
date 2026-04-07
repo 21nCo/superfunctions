@@ -153,10 +153,18 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
       }
 
       const nodeStream = createWriteStream(filePath);
+      let streamError: Error | null = null;
+      nodeStream.on('error', (err) => {
+        streamError = err;
+      });
 
       return new WritableStream({
         write(chunk) {
           return new Promise((resolve, reject) => {
+            if (streamError) {
+              reject(streamError);
+              return;
+            }
             const buffer = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
             const ok = nodeStream.write(buffer);
             if (ok) {
@@ -181,6 +189,10 @@ export function createLocalStorageAdapter(config: LocalStorageConfig): StorageAd
         },
         close() {
           return new Promise((resolve, reject) => {
+            if (streamError) {
+              reject(streamError);
+              return;
+            }
             const cleanup = () => {
               nodeStream.off('finish', onFinish);
               nodeStream.off('error', onError);
