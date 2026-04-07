@@ -276,6 +276,40 @@ describe("oauth-router route factories", () => {
     );
   });
 
+  it("preserves resolver-provided requestId for browser start routes when the header is absent", async () => {
+    const { service, start } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async () => ({
+        providerId: "google",
+        subject: {
+          kind: "browser-auth",
+          intentId: "intent_01",
+          returnTo: "https://app.example/post-auth",
+        },
+        redirectUri: "https://app.example/callback",
+        requestId: "req_from_browser_resolver",
+      }),
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/auth/social/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "req_from_browser_resolver",
+      })
+    );
+  });
+
   it("derives callback redirectUri from the current request URL when none is provided explicitly", async () => {
     const { service, handleCallback } = createFlowServiceMocks();
     const routes = createOAuthBrowserRoutes({

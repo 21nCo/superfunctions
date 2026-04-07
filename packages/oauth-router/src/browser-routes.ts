@@ -59,7 +59,7 @@ export function createOAuthBrowserRoutes(config: OAuthBrowserRouteConfig): Route
         const input = await config.resolveStartInput(request, context);
         const result = await config.flowService.start({
           ...input,
-          requestId
+          requestId: requestId ?? input.requestId
         });
         return Response.json(result);
       }
