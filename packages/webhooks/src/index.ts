@@ -251,9 +251,9 @@ function decodeSignature(value: string, encoding: SignatureEncoding): Buffer | n
     if (decoded.length === 0) {
       return null;
     }
-    const normalizedInput = value.replace(/=+$/, '');
-    const normalizedDecoded = decoded.toString('base64').replace(/=+$/, '');
-    return normalizedDecoded === normalizedInput ? decoded : null;
+    const canonicalPadded = decoded.toString('base64');
+    const canonicalUnpadded = canonicalPadded.replace(/=+$/, '');
+    return value === canonicalPadded || value === canonicalUnpadded ? decoded : null;
   } catch {
     return null;
   }

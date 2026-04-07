@@ -32,6 +32,9 @@ describe('webhooks package exports', () => {
     expect(
       verifyWebhookSignature(payload, `${signature}!!`, secret, { encoding: 'base64' })
     ).toBe(false);
+    expect(
+      verifyWebhookSignature(payload, `${signature}=`, secret, { encoding: 'base64' })
+    ).toBe(false);
   });
 
   it('delivers payload with bounded retries and returns structured attempts', async () => {
