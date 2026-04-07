@@ -334,7 +334,11 @@ class SQLAlchemyAdapter:
                 existing = self._fetch_one_by_clause(conn, table, where_clause)
                 if existing is None:
                     raise NotFoundError("Record not found for update")
-                target_where_clause = self._build_primary_key_where_clause(table, existing) or where_clause
+                target_where_clause = (
+                    self._build_primary_key_where_clause(table, existing)
+                    or self._build_data_where_clause(table, existing)
+                    or where_clause
+                )
                 result = conn.execute(update(table).where(target_where_clause).values(**params.data))
                 if result.rowcount == 0:
                     raise NotFoundError("Record not found for update")
@@ -367,7 +371,11 @@ class SQLAlchemyAdapter:
                 existing = self._fetch_one_by_clause(conn, table, where_clause)
                 if existing is None:
                     raise NotFoundError("Record not found for deletion")
-                target_where_clause = self._build_primary_key_where_clause(table, existing) or where_clause
+                target_where_clause = (
+                    self._build_primary_key_where_clause(table, existing)
+                    or self._build_data_where_clause(table, existing)
+                    or where_clause
+                )
                 result = conn.execute(delete(table).where(target_where_clause))
                 if result.rowcount == 0:
                     raise NotFoundError("Record not found for deletion")

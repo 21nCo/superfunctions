@@ -55,6 +55,21 @@ def weird_adapter():
     return create_adapter(engine)
 
 
+@pytest.fixture()
+def no_pk_adapter():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata = MetaData()
+    Table(
+        "events",
+        metadata,
+        Column("email", String),
+        Column("name", String),
+        Column("kind", String),
+    )
+    metadata.create_all(engine)
+    return create_adapter(engine)
+
+
 @pytest.mark.asyncio
 async def test_create_and_create_many_support_keyword_args_and_return_inserted_rows(adapter) -> None:
     created = await adapter.create(model="users", data={"email": "alice@example.com", "name": "Alice"})
@@ -201,3 +216,22 @@ async def test_field_lookups_use_column_keys_for_reserved_names(weird_adapter) -
     )
 
     assert rows == [{"keys": "alpha", "values": "one"}]
+
+
+@pytest.mark.asyncio
+async def test_update_without_primary_key_falls_back_to_existing_row_values(no_pk_adapter) -> None:
+    await no_pk_adapter.create(model="events", data={"email": "a@example.com", "name": "same", "kind": "first"})
+    await no_pk_adapter.create(model="events", data={"email": "b@example.com", "name": "same", "kind": "second"})
+
+    updated = await no_pk_adapter.update(
+        model="events",
+        where=[WhereClause(field="name", operator=Operator.EQ, value="same")],
+        data={"name": "changed"},
+    )
+
+    assert updated["email"] == "a@example.com"
+    rows = await no_pk_adapter.find_many(model="events", where=[])
+    assert sorted((row["email"], row["name"]) for row in rows) == [
+        ("a@example.com", "changed"),
+        ("b@example.com", "same"),
+    ]
