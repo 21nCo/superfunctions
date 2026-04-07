@@ -441,7 +441,7 @@ async function deploySingleService(
         '*.log',
       ];
       const localExcludes = bundleDir
-        ? rawExcludes.map((pattern) => pattern === 'dist' ? '/dist' : pattern)
+        ? rawExcludes.map((pattern) => (pattern === 'dist' || pattern === 'build') ? `/${pattern}` : pattern)
         : rawExcludes;
 
       await FileSync.syncLocal(actualSourceDir, remoteDir, {
@@ -462,7 +462,7 @@ async function deploySingleService(
         'node_modules', '.git', 'dist', '.env', '*.log',
       ];
       const syncExcludes = bundleDir
-        ? rawExcludes.map(p => p === 'dist' ? '/dist' : p)
+        ? rawExcludes.map(p => (p === 'dist' || p === 'build') ? `/${p}` : p)
         : rawExcludes;
       
       await FileSync.sync(

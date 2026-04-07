@@ -29,7 +29,7 @@ HostFn is configured via a `hostfn.config.json` file in your project root. This 
   "build": {
     "command": "npm run build",
     "directory": "dist",
-    "nodeModules": "production"
+    "nodeModules": "all"
   },
   "start": {
     "command": "npm start",
@@ -129,7 +129,7 @@ Controls how the application is built on the remote server. This entire section 
 "build": {
   "command": "npm run build",
   "directory": "dist",
-  "nodeModules": "production"
+  "nodeModules": "all"
 }
 ```
 
@@ -137,7 +137,7 @@ Controls how the application is built on the remote server. This entire section 
 |---|---|---|---|---|
 | `command` | `string` | Yes | -- | Build command to run on the server (e.g., `"npm run build"`, `"npx tsc"`). |
 | `directory` | `string` | No | `"dist"` | Build output directory. |
-| `nodeModules` | `"all" \| "production" \| "none"` | No | `"production"` | Which dependencies to install. `"all"` includes devDependencies. |
+| `nodeModules` | `"all" \| "production" \| "none"` | No | `"all"` when `build.command` is set, otherwise `"production"` | Which dependencies to install. `"all"` includes devDependencies. |
 
 When a `build.command` is present, HostFn automatically installs all dependencies (including devDependencies) so the build can succeed, regardless of the `nodeModules` setting.
 

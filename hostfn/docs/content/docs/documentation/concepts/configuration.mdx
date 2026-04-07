@@ -29,7 +29,7 @@ All HostFn behavior is controlled by a single `hostfn.config.json` file in your 
   "build": {
     "command": "npm run build",
     "directory": "dist",
-    "nodeModules": "production"
+    "nodeModules": "all"
   },
   "start": {
     "command": "npm start",
@@ -128,7 +128,7 @@ Controls how your application is built on the server.
 "build": {
   "command": "npm run build",
   "directory": "dist",
-  "nodeModules": "production"
+  "nodeModules": "all"
 }
 ```
 
@@ -136,7 +136,7 @@ Controls how your application is built on the server.
 |---|---|---|---|
 | `command` | `string` | — | Build command to run (e.g., `npm run build`) |
 | `directory` | `string` | `"dist"` | Build output directory |
-| `nodeModules` | `"all" \| "production" \| "none"` | `"production"` | Which node_modules to install |
+| `nodeModules` | `"all" \| "production" \| "none"` | `"all"` when `build.command` is set, otherwise `"production"` | Which node_modules to install |
 
 If `build` is omitted, HostFn skips the build step and installs only production dependencies.
 
