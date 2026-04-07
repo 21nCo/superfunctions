@@ -22,15 +22,15 @@ export class FileSync {
       args.push('--dry-run');
     }
 
-    if (options.exclude && options.exclude.length > 0) {
-      for (const pattern of options.exclude) {
-        args.push('--exclude', pattern);
-      }
-    }
-
     if (options.include && options.include.length > 0) {
       for (const pattern of options.include) {
         args.push('--include', pattern);
+      }
+    }
+
+    if (options.exclude && options.exclude.length > 0) {
+      for (const pattern of options.exclude) {
+        args.push('--exclude', pattern);
       }
     }
 
