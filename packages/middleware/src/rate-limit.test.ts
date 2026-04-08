@@ -88,6 +88,23 @@ describe('rate-limit', () => {
       expect(fixedAtHalfWindow.allowed).toBe(false);
     });
 
+    it('returns a clean denial for zero-limit token buckets instead of crashing', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-12T00:00:00.000Z'));
+
+      const limiter = createRateLimiter({
+        windowMs: 1000,
+        maxRequests: 0,
+        algorithm: 'token-bucket',
+      });
+
+      await expect(limiter.check({ key: 'tb-zero' })).resolves.toMatchObject({
+        allowed: false,
+        remaining: 0,
+        total: 0,
+      });
+    });
+
     it('tracks different keys separately', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,

@@ -201,6 +201,16 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
         }
 
         if (algorithm === 'token-bucket') {
+          if (effectiveLimit <= 0) {
+            const resetAt = currentTime + Math.max(0, effectiveWindowMs);
+            return {
+              allowed: false,
+              remaining: 0,
+              resetAt: new Date(resetAt).toISOString(),
+              total: effectiveLimit,
+            };
+          }
+
           const refillRatePerMs = effectiveLimit / effectiveWindowMs;
           const state = (await getState<TokenBucketState>(kv, key)) ?? {
             tokens: effectiveLimit,
