@@ -199,6 +199,27 @@ async def test_create_many_preserves_constraint_errors(adapter) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_preserves_duplicate_key_errors(adapter) -> None:
+    await adapter.create(model="users", data={"email": "dupe@example.com", "name": "Alice"})
+
+    with pytest.raises(DuplicateKeyError):
+        await adapter.create(model="users", data={"email": "dupe@example.com", "name": "Bob"})
+
+
+@pytest.mark.asyncio
+async def test_update_many_preserves_constraint_errors(adapter) -> None:
+    await adapter.create(model="users", data={"email": "alice@example.com", "name": "Alice"})
+    await adapter.create(model="users", data={"email": "bob@example.com", "name": "Bob"})
+
+    with pytest.raises(ConstraintViolationError):
+        await adapter.update_many(
+            model="users",
+            where=[WhereClause(field="email", operator=Operator.EQ, value="bob@example.com")],
+            data={"email": "alice@example.com"},
+        )
+
+
+@pytest.mark.asyncio
 async def test_transaction_accepts_sync_callbacks(adapter) -> None:
     result = await adapter.transaction(lambda trx: "ok")
 

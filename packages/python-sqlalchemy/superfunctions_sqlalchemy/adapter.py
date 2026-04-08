@@ -264,6 +264,8 @@ class SQLAlchemyAdapter:
             raise ConstraintViolationError(str(e), cause=e)
         except OperationalError as e:
             raise ConnectionError(str(e), cause=e)
+        except (DuplicateKeyError, ConstraintViolationError, ConnectionError, QueryFailedError):
+            raise
         except Exception as e:
             raise QueryFailedError(f"Create failed: {str(e)}", cause=e)
 
@@ -342,10 +344,11 @@ class SQLAlchemyAdapter:
                 result = conn.execute(update(table).where(target_where_clause).values(**params.data))
                 if result.rowcount == 0:
                     raise NotFoundError("Record not found for update")
-                refreshed = self._fetch_one_by_primary_key(conn, table, existing, params.select)
+                updated_row = {**existing, **params.data}
+                refreshed = self._fetch_one_by_primary_key(conn, table, updated_row, params.select)
                 if refreshed is not None:
                     return refreshed
-                return self._project_row({**existing, **params.data}, params.select)
+                return self._project_row(updated_row, params.select)
 
             with self.engine.begin() as managed_conn:
                 return await self._update(params, managed_conn)
@@ -354,6 +357,8 @@ class SQLAlchemyAdapter:
             raise
         except IntegrityError as e:
             raise ConstraintViolationError(str(e), cause=e)
+        except (ConstraintViolationError, ConnectionError, QueryFailedError):
+            raise
         except Exception as e:
             raise QueryFailedError(f"Update failed: {str(e)}", cause=e)
 
@@ -434,6 +439,10 @@ class SQLAlchemyAdapter:
         
         except QueryFailedError:
             raise
+        except IntegrityError as e:
+            raise ConstraintViolationError(str(e), cause=e)
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
         except Exception as e:
             raise QueryFailedError(f"UpdateMany failed: {str(e)}", cause=e)
 
