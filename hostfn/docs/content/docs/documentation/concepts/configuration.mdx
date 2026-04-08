@@ -180,7 +180,7 @@ Controls post-deployment health verification.
 | `retries` | `number` | `10` | Number of health check attempts |
 | `interval` | `number` | `3` | Seconds between retries |
 
-HostFn uses `curl --max-time {timeout} -sf` on the server to check `http://localhost:{port}{path}`. Success follows curl's `-f` exit-code behavior rather than an explicit `200-299` status check in HostFn itself.
+HostFn uses `curl --max-time {timeout} -sf` on the server to check `http://localhost:{port}{path}`. Success follows curl's `-f` exit-code behavior rather than an explicit `200-299` status check in HostFn itself, so redirects that curl follows can also count as healthy.
 
 ## Environment Variables Configuration
 

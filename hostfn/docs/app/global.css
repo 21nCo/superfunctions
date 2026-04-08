@@ -2,5 +2,5 @@
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 
-/* Shared theme package source: @superfunctions/docs-theme/tokens.css */
-@import "../../../packages/docs-theme/src/tokens.css";
+/* Shared theme package entrypoint */
+@import "@superfunctions/docs-theme/tokens.css";
