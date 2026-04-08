@@ -83,7 +83,8 @@ export type WebhookDeliveryOptions = {
 
 function findHeaderKey(headers: Record<string, string>, headerName: string): string | undefined {
   const target = headerName.toLowerCase();
-  return Object.keys(headers).find((key) => key.toLowerCase() === target);
+  const matches = Object.keys(headers).filter((key) => key.toLowerCase() === target);
+  return matches.at(-1);
 }
 
 function deleteHeaderVariants(headers: Record<string, string>, headerName: string): void {
@@ -105,7 +106,7 @@ export async function deliverWebhook(
   options: WebhookDeliveryOptions = {}
 ): Promise<WebhookDeliveryResult> {
   const fetchFn = options.fetch ?? globalThis.fetch;
-  const maxRetries = Math.max(1, options.maxRetries ?? 3);
+  const maxRetries = normalizeRetryCount(options.maxRetries);
   const initialDelayMs = Math.max(0, options.initialDelayMs ?? 1000);
   const maxDelayMs = Math.max(initialDelayMs, options.maxDelayMs ?? 30_000);
   const perAttemptTimeoutMs = Math.max(0, options.perAttemptTimeoutMs ?? 15_000);
@@ -231,6 +232,16 @@ export async function deliverWebhook(
     attempts,
     responseStatus: attempts[attempts.length - 1]?.status,
   };
+}
+
+function normalizeRetryCount(value: number | undefined): number {
+  if (value === undefined) {
+    return 3;
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error('WEBHOOK_MAX_RETRIES_INVALID');
+  }
+  return Math.max(1, Math.trunc(value));
 }
 
 function decodeSignature(value: string, encoding: SignatureEncoding): Buffer | null {
