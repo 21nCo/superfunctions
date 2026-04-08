@@ -1,7 +1,7 @@
 import ora from 'ora';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { mkdtempSync, rmSync, cpSync } from 'fs';
+import { mkdtempSync, rmSync, cpSync, existsSync } from 'fs';
 import { Logger } from '../utils/logger.js';
 import { ConfigLoader } from '../config/loader.js';
 import { createSSHConnection, SSHConnection } from '../core/ssh.js';
@@ -23,6 +23,37 @@ interface DeployOptions {
   dryRun: boolean;
   service?: string;
   all?: boolean;
+}
+
+interface InstallPlan {
+  nodeModulesMode: 'all' | 'production' | 'none';
+  useCi: boolean;
+  installCmd: string | null;
+}
+
+function computeInstallPlan(
+  config: HostfnConfig,
+  hasLockFile: boolean,
+): InstallPlan {
+  const nodeModulesMode =
+    config.build?.nodeModules ?? (config.build?.command ? 'all' : 'production');
+
+  const installCmd =
+    nodeModulesMode === 'none'
+      ? null
+      : hasLockFile
+        ? (nodeModulesMode === 'all'
+            ? 'npm ci --install-links'
+            : 'npm ci --production --install-links')
+        : (nodeModulesMode === 'all'
+            ? 'npm install --install-links'
+            : 'npm install --production --install-links');
+
+  return {
+    nodeModulesMode,
+    useCi: hasLockFile,
+    installCmd,
+  };
 }
 
 export async function deployCommand(
@@ -500,23 +531,7 @@ async function deploySingleService(
     );
     const hasLockFile = lockFileCheck.stdout.trim() === 'exists';
 
-    const nodeModulesMode =
-      config.build?.nodeModules ?? (config.build?.command ? 'all' : 'production');
-
-    // npm ci: used when a lockfile is present (workspace bundles always have one,
-    // generated locally). npm ci is fast (cache extraction, no resolution) and
-    // deletes+reinstalls node_modules cleanly — no stale state possible.
-    const useCi = hasLockFile;
-    const installCmd =
-      nodeModulesMode === 'none'
-        ? null
-        : useCi
-          ? (nodeModulesMode === 'all'
-              ? 'npm ci --install-links'
-              : 'npm ci --production --install-links')
-          : (nodeModulesMode === 'all'
-              ? 'npm install --install-links'
-              : 'npm install --production --install-links');
+    const { installCmd } = computeInstallPlan(config, hasLockFile);
 
     if (installCmd) {
       const installResult = await ssh.exec(
@@ -810,8 +825,19 @@ async function dryRunDeploy(
   Logger.log(`   → Exclude: ${config.sync?.exclude?.join(', ')}`);
   Logger.br();
   
+  const hasLocalLockFile = existsSync(join(process.cwd(), 'package-lock.json'));
+  const workspaceManager = new WorkspaceManager();
+  const isWorkspace = await workspaceManager.detectWorkspace(process.cwd());
+  const hasBundledWorkspaceDeps =
+    isWorkspace && workspaceManager.getWorkspaceDependencies(process.cwd()).length > 0;
+  const { installCmd } = computeInstallPlan(config, hasLocalLockFile || hasBundledWorkspaceDeps);
+
   Logger.log('3. Remote Build');
-  Logger.log('   → npm ci --production');
+  if (installCmd) {
+    Logger.log(`   → ${installCmd}`);
+  } else {
+    Logger.log('   → Skip dependency installation (build.nodeModules=none)');
+  }
   if (config.build?.command) {
     Logger.log(`   → ${config.build.command}`);
   }

@@ -77,7 +77,7 @@ describe('WorkspaceManager.generateLockfile', () => {
     rmSync(targetDir, { recursive: true, force: true });
   });
 
-  it('prefers workspace-scoped lockfile entries over root-level versions', async () => {
+  it('pins package.json to the exact workspace-scoped versions used for lockfile generation', async () => {
     execSyncMock.mockImplementation(() => {
       const pinnedPackageJson = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf-8'));
       expect(pinnedPackageJson.dependencies.commander).toBe('12.1.0');
@@ -97,10 +97,10 @@ describe('WorkspaceManager.generateLockfile', () => {
       }),
     );
 
-    const restoredPackageJson = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf-8'));
-    expect(restoredPackageJson.dependencies.commander).toBe('^12.0.0');
-    expect(restoredPackageJson.dependencies.chalk).toBe('^5.0.0');
-    expect(restoredPackageJson.dependencies['zero-lib']).toBe('^0.2.3');
+    const deployedPackageJson = JSON.parse(readFileSync(join(targetDir, 'package.json'), 'utf-8'));
+    expect(deployedPackageJson.dependencies.commander).toBe('12.1.0');
+    expect(deployedPackageJson.dependencies.chalk).toBe('5.3.0');
+    expect(deployedPackageJson.dependencies['zero-lib']).toBe('0.2.8');
   });
 });
 

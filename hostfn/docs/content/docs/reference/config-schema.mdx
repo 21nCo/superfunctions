@@ -139,7 +139,7 @@ Controls how the application is built on the remote server. This entire section 
 | `directory` | `string` | No | `"dist"` | Build output directory. |
 | `nodeModules` | `"all" \| "production" \| "none"` | No | `"all"` when `build.command` is set, otherwise `"production"` | Which dependencies to install. `"all"` includes devDependencies. |
 
-When `build.nodeModules` is omitted, HostFn defaults to installing all dependencies when `build.command` is present. Set `nodeModules` to `"production"` or `"none"` to override that behavior.
+When `build.nodeModules` is omitted, HostFn defaults to installing all dependencies when `build.command` is present. Set `build.nodeModules` to `"production"` or `"none"` to override that behavior.
 
 ## Start
 

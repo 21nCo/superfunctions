@@ -146,14 +146,12 @@ export class WorkspaceManager {
     // We pin direct deps only (not transitive). Overriding transitive deps causes
     // EUSAGE errors from `npm ci` because the lockfile's transitive versions may no
     // longer match what the pinned direct dep's own package.json requires.
-    let originalPkgJson: string | null = null;
     if (this.workspaceRoot) {
       const rootLockfilePath = join(this.workspaceRoot, 'package-lock.json');
       if (existsSync(rootLockfilePath)) {
         try {
           const rootLockfile = JSON.parse(readFileSync(rootLockfilePath, 'utf-8'));
-          originalPkgJson = readFileSync(pkgJsonPath, 'utf-8');
-          const pkg = JSON.parse(originalPkgJson);
+          const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
 
           // Replace semver ranges in direct deps with the exact resolved version.
           // This prevents npm from upgrading direct deps when generating the lockfile.
@@ -174,24 +172,15 @@ export class WorkspaceManager {
 
           writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2));
         } catch {
-          originalPkgJson = null; // Fall through without pinning
+          // Fall through without pinning
         }
       }
     }
 
-    try {
-      execSync('npm install --package-lock-only --ignore-scripts', {
-        cwd: targetDir,
-        stdio: 'ignore',
-      });
-    } finally {
-      // Restore package.json without overrides. The server uses `npm ci` which
-      // reads the lockfile directly and ignores overrides, so the overrides
-      // only need to be present during lockfile generation.
-      if (originalPkgJson !== null) {
-        writeFileSync(pkgJsonPath, originalPkgJson);
-      }
-    }
+    execSync('npm install --package-lock-only --ignore-scripts', {
+      cwd: targetDir,
+      stdio: 'ignore',
+    });
   }
 
   rewritePackageJson(servicePath: string, targetDir: string): void {
