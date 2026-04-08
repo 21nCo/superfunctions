@@ -4,16 +4,13 @@ import sys
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine
+from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, create_engine, event
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-PYTHON_CORE_ROOT = PACKAGE_ROOT.parent / "python-core"
-
-for path in (PACKAGE_ROOT, PYTHON_CORE_ROOT):
-    path_str = str(path)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
+package_root_str = str(PACKAGE_ROOT)
+if package_root_str not in sys.path:
+    sys.path.insert(0, package_root_str)
 
 from superfunctions.db import (  # noqa: E402
     ConstraintViolationError,
@@ -65,6 +62,39 @@ def no_pk_adapter():
         Column("email", String),
         Column("name", String),
         Column("kind", String),
+    )
+    metadata.create_all(engine)
+    return create_adapter(engine)
+
+
+def _create_foreign_key_engine():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    return engine
+
+
+@pytest.fixture()
+def referential_adapter():
+    engine = _create_foreign_key_engine()
+    metadata = MetaData()
+    Table(
+        "parents",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=True),
+        Column("name", String, unique=True),
+    )
+    Table(
+        "children",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=True),
+        Column("parent_id", Integer, ForeignKey("parents.id", ondelete="RESTRICT")),
+        Column("name", String),
     )
     metadata.create_all(engine)
     return create_adapter(engine)
@@ -256,3 +286,33 @@ async def test_update_without_primary_key_falls_back_to_existing_row_values(no_p
         ("a@example.com", "changed"),
         ("b@example.com", "same"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_delete_preserves_constraint_errors(referential_adapter) -> None:
+    parent = await referential_adapter.create(model="parents", data={"name": "parent-1"})
+    await referential_adapter.create(
+        model="children",
+        data={"parent_id": parent["id"], "name": "child-1"},
+    )
+
+    with pytest.raises(ConstraintViolationError):
+        await referential_adapter.delete(
+            model="parents",
+            where=[WhereClause(field="id", operator=Operator.EQ, value=parent["id"])],
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_many_preserves_constraint_errors(referential_adapter) -> None:
+    parent = await referential_adapter.create(model="parents", data={"name": "parent-2"})
+    await referential_adapter.create(
+        model="children",
+        data={"parent_id": parent["id"], "name": "child-2"},
+    )
+
+    with pytest.raises(ConstraintViolationError):
+        await referential_adapter.delete_many(
+            model="parents",
+            where=[WhereClause(field="id", operator=Operator.EQ, value=parent["id"])],
+        )

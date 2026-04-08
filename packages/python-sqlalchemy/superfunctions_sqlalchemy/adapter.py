@@ -27,7 +27,6 @@ from superfunctions.db import (
     QueryFailedError,
     SchemaCreation,
     TableSchema,
-    TransactionAdapter,
     UpdateManyParams,
     UpdateParams,
     UpsertParams,
@@ -391,6 +390,10 @@ class SQLAlchemyAdapter:
         
         except NotFoundError:
             raise
+        except IntegrityError as e:
+            raise ConstraintViolationError(str(e), cause=e)
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
         except Exception as e:
             raise QueryFailedError(f"Delete failed: {str(e)}", cause=e)
 
@@ -461,6 +464,10 @@ class SQLAlchemyAdapter:
         
         except QueryFailedError:
             raise
+        except IntegrityError as e:
+            raise ConstraintViolationError(str(e), cause=e)
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
         except Exception as e:
             raise QueryFailedError(f"DeleteMany failed: {str(e)}", cause=e)
 
