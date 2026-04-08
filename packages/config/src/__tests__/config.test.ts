@@ -22,6 +22,15 @@ describe('config', () => {
     ).toThrowError(ConfigError);
   });
 
+  it('rejects integers outside the JavaScript safe range', () => {
+    expect(() =>
+      readIntEnv('RECFN_RATE_LIMIT_WINDOW_MS', {
+        env: { RECFN_RATE_LIMIT_WINDOW_MS: '9007199254740993' },
+        defaultValue: 1000,
+      })
+    ).toThrowError(ConfigError);
+  });
+
   it('can fallback deterministically using readIntEnvOrDefault', () => {
     expect(
       readIntEnvOrDefault('RECFN_RATE_LIMIT_WINDOW_MS', {

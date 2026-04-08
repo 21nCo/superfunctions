@@ -13,7 +13,7 @@ function validateIntValue(
   value: number,
   options: { min?: number; max?: number }
 ): number {
-  if (!Number.isInteger(value)) {
+  if (!Number.isSafeInteger(value)) {
     throw new ConfigError('ENV_VALUE_INVALID', `${key} must be an integer`);
   }
 
