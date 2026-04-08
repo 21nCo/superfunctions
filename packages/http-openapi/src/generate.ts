@@ -48,7 +48,7 @@ export function generateOpenApiDocument(input: GenerateOpenApiDocumentInput): Re
     const normalizedPath = normalizeOpenApiPath(route.path);
     const normalizedMethod = route.method.toLowerCase();
     const operations = pathEntries.get(normalizedPath) ?? new Map<string, Record<string, unknown>>();
-    operations.set(normalizedMethod, buildOperation(meta));
+    operations.set(normalizedMethod, buildOperation(meta, normalizedPath));
     pathEntries.set(normalizedPath, operations);
   }
 
@@ -77,7 +77,7 @@ function collectRoutes(routers: GenerateOpenApiDocumentInput["routers"]): Route[
   return routers.flatMap((router) => router.getRoutes());
 }
 
-function buildOperation(meta: OpenApiRouteMeta): Record<string, unknown> {
+function buildOperation(meta: OpenApiRouteMeta, normalizedPath: string): Record<string, unknown> {
   const operation: Record<string, unknown> = {
     operationId: meta.operationId
   };
@@ -103,6 +103,11 @@ function buildOperation(meta: OpenApiRouteMeta): Record<string, unknown> {
         }
       }
     };
+  }
+
+  const pathParameters = createPathParameters(normalizedPath);
+  if (pathParameters.length > 0) {
+    operation.parameters = pathParameters;
   }
 
   operation.responses = createResponses(meta.responseSchemas);
@@ -139,6 +144,18 @@ function createResponses(
 
 function normalizeOpenApiPath(path: string): string {
   return path.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
+}
+
+function createPathParameters(path: string): Array<Record<string, unknown>> {
+  const matches = path.matchAll(/\{([A-Za-z0-9_]+)\}/g);
+  return [...matches].map((match) => ({
+    name: match[1],
+    in: "path",
+    required: true,
+    schema: {
+      type: "string"
+    }
+  }));
 }
 
 function compareMethods(left: string, right: string): number {

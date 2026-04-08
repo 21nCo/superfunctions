@@ -104,6 +104,16 @@ describe("http-openapi generator", () => {
           get: {
             operationId: "getUser",
             tags: ["auth", "users"],
+            parameters: [
+              {
+                in: "path",
+                name: "userId",
+                required: true,
+                schema: {
+                  type: "string"
+                }
+              }
+            ],
             responses: {
               "200": {
                 description: "Success"
@@ -180,5 +190,51 @@ describe("http-openapi generator", () => {
         }
       })
     );
+  });
+
+  it("emits every path parameter required by templated routes", () => {
+    const router = createRouter({
+      routes: [
+        {
+          method: "GET",
+          path: "/teams/:teamId/users/:userId",
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "getTeamUser",
+            }
+          }
+        }
+      ]
+    });
+
+    const document = generateOpenApiDocument({
+      title: "Nested API",
+      version: "1.0.0",
+      routers: [router]
+    });
+
+    expect(document).toMatchObject({
+      paths: {
+        "/teams/{teamId}/users/{userId}": {
+          get: {
+            parameters: [
+              {
+                in: "path",
+                name: "teamId",
+                required: true,
+                schema: { type: "string" }
+              },
+              {
+                in: "path",
+                name: "userId",
+                required: true,
+                schema: { type: "string" }
+              }
+            ]
+          }
+        }
+      }
+    });
   });
 });
