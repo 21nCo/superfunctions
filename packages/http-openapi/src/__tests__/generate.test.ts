@@ -237,4 +237,47 @@ describe("http-openapi generator", () => {
       }
     });
   });
+
+  it("fails clearly when two routes normalize to the same method and path", () => {
+    const router = createRouter({
+      routes: [
+        {
+          method: "GET",
+          path: "/users/:userId",
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "getUserById",
+            }
+          }
+        },
+        {
+          method: "GET",
+          path: "/users/{userId}".replace("{userId}", ":userId"),
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "getUserDuplicate",
+            }
+          }
+        }
+      ]
+    });
+
+    expect(() =>
+      generateOpenApiDocument({
+        title: "Duplicate API",
+        version: "1.0.0",
+        routers: [router]
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<OpenApiGenerationError>>({
+        code: "OPENAPI_META_INCOMPLETE",
+        details: {
+          method: "GET",
+          path: "/users/{userId}"
+        }
+      })
+    );
+  });
 });

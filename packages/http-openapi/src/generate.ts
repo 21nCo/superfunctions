@@ -48,6 +48,12 @@ export function generateOpenApiDocument(input: GenerateOpenApiDocumentInput): Re
     const normalizedPath = normalizeOpenApiPath(route.path);
     const normalizedMethod = route.method.toLowerCase();
     const operations = pathEntries.get(normalizedPath) ?? new Map<string, Record<string, unknown>>();
+    if (operations.has(normalizedMethod)) {
+      throw new OpenApiGenerationError("duplicate OpenAPI operation for method and path", {
+        method: route.method,
+        path: normalizedPath
+      });
+    }
     operations.set(normalizedMethod, buildOperation(meta, normalizedPath));
     pathEntries.set(normalizedPath, operations);
   }

@@ -31,16 +31,24 @@ export const oauthProviderPolicies: Record<OAuthProviderId, ProviderPolicyDefini
   github: githubProviderPolicy
 };
 
+function cloneOAuthProviderDescriptor(provider: OAuthProviderDescriptor): OAuthProviderDescriptor {
+  return {
+    ...provider,
+    defaultScopes: [...provider.defaultScopes],
+    extraAuthParams: provider.extraAuthParams ? { ...provider.extraAuthParams } : undefined,
+  };
+}
+
 export function getOAuthProviderDescriptor(providerId: OAuthProviderId): OAuthProviderDescriptor {
-  return oauthProviderDescriptors[providerId];
+  return cloneOAuthProviderDescriptor(oauthProviderDescriptors[providerId]);
 }
 
 export function listOAuthProviderDescriptors(): OAuthProviderDescriptor[] {
-  return Object.values(oauthProviderDescriptors);
+  return Object.values(oauthProviderDescriptors).map((provider) => cloneOAuthProviderDescriptor(provider));
 }
 
 export function listAuthOAuthProviderDescriptors(): OAuthProviderDescriptor[] {
-  return authOAuthProviderIds.map((providerId) => oauthProviderDescriptors[providerId]);
+  return authOAuthProviderIds.map((providerId) => cloneOAuthProviderDescriptor(oauthProviderDescriptors[providerId]));
 }
 
 export function getProviderPolicy(providerId: OAuthProviderId): ProviderPolicyDefinition {
