@@ -335,12 +335,15 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
     async openUploadStream(input: { key: string; contentType?: string }): Promise<WritableStream> {
       const blockBlobClient = containerClient.getBlockBlobClient(input.key);
       const stream = new PassThrough();
+      let uploadError: Error | undefined;
+      stream.on('error', (error) => {
+        uploadError = toAzureUploadError(error);
+      });
       const uploadPromise = blockBlobClient.uploadStream(stream, 4 * 1024 * 1024, 5, {
         blobHTTPHeaders: {
           blobContentType: input.contentType,
         },
       });
-      let uploadError: Error | undefined;
       void uploadPromise.catch((error) => {
         uploadError = toAzureUploadError(error);
       });
