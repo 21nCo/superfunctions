@@ -105,6 +105,18 @@ describe('rate-limit', () => {
       });
     });
 
+    it('rejects non-positive effective windows before computing bucket math', async () => {
+      const limiter = createRateLimiter({
+        windowMs: 1000,
+        maxRequests: 1,
+        algorithm: 'token-bucket',
+      });
+
+      await expect(limiter.check({ key: 'tb-invalid-window', windowSeconds: 0 })).rejects.toThrow(
+        'RATE_LIMIT_WINDOW_INVALID'
+      );
+    });
+
     it('tracks different keys separately', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,

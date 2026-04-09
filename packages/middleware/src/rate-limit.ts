@@ -177,6 +177,10 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
         const effectiveLimit = input.limit ?? maxRequests;
         const currentTime = now();
 
+        if (!Number.isFinite(effectiveWindowMs) || effectiveWindowMs <= 0) {
+          throw new Error('RATE_LIMIT_WINDOW_INVALID');
+        }
+
         if (algorithm === 'sliding-window') {
           const state = (await getState<SlidingWindowState>(kv, key)) ?? { timestamps: [] };
           const floor = currentTime - effectiveWindowMs;

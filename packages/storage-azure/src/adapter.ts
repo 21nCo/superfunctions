@@ -34,6 +34,10 @@ type AzureMultipartUploadId = {
   sessionId: string;
 };
 
+function toAzureUploadError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 function normalizeSasToken(sasToken: string): string {
   return sasToken.replace(/^\?+/, '');
 }
@@ -336,8 +340,15 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
           blobContentType: input.contentType,
         },
       });
+      let uploadError: Error | undefined;
+      void uploadPromise.catch((error) => {
+        uploadError = toAzureUploadError(error);
+      });
       return new WritableStream({
         async write(chunk) {
+          if (uploadError) {
+            throw uploadError;
+          }
           const buf = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
           if (stream.write(buf)) {
             return;
@@ -360,6 +371,9 @@ export function createAzureStorageAdapter(config: AzureStorageConfig): StorageAd
           });
         },
         async close() {
+          if (uploadError) {
+            throw uploadError;
+          }
           stream.end();
           await uploadPromise;
         },
