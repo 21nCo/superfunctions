@@ -165,7 +165,7 @@ function asRequiredString(value: string | null | undefined, field: string): stri
 async function parseDisconnectBody(
   request: Request
 ): Promise<Omit<OAuthFlowDisconnectInput, "providerId" | "requestId">> {
-  const body = (await parseJsonBody(request)) as {
+  const body = asJsonObject(await parseJsonBody(request), "disconnect body") as {
     connectionId?: string;
     revokeRemote?: unknown;
     tokenTypeHint?: unknown;
@@ -184,6 +184,13 @@ async function parseJsonBody(request: Request): Promise<unknown> {
   } catch {
     throw new BadRequestError("disconnect body must be valid JSON", "OAUTH_ROUTE_INVALID_INPUT");
   }
+}
+
+function asJsonObject(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BadRequestError(`${field} must be a JSON object`, "OAUTH_ROUTE_INVALID_INPUT");
+  }
+  return value as Record<string, unknown>;
 }
 
 function asOptionalBoolean(value: unknown, field: string): boolean | undefined {

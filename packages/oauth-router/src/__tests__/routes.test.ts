@@ -245,6 +245,35 @@ describe("oauth-router route factories", () => {
     expect(connectionRoutes.map((route) => route.meta?.auth?.mode)).toEqual(["hybrid", "none", "hybrid"]);
   });
 
+  it("uses an absolute fallback redirect URL when browser callback completion has no returnTo", async () => {
+    const browser = createFlowServiceMocks();
+    browser.handleCallback.mockResolvedValue({
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_01"
+      },
+      tokenSet: {
+        accessToken: "access_01"
+      }
+    } satisfies OAuthFlowCallbackResult);
+
+    const browserRoutes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: browser.service,
+      resolveStartInput: async (request) => (await request.json()) as never,
+      callbackMode: "redirect"
+    });
+    const browserRouter = createRouter({ routes: browserRoutes });
+
+    const redirectResponse = await browserRouter.handle(
+      new Request("https://app.example/auth/social/callback/google?code=code_02&state=st_01")
+    );
+
+    expect(redirectResponse.status).toBe(302);
+    expect(redirectResponse.headers.get("location")).toBe("https://app.example/");
+  });
+
   it("preserves resolver-provided requestId when the start header is absent", async () => {
     const { service, start } = createFlowServiceMocks();
     const routes = createOAuthConnectionRoutes({
@@ -397,6 +426,27 @@ describe("oauth-router route factories", () => {
         })
       )
     ).rejects.toThrow("tokenTypeHint");
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it("rejects null browser disconnect payloads before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    await expect(
+      router.handle(
+        new Request("http://localhost/auth/social/disconnect/google", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "null"
+        })
+      )
+    ).rejects.toThrow("disconnect body");
     expect(disconnect).not.toHaveBeenCalled();
   });
 });
