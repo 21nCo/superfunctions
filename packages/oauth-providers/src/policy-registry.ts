@@ -313,7 +313,7 @@ function defaultProviderPolicyIdGenerator(kind: ProviderPolicyIdKind): string {
   return `${kind}_${randomUUID()}`;
 }
 
-function clonePolicy(policy: ProviderPolicyDefinition): ProviderPolicyDefinition {
+export function clonePolicy(policy: ProviderPolicyDefinition): ProviderPolicyDefinition {
   return {
     providerId: policy.providerId,
     policyVersion: policy.policyVersion,

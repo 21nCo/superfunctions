@@ -8,7 +8,8 @@ import {
   ProviderPolicyRegistry,
   type OAuthProviderId,
   type ProviderPolicyDefinition,
-  type ProviderPolicyRegistryOptions
+  type ProviderPolicyRegistryOptions,
+  clonePolicy,
 } from "./policy-registry.js";
 import { MemoryProviderPolicyAuditStore, MemoryProviderPolicyConsentStore } from "./stores.js";
 
@@ -52,15 +53,15 @@ export function listAuthOAuthProviderDescriptors(): OAuthProviderDescriptor[] {
 }
 
 export function getProviderPolicy(providerId: OAuthProviderId): ProviderPolicyDefinition {
-  return oauthProviderPolicies[providerId];
+  return clonePolicy(oauthProviderPolicies[providerId]);
 }
 
 export function listProviderPolicies(): ProviderPolicyDefinition[] {
-  return Object.values(oauthProviderPolicies);
+  return Object.values(oauthProviderPolicies).map((policy) => clonePolicy(policy));
 }
 
 export function listAuthProviderPolicies(): ProviderPolicyDefinition[] {
-  return authOAuthProviderIds.map((providerId) => oauthProviderPolicies[providerId]);
+  return authOAuthProviderIds.map((providerId) => clonePolicy(oauthProviderPolicies[providerId]));
 }
 
 export function createDefaultProviderPolicyRegistry(

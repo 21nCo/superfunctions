@@ -54,7 +54,7 @@ export function generateOpenApiDocument(input: GenerateOpenApiDocumentInput): Re
         path: normalizedPath
       });
     }
-    operations.set(normalizedMethod, buildOperation(meta, normalizedPath));
+    operations.set(normalizedMethod, buildOperation(meta, normalizedPath, route.method));
     pathEntries.set(normalizedPath, operations);
   }
 
@@ -83,7 +83,11 @@ function collectRoutes(routers: GenerateOpenApiDocumentInput["routers"]): Route[
   return routers.flatMap((router) => router.getRoutes());
 }
 
-function buildOperation(meta: OpenApiRouteMeta, normalizedPath: string): Record<string, unknown> {
+function buildOperation(
+  meta: OpenApiRouteMeta,
+  normalizedPath: string,
+  method: string
+): Record<string, unknown> {
   const operation: Record<string, unknown> = {
     operationId: meta.operationId
   };
@@ -116,12 +120,16 @@ function buildOperation(meta: OpenApiRouteMeta, normalizedPath: string): Record<
     operation.parameters = pathParameters;
   }
 
-  operation.responses = createResponses(meta.responseSchemas);
+  operation.responses = createResponses(meta.responseSchemas, {
+    method,
+    path: normalizedPath,
+  });
   return operation;
 }
 
 function createResponses(
-  responseSchemas: OpenApiRouteMeta["responseSchemas"]
+  responseSchemas: OpenApiRouteMeta["responseSchemas"],
+  details: OpenApiGenerationErrorDetails
 ): Record<string, Record<string, unknown>> {
   if (!responseSchemas || Object.keys(responseSchemas).length === 0) {
     return {
@@ -140,7 +148,7 @@ function createResponses(
           description: `HTTP ${statusCode} response`,
           content: {
             "application/json": {
-              schema: sortObject(schema as Record<string, unknown>)
+              schema: sortObject(assertSchemaObject(schema, details))
             }
           }
         }
@@ -165,7 +173,8 @@ function createPathParameters(path: string): Array<Record<string, unknown>> {
 }
 
 function compareMethods(left: string, right: string): number {
-  return getMethodOrder(left) - getMethodOrder(right);
+  const orderDiff = getMethodOrder(left) - getMethodOrder(right);
+  return orderDiff !== 0 ? orderDiff : left.localeCompare(right);
 }
 
 function getMethodOrder(method: string): number {
@@ -192,4 +201,15 @@ function sortValue(value: unknown): unknown {
   }
 
   return value;
+}
+
+function assertSchemaObject(
+  schema: unknown,
+  details: OpenApiGenerationErrorDetails
+): Record<string, unknown> {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    throw new OpenApiGenerationError("route OpenAPI response schema must be an object", details);
+  }
+
+  return schema as Record<string, unknown>;
 }

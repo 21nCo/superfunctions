@@ -280,4 +280,40 @@ describe("http-openapi generator", () => {
       })
     );
   });
+
+  it("fails clearly when a response schema entry is not an object", () => {
+    const router = createRouter({
+      routes: [
+        {
+          method: "POST",
+          path: "/broken",
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "brokenResponseSchema",
+              responseSchemas: {
+                "200": null as never,
+              }
+            }
+          }
+        }
+      ]
+    });
+
+    expect(() =>
+      generateOpenApiDocument({
+        title: "Broken API",
+        version: "1.0.0",
+        routers: [router]
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<OpenApiGenerationError>>({
+        code: "OPENAPI_META_INCOMPLETE",
+        details: {
+          method: "POST",
+          path: "/broken"
+        }
+      })
+    );
+  });
 });
