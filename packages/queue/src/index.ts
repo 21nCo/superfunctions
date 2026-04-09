@@ -69,7 +69,11 @@ export interface FlowFnQueueAdapterConfig {
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, '');
+  let normalized = baseUrl;
+  while (normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
 }
 
 function encodeQueueName(queueName: string): string {
