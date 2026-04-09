@@ -101,15 +101,40 @@ function setCanonicalHeader(headers: Record<string, string>, headerName: string,
   headers[headerName] = value;
 }
 
+function normalizeNonNegativeDuration(
+  value: number | undefined,
+  fallback: number,
+  errorCode: string
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error(errorCode);
+  }
+  return Math.max(0, value);
+}
+
 export async function deliverWebhook(
   input: WebhookDeliveryInput,
   options: WebhookDeliveryOptions = {}
 ): Promise<WebhookDeliveryResult> {
   const fetchFn = options.fetch ?? globalThis.fetch;
   const maxRetries = normalizeRetryCount(options.maxRetries);
-  const initialDelayMs = Math.max(0, options.initialDelayMs ?? 1000);
-  const maxDelayMs = Math.max(initialDelayMs, options.maxDelayMs ?? 30_000);
-  const perAttemptTimeoutMs = Math.max(0, options.perAttemptTimeoutMs ?? 15_000);
+  const initialDelayMs = normalizeNonNegativeDuration(
+    options.initialDelayMs,
+    1000,
+    'WEBHOOK_INITIAL_DELAY_INVALID'
+  );
+  const maxDelayMs = Math.max(
+    initialDelayMs,
+    normalizeNonNegativeDuration(options.maxDelayMs, 30_000, 'WEBHOOK_MAX_DELAY_INVALID')
+  );
+  const perAttemptTimeoutMs = normalizeNonNegativeDuration(
+    options.perAttemptTimeoutMs,
+    15_000,
+    'WEBHOOK_PER_ATTEMPT_TIMEOUT_INVALID'
+  );
 
   let payloadString: string;
   try {

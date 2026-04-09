@@ -118,6 +118,17 @@ describe('queue adapters', () => {
     await expect(adapter.enqueue('jobs', { id: 'job_1' })).rejects.toThrow('The operation was aborted.');
   });
 
+  it('rejects a non-finite timeoutMs value', async () => {
+    expect(
+      () =>
+        new FlowFnQueueAdapter({
+          baseUrl: 'https://flowfn.example.com',
+          apiKey: 'flowfn-key',
+          timeoutMs: Number.NaN,
+        })
+    ).toThrow('FLOWFN_QUEUE_TIMEOUT_INVALID');
+  });
+
   it('flowfn adapter normalizes a trailing slash in baseUrl', async () => {
     const calls: string[] = [];
     const adapter = new FlowFnQueueAdapter<{ id: string }>({

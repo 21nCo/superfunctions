@@ -241,4 +241,42 @@ describe('webhooks package exports', () => {
       )
     ).rejects.toThrow('WEBHOOK_MAX_RETRIES_INVALID');
   });
+
+  it('rejects non-finite webhook timing options before scheduling retries', async () => {
+    await expect(
+      deliverWebhook(
+        {
+          url: 'https://example.com/hook',
+          payload: { hello: 'world' },
+        },
+        {
+          initialDelayMs: Number.NaN,
+        }
+      )
+    ).rejects.toThrow('WEBHOOK_INITIAL_DELAY_INVALID');
+
+    await expect(
+      deliverWebhook(
+        {
+          url: 'https://example.com/hook',
+          payload: { hello: 'world' },
+        },
+        {
+          maxDelayMs: Number.NaN,
+        }
+      )
+    ).rejects.toThrow('WEBHOOK_MAX_DELAY_INVALID');
+
+    await expect(
+      deliverWebhook(
+        {
+          url: 'https://example.com/hook',
+          payload: { hello: 'world' },
+        },
+        {
+          perAttemptTimeoutMs: Number.NaN,
+        }
+      )
+    ).rejects.toThrow('WEBHOOK_PER_ATTEMPT_TIMEOUT_INVALID');
+  });
 });

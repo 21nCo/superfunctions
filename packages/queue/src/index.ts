@@ -76,6 +76,16 @@ function encodeQueueName(queueName: string): string {
   return encodeURIComponent(normalizeQueueName(queueName));
 }
 
+function normalizeTimeoutMs(value: number | undefined): number {
+  if (value === undefined) {
+    return 15_000;
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error('FLOWFN_QUEUE_TIMEOUT_INVALID');
+  }
+  return Math.max(0, value);
+}
+
 export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly fetcher: typeof globalThis.fetch;
   private readonly timeoutMs: number;
@@ -83,7 +93,7 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
 
   constructor(private readonly config: FlowFnQueueAdapterConfig) {
     this.fetcher = config.fetch ?? globalThis.fetch;
-    this.timeoutMs = Math.max(0, config.timeoutMs ?? 15_000);
+    this.timeoutMs = normalizeTimeoutMs(config.timeoutMs);
     this.baseUrl = normalizeBaseUrl(config.baseUrl);
   }
 
