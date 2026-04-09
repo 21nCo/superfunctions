@@ -356,6 +356,8 @@ class SQLAlchemyAdapter:
             raise
         except IntegrityError as e:
             raise ConstraintViolationError(str(e), cause=e)
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
         except (ConstraintViolationError, ConnectionError, QueryFailedError):
             raise
         except Exception as e:
@@ -424,6 +426,8 @@ class SQLAlchemyAdapter:
             raise
         except IntegrityError as e:
             raise ConstraintViolationError(str(e), cause=e)
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
         except Exception as e:
             raise QueryFailedError(f"CreateMany failed: {str(e)}", cause=e)
 

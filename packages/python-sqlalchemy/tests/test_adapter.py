@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import Column, ForeignKey, Integer, MetaData, String, Table, create_engine, event
+from sqlalchemy.exc import OperationalError
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -13,10 +14,12 @@ if package_root_str not in sys.path:
     sys.path.insert(0, package_root_str)
 
 from superfunctions.db import (  # noqa: E402
+    ConnectionError,
     ConstraintViolationError,
     DuplicateKeyError,
     Operator,
     QueryFailedError,
+    UpdateParams,
     WhereClause,
 )
 from superfunctions_sqlalchemy import create_adapter  # noqa: E402
@@ -246,6 +249,42 @@ async def test_update_many_preserves_constraint_errors(adapter) -> None:
             model="users",
             where=[WhereClause(field="email", operator=Operator.EQ, value="bob@example.com")],
             data={"email": "alice@example.com"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_connection_errors(adapter, monkeypatch) -> None:
+    def fake_fetch_one_by_clause(*_args, **_kwargs):
+        return {"id": 1, "email": "alice@example.com", "name": "Alice"}
+
+    class FailingConnection:
+        def execute(self, _query):
+            raise OperationalError("UPDATE users", {}, Exception("connection dropped"))
+
+    monkeypatch.setattr(adapter, "_fetch_one_by_clause", fake_fetch_one_by_clause)
+
+    with pytest.raises(ConnectionError):
+        await adapter._update(
+            UpdateParams(
+                model="users",
+                where=[WhereClause(field="id", operator=Operator.EQ, value=1)],
+                data={"name": "Updated"},
+            ),
+            FailingConnection(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_many_preserves_connection_errors(adapter, monkeypatch) -> None:
+    async def fake_create(*_args, **_kwargs):
+        raise OperationalError("INSERT INTO users", {}, Exception("connection dropped"))
+
+    monkeypatch.setattr(adapter, "_create", fake_create)
+
+    with pytest.raises(ConnectionError):
+        await adapter.create_many(
+            model="users",
+            data=[{"email": "alice@example.com", "name": "Alice"}],
         )
 
 
