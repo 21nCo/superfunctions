@@ -446,8 +446,15 @@ async function deploySingleService(
         // Rewrite package.json to use file: references for workspace deps
         workspaceManager.rewritePackageJson(sourceDir, bundleDir);
 
-        bundleSpinner.text = 'Generating lockfile...';
-        await workspaceManager.generateLockfile(bundleDir, sourceDir);
+        const { nodeModulesMode } = computeInstallPlan(
+          config,
+          existsSync(join(bundleDir, 'package-lock.json')),
+        );
+
+        if (nodeModulesMode !== 'none') {
+          bundleSpinner.text = 'Generating lockfile...';
+          await workspaceManager.generateLockfile(bundleDir, sourceDir);
+        }
         
         bundleSpinner.succeed('Workspace dependencies bundled');
         Logger.br();

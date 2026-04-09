@@ -48,7 +48,8 @@ All HostFn behavior is controlled by a single `hostfn.config.json` file in your 
   "sync": {
     "exclude": [
       "node_modules", ".git", ".github",
-      "dist", "build", ".env", ".env.*", "*.log"
+      "dist", "build", ".env", ".env.*", "*.log",
+      ".turbo", ".wrangler"
     ]
   },
   "backup": {
@@ -180,7 +181,7 @@ Controls post-deployment health verification.
 | `retries` | `number` | `10` | Number of health check attempts |
 | `interval` | `number` | `3` | Seconds between retries |
 
-HostFn uses `curl --max-time {timeout} -sf` on the server to check `http://localhost:{port}{path}`. Success follows curl's `-f` exit-code behavior rather than an explicit `200-299` status check in HostFn itself, so redirects that curl follows can also count as healthy.
+HostFn uses `curl --max-time {timeout} -sf` on the server to check `http://localhost:{port}{path}`. Success follows curl's `-f` exit-code behavior rather than an explicit `200-299` status check in HostFn itself, so 3xx responses can also count as healthy even though HostFn does not pass `-L` to follow redirects.
 
 ## Environment Variables Configuration
 
@@ -203,7 +204,8 @@ Controls which files are synced to the server via rsync.
 "sync": {
   "exclude": [
     "node_modules", ".git", ".github",
-    "dist", "build", ".env", ".env.*", "*.log"
+    "dist", "build", ".env", ".env.*", "*.log",
+    ".turbo", ".wrangler"
   ]
 }
 ```

@@ -48,7 +48,8 @@ HostFn is configured via a `hostfn.config.json` file in your project root. This 
   "sync": {
     "exclude": [
       "node_modules", ".git", ".github",
-      "dist", "build", ".env", ".env.*", "*.log"
+      "dist", "build", ".env", ".env.*", "*.log",
+      ".turbo", ".wrangler"
     ]
   },
   "backup": {
@@ -177,7 +178,7 @@ Controls post-deployment health check behavior. If omitted, defaults are used.
 | `retries` | `number` | No | `10` | Number of health check attempts before declaring failure. |
 | `interval` | `number` | No | `3` | Seconds to wait between health check attempts. |
 
-HostFn checks `http://localhost:{port}{path}` on the remote server using `curl -sf`. A successful curl exit code is considered healthy, which normally means a non-4xx/non-5xx response after curl follows redirects.
+HostFn checks `http://localhost:{port}{path}` on the remote server using `curl -sf`. A successful curl exit code is considered healthy, which normally means a non-4xx/non-5xx response. Because HostFn does not pass `-L`, 3xx responses can count as healthy without curl following the redirect.
 
 ## Env
 
