@@ -295,6 +295,10 @@ async def test_transaction_accepts_sync_callbacks(adapter) -> None:
     assert result == "ok"
 
 
+def test_adapter_reports_nested_transactions_as_unsupported(adapter) -> None:
+    assert adapter.capabilities.nested_transactions is False
+
+
 @pytest.mark.asyncio
 async def test_field_lookups_use_column_keys_for_reserved_names(weird_adapter) -> None:
     await weird_adapter.create(model="weird", data={"keys": "alpha", "values": "one"})

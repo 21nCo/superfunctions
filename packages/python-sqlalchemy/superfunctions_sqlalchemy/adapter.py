@@ -57,7 +57,7 @@ class SQLAlchemyAdapter:
         self.version = "0.1.0"
         self.capabilities = AdapterCapabilities(
             transactions=True,
-            nested_transactions=True,
+            nested_transactions=False,
             joins=True,
             full_text_search=False,
             json_operations=True,
