@@ -362,6 +362,31 @@ describe("oauth-router route factories", () => {
     });
   });
 
+  it("preserves non-transient callback query params when inferring redirectUri", async () => {
+    const { service, handleCallback } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request(
+        "https://app.example/auth/social/callback/google?tenant=tenant_01&code=code_05&state=st_05"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleCallback).toHaveBeenCalledWith({
+      providerId: "google",
+      code: "code_05",
+      state: "st_05",
+      redirectUri: "https://app.example/auth/social/callback/google?tenant=tenant_01",
+      requestId: undefined
+    });
+  });
+
   it("rejects explicitly empty callback redirectUri values", async () => {
     const { service } = createFlowServiceMocks();
     const routes = createOAuthBrowserRoutes({

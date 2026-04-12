@@ -68,7 +68,7 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
           redirectUri: asRequiredString(
             resolvedInput.redirectUri ??
               url.searchParams.get("redirectUri") ??
-              `${url.origin}${url.pathname}`,
+              inferCallbackRedirectUri(url),
             "redirectUri"
           ),
           requestId
@@ -184,6 +184,14 @@ async function parseJsonBody(request: Request): Promise<unknown> {
   } catch {
     throw new BadRequestError("disconnect body must be valid JSON", "OAUTH_ROUTE_INVALID_INPUT");
   }
+}
+
+function inferCallbackRedirectUri(url: URL): string {
+  const redirectUrl = new URL(url.toString());
+  for (const transientParam of ["code", "state", "redirectUri", "error", "error_description", "error_uri"]) {
+    redirectUrl.searchParams.delete(transientParam);
+  }
+  return redirectUrl.toString();
 }
 
 function asJsonObject(value: unknown, field: string): Record<string, unknown> {

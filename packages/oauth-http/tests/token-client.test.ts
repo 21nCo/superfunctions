@@ -94,6 +94,7 @@ describe("oauth-http token client", () => {
 
     expect(capturedInit?.headers.authorization).toMatch(/^Basic /);
     const params = new URLSearchParams(capturedInit?.body);
+    expect(params.get("client_id")).toBeNull();
     expect(params.get("client_secret")).toBeNull();
   });
 

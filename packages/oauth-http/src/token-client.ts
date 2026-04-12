@@ -355,7 +355,6 @@ function createAuthHeaders(
     params.set("client_id", credentials.clientId);
     params.set("client_secret", credentials.clientSecret);
   } else {
-    params.set("client_id", credentials.clientId);
     const authUser = encodeURIComponent(credentials.clientId);
     const authPassword = encodeURIComponent(credentials.clientSecret);
     const auth = Buffer.from(`${authUser}:${authPassword}`, "utf8").toString("base64");

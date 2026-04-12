@@ -488,7 +488,7 @@ function mapRevocationFailureRowToRecord(row: RevocationFailureRow): OAuthRevoca
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
     tokenId: row.token_id ?? undefined,
-    tokenTypeHint: row.token_type_hint as "access_token" | "refresh_token" | undefined,
+    tokenTypeHint: parseTokenTypeHint(row.token_type_hint),
     errorCode: row.error_code,
     errorMessage: row.error_message,
     retryable: row.retryable,
@@ -531,6 +531,16 @@ function parseRecordValue(raw: unknown, fieldName: string): Record<string, unkno
   }
 
   return { ...value };
+}
+
+function parseTokenTypeHint(value: string | null | undefined): "access_token" | "refresh_token" | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (value === "access_token" || value === "refresh_token") {
+    return value;
+  }
+  throw new OAuthDbAdapterError("INTERNAL_ERROR", "token_type_hint must be access_token or refresh_token");
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
