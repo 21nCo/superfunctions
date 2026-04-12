@@ -359,3 +359,21 @@ async def test_delete_many_preserves_constraint_errors(referential_adapter) -> N
             model="parents",
             where=[WhereClause(field="id", operator=Operator.EQ, value=parent["id"])],
         )
+
+
+@pytest.mark.asyncio
+async def test_delete_preserves_connection_errors(adapter, monkeypatch) -> None:
+    def fake_fetch_one_by_clause(*_args, **_kwargs):
+        return {"id": 1, "email": "alice@example.com", "name": "Alice"}
+
+    class FailingConnection:
+        def execute(self, _query):
+            raise OperationalError("DELETE FROM users", {}, Exception("connection dropped"))
+
+    monkeypatch.setattr(adapter, "_fetch_one_by_clause", fake_fetch_one_by_clause)
+
+    with pytest.raises(ConnectionError):
+        await adapter.delete(
+            model="users",
+            where=[WhereClause(field="id", operator=Operator.EQ, value=1)],
+        )

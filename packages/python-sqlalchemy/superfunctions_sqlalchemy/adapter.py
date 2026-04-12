@@ -396,6 +396,8 @@ class SQLAlchemyAdapter:
             raise ConstraintViolationError(str(e), cause=e)
         except OperationalError as e:
             raise ConnectionError(str(e), cause=e)
+        except ConnectionError:
+            raise
         except Exception as e:
             raise QueryFailedError(f"Delete failed: {str(e)}", cause=e)
 
