@@ -137,9 +137,28 @@ export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
 
   private async executeWithRetry(url: string, init: RequestInitLike): Promise<ResponseLike> {
     let attempt = 1;
-    let response = await this.fetcher(url, init);
-
     while (true) {
+      let response: ResponseLike;
+      try {
+        response = await this.fetcher(url, init);
+      } catch (error) {
+        const decision = decideRetry(
+          {
+            attempt,
+            status: 503
+          },
+          this.retryPolicy
+        );
+
+        if (!decision.retry) {
+          throw error;
+        }
+
+        await this.sleep(decision.delayMs);
+        attempt += 1;
+        continue;
+      }
+
       const decision = decideRetry(
         {
           attempt,
@@ -155,7 +174,6 @@ export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
 
       await this.sleep(decision.delayMs);
       attempt += 1;
-      response = await this.fetcher(url, init);
     }
   }
 }
@@ -373,6 +391,15 @@ function parseResponseBody(rawBodyText: string, contentType: string | null): unk
 }
 
 function normalizeTokenResponse(parsedBody: unknown): OAuthTokenEndpointResponse {
+  if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+    throw new OAuthHttpError("OAuth token response body must be a JSON object", {
+      code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+      status: 502,
+      retryable: false,
+      details: { parsedBodyKeys: [] }
+    });
+  }
+
   const payload = parsedBody as Record<string, unknown>;
   const accessToken = asString(payload.access_token);
   if (!accessToken) {
