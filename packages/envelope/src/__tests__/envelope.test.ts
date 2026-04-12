@@ -33,6 +33,23 @@ describe('envelope', () => {
     expect(dataEnvelope.ok && dataEnvelope.data).toEqual({ a: 2 });
   });
 
+  it('does not treat malformed ok:false envelopes with data as successful payloads', () => {
+    const normalized = normalizeLegacyEnvelope(
+      {
+        ok: false,
+        data: { leaked: true },
+        error: { code: 'BAD', message: 'broken legacy envelope' },
+      } as never,
+      { timestamp: 't3', defaultStatus: 502, defaultRetryable: false }
+    );
+
+    expect(normalized.ok).toBe(false);
+    if (!normalized.ok) {
+      expect(normalized.error.code).toBe('BAD');
+      expect(normalized.error.status).toBe(502);
+    }
+  });
+
   it('converts canonical envelope back to legacy variants', () => {
     const canonical = ok({ y: 2 }, { timestamp: '2026-03-12T00:00:00.000Z' });
     expect(toLegacyDataEnvelope(canonical)).toEqual({ ok: true, data: { y: 2 } });

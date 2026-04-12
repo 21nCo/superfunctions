@@ -97,18 +97,18 @@ export function normalizeLegacyEnvelope<T>(
   options?: { timestamp?: string; defaultStatus?: number; defaultRetryable?: boolean }
 ): Envelope<T> {
   if ('meta' in envelope && typeof envelope.meta?.timestamp === 'string') {
-    if ('data' in envelope) {
+    if (envelope.ok === true && 'data' in envelope) {
       return envelope;
     }
-    if ('error' in envelope && isValidErrorShape(envelope.error)) {
+    if (envelope.ok === false && 'error' in envelope && isValidErrorShape(envelope.error)) {
       return envelope;
     }
   }
 
-  if ('data' in envelope) {
+  if (envelope.ok === true && 'data' in envelope) {
     return ok(envelope.data, options);
   }
-  if ('result' in envelope) {
+  if (envelope.ok === true && 'result' in envelope) {
     return ok(envelope.result, options);
   }
 
