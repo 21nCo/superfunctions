@@ -117,6 +117,21 @@ describe('rate-limit', () => {
       );
     });
 
+    it('rejects non-finite or negative effective limits before rate-limit calculations', async () => {
+      const limiter = createRateLimiter({
+        windowMs: 1000,
+        maxRequests: 1,
+        algorithm: 'token-bucket',
+      });
+
+      await expect(
+        limiter.check({ key: 'tb-invalid-limit', limit: Number.NaN as number })
+      ).rejects.toThrow('RATE_LIMIT_LIMIT_INVALID');
+      await expect(limiter.check({ key: 'tb-negative-limit', limit: -1 })).rejects.toThrow(
+        'RATE_LIMIT_LIMIT_INVALID'
+      );
+    });
+
     it('tracks different keys separately', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,

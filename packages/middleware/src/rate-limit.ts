@@ -180,6 +180,9 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
         if (!Number.isFinite(effectiveWindowMs) || effectiveWindowMs <= 0) {
           throw new Error('RATE_LIMIT_WINDOW_INVALID');
         }
+        if (!Number.isFinite(effectiveLimit) || effectiveLimit < 0) {
+          throw new Error('RATE_LIMIT_LIMIT_INVALID');
+        }
 
         if (algorithm === 'sliding-window') {
           const state = (await getState<SlidingWindowState>(kv, key)) ?? { timestamps: [] };
