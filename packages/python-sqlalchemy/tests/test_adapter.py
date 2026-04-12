@@ -16,6 +16,7 @@ if package_root_str not in sys.path:
 from superfunctions.db import (  # noqa: E402
     ConnectionError,
     ConstraintViolationError,
+    DeleteParams,
     DuplicateKeyError,
     Operator,
     QueryFailedError,
@@ -373,7 +374,37 @@ async def test_delete_preserves_connection_errors(adapter, monkeypatch) -> None:
     monkeypatch.setattr(adapter, "_fetch_one_by_clause", fake_fetch_one_by_clause)
 
     with pytest.raises(ConnectionError):
-        await adapter.delete(
+        await adapter._delete(
+            DeleteParams(
+                model="users",
+                where=[WhereClause(field="id", operator=Operator.EQ, value=1)],
+            ),
+            FailingConnection(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_does_not_treat_no_op_rowcount_as_missing(adapter, monkeypatch) -> None:
+    def fake_fetch_one_by_clause(*_args, **_kwargs):
+        return {"id": 1, "email": "alice@example.com", "name": "Alice"}
+
+    class NoOpUpdateConnection:
+        def execute(self, _query):
+            class Result:
+                rowcount = 0
+
+            return Result()
+
+    monkeypatch.setattr(adapter, "_fetch_one_by_clause", fake_fetch_one_by_clause)
+    monkeypatch.setattr(adapter, "_fetch_one_by_primary_key", lambda *_args, **_kwargs: None)
+
+    updated = await adapter._update(
+        UpdateParams(
             model="users",
             where=[WhereClause(field="id", operator=Operator.EQ, value=1)],
-        )
+            data={"name": "Alice"},
+        ),
+        NoOpUpdateConnection(),
+    )
+
+    assert updated == {"id": 1, "email": "alice@example.com", "name": "Alice"}

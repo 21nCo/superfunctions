@@ -285,7 +285,10 @@ class SQLAlchemyAdapter:
 
             with self.engine.connect() as managed_conn:
                 return await self._find_one(params, managed_conn)
-        
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
+        except (ConnectionError, QueryFailedError):
+            raise
         except Exception as e:
             raise QueryFailedError(f"FindOne failed: {str(e)}", cause=e)
 
@@ -317,7 +320,10 @@ class SQLAlchemyAdapter:
 
             with self.engine.connect() as managed_conn:
                 return await self._find_many(params, managed_conn)
-        
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
+        except (ConnectionError, QueryFailedError):
+            raise
         except Exception as e:
             raise QueryFailedError(f"FindMany failed: {str(e)}", cause=e)
 
@@ -341,8 +347,6 @@ class SQLAlchemyAdapter:
                     or where_clause
                 )
                 result = conn.execute(update(table).where(target_where_clause).values(**params.data))
-                if result.rowcount == 0:
-                    raise NotFoundError("Record not found for update")
                 updated_row = {**existing, **params.data}
                 refreshed = self._fetch_one_by_primary_key(conn, table, updated_row, params.select)
                 if refreshed is not None:
@@ -534,7 +538,10 @@ class SQLAlchemyAdapter:
             with self.engine.connect() as conn:
                 result = conn.execute(query)
                 return result.scalar() or 0
-        
+        except OperationalError as e:
+            raise ConnectionError(str(e), cause=e)
+        except (ConnectionError, QueryFailedError):
+            raise
         except Exception as e:
             raise QueryFailedError(f"Count failed: {str(e)}", cause=e)
 
