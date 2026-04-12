@@ -279,4 +279,14 @@ describe('webhooks package exports', () => {
       )
     ).rejects.toThrow('WEBHOOK_PER_ATTEMPT_TIMEOUT_INVALID');
   });
+
+  it('rejects an explicitly empty signing secret instead of sending an unsigned webhook', async () => {
+    await expect(
+      deliverWebhook({
+        url: 'https://example.com/hook',
+        payload: { hello: 'world' },
+        secret: '',
+      })
+    ).rejects.toThrow('WEBHOOK_SECRET_INVALID');
+  });
 });
