@@ -50,6 +50,20 @@ describe('envelope', () => {
     }
   });
 
+  it('guards malformed legacy error envelopes that omit the error payload', () => {
+    const normalized = normalizeLegacyEnvelope(
+      { ok: false } as never,
+      { timestamp: 't4', defaultStatus: 503, defaultRetryable: true }
+    );
+
+    expect(normalized.ok).toBe(false);
+    if (!normalized.ok) {
+      expect(normalized.error.code).toBe('INVALID_ENVELOPE_ERROR_SHAPE');
+      expect(normalized.error.status).toBe(503);
+      expect(normalized.error.retryable).toBe(true);
+    }
+  });
+
   it('converts canonical envelope back to legacy variants', () => {
     const canonical = ok({ y: 2 }, { timestamp: '2026-03-12T00:00:00.000Z' });
     expect(toLegacyDataEnvelope(canonical)).toEqual({ ok: true, data: { y: 2 } });

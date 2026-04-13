@@ -111,6 +111,17 @@ export function normalizeLegacyEnvelope<T>(
   if (envelope.ok === true && 'result' in envelope) {
     return ok(envelope.result, options);
   }
+  if (!('error' in envelope) || !envelope.error) {
+    return err(
+      {
+        code: 'INVALID_ENVELOPE_ERROR_SHAPE',
+        message: 'Legacy error envelopes require an error payload',
+        status: options?.defaultStatus ?? 500,
+        retryable: options?.defaultRetryable ?? false,
+      },
+      options
+    );
+  }
 
   return err(
     {
