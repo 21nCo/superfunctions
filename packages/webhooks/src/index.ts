@@ -176,6 +176,9 @@ export async function deliverWebhook(
     if (input.secret.length === 0) {
       throw new Error('WEBHOOK_SECRET_INVALID');
     }
+    if (input.signatureHeader !== undefined && input.signatureHeader.trim().length === 0) {
+      throw new Error('WEBHOOK_SIGNATURE_HEADER_INVALID');
+    }
     setCanonicalHeader(
       headers,
       input.signatureHeader ?? 'X-Webhook-Signature',

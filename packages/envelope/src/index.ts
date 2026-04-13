@@ -122,6 +122,17 @@ export function normalizeLegacyEnvelope<T>(
       options
     );
   }
+  if (!isLegacyErrorInput(envelope.error)) {
+    return err(
+      {
+        code: 'INVALID_ENVELOPE_ERROR_SHAPE',
+        message: 'Legacy error envelopes require string code and message fields',
+        status: options?.defaultStatus ?? 500,
+        retryable: options?.defaultRetryable ?? false,
+      },
+      options
+    );
+  }
 
   return err(
     {
@@ -183,4 +194,19 @@ function isValidErrorShape(input: {
   details?: Record<string, unknown>;
 } {
   return typeof input.status === 'number' && Number.isFinite(input.status) && typeof input.retryable === 'boolean';
+}
+
+function isLegacyErrorInput(input: unknown): input is {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+  status?: number;
+  retryable?: boolean;
+} {
+  return (
+    typeof input === 'object' &&
+    input !== null &&
+    typeof (input as { code?: unknown }).code === 'string' &&
+    typeof (input as { message?: unknown }).message === 'string'
+  );
 }

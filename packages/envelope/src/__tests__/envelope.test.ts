@@ -64,6 +64,19 @@ describe('envelope', () => {
     }
   });
 
+  it('guards malformed legacy error envelopes with non-string code or message fields', () => {
+    const normalized = normalizeLegacyEnvelope(
+      { ok: false, error: { code: 42, message: null } } as never,
+      { timestamp: 't5', defaultStatus: 422, defaultRetryable: false }
+    );
+
+    expect(normalized.ok).toBe(false);
+    if (!normalized.ok) {
+      expect(normalized.error.code).toBe('INVALID_ENVELOPE_ERROR_SHAPE');
+      expect(normalized.error.status).toBe(422);
+    }
+  });
+
   it('converts canonical envelope back to legacy variants', () => {
     const canonical = ok({ y: 2 }, { timestamp: '2026-03-12T00:00:00.000Z' });
     expect(toLegacyDataEnvelope(canonical)).toEqual({ ok: true, data: { y: 2 } });

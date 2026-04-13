@@ -289,4 +289,15 @@ describe('webhooks package exports', () => {
       })
     ).rejects.toThrow('WEBHOOK_SECRET_INVALID');
   });
+
+  it('rejects blank signature header names before sending a signed webhook', async () => {
+    await expect(
+      deliverWebhook({
+        url: 'https://example.com/hook',
+        payload: { hello: 'world' },
+        secret: 'whsec_test',
+        signatureHeader: '   ',
+      })
+    ).rejects.toThrow('WEBHOOK_SIGNATURE_HEADER_INVALID');
+  });
 });
