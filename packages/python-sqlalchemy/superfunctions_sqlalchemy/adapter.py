@@ -58,7 +58,7 @@ class SQLAlchemyAdapter:
         self.capabilities = AdapterCapabilities(
             transactions=True,
             nested_transactions=False,
-            joins=True,
+            joins=False,
             full_text_search=False,
             json_operations=True,
             schema_management=False,
@@ -346,7 +346,7 @@ class SQLAlchemyAdapter:
                     or self._build_data_where_clause(table, existing)
                     or where_clause
                 )
-                result = conn.execute(update(table).where(target_where_clause).values(**params.data))
+                conn.execute(update(table).where(target_where_clause).values(**params.data))
                 updated_row = {**existing, **params.data}
                 refreshed = self._fetch_one_by_primary_key(conn, table, updated_row, params.select)
                 if refreshed is not None:

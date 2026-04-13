@@ -298,6 +298,7 @@ async def test_transaction_accepts_sync_callbacks(adapter) -> None:
 
 def test_adapter_reports_nested_transactions_as_unsupported(adapter) -> None:
     assert adapter.capabilities.nested_transactions is False
+    assert adapter.capabilities.joins is False
 
 
 @pytest.mark.asyncio
