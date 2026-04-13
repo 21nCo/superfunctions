@@ -430,6 +430,30 @@ describe("oauth-router route factories", () => {
     expect(disconnect).not.toHaveBeenCalled();
   });
 
+  it("rejects non-string required route fields before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    await expect(
+      router.handle(
+        new Request("http://localhost/oauth/connections/disconnect/google", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            connectionId: 123,
+            revokeRemote: true
+          })
+        })
+      )
+    ).rejects.toThrow("connectionId");
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid browser disconnect payload fields before calling disconnect", async () => {
     const { service, disconnect } = createFlowServiceMocks();
     const routes = createOAuthBrowserRoutes({

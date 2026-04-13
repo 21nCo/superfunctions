@@ -155,8 +155,8 @@ function joinPath(basePath: string, suffix: string): string {
   return `${normalizedBase.replace(/\/$/, "")}/${suffix.replace(/^\//, "")}`;
 }
 
-function asRequiredString(value: string | null | undefined, field: string): string {
-  if (!value || value.length === 0) {
+function asRequiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
     throw new BadRequestError(`${field} is required`, "OAUTH_ROUTE_INVALID_INPUT");
   }
   return value;
