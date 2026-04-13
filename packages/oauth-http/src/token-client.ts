@@ -151,7 +151,15 @@ export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
         );
 
         if (!decision.retry) {
-          throw error;
+          throw new OAuthHttpError("OAuth provider request failed", {
+            code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+            status: 502,
+            retryable: false,
+            cause: error,
+            details: {
+              transportFailure: true
+            }
+          });
         }
 
         await this.sleep(decision.delayMs);

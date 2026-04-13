@@ -381,6 +381,40 @@ describe("oauth-http token client", () => {
     expect(response.accessToken).toBe("at_after_retry");
   });
 
+  it("wraps exhausted fetch exceptions in OAuthHttpError after retry attempts are spent", async () => {
+    const sleep = vi.fn(async () => undefined);
+    const client = new DefaultOAuthTokenHttpClient({
+      fetcher: async () => {
+        throw new Error("socket hang up");
+      },
+      sleep,
+      retryPolicy: {
+        maxAttempts: 1,
+        baseDelayMs: 10,
+        maxDelayMs: 10,
+        jitterRatio: 0,
+        random: () => 0,
+      },
+    });
+
+    await expect(
+      client.exchangeToken({
+        provider: googleProvider,
+        grantType: "authorization_code",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        code: "code-fail",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+      details: {
+        transportFailure: true
+      }
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("fails deterministically when a JSON token body is malformed", async () => {
     const client = new DefaultOAuthTokenHttpClient({
       fetcher: async () =>
