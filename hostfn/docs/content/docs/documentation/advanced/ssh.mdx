@@ -67,13 +67,10 @@ With these settings, a connection can survive up to 5 minutes of network inactiv
 
 ## Password Authentication
 
-For servers that use password authentication instead of SSH keys, you can provide the password via the `--password` option or the `HOSTFN_SSH_PASSWORD` environment variable:
+For commands that support password authentication, you can provide the password via a CLI flag or the `HOSTFN_SSH_PASSWORD` environment variable. For `hostfn deploy`, use the environment variable:
 
 ```bash
-# Using the --password option
-hostfn deploy production --password
-
-# Using the environment variable
+# Using the environment variable with deploy
 HOSTFN_SSH_PASSWORD="your-password" hostfn deploy production
 ```
 

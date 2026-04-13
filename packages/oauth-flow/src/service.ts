@@ -433,29 +433,21 @@ class DefaultOAuthFlowService implements OAuthFlowService {
 
   async handleCallback(input: OAuthFlowCallbackInput): Promise<OAuthFlowCallbackResult> {
     const requestId = input.requestId ?? randomUUID();
-    const statePreview = await this.config.stateStore.get(input.state);
-    const providerId = input.providerId ?? statePreview?.providerId;
-    const subjectPreview = statePreview ? toFlowSubject(statePreview) : undefined;
-
-    if (!providerId) {
-      const error = new OAuthFlowError("OAUTH_STATE_INVALID", "OAuth state is invalid or expired", {
-        status: 400,
-        retryable: false
-      });
-      this.emitEvent({
-        name: "oauth.flow.callback.failed",
-        requestId,
-        providerId: input.providerId ?? "unknown",
-        at: this.now().toISOString(),
-        ok: false,
-        subjectKind: subjectPreview?.kind,
-        connectionId: subjectPreview?.connectionId,
-        errorCode: error.code
-      });
-      throw error;
-    }
+    let providerId = input.providerId;
+    let subjectPreview: OAuthFlowSubject | undefined;
 
     try {
+      const statePreview = await this.config.stateStore.get(input.state);
+      providerId = input.providerId ?? statePreview?.providerId;
+      subjectPreview = statePreview ? toFlowSubject(statePreview) : undefined;
+
+      if (!providerId) {
+        throw new OAuthFlowError("OAUTH_STATE_INVALID", "OAuth state is invalid or expired", {
+          status: 400,
+          retryable: false
+        });
+      }
+
       const tokenSet = await this.coreService.handleCallback({
         providerId,
         code: input.code,
@@ -528,7 +520,7 @@ class DefaultOAuthFlowService implements OAuthFlowService {
       this.emitEvent({
         name: "oauth.flow.callback.failed",
         requestId,
-        providerId,
+        providerId: providerId ?? input.providerId ?? "unknown",
         at: this.now().toISOString(),
         ok: false,
         subjectKind: subjectPreview?.kind,
@@ -553,6 +545,18 @@ class DefaultOAuthFlowService implements OAuthFlowService {
         throw new OAuthFlowError("OAUTH_TOKEN_REFRESH_FAILED", "OAuth token record not found for connection", {
           status: 404,
           retryable: false
+        });
+      }
+
+      if (existing.record.providerId !== input.providerId) {
+        throw new OAuthFlowError("OAUTH_CALLBACK_MISMATCH", "provider mismatch for refresh", {
+          status: 400,
+          retryable: false,
+          details: {
+            expectedProviderId: existing.record.providerId,
+            receivedProviderId: input.providerId,
+            connectionId: input.connectionId
+          }
         });
       }
 
@@ -633,6 +637,18 @@ class DefaultOAuthFlowService implements OAuthFlowService {
       const tokenRecord = await this.getTokenSetByConnection(input.connectionId);
       const revokeRemote = input.revokeRemote ?? false;
 
+      if (tokenRecord && tokenRecord.record.providerId !== input.providerId) {
+        throw new OAuthFlowError("OAUTH_CALLBACK_MISMATCH", "provider mismatch for disconnect", {
+          status: 400,
+          retryable: false,
+          details: {
+            expectedProviderId: tokenRecord.record.providerId,
+            receivedProviderId: input.providerId,
+            connectionId: input.connectionId
+          }
+        });
+      }
+
       let revokeError: OAuthFlowError | null = null;
       if (revokeRemote && provider.revocationUrl && tokenRecord) {
         remoteRevokeAttempted = true;
@@ -649,7 +665,12 @@ class DefaultOAuthFlowService implements OAuthFlowService {
           prompt: undefined,
           loginHint: undefined
         });
-        const tokenToRevoke = tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken;
+        const tokenToRevoke =
+          input.tokenTypeHint === "access_token"
+            ? tokenRecord.tokenSet.accessToken ?? tokenRecord.tokenSet.refreshToken
+            : input.tokenTypeHint === "refresh_token"
+              ? tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken
+              : tokenRecord.tokenSet.refreshToken ?? tokenRecord.tokenSet.accessToken;
         try {
           await revokeToken({
             provider,

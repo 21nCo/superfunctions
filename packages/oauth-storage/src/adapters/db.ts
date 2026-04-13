@@ -1,3 +1,4 @@
+import { NotFoundError } from "@superfunctions/db";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type {
   OAuthConsentRecord,
@@ -154,8 +155,11 @@ export class DbAdapterOAuthStateStore implements OAuthStateStore {
       });
 
       return mapStateRowToRecord(updated);
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return null;
+      }
+      throw error;
     }
   }
 
@@ -205,18 +209,15 @@ export class DbAdapterTokenVault implements TokenVault {
   }
 
   async rotateKey(tokenId: string, newKeyRef: string): Promise<void> {
-    try {
-      await this.adapter.update({
-        model: this.model,
-        where: [{ field: "token_id", operator: "eq", value: tokenId }],
-        data: {
-          key_ref: newKeyRef,
-          updated_at: new Date().toISOString()
-        }
-      });
-    } catch {
+    const existing = await this.get(tokenId);
+    if (!existing || existing.keyRef === newKeyRef) {
       return;
     }
+
+    throw new OAuthDbAdapterError(
+      "INTERNAL_ERROR",
+      "Token key rotation requires re-encryption; use EncryptedTokenVault.rotateKey"
+    );
   }
 
   async deleteByConnection(connectionId: string): Promise<void> {
@@ -487,7 +488,7 @@ function mapRevocationFailureRowToRecord(row: RevocationFailureRow): OAuthRevoca
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
     tokenId: row.token_id ?? undefined,
-    tokenTypeHint: row.token_type_hint as "access_token" | "refresh_token" | undefined,
+    tokenTypeHint: parseTokenTypeHint(row.token_type_hint),
     errorCode: row.error_code,
     errorMessage: row.error_message,
     retryable: row.retryable,
@@ -504,7 +505,11 @@ function parseSubject(raw: unknown): OAuthStoredSubject {
 
 function parseJsonValue<T>(raw: unknown): T {
   if (typeof raw === "string") {
-    return JSON.parse(raw) as T;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      throw new OAuthDbAdapterError("INTERNAL_ERROR", "persisted JSON value must be valid JSON");
+    }
   }
 
   return raw as T;
@@ -526,6 +531,16 @@ function parseRecordValue(raw: unknown, fieldName: string): Record<string, unkno
   }
 
   return { ...value };
+}
+
+function parseTokenTypeHint(value: string | null | undefined): "access_token" | "refresh_token" | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (value === "access_token" || value === "refresh_token") {
+    return value;
+  }
+  throw new OAuthDbAdapterError("INTERNAL_ERROR", "token_type_hint must be access_token or refresh_token");
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

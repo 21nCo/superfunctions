@@ -14,6 +14,7 @@ export interface OAuthHttpErrorOptions {
   status?: number;
   retryable?: boolean;
   details?: Record<string, unknown>;
+  cause?: unknown;
 }
 
 export class OAuthHttpError extends Error {
@@ -21,6 +22,7 @@ export class OAuthHttpError extends Error {
   readonly status?: number;
   readonly retryable: boolean;
   readonly details?: Record<string, unknown>;
+  readonly cause?: unknown;
 
   constructor(message: string, options: OAuthHttpErrorOptions) {
     super(message);
@@ -29,6 +31,7 @@ export class OAuthHttpError extends Error {
     this.status = options.status;
     this.retryable = options.retryable ?? false;
     this.details = options.details;
+    this.cause = options.cause;
   }
 }
 
@@ -59,12 +62,12 @@ export function secretResolutionFailedError(
     code: "OAUTH_SECRET_RESOLUTION_FAILED",
     status: 500,
     retryable: false,
+    cause,
     details: {
       providerId: context.provider.id,
       operation: context.operation,
       grantType: context.grantType,
-      hasResolver: true,
-      causeMessage: cause instanceof Error ? cause.message : undefined
+      hasResolver: true
     }
   });
 }
@@ -81,10 +84,18 @@ export function normalizeOAuthErrorBody(rawBody: unknown): { message: string; de
     asString(payload.error) ??
     asString(payload.detail) ??
     "OAuth provider request failed";
+  const details = Object.fromEntries(
+    Object.entries({
+      error: asString(payload.error),
+      error_description: asString(payload.error_description),
+      error_uri: asString(payload.error_uri),
+      detail: asString(payload.detail)
+    }).filter(([, value]) => value !== undefined)
+  );
 
   return {
     message: description,
-    details: payload
+    details: Object.keys(details).length > 0 ? details : undefined
   };
 }
 

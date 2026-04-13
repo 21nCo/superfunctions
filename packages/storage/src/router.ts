@@ -29,6 +29,13 @@ export interface RoutedStorageAdapterConfig {
   name?: StorageAdapterName;
 }
 
+function withoutDelegatedTarget<T extends { target?: StorageTargetName }>(
+  input: T,
+): Omit<T, 'target'> {
+  const { target: _target, ...delegatedInput } = input;
+  return delegatedInput;
+}
+
 function mergeCapabilities(adapters: StorageAdapter[]): StorageAdapterCapabilities {
   return {
     signedUploadUrls: adapters.every((adapter) => adapter.capabilities.signedUploadUrls),
@@ -85,68 +92,68 @@ export function createRoutedStorageAdapter(config: RoutedStorageAdapterConfig): 
       return pickAdapter(adapterEntries, defaultTarget, target).adapter.capabilities;
     },
     async statObject(input) {
-      const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
-      return adapter.statObject({ ...input, target });
+      const { adapter } = pickAdapter(adapterEntries, defaultTarget, input.target);
+      return adapter.statObject(withoutDelegatedTarget(input));
     },
     async deleteObject(input) {
-      const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
-      return adapter.deleteObject({ ...input, target });
+      const { adapter } = pickAdapter(adapterEntries, defaultTarget, input.target);
+      return adapter.deleteObject(withoutDelegatedTarget(input));
     },
     async signUploadUrl(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.signUploadUrl) {
         throw new Error(`Storage target '${target}' does not support signed upload URLs`);
       }
-      return adapter.signUploadUrl({ ...input, target });
+      return adapter.signUploadUrl(withoutDelegatedTarget(input));
     },
     async signDownloadUrl(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.signDownloadUrl) {
         throw new Error(`Storage target '${target}' does not support signed download URLs`);
       }
-      return adapter.signDownloadUrl({ ...input, target });
+      return adapter.signDownloadUrl(withoutDelegatedTarget(input));
     },
     async createMultipartUpload(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.createMultipartUpload) {
         throw new Error(`Storage target '${target}' does not support multipart uploads`);
       }
-      return adapter.createMultipartUpload({ ...input, target });
+      return adapter.createMultipartUpload(withoutDelegatedTarget(input));
     },
     async signMultipartUploadPartUrl(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.signMultipartUploadPartUrl) {
         throw new Error(`Storage target '${target}' does not support multipart uploads`);
       }
-      return adapter.signMultipartUploadPartUrl({ ...input, target });
+      return adapter.signMultipartUploadPartUrl(withoutDelegatedTarget(input));
     },
     async completeMultipartUpload(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.completeMultipartUpload) {
         throw new Error(`Storage target '${target}' does not support multipart uploads`);
       }
-      return adapter.completeMultipartUpload({ ...input, target });
+      return adapter.completeMultipartUpload(withoutDelegatedTarget(input));
     },
     async abortMultipartUpload(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.abortMultipartUpload) {
         throw new Error(`Storage target '${target}' does not support multipart uploads`);
       }
-      return adapter.abortMultipartUpload({ ...input, target });
+      return adapter.abortMultipartUpload(withoutDelegatedTarget(input));
     },
     async openUploadStream(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.openUploadStream) {
         throw new Error(`Storage target '${target}' does not support proxy streaming uploads`);
       }
-      return adapter.openUploadStream({ ...input, target });
+      return adapter.openUploadStream(withoutDelegatedTarget(input));
     },
     async openDownloadStream(input) {
       const { adapter, target } = pickAdapter(adapterEntries, defaultTarget, input.target);
       if (!adapter.openDownloadStream) {
         throw new Error(`Storage target '${target}' does not support proxy streaming downloads`);
       }
-      return adapter.openDownloadStream({ ...input, target });
+      return adapter.openDownloadStream(withoutDelegatedTarget(input));
     },
   };
 }

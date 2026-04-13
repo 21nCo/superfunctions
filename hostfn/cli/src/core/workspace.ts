@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, cpSync, mkdirSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, relative, sep } from 'path';
+import { valid, validRange, satisfies } from 'semver';
 import { Logger } from '../utils/logger.js';
 
 interface PackageJson {
@@ -133,7 +134,7 @@ export class WorkspaceManager {
     }
   }
 
-  async generateLockfile(targetDir: string): Promise<void> {
+  async generateLockfile(targetDir: string, servicePath?: string): Promise<void> {
     const { execSync } = await import('child_process');
     const pkgJsonPath = join(targetDir, 'package.json');
 
@@ -145,35 +146,24 @@ export class WorkspaceManager {
     // We pin direct deps only (not transitive). Overriding transitive deps causes
     // EUSAGE errors from `npm ci` because the lockfile's transitive versions may no
     // longer match what the pinned direct dep's own package.json requires.
-    let originalPkgJson: string | null = null;
     if (this.workspaceRoot) {
       const rootLockfilePath = join(this.workspaceRoot, 'package-lock.json');
       if (existsSync(rootLockfilePath)) {
         try {
           const rootLockfile = JSON.parse(readFileSync(rootLockfilePath, 'utf-8'));
-          originalPkgJson = readFileSync(pkgJsonPath, 'utf-8');
-          const pkg = JSON.parse(originalPkgJson);
-
-          // Build a lookup from package name → resolved version in the root lockfile.
-          // Skip npm alias packages (where the lockfile entry's `name` field differs
-          // from the path-derived name, e.g. `string-width-cjs` → `string-width`).
-          const rootVersions: Record<string, string> = {};
-          for (const [pkgPath, pkgEntry] of Object.entries(
-            (rootLockfile.packages || {}) as Record<string, { version?: string; name?: string }>
-          )) {
-            const match = pkgPath.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)$/);
-            if (match && pkgEntry.version) {
-              const pkgName = match[1];
-              if (pkgEntry.name !== undefined && pkgEntry.name !== pkgName) continue;
-              rootVersions[pkgName] = pkgEntry.version;
-            }
-          }
+          const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
 
           // Replace semver ranges in direct deps with the exact resolved version.
           // This prevents npm from upgrading direct deps when generating the lockfile.
           for (const depGroup of ['dependencies', 'devDependencies'] as const) {
             for (const depName of Object.keys(pkg[depGroup] || {})) {
-              const exactVersion = rootVersions[depName];
+              const declaredVersion = pkg[depGroup]![depName];
+              const exactVersion = this.getResolvedVersionForDependency(
+                rootLockfile.packages || {},
+                servicePath,
+                depName,
+                declaredVersion,
+              );
               if (exactVersion) {
                 pkg[depGroup]![depName] = exactVersion;
               }
@@ -182,24 +172,15 @@ export class WorkspaceManager {
 
           writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2));
         } catch {
-          originalPkgJson = null; // Fall through without pinning
+          // Fall through without pinning
         }
       }
     }
 
-    try {
-      execSync('npm install --package-lock-only --ignore-scripts', {
-        cwd: targetDir,
-        stdio: 'ignore',
-      });
-    } finally {
-      // Restore package.json without overrides. The server uses `npm ci` which
-      // reads the lockfile directly and ignores overrides, so the overrides
-      // only need to be present during lockfile generation.
-      if (originalPkgJson !== null) {
-        writeFileSync(pkgJsonPath, originalPkgJson);
-      }
-    }
+    execSync('npm install --package-lock-only --ignore-scripts', {
+      cwd: targetDir,
+      stdio: 'ignore',
+    });
   }
 
   rewritePackageJson(servicePath: string, targetDir: string): void {
@@ -223,7 +204,7 @@ export class WorkspaceManager {
     if (pkg.devDependencies) {
       for (const depName of workspaceDeps) {
         if (pkg.devDependencies[depName]) {
-          delete pkg.devDependencies[depName];
+          pkg.devDependencies[depName] = `file:./__workspace__/${depName}`;
         }
       }
     }
@@ -248,5 +229,57 @@ export class WorkspaceManager {
 
   isInWorkspace(): boolean {
     return this.workspaceRoot !== null;
+  }
+
+  private getResolvedVersionForDependency(
+    lockfilePackages: Record<string, { version?: string; name?: string }>,
+    servicePath: string | undefined,
+    depName: string,
+    declaredRange: string,
+  ): string | null {
+    const candidatePaths = this.getDependencyCandidatePaths(servicePath, depName);
+
+    for (const candidatePath of candidatePaths) {
+      const pkgEntry = lockfilePackages[candidatePath];
+      if (!pkgEntry?.version) continue;
+      if (pkgEntry.name !== undefined && pkgEntry.name !== depName) continue;
+      if (!this.isResolvedVersionCompatible(declaredRange, pkgEntry.version)) continue;
+      return pkgEntry.version;
+    }
+
+    return null;
+  }
+
+  private getDependencyCandidatePaths(servicePath: string | undefined, depName: string): string[] {
+    const candidates: string[] = [];
+
+    if (this.workspaceRoot && servicePath) {
+      const relativeServicePath = relative(this.workspaceRoot, servicePath).split(sep).join('/');
+      if (relativeServicePath && relativeServicePath !== '.') {
+        candidates.push(`${relativeServicePath}/node_modules/${depName}`);
+      }
+    }
+
+    candidates.push(`node_modules/${depName}`);
+    return candidates;
+  }
+
+  private isResolvedVersionCompatible(declaredRange: string, resolvedVersion: string): boolean {
+    const normalizedRange = declaredRange.startsWith('workspace:')
+      ? declaredRange.slice('workspace:'.length)
+      : declaredRange;
+
+    if (normalizedRange === '' || normalizedRange === '*') {
+      return true;
+    }
+
+    const validResolvedVersion = valid(resolvedVersion);
+    const validResolvedRange = validRange(normalizedRange);
+
+    if (!validResolvedVersion || !validResolvedRange) {
+      return false;
+    }
+
+    return satisfies(validResolvedVersion, validResolvedRange);
   }
 }

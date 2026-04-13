@@ -135,25 +135,111 @@ class FileService:
             return False
         return file.fileId > cursor["fileId"]
 
+    def _is_grant_expired(self, expires_at: Optional[str]) -> bool:
+        if not expires_at:
+            return False
+        try:
+            return self._parse_timestamp(expires_at) <= datetime.now(timezone.utc)
+        except Exception:
+            return False
+
     async def _get_readable_grant_file_ids(self, ctx: FileProviderContext) -> Set[str]:
         if not ctx.principalId:
             return set()
 
-        grants = await self.db.find_many(
-            model="filePermissions",
-            where=[],
-            namespace=self.namespace,
+        grants: List[Dict[str, Any]] = []
+        grants.extend(
+            await self.db.find_many(
+                model="filePermissions",
+                where=[{"field": "userId", "operator": "eq", "value": ctx.principalId}],
+                namespace=self.namespace,
+            )
         )
+        if ctx.tenantId:
+            grants.extend(
+                await self.db.find_many(
+                    model="filePermissions",
+                    where=[{"field": "tenantId", "operator": "eq", "value": ctx.tenantId}],
+                    namespace=self.namespace,
+                )
+            )
 
         readable: Set[str] = set()
         for grant in grants:
             if not grant.get("canRead"):
+                continue
+            if self._is_grant_expired(grant.get("expiresAt")):
                 continue
             if grant.get("userId") == ctx.principalId:
                 readable.add(grant.get("fileId"))
             elif grant.get("tenantId") and grant.get("tenantId") == ctx.tenantId:
                 readable.add(grant.get("fileId"))
         return readable
+
+    @staticmethod
+    def _list_order_by() -> List[Dict[str, str]]:
+        return [
+            {"field": "updatedAt", "direction": "desc"},
+            {"field": "fileId", "direction": "asc"},
+        ]
+
+    async def _find_files(
+        self,
+        where: List[Dict[str, Any]],
+        *,
+        limit: Optional[int] = None,
+    ) -> List[FileRecord]:
+        rows = await self.db.find_many(
+            model="files",
+            where=where,
+            order_by=self._list_order_by(),
+            limit=limit,
+            namespace=self.namespace,
+        )
+        return [FileRecord(**item) for item in rows]
+
+    async def _list_accessible_files_default(
+        self,
+        ctx: FileProviderContext,
+        *,
+        source_limit: Optional[int] = None,
+    ) -> List[FileRecord]:
+        files_by_id: Dict[str, FileRecord] = {}
+
+        for file in await self._find_files(
+            [{"field": "visibility", "operator": "eq", "value": Visibility.PUBLIC.value}],
+            limit=source_limit,
+        ):
+            files_by_id[file.fileId] = file
+
+        if ctx.tenantId:
+            for file in await self._find_files(
+                [
+                    {"field": "visibility", "operator": "eq", "value": Visibility.SHARED.value},
+                    {"field": "tenantId", "operator": "eq", "value": ctx.tenantId},
+                ],
+                limit=source_limit,
+            ):
+                files_by_id[file.fileId] = file
+
+        if ctx.principalId:
+            for file in await self._find_files(
+                [{"field": "ownerId", "operator": "eq", "value": ctx.principalId}],
+                limit=source_limit,
+            ):
+                files_by_id[file.fileId] = file
+
+            granted_file_ids = await self._get_readable_grant_file_ids(ctx)
+            for file_id in granted_file_ids:
+                file_data = await self.db.find_one(
+                    model="files",
+                    where=[{"field": "fileId", "operator": "eq", "value": file_id}],
+                    namespace=self.namespace,
+                )
+                if file_data:
+                    files_by_id[file_id] = FileRecord(**file_data)
+
+        return list(files_by_id.values())
 
     async def _can_read_file(
         self,
@@ -211,18 +297,21 @@ class FileService:
             requested = 20
         limit = min(100, max(1, requested))
 
-        all_files_data = await self.db.find_many(
-            model="files",
-            where=[],
-            namespace=self.namespace,
-        )
-        all_files = [FileRecord(**item) for item in all_files_data]
-
-        granted_file_ids = await self._get_readable_grant_file_ids(ctx)
-        accessible_files: List[FileRecord] = []
-        for file in all_files:
-            if await self._can_read_file(file, ctx, granted_file_ids):
-                accessible_files.append(file)
+        if isinstance(self.authorizer, DefaultAuthorizer):
+            source_limit = None if options.get("cursor") else (limit + 1)
+            accessible_files = await self._list_accessible_files_default(ctx, source_limit=source_limit)
+        else:
+            all_files_data = await self.db.find_many(
+                model="files",
+                where=[],
+                namespace=self.namespace,
+            )
+            all_files = [FileRecord(**item) for item in all_files_data]
+            granted_file_ids = await self._get_readable_grant_file_ids(ctx)
+            accessible_files = []
+            for file in all_files:
+                if await self._can_read_file(file, ctx, granted_file_ids):
+                    accessible_files.append(file)
 
         accessible_files.sort(key=self._file_sort_key)
 
@@ -267,8 +356,18 @@ class FileService:
                     target=storage_target,
                 )
                 return {"url": result["url"], "headers": result.get("headers")}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger_warning = getattr(self.logger, "warning", None)
+                if callable(logger_warning):
+                    logger_warning(
+                        "signed download url generation failed; falling back to proxy",
+                        {
+                            "fileId": file_id,
+                            "versionId": version.versionId,
+                            "storageKey": version.storageKey,
+                            "error": str(exc),
+                        },
+                    )
 
         proxy_url = (
             f"/proxy/files/{file_id}/versions/{version.versionId}/download"
@@ -422,7 +521,7 @@ class FileService:
             where=[{"field": "fileId", "operator": "eq", "value": file_id}],
             namespace=self.namespace,
         )
-        for session in pending_sessions:
+        for session in all_sessions:
             await self.db.delete(
                 model="uploadSessions",
                 where=[{"field": "uploadSessionId", "operator": "eq", "value": session.get("uploadSessionId")}],

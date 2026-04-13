@@ -70,19 +70,27 @@ export class AesGcmTokenCipher implements TokenCipher {
       throw new TokenVaultError("VALIDATION_ERROR", "keyRef is required");
     }
 
-    const [version, ivPart, authTagPart, payloadPart] = ciphertext.split(":");
-    if (version !== "v1" || !ivPart || !authTagPart || !payloadPart) {
-      throw new TokenVaultError("INTERNAL_ERROR", "Invalid encrypted payload format");
-    }
+    try {
+      const [version, ivPart, authTagPart, payloadPart] = ciphertext.split(":");
+      if (version !== "v1" || !ivPart || !authTagPart || !payloadPart) {
+        throw new TokenVaultError("INTERNAL_ERROR", "Invalid encrypted payload format");
+      }
 
-    const key = await this.getKey(keyRef);
-    const iv = Buffer.from(ivPart, "base64url");
-    const authTag = Buffer.from(authTagPart, "base64url");
-    const payload = Buffer.from(payloadPart, "base64url");
-    const decipher = createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(authTag);
-    const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
-    return decrypted.toString("utf8");
+      const key = await this.getKey(keyRef);
+      const iv = Buffer.from(ivPart, "base64url");
+      const authTag = Buffer.from(authTagPart, "base64url");
+      const payload = Buffer.from(payloadPart, "base64url");
+      const decipher = createDecipheriv("aes-256-gcm", key, iv);
+      decipher.setAuthTag(authTag);
+      const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
+      return decrypted.toString("utf8");
+    } catch (error) {
+      if (error instanceof TokenVaultError) {
+        throw error;
+      }
+
+      throw new TokenVaultError("INTERNAL_ERROR", "Failed to decrypt token payload");
+    }
   }
 
   private async getKey(keyRef: string): Promise<Buffer> {
@@ -236,6 +244,9 @@ function validatePersistTokenSetInput(input: PersistTokenSetInput): void {
 }
 
 function assertIsoTimestamp(fieldName: string, value: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)) {
+    throw new TokenVaultError("VALIDATION_ERROR", `${fieldName} must be a valid ISO-8601 timestamp`);
+  }
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) {
     throw new TokenVaultError("VALIDATION_ERROR", `${fieldName} must be a valid ISO-8601 timestamp`);

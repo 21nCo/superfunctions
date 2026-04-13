@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -79,7 +79,7 @@ class MultiRegionService:
         authority = (region.authority if region else resolved_runtime.base_url) if resolved_runtime.base_url else None
         if not region_id or not authority:
             return None
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         existing = await self.config.database.find_one(
             model="region_profiles",
             where=[{"field": "userId", "operator": "eq", "value": user_id}],
@@ -287,11 +287,17 @@ def _coerce_runtime(value: Any) -> AuthFnRuntimeResolution:
         return value
     if isinstance(value, dict):
         return AuthFnRuntimeResolution.model_validate(value)
+    base_url = getattr(value, "baseUrl", None)
+    if base_url is None:
+        base_url = getattr(value, "base_url", None)
+    region_id = getattr(value, "regionId", None)
+    if region_id is None:
+        region_id = getattr(value, "region_id", None)
     return AuthFnRuntimeResolution.model_validate(
         {
             "issuer": getattr(value, "issuer"),
-            "baseUrl": getattr(value, "baseUrl", getattr(value, "base_url")),
-            "regionId": getattr(value, "regionId", getattr(value, "region_id", None)),
+            "baseUrl": base_url,
+            "regionId": region_id,
             "cookie": getattr(value, "cookie", None),
             "oauth": getattr(value, "oauth", None),
         }

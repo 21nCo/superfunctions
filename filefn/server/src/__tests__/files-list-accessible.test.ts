@@ -210,4 +210,27 @@ describe('PHASE_03 FILE-001 deterministic list semantics', () => {
     const cappedPage = await service.listFiles(ctx, { limit: 999 });
     expect(cappedPage.files).toHaveLength(100);
   });
+
+  it('TV-FILE-LIST-002: cursor tie-breaking stays consistent for mixed-case file IDs', async () => {
+    const db = createDb({
+      files: [
+        buildFile({ fileId: 'file_a', ownerId: 'user_123', updatedAt: '2026-03-20T15:00:00.000Z' }),
+        buildFile({ fileId: 'file_B', ownerId: 'user_123', updatedAt: '2026-03-20T15:00:00.000Z' }),
+        buildFile({ fileId: 'file_c', ownerId: 'user_123', updatedAt: '2026-03-20T14:00:00.000Z' }),
+      ],
+    });
+
+    const service = createFileService({
+      db,
+      storage: { capabilities: { signedDownloadUrls: true } } as any,
+      events: createEventEmitter(),
+      namespace: 'filefn',
+    });
+
+    const page1 = await service.listFiles({ principalId: 'user_123', tenantId: 'org_123' }, { limit: 2 });
+    const page2 = await service.listFiles({ principalId: 'user_123', tenantId: 'org_123' }, { limit: 2, cursor: page1.nextCursor });
+
+    expect(page1.files.map((file) => file.fileId)).toEqual(['file_a', 'file_B']);
+    expect(page2.files.map((file) => file.fileId)).toEqual(['file_c']);
+  });
 });

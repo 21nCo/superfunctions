@@ -3,6 +3,7 @@ import { getStorageCapabilities, type StorageAdapter } from '@superfunctions/sto
 import type { FileProviderContext } from '@superfunctions/files';
 import type { FileFnEventEmitter } from '../events.js';
 import { resolveArtifactStorageTarget, resolveStorageTarget, type PolicyRegistry } from '../policies.js';
+import type { Logger } from '../observability/logger.js';
 import * as errors from '../errors.js';
 
 export interface Processor {
@@ -55,8 +56,10 @@ export interface ProcessingServiceConfig {
   events: FileFnEventEmitter;
   processors?: Processor[];
   flowFn?: FlowFnProvider;
+  logger?: Logger;
   namespace?: string;
   enabled?: boolean;
+  maxFileBytes?: number;
 }
 
 export interface FileArtifactRecord {
@@ -73,18 +76,30 @@ export interface FileArtifactRecord {
 
 interface FileRecord {
   fileId: string;
+  currentVersionId: string;
   ownerId: string;
   tenantId: string | null;
   visibility: 'private' | 'shared' | 'public';
   policy: string;
+  name: string;
+  mimeType: string;
+  size: number;
 }
 
 interface FilePermissionRecord {
   fileId: string;
-  principalId?: string;
   userId?: string;
   tenantId?: string | null;
   canRead?: boolean;
+  expiresAt?: string | null;
+}
+
+interface FileVersionRecord {
+  versionId: string;
+  fileId: string;
+  storageKey: string;
+  mimeType: string;
+  size: number;
 }
 
 function generateId(): string {
@@ -103,6 +118,17 @@ function buildProcessingIdempotencyKey(fileId: string, versionId: string, proces
   return `processing:${fileId}:${versionId}:${processorKey}`;
 }
 
+function isGrantExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) {
+    return false;
+  }
+  const expiresAtMs = Date.parse(expiresAt);
+  if (Number.isNaN(expiresAtMs)) {
+    return false;
+  }
+  return expiresAtMs <= Date.now();
+}
+
 export function createProcessingService(config: ProcessingServiceConfig) {
   const {
     db,
@@ -111,8 +137,10 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     events,
     processors = [],
     flowFn,
+    logger,
     namespace = 'filefn',
     enabled = true,
+    maxFileBytes = 50 * 1024 * 1024,
   } = config;
 
   const QUEUE_NAME = 'filefn.processing';
@@ -122,17 +150,24 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       return new Set<string>();
     }
 
-    const grants = await db.findMany<FilePermissionRecord>({
+    const grants: FilePermissionRecord[] = [];
+    grants.push(...await db.findMany<FilePermissionRecord>({
       model: 'filePermissions',
-      where: [],
+      where: [{ field: 'userId', operator: 'eq', value: ctx.principalId }],
       namespace,
-    });
+    }));
+    if (ctx.tenantId) {
+      grants.push(...await db.findMany<FilePermissionRecord>({
+        model: 'filePermissions',
+        where: [{ field: 'tenantId', operator: 'eq', value: ctx.tenantId }],
+        namespace,
+      }));
+    }
 
     const readable = new Set<string>();
     for (const grant of grants) {
-      if (!grant?.canRead) continue;
+      if (!grant?.canRead || isGrantExpired(grant.expiresAt)) continue;
       if (
-        grant.principalId === ctx.principalId ||
         grant.userId === ctx.principalId ||
         (grant.tenantId && grant.tenantId === ctx.tenantId)
       ) {
@@ -171,6 +206,34 @@ export function createProcessingService(config: ProcessingServiceConfig) {
     }
 
     throw errors.forbidden();
+  }
+
+  async function getVersionChecked(fileId: string, versionId: string): Promise<FileVersionRecord> {
+    const version = await db.findOne<FileVersionRecord>({
+      model: 'fileVersions',
+      where: [{ field: 'versionId', operator: 'eq', value: versionId }],
+      namespace,
+    });
+
+    if (!version) {
+      throw errors.notFound('Version');
+    }
+
+    if (version.fileId !== fileId) {
+      throw errors.notFound('Version');
+    }
+
+    return version;
+  }
+
+  async function getReadableVersionForFile(
+    fileId: string,
+    ctx: FileProviderContext,
+    versionId?: string,
+  ): Promise<{ file: FileRecord; version: FileVersionRecord }> {
+    const file = await requireReadableFile(fileId, ctx);
+    const version = await getVersionChecked(fileId, versionId || file.currentVersionId);
+    return { file, version };
   }
 
   function getFileStorageTarget(file: Pick<FileRecord, 'policy'>): string {
@@ -252,13 +315,20 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       setImmediate(async () => {
         try {
           await this.runProcessing(input, ctx);
-        } catch {
+        } catch (error) {
+          logger?.error('processing failed', {
+            requestId: ctx.requestId,
+            fileId: input.fileId,
+            versionId: input.versionId,
+            error: error instanceof Error ? error.stack ?? error.message : String(error),
+          });
           events.emit('processing.failed' as any, {
             type: 'processing.failed',
             timestamp: new Date().toISOString(),
             requestId: ctx.requestId,
             fileId: input.fileId,
             versionId: input.versionId,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       });
@@ -287,6 +357,7 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
 
       let dataCache: Uint8Array | null = null;
+      // Processing currently reads the source into memory once per run; reject overly large inputs early.
       const getData = async (): Promise<Uint8Array> => {
         if (dataCache) return dataCache;
 
@@ -294,12 +365,20 @@ export function createProcessingService(config: ProcessingServiceConfig) {
           const stream = await storage.openDownloadStream({ key: input.storageKey, target: fileStorageTarget });
           const reader = stream.getReader();
           const chunks: Uint8Array[] = [];
+          let totalLength = 0;
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            if (value) chunks.push(value);
+            if (value) {
+              totalLength += value.length;
+              if (totalLength > maxFileBytes) {
+                throw new Error(
+                  `Processing source exceeds ${maxFileBytes} bytes; increase maxFileBytes or use a streaming-friendly processor.`,
+                );
+              }
+              chunks.push(value);
+            }
           }
-          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
           dataCache = new Uint8Array(totalLength);
           let offset = 0;
           for (const chunk of chunks) {
@@ -431,8 +510,6 @@ export function createProcessingService(config: ProcessingServiceConfig) {
       artifactId: string,
       ctx: FileProviderContext
     ): Promise<{ url: string; headers?: Record<string, string> }> {
-      void ctx;
-
       const artifact = await db.findOne<FileArtifactRecord>({
         model: 'fileArtifacts',
         where: [{ field: 'artifactId', operator: 'eq', value: artifactId }],
@@ -448,6 +525,9 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         where: [{ field: 'fileId', operator: 'eq', value: artifact.fileId }],
         namespace,
       });
+      if (file) {
+        await requireReadableFile(file.fileId, ctx);
+      }
       const artifactStorageTarget = getArtifactStorageTarget(file ?? { policy: '' });
 
       if (getStorageCapabilities(storage, artifactStorageTarget).signedDownloadUrls && storage.signDownloadUrl) {
@@ -512,6 +592,14 @@ export function createProcessingService(config: ProcessingServiceConfig) {
         contentType: artifact.mimeType,
         size: artifact.size,
       };
+    },
+
+    async getReadableVersionForFile(
+      fileId: string,
+      ctx: FileProviderContext,
+      versionId?: string,
+    ) {
+      return getReadableVersionForFile(fileId, ctx, versionId);
     },
   };
 }

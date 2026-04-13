@@ -2,11 +2,11 @@
 
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from superfunctions.db import Adapter as DatabaseAdapter, OrderBy, WhereClause
-from .config import normalize_config
+from .config import get_plugin_config, normalize_config
 from .http import authenticate_request, create_authfn_openapi, create_authfn_routes
 from .plugins.api_keys import ApiKeyPluginConfig, ApiKeyService
 from .schema import get_schema
@@ -33,6 +33,10 @@ def generate_id(prefix: str) -> str:
     timestamp = format(int(time.time() * 1000), "x")
     random_str = secrets.token_hex(5)[:7]
     return f"{prefix}_{timestamp}{random_str}"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class AuthFnProvider:
@@ -68,15 +72,15 @@ class AuthFnProvider:
         await self.database.update(
             model="sessions",
             where=[WhereClause(field="id", operator="eq", value=session_id)],
-            data={"revokedAt": datetime.utcnow()},
+            data={"revokedAt": _utcnow()},
             namespace=self.namespace,
         )
         await self.database.update(
             model="api_keys",
             where=[WhereClause(field="id", operator="eq", value=session_id)],
             data={
-                "revokedAt": datetime.utcnow(),
-                "updatedAt": datetime.utcnow(),
+                "revokedAt": _utcnow(),
+                "updatedAt": _utcnow(),
             },
             namespace=self.namespace,
         )
@@ -113,9 +117,10 @@ class AuthFn:
 
     async def create_key(self, data: ApiKeyCreate) -> ApiKeyResponse:
         """Create a new API key."""
+        plugin_config = get_plugin_config(self.config, "apiKey", ApiKeyPluginConfig())
         created = await ApiKeyService(
             self.config,
-            ApiKeyPluginConfig(),
+            plugin_config,
         ).create_key(
             user_id=None,
             name=data.name,
@@ -128,7 +133,8 @@ class AuthFn:
 
     async def revoke_key(self, key_id: str) -> None:
         """Revoke an API key."""
-        await ApiKeyService(self.config, ApiKeyPluginConfig()).revoke_key(key_id=key_id)
+        plugin_config = get_plugin_config(self.config, "apiKey", ApiKeyPluginConfig())
+        await ApiKeyService(self.config, plugin_config).revoke_key(key_id=key_id)
 
     async def get_key(self, key_id: str) -> Optional[ApiKeySanitized]:
         """Get API key by ID (without the secret key)."""

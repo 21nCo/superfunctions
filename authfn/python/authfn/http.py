@@ -41,6 +41,16 @@ from .types import (
     ValidationError,
 )
 
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _coerce_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
 DEFAULT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7
 DEFAULT_CSRF_MAX_AGE_SECONDS = DEFAULT_SESSION_MAX_AGE_SECONDS
 PASSWORD_HASH_ALGO = "scrypt"
@@ -204,7 +214,7 @@ async def get_cookie_session_state(config: AuthFnConfig, request: Any) -> Sessio
         state.failure_reason = "revoked"
         return state
     expires_at = record.get("expiresAt")
-    if expires_at is not None and expires_at <= datetime.utcnow():
+    if expires_at is not None and _coerce_utc(expires_at) <= _utcnow():
         state.session_record = record
         state.failure_reason = "expired"
         return state
@@ -218,7 +228,7 @@ async def get_cookie_session_state(config: AuthFnConfig, request: Any) -> Sessio
         state.failure_reason = "missing"
         return state
 
-    now = datetime.utcnow()
+    now = _utcnow()
     updated = await config.database.update(
         model="sessions",
         where=[{"field": "id", "operator": "eq", "value": record["id"]}],
@@ -345,7 +355,7 @@ async def issue_session(
 ) -> Dict[str, Any]:
     runtime = resolve_runtime(config, request)
     cookie_policy = resolve_cookie_policy(config, request, runtime)
-    now = datetime.utcnow()
+    now = _utcnow()
     payload = {
         "userId": user["id"],
         "primaryEmail": user.get("primaryEmail"),
@@ -680,7 +690,7 @@ async def _handle_list_sessions(config: AuthFnConfig, request: Any, _context: Ro
     active = [
         _build_user_session(row, state.user, getattr(state.runtime, "region_id", None) or getattr(state.runtime, "regionId", None))
         for row in rows
-        if row.get("revokedAt") is None and row.get("expiresAt") and row["expiresAt"] > datetime.utcnow()
+        if row.get("revokedAt") is None and row.get("expiresAt") and _coerce_utc(row["expiresAt"]) > _utcnow()
     ]
     return json_success(
         request,
@@ -709,14 +719,14 @@ async def _handle_sign_out(config: AuthFnConfig, request: Any, _context: RouteCo
                 await config.database.update(
                     model="sessions",
                     where=[{"field": "id", "operator": "eq", "value": row["id"]}],
-                    data={"revokedAt": datetime.utcnow(), "updatedAt": datetime.utcnow()},
+                    data={"revokedAt": _utcnow(), "updatedAt": _utcnow()},
                     namespace=config.namespace,
                 )
     else:
         await config.database.update(
             model="sessions",
             where=[{"field": "id", "operator": "eq", "value": state.session.id}],
-            data={"revokedAt": datetime.utcnow(), "updatedAt": datetime.utcnow()},
+            data={"revokedAt": _utcnow(), "updatedAt": _utcnow()},
             namespace=config.namespace,
         )
     return json_success(request, {"revoked": True, "allSessions": all_sessions}, cookies=cookies)
@@ -735,7 +745,7 @@ async def _handle_revoke_session(config: AuthFnConfig, request: Any, context: Ro
     await config.database.update(
         model="sessions",
         where=[{"field": "id", "operator": "eq", "value": context.params["sessionId"]}],
-        data={"revokedAt": datetime.utcnow(), "updatedAt": datetime.utcnow()},
+        data={"revokedAt": _utcnow(), "updatedAt": _utcnow()},
         namespace=config.namespace,
     )
     cookies = clear_session_cookies(state.cookie_policy) if context.params["sessionId"] == state.session.id else []
@@ -976,7 +986,7 @@ async def _handle_two_factor_confirm(config: AuthFnConfig, request: Any, _contex
     await config.database.update(
         model="sessions",
         where=[{"field": "id", "operator": "eq", "value": state.session.id}],
-        data={"methods": updated, "updatedAt": datetime.utcnow()},
+        data={"methods": updated, "updatedAt": _utcnow()},
         namespace=config.namespace,
     )
     return json_success(request, {"enabled": True, "sessionMethods": updated})
@@ -1092,7 +1102,7 @@ async def _sign_up_with_password(
     if existing is not None:
         raise ConflictError("A user with this email already exists", {"primaryEmail": resolved_email})
 
-    now = datetime.utcnow()
+    now = _utcnow()
     user = {
         "id": _create_id("user"),
         "primaryEmail": resolved_email,
@@ -1345,10 +1355,11 @@ def _assert_valid_csrf(request: Any, state: SessionState) -> None:
     header_token = _headers_dict(request).get("x-authfn-csrf")
     if not header_token or not state.csrf_token or not state.session_record:
         raise CsrfInvalidError("CSRF token invalid")
-    if header_token != state.csrf_token:
+    if not secrets.compare_digest(header_token, state.csrf_token):
         raise CsrfInvalidError("CSRF token invalid")
     expected = state.session_record.get("csrfHash")
-    if not expected or _hash_secret(header_token) != expected:
+    actual = _hash_secret(header_token)
+    if not expected or not secrets.compare_digest(actual, expected):
         raise CsrfInvalidError("CSRF token invalid")
 
 

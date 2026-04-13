@@ -223,6 +223,39 @@ describe('OPFSStore', () => {
       });
     });
 
+    it('prefers the newest pending upload when a fileId is reused', async () => {
+      const store = new OPFSStore();
+      await store.init();
+
+      await store.stagePendingUpload({
+        uploadSessionId: 'offline_old_001',
+        fileId: 'file_reused',
+        policy: 'images',
+        fileName: 'older.jpg',
+        size: 12,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('old').buffer,
+        createdAt: '2026-04-02T10:00:00.000Z',
+        retryCount: 0,
+      });
+      await store.stagePendingUpload({
+        uploadSessionId: 'offline_new_001',
+        fileId: 'file_reused',
+        policy: 'images',
+        fileName: 'newer.jpg',
+        size: 12,
+        mimeType: 'image/jpeg',
+        fileData: new TextEncoder().encode('new').buffer,
+        createdAt: '2026-04-02T11:00:00.000Z',
+        retryCount: 0,
+      });
+
+      const descriptor = await store.getPendingLocalDescriptor('file_reused');
+
+      expect(descriptor?.uploadSessionId).toBe('offline_new_001');
+      expect(descriptor?.source.fileName).toBe('newer.jpg');
+    });
+
     it('should list all pending uploads', async () => {
       const store = new OPFSStore();
       await store.init();
@@ -297,6 +330,49 @@ describe('OPFSStore', () => {
 
       const retrieved2 = await store.getPendingUpload('offline_001');
       expect(retrieved2!.retryCount).toBe(2);
+    });
+
+    it('cleans up partial staging directories when metadata write fails', async () => {
+      const store = new OPFSStore();
+      await store.init();
+
+      const rootDir = (store as any).rootDir;
+      const originalGetDirectoryHandle = rootDir.getDirectoryHandle.bind(rootDir);
+      rootDir.getDirectoryHandle = async (name: string, options?: { create?: boolean }) => {
+        const dir = await originalGetDirectoryHandle(name, options);
+        const originalGetFileHandle = dir.getFileHandle.bind(dir);
+        dir.getFileHandle = async (fileName: string, fileOptions?: { create?: boolean }) => {
+          const handle = await originalGetFileHandle(fileName, fileOptions);
+          if (fileName === 'metadata.json') {
+            return {
+              async createWritable() {
+                return {
+                  write: async () => {
+                    throw new Error('metadata write failed');
+                  },
+                  close: async () => {},
+                };
+              },
+            };
+          }
+          return handle;
+        };
+        return dir;
+      };
+
+      const pendingUpload: PendingUpload = {
+        uploadSessionId: 'offline_partial_001',
+        policy: 'test-policy',
+        fileName: 'test.txt',
+        size: 100,
+        mimeType: 'text/plain',
+        fileData: new ArrayBuffer(100),
+        createdAt: new Date().toISOString(),
+        retryCount: 0,
+      };
+
+      await expect(store.stagePendingUpload(pendingUpload)).rejects.toThrow('metadata write failed');
+      expect(await store.listPendingUploads()).toEqual([]);
     });
 
     it('should calculate total size of pending uploads', async () => {

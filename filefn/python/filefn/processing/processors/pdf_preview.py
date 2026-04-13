@@ -36,23 +36,24 @@ class PdfPreviewProcessor:
             for size in self.sizes:
                 preview_data, render_mode = self._render_preview(pdf_data, size)
                 base_key = input.storageKey.rsplit('.', 1)[0]
+                output_data, output_mime_type, extension = self._format_output(preview_data)
                 artifacts.append(
                     ProcessorOutputArtifact(
                         kind=f'pdf-preview-page-1-{size.name}',
-                        data=preview_data,
-                        mimeType='image/png',
-                        storageKey=f'{base_key}-pdf-preview-page-1-{size.name}.png',
+                        data=output_data,
+                        mimeType=output_mime_type,
+                        storageKey=f'{base_key}-pdf-preview-page-1-{size.name}.{extension}',
                         metadata={
                             'width': size.width,
                             'height': size.height,
                             'density': self.density,
                             'pageNumber': 1,
-                            'format': 'png',
+                            'format': extension,
                             'renderMode': render_mode,
                             'sourceFileId': input.fileId,
                             'sourceVersionId': input.versionId,
                             'originalSize': len(pdf_data),
-                            'previewSize': len(preview_data),
+                            'previewSize': len(output_data),
                         },
                     )
                 )
@@ -111,6 +112,27 @@ class PdfPreviewProcessor:
             self._png_chunk(b'IDAT', compressed),
             self._png_chunk(b'IEND', b''),
         ])
+
+    def _format_output(self, preview_png: bytes) -> Tuple[bytes, str, str]:
+        if self.format == 'png':
+            return preview_png, 'image/png', 'png'
+
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(preview_png)) as img:
+                out_buffer = io.BytesIO()
+                fmt = self.format.upper()
+                if fmt == 'JPG':
+                    fmt = 'JPEG'
+                if fmt == 'JPEG' and img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                img.save(out_buffer, format=fmt, quality=self.quality)
+                mime_type = 'image/webp' if fmt == 'WEBP' else 'image/jpeg'
+                extension = 'webp' if fmt == 'WEBP' else 'jpg'
+                return out_buffer.getvalue(), mime_type, extension
+        except Exception:
+            return preview_png, 'image/png', 'png'
 
     def _png_chunk(self, chunk_type: bytes, data: bytes) -> bytes:
         checksum = zlib.crc32(chunk_type)

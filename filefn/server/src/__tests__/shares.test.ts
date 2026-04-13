@@ -467,6 +467,36 @@ describe('@filefn/server shares', () => {
 
       expect(result.expiresAt).toBe(expiresAt);
     });
+
+    it('should allow delegated canShare grants to create share links', async () => {
+      await seedFileAndVersion(db, 'file_delegate', 'owner_user');
+      await db.create({
+        model: 'filePermissions',
+        data: {
+          permissionId: 'perm_delegate',
+          fileId: 'file_delegate',
+          userId: 'delegate_user',
+          role: null,
+          tenantId: null,
+          canRead: true,
+          canWrite: false,
+          canDelete: false,
+          canShare: true,
+          expiresAt: null,
+          createdAt: new Date().toISOString(),
+        },
+        namespace: 'filefn',
+      });
+
+      const sharesService = createSharesService({ db, storage, namespace: 'filefn' });
+      const result = await sharesService.createShareLink(
+        { fileId: 'file_delegate' },
+        { principalId: 'delegate_user' },
+      );
+
+      expect(result.token).toBeDefined();
+      expect(typeof result.token).toBe('string');
+    });
   });
 
   describe('Download increments counter', () => {

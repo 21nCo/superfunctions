@@ -83,11 +83,17 @@ def _coerce_runtime(value: Any) -> AuthFnRuntimeResolution:
         return value
     if isinstance(value, dict):
         return AuthFnRuntimeResolution.model_validate(value)
+    base_url = getattr(value, "baseUrl", None)
+    if base_url is None:
+        base_url = getattr(value, "base_url", None)
+    region_id = getattr(value, "regionId", None)
+    if region_id is None:
+        region_id = getattr(value, "region_id", None)
     return AuthFnRuntimeResolution.model_validate(
         {
             "issuer": getattr(value, "issuer"),
-            "baseUrl": getattr(value, "baseUrl", getattr(value, "base_url")),
-            "regionId": getattr(value, "regionId", getattr(value, "region_id", None)),
+            "baseUrl": base_url,
+            "regionId": region_id,
             "cookie": getattr(value, "cookie", None),
             "oauth": getattr(value, "oauth", None),
         }

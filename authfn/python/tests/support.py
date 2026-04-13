@@ -5,8 +5,6 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from superfunctions.http import RouteContext
-
 
 TESTS_DIR = os.path.dirname(__file__)
 AUTHFN_PYTHON_ROOT = os.path.abspath(os.path.join(TESTS_DIR, ".."))
@@ -23,6 +21,8 @@ PYTHON_FLASK_ROOT = os.path.abspath(
 for path in (AUTHFN_PYTHON_ROOT, PYTHON_CORE_ROOT, PYTHON_FASTAPI_ROOT, PYTHON_FLASK_ROOT):
     if path not in sys.path:
         sys.path.insert(0, path)
+
+from superfunctions.http import RouteContext
 
 
 class InMemoryDatabaseAdapter:

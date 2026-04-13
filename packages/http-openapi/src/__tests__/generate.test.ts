@@ -104,6 +104,16 @@ describe("http-openapi generator", () => {
           get: {
             operationId: "getUser",
             tags: ["auth", "users"],
+            parameters: [
+              {
+                in: "path",
+                name: "userId",
+                required: true,
+                schema: {
+                  type: "string"
+                }
+              }
+            ],
             responses: {
               "200": {
                 description: "Success"
@@ -177,6 +187,131 @@ describe("http-openapi generator", () => {
         details: {
           method: "GET",
           path: "/auth/session"
+        }
+      })
+    );
+  });
+
+  it("emits every path parameter required by templated routes", () => {
+    const router = createRouter({
+      routes: [
+        {
+          method: "GET",
+          path: "/teams/:teamId/users/:userId",
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "getTeamUser",
+            }
+          }
+        }
+      ]
+    });
+
+    const document = generateOpenApiDocument({
+      title: "Nested API",
+      version: "1.0.0",
+      routers: [router]
+    });
+
+    expect(document).toMatchObject({
+      paths: {
+        "/teams/{teamId}/users/{userId}": {
+          get: {
+            parameters: [
+              {
+                in: "path",
+                name: "teamId",
+                required: true,
+                schema: { type: "string" }
+              },
+              {
+                in: "path",
+                name: "userId",
+                required: true,
+                schema: { type: "string" }
+              }
+            ]
+          }
+        }
+      }
+    });
+  });
+
+  it("fails clearly when two routes normalize to the same method and path", () => {
+    const router = createRouter({
+      routes: [
+        {
+          method: "GET",
+          path: "/users/:userId",
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "getUserById",
+            }
+          }
+        },
+        {
+          method: "GET",
+          path: "/users/{userId}".replace("{userId}", ":userId"),
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "getUserDuplicate",
+            }
+          }
+        }
+      ]
+    });
+
+    expect(() =>
+      generateOpenApiDocument({
+        title: "Duplicate API",
+        version: "1.0.0",
+        routers: [router]
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<OpenApiGenerationError>>({
+        code: "OPENAPI_META_INCOMPLETE",
+        details: {
+          method: "GET",
+          path: "/users/{userId}"
+        }
+      })
+    );
+  });
+
+  it("fails clearly when a response schema entry is not an object", () => {
+    const router = createRouter({
+      routes: [
+        {
+          method: "POST",
+          path: "/broken",
+          handler: () => Response.json({ ok: true }),
+          meta: {
+            openapi: {
+              operationId: "brokenResponseSchema",
+              responseSchemas: {
+                "200": null as never,
+              }
+            }
+          }
+        }
+      ]
+    });
+
+    expect(() =>
+      generateOpenApiDocument({
+        title: "Broken API",
+        version: "1.0.0",
+        routers: [router]
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<OpenApiGenerationError>>({
+        code: "OPENAPI_META_INCOMPLETE",
+        details: {
+          method: "POST",
+          path: "/broken"
         }
       })
     );

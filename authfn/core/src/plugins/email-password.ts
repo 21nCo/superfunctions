@@ -1,7 +1,7 @@
 import type { Route } from '@superfunctions/http';
 import type { PasswordPluginConfig } from '../plugin-types.js';
 import type { AuthFnPlugin, AuthFnPluginRuntimeContext, AuthFnSchemaDefinition } from '../types.js';
-import { createAuthFnRouteMeta } from '../http/router.js';
+import { createAuthFnRouteMeta, readOptionalJson } from '../http/router.js';
 import { issueSession } from '../core/sessions.js';
 import { issueSessionCookies } from '../core/cookies.js';
 import { resolveRuntime } from '../core/runtime.js';
@@ -73,11 +73,11 @@ function createPasswordRoutes(
         mode: 'none'
       }),
       handler: async (request) => {
-        const body = await request.json() as {
+        const body = await readOptionalJson<{
           email?: string;
           password?: string;
           profile?: Record<string, unknown>;
-        };
+        }>(request);
         const runtime = await resolveRuntime(ctx.config, request);
         const result = await signUpWithPassword(ctx.config, ctx.hooks, {
           email: body.email ?? '',
@@ -123,9 +123,9 @@ function createPasswordRoutes(
         mode: 'none'
       }),
       handler: async (request) => {
-        const body = await request.json() as {
+        const body = await readOptionalJson<{
           email?: string;
-        };
+        }>(request);
         const result = await sendOtpChallenge(ctx.config, ctx.hooks, config.otp ?? {}, {
           request,
           purpose: 'reset-password',

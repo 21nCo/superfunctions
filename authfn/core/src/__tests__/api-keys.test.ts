@@ -160,4 +160,70 @@ describe('@authfn/core api key plugin', () => {
     expect(rejected.status).toBe(400);
     expect((await rejected.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
   });
+
+  it('preserves authoritative metadata fields and rejects invalid expiry timestamps', async () => {
+    const config = createConfig();
+    const auth = createAuthFn(config);
+    const user = await createUser(config, {
+      primaryEmail: 'ada@example.com'
+    });
+    const issued = await issueSession(config, {}, {
+      request: new Request('https://account.example.com/auth/session'),
+      userId: user.id,
+      primaryEmail: user.primaryEmail,
+      methods: ['password']
+    });
+    const cookieHeader = cookieHeaderFromSetCookies(
+      Object.values(issueSessionCookies(issued.cookiePolicy!, issued.sessionToken, issued.csrfToken))
+    );
+
+    const invalidExpiry = await auth.router.handle(
+      new Request('https://account.example.com/auth/api-keys', {
+        method: 'POST',
+        headers: {
+          cookie: cookieHeader,
+          'content-type': 'application/json',
+          'x-authfn-csrf': issued.csrfToken
+        },
+        body: JSON.stringify({
+          name: 'bad-expiry',
+          expiresAt: 'not-a-date'
+        })
+      })
+    );
+    expect(invalidExpiry.status).toBe(400);
+    expect((await invalidExpiry.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+
+    const created = await auth.router.handle(
+      new Request('https://account.example.com/auth/api-keys', {
+        method: 'POST',
+        headers: {
+          cookie: cookieHeader,
+          'content-type': 'application/json',
+          'x-authfn-csrf': issued.csrfToken
+        },
+        body: JSON.stringify({
+          name: 'authoritative',
+          scopes: ['read'],
+          metadata: {
+            ownerUserId: 'override-attempt',
+            scopes: ['override']
+          }
+        })
+      })
+    );
+    const createdBody = await created.json();
+    const authenticated = await auth.provider.authenticate(
+      new Request('https://account.example.com/auth/session', {
+        headers: {
+          authorization: `Bearer ${createdBody.data.secret}`
+        }
+      })
+    );
+
+    expect(authenticated?.metadata).toMatchObject({
+      ownerUserId: user.id,
+      scopes: ['read']
+    });
+  });
 });

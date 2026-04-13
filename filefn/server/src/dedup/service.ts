@@ -46,86 +46,63 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
     return resolveStorageTarget(policy ?? {});
   }
 
-  return {
-    isEnabled(): boolean {
-      return enabled;
-    },
+  function computeHash(data: Uint8Array): string {
+    const hash = createHash('sha256');
+    hash.update(data);
+    return hash.digest('base64');
+  }
 
-    /**
-     * Computes SHA-256 hash of the provided data.
-     * Returns base64-encoded hash.
-     */
-    computeHash(data: Uint8Array): string {
-      const hash = createHash('sha256');
-      hash.update(data);
-      return hash.digest('base64');
-    },
+  async function computeHashFromStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+    const hash = createHash('sha256');
+    const reader = stream.getReader();
 
-    /**
-     * Computes SHA-256 hash from a readable stream.
-     * Returns base64-encoded hash.
-     */
-    async computeHashFromStream(stream: ReadableStream<Uint8Array>): Promise<string> {
-      const hash = createHash('sha256');
-      const reader = stream.getReader();
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            hash.update(value);
-          }
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          hash.update(value);
         }
-      } finally {
-        reader.releaseLock();
       }
+    } finally {
+      reader.releaseLock();
+    }
 
-      return hash.digest('base64');
-    },
+    return hash.digest('base64');
+  }
 
-    /**
-     * Checks if a version with the given hash already exists in the same tenant.
-     * Returns deduplication result with existing version info if found.
-     */
-    async checkForDuplicate(
-      checksumSha256Base64: string,
-      tenantId: string | null,
-      storageTarget?: StorageTargetName | null,
-    ): Promise<DeduplicationResult> {
-      if (!enabled) {
-        return {
-          isDuplicate: false,
-          checksumSha256Base64,
-        };
-      }
+  async function checkForDuplicate(
+    checksumSha256Base64: string,
+    tenantId: string | null,
+    storageTarget?: StorageTargetName | null,
+  ): Promise<DeduplicationResult> {
+    if (!enabled) {
+      return {
+        isDuplicate: false,
+        checksumSha256Base64,
+      };
+    }
 
-      const whereConditions: Array<{
-        field: string;
-        operator: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in' | 'contains' | 'starts_with' | 'ends_with';
-        value: any;
-      }> = [{ field: 'checksumSha256Base64', operator: 'eq', value: checksumSha256Base64 }];
+    const whereConditions: Array<{
+      field: string;
+      operator: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in' | 'contains' | 'starts_with' | 'ends_with';
+      value: any;
+    }> = [{ field: 'checksumSha256Base64', operator: 'eq', value: checksumSha256Base64 }];
 
-      if (tenantId !== null) {
-        whereConditions.push({ field: 'tenantId', operator: 'eq', value: tenantId });
-      } else {
-        whereConditions.push({ field: 'tenantId', operator: 'eq', value: null });
-      }
+    if (tenantId !== null) {
+      whereConditions.push({ field: 'tenantId', operator: 'eq', value: tenantId });
+    } else {
+      whereConditions.push({ field: 'tenantId', operator: 'eq', value: null });
+    }
 
-      const existingVersions = await db.findMany<FileVersionRecord>({
+    if (!storageTarget) {
+      const existingVersion = await db.findOne<FileVersionRecord>({
         model: 'fileVersions',
         where: whereConditions,
         namespace,
       });
 
-      for (const existingVersion of existingVersions) {
-        if (storageTarget) {
-          const existingTarget = await resolveVersionStorageTarget(existingVersion);
-          if (existingTarget !== storageTarget) {
-            continue;
-          }
-        }
-
+      if (existingVersion) {
         return {
           isDuplicate: true,
           existingVersionId: existingVersion.versionId,
@@ -138,7 +115,58 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
         isDuplicate: false,
         checksumSha256Base64,
       };
+    }
+
+    const existingVersions = await db.findMany<FileVersionRecord>({
+      model: 'fileVersions',
+      where: whereConditions,
+      namespace,
+    });
+
+    for (const existingVersion of existingVersions) {
+      if (storageTarget) {
+        const existingTarget = await resolveVersionStorageTarget(existingVersion);
+        if (existingTarget !== storageTarget) {
+          continue;
+        }
+      }
+
+      return {
+        isDuplicate: true,
+        existingVersionId: existingVersion.versionId,
+        existingStorageKey: existingVersion.storageKey,
+        checksumSha256Base64,
+      };
+    }
+
+    return {
+      isDuplicate: false,
+      checksumSha256Base64,
+    };
+  }
+
+  return {
+    isEnabled(): boolean {
+      return enabled;
     },
+
+    /**
+     * Computes SHA-256 hash of the provided data.
+     * Returns base64-encoded hash.
+     */
+    computeHash,
+
+    /**
+     * Computes SHA-256 hash from a readable stream.
+     * Returns base64-encoded hash.
+     */
+    computeHashFromStream,
+
+    /**
+     * Checks if a version with the given hash already exists in the same tenant.
+     * Returns deduplication result with existing version info if found.
+     */
+    checkForDuplicate,
 
     /**
      * Computes hash from stored content and checks for duplicates.
@@ -147,24 +175,32 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
     async computeAndCheckDuplicate(
       storageKey: string,
       tenantId: string | null,
-      storageTarget: StorageTargetName | null,
-      storage: Pick<StorageAdapter, 'openDownloadStream'>
+      storageTargetOrStorage: StorageTargetName | null | Pick<StorageAdapter, 'openDownloadStream'>,
+      maybeStorage?: Pick<StorageAdapter, 'openDownloadStream'>
     ): Promise<DeduplicationResult> {
-      if (!enabled) {
-        return {
-          isDuplicate: false,
-          checksumSha256Base64: '',
-        };
-      }
+      const storageTarget =
+        maybeStorage === undefined
+          ? null
+          : storageTargetOrStorage as StorageTargetName | null;
+      const storage =
+        maybeStorage ??
+        (storageTargetOrStorage as Pick<StorageAdapter, 'openDownloadStream'>);
 
       if (!storage.openDownloadStream) {
         throw new Error('Storage adapter does not support streaming downloads required for deduplication');
       }
 
       const stream = await storage.openDownloadStream({ key: storageKey, target: storageTarget ?? undefined });
-      const checksumSha256Base64 = await this.computeHashFromStream(stream);
+      const checksumSha256Base64 = await computeHashFromStream(stream);
 
-      return this.checkForDuplicate(checksumSha256Base64, tenantId, storageTarget);
+      if (!enabled) {
+        return {
+          isDuplicate: false,
+          checksumSha256Base64,
+        };
+      }
+
+      return checkForDuplicate(checksumSha256Base64, tenantId, storageTarget);
     },
 
     /**
@@ -182,7 +218,7 @@ export function createDeduplicationService(config: DeduplicationServiceConfig) {
       }
 
       const stream = await storage.openDownloadStream({ key: storageKey, target: storageTarget ?? undefined });
-      const actualHash = await this.computeHashFromStream(stream);
+      const actualHash = await computeHashFromStream(stream);
 
       return actualHash === expectedHash;
     },

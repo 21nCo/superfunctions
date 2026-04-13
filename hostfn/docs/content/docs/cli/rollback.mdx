@@ -61,8 +61,7 @@ hostfn rollback staging
 
 HostFn also performs automatic rollback during `hostfn deploy` when:
 
-- The build step fails
 - The health check fails after deployment
 - PM2 fails to start the service
 
-This happens transparently - no manual intervention needed.
+When rollback succeeds, this happens automatically. If rollback itself fails, HostFn reports that manual intervention is required.

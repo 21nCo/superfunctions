@@ -675,12 +675,32 @@ describe('Combined Video and Audio Processing', () => {
       { principalId: 'user_123', requestId: 'req_013' }
     );
 
+    const testAudio = createMockAudioData(4000);
+    storage.setData('tenant/file_014/ver_001.mp3', testAudio);
+
+    await service.runProcessing(
+      {
+        fileId: 'file_014',
+        versionId: 'ver_001',
+        storageKey: 'tenant/file_014/ver_001.mp3',
+        mimeType: 'audio/mpeg',
+        size: testAudio.length,
+        fileName: 'song.mp3',
+      },
+      { principalId: 'user_123', requestId: 'req_014' }
+    );
+
     const videoArtifacts = await service.listArtifacts('file_013', {});
+    const audioArtifacts = await service.listArtifacts('file_014', {});
     const videoArtifactId = videoArtifacts[0].artifactId;
+    const audioArtifactId = audioArtifacts.find((artifact) => artifact.kind.startsWith('audio-transcoded-'))?.artifactId;
 
     const { url: videoUrl } = await service.getArtifactDownloadUrl(videoArtifactId, {});
+    const { url: audioUrl } = await service.getArtifactDownloadUrl(audioArtifactId!, {});
 
     expect(videoUrl).toContain('tenant/file_013/ver_001-poster.jpg');
     expect(videoUrl).toMatch(/^https:\/\/storage\.test\/download\//);
+    expect(audioUrl).toContain('tenant/file_014/ver_001-aac.m4a');
+    expect(audioUrl).toMatch(/^https:\/\/storage\.test\/download\//);
   });
 });

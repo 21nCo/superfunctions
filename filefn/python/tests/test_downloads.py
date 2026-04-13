@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +16,7 @@ from filefn.server.shares.service import CreateShareLinkInput, SharesServiceConf
 class FakeDB:
     def __init__(self) -> None:
         self.tables: Dict[str, List[Dict[str, Any]]] = {}
+        self.find_many_calls: List[Dict[str, Any]] = []
 
     def _table(self, model: str) -> List[Dict[str, Any]]:
         return self.tables.setdefault(model, [])
@@ -55,6 +56,7 @@ class FakeDB:
         limit: Optional[int] = None,
         namespace: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        self.find_many_calls.append({"model": model, "where": where, "order_by": order_by, "limit": limit})
         rows = [dict(row) for row in self._table(model) if self._matches(row, where)]
 
         if order_by:
@@ -102,6 +104,28 @@ class FakeDB:
         deleted = len(rows) - len(retained)
         self.tables[model] = retained
         return deleted
+
+
+class FlakyShareDB(FakeDB):
+    def __init__(self) -> None:
+        super().__init__()
+        self.share_update_conflicts = 1
+
+    async def update(
+        self,
+        model: str,
+        where: List[Dict[str, Any]],
+        data: Dict[str, Any],
+        namespace: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if (
+            model == "fileShares"
+            and self.share_update_conflicts > 0
+            and any(clause.get("field") == "downloads" for clause in where)
+        ):
+            self.share_update_conflicts -= 1
+            return None
+        return await super().update(model=model, where=where, data=data, namespace=namespace)
 
 
 class FakeStorage:
@@ -297,6 +321,19 @@ async def test_version_aware_get_file_and_list_files_are_deterministic() -> None
         {"limit": 2, "cursor": first_page["nextCursor"]},
     )
     assert [file["fileId"] for file in second_page["files"]] == ["file_0002"]
+    assert not any(
+        call["model"] == "files" and call["where"] == []
+        for call in db.find_many_calls
+    )
+    assert any(
+        call["model"] == "files"
+        and call["limit"] == 2
+        and call["order_by"] == [
+            {"field": "updatedAt", "direction": "desc"},
+            {"field": "fileId", "direction": "asc"},
+        ]
+        for call in db.find_many_calls
+    )
 
 
 @pytest.mark.asyncio
@@ -338,6 +375,65 @@ async def test_share_proxy_descriptor_defers_download_counter_until_stream_acces
     assert b"".join(payload) == b"bytes"
     share_rows = await db.find_many("fileShares", where=[])
     assert share_rows[0]["downloads"] == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_share_descriptor_increments_downloads_once() -> None:
+    db = FakeDB()
+    await _seed_file_rows(db)
+
+    shares_service = create_shares_service(
+        SharesServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=True),
+            namespace="filefn",
+        )
+    )
+    shares_service.storage.capabilities = {"signedDownloadUrls": True}
+
+    create_res = await shares_service.create_share_link(
+        CreateShareLinkInput(fileId="file_0001", versionId="ver_0001"),
+        _ctx("user_123"),
+    )
+
+    token = create_res["token"]
+    descriptor = await shares_service.download_via_share_link(token, _ctx(None), is_authenticated=False)
+
+    assert descriptor["url"].startswith("https://download.local/")
+    share_rows = await db.find_many("fileShares", where=[])
+    assert share_rows[0]["downloads"] == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_share_descriptor_retries_download_reservation_conflicts() -> None:
+    db = FlakyShareDB()
+    await _seed_file_rows(db)
+
+    shares_service = create_shares_service(
+        SharesServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=True),
+            namespace="filefn",
+        )
+    )
+    shares_service.storage.capabilities = {"signedDownloadUrls": True}
+
+    create_res = await shares_service.create_share_link(
+        CreateShareLinkInput(fileId="file_0001", versionId="ver_0001", maxDownloads=1),
+        _ctx("user_123"),
+    )
+
+    token = create_res["token"]
+    descriptor = await shares_service.download_via_share_link(token, _ctx(None), is_authenticated=False)
+
+    assert descriptor["url"].startswith("https://download.local/")
+
+    share_rows = await db.find_many("fileShares", where=[])
+    assert share_rows[0]["downloads"] == 1
+
+    with pytest.raises(Exception) as exc_info:
+        await shares_service.download_via_share_link(token, _ctx(None), is_authenticated=False)
+    assert getattr(exc_info.value, "code", "") == "FILEFN_SHARE_DOWNLOADS_EXCEEDED"
 
 
 @pytest.mark.asyncio
@@ -611,3 +707,112 @@ async def test_delete_treats_same_storage_key_in_different_targets_as_distinct()
 
     await service.delete_file("file_temporary", _ctx("user_123"))
     assert "default:shared/object.png" in temporary.delete_calls
+
+
+@pytest.mark.asyncio
+async def test_read_grants_ignore_expired_permissions() -> None:
+    db = FakeDB()
+    await _seed_file_rows(db)
+    await db.update(
+        model="files",
+        where=[{"field": "fileId", "operator": "eq", "value": "file_0001"}],
+        data={"ownerId": "owner_user"},
+    )
+    await db.create(
+        model="filePermissions",
+        data={
+            "permissionId": "perm_valid",
+            "fileId": "file_0001",
+            "userId": "user_123",
+            "tenantId": None,
+            "canRead": True,
+            "canWrite": False,
+            "canDelete": False,
+            "canShare": False,
+            "expiresAt": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    service = create_file_service(
+        FileServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=False),
+            events=create_event_emitter(),
+            namespace="filefn",
+        )
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        await service.get_file("file_0001", _ctx("user_123"))
+    assert getattr(exc_info.value, "code", "") == "FILEFN_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_delete_file_removes_completed_upload_sessions() -> None:
+    db = FakeDB()
+    now = datetime.now(timezone.utc).isoformat()
+    await db.create(
+        model="files",
+        data={
+            "fileId": "file_cleanup",
+            "currentVersionId": "ver_cleanup",
+            "ownerId": "user_123",
+            "tenantId": "org_123",
+            "visibility": "private",
+            "policy": "user-avatar",
+            "mimeType": "image/png",
+            "size": 3,
+            "name": "cleanup.png",
+            "metadata": {},
+            "createdAt": now,
+            "updatedAt": now,
+        },
+    )
+    await db.create(
+        model="fileVersions",
+        data={
+            "versionId": "ver_cleanup",
+            "fileId": "file_cleanup",
+            "storageKey": "uploads/file_cleanup/ver_cleanup.png",
+            "mimeType": "image/png",
+            "size": 3,
+            "checksumSha256Base64": None,
+            "tenantId": "org_123",
+            "createdAt": now,
+        },
+    )
+    await db.create(
+        model="uploadSessions",
+        data={
+            "uploadSessionId": "upl_completed",
+            "status": "completed",
+            "policy": "user-avatar",
+            "fileId": "file_cleanup",
+            "fileName": "cleanup.png",
+            "mimeType": "image/png",
+            "size": 3,
+            "uploadMode": "proxy",
+            "chunkSizeBytes": 3,
+            "totalParts": 1,
+            "storageKey": "uploads/file_cleanup/ver_cleanup.png",
+            "storageUploadId": None,
+            "ownerId": "user_123",
+            "tenantId": "org_123",
+            "metadata": {},
+            "expiresAt": now,
+            "createdAt": now,
+        },
+    )
+
+    service = create_file_service(
+        FileServiceConfig(
+            db=db,
+            storage=FakeStorage(with_signing=False),
+            events=create_event_emitter(),
+            namespace="filefn",
+        )
+    )
+
+    await service.delete_file("file_cleanup", _ctx("user_123"))
+    assert await db.find_many("uploadSessions", where=[{"field": "fileId", "operator": "eq", "value": "file_cleanup"}]) == []

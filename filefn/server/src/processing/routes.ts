@@ -60,6 +60,12 @@ function errorResponse(error: errors.FileFnError, requestId?: string): Response 
 export function createProcessingRoutes(config: ProcessingRoutesConfig) {
   const { service, auth, rateLimiter, rateLimits } = config;
 
+  function requireAuth(principal: { principalId?: string; tenantId?: string } | null): void {
+    if (!principal && auth.required !== false) {
+      throw errors.authRequired();
+    }
+  }
+
   async function checkArtifactDownloadRateLimit(
     principal: { principalId?: string; tenantId?: string } | null
   ): Promise<void> {
@@ -84,6 +90,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
 
       try {
         const principal = await resolvePrincipal(request, auth);
+        requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
           principalId: principal?.principalId,
@@ -120,6 +127,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
 
       try {
         const principal = await resolvePrincipal(request, auth);
+        requireAuth(principal);
         await checkArtifactDownloadRateLimit(principal);
         const ctx = {
           principalId: principal?.principalId,
@@ -143,6 +151,8 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
 
       try {
         const principal = await resolvePrincipal(request, auth);
+        requireAuth(principal);
+        await checkArtifactDownloadRateLimit(principal);
         const ctx = {
           principalId: principal?.principalId,
           tenantId: principal?.tenantId,
@@ -171,10 +181,7 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
 
       try {
         const principal = await resolvePrincipal(request, auth);
-
-        if (!principal && auth.required) {
-          throw errors.authRequired();
-        }
+        requireAuth(principal);
 
         const ctx = {
           principalId: principal?.principalId,
@@ -184,21 +191,18 @@ export function createProcessingRoutes(config: ProcessingRoutesConfig) {
 
         const body = (await request.json()) as {
           versionId?: string;
-          storageKey: string;
-          mimeType: string;
-          size: number;
-          fileName: string;
-        };
+        } | undefined;
+        const target = await service.getReadableVersionForFile(fileId, ctx, body?.versionId);
 
         const result = await service.triggerProcessing(
           {
             fileId,
-            versionId: body.versionId || fileId,
-            storageKey: body.storageKey,
-            mimeType: body.mimeType,
-            size: body.size,
-            fileName: body.fileName,
-            tenantId: ctx.tenantId,
+            versionId: target.version.versionId,
+            storageKey: target.version.storageKey,
+            mimeType: target.version.mimeType,
+            size: target.version.size,
+            fileName: target.file.name,
+            tenantId: target.file.tenantId ?? ctx.tenantId,
           },
           ctx
         );

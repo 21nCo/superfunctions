@@ -9,6 +9,7 @@ import type {
   RenderPlaceholderKind,
   UploadInput,
   UploadHandle,
+  UploadHandleWithFileId,
   UploadResult,
 } from './types.js';
 import type { UploadPreprocessor } from './preprocessing/types.js';
@@ -34,6 +35,7 @@ export type {
   RenderPlaceholderKind,
   UploadInput,
   UploadHandle,
+  UploadHandleWithFileId,
   UploadProgress,
   UploadResult,
   RetryOptions,
@@ -86,11 +88,11 @@ export {
 } from './offline/sync.js';
 
 export interface FileFnClient {
-  uploadFile(input: UploadInput): UploadHandle;
+  uploadFile(input: UploadInput): UploadHandleWithFileId;
   resumeUpload(
     uploadSessionId: string,
     file: Blob,
-    options?: { uploadSessionToken?: string }
+    options?: { uploadSessionToken?: string; fileId?: string }
   ): UploadHandle;
   getFile(fileId: string): Promise<Record<string, unknown>>;
   listArtifacts(fileId: string): Promise<ArtifactDescriptor[]>;
@@ -104,6 +106,10 @@ export interface FileFnClient {
   }): Promise<RenderDescriptor>;
   deleteFile(fileId: string): Promise<void>;
   getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null>;
+}
+
+function createAbortError(): DOMException {
+  return new DOMException('Aborted', 'AbortError');
 }
 
 function createPlaceholderDescriptor(input: {
@@ -157,7 +163,7 @@ function resolvePendingLocalRenderable(
     };
   }
 
-  if (pending.source.kind === 'image') {
+  if (pending.source.previewBehavior === 'direct-image' && pending.source.kind === 'image') {
     return {
       ...base,
       state: 'pending-local',
@@ -168,7 +174,18 @@ function resolvePendingLocalRenderable(
     };
   }
 
-  if (pending.source.kind === 'pdf') {
+  if (pending.source.previewBehavior === 'direct-pdf' && pending.source.kind === 'pdf') {
+    return {
+      ...base,
+      state: 'pending-local',
+      source: {
+        mode: 'original',
+        url: pending.source.url,
+      },
+    };
+  }
+
+  if (pending.source.kind === 'pdf' || pending.source.previewBehavior === 'deterministic-placeholder') {
     return createPlaceholderDescriptor({
       ...base,
       state: 'pending-local',
@@ -216,92 +233,143 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
   let offlineSync: OfflineSync | undefined;
   let offlineStore: OPFSStore | undefined;
 
-  if (config.offline?.enabled) {
+  function ensureOfflineSupport(): { store: OPFSStore; sync: OfflineSync } {
+    if (!config.offline?.enabled) {
+      const error = new Error('Offline uploads are disabled') as Error & { code?: string };
+      error.code = 'FILEFN_OFFLINE_DISABLED';
+      throw error;
+    }
     if (!OPFSStore.isSupported()) {
-      const error = new Error('OPFS unavailable') as any;
+      const error = new Error('OPFS unavailable') as Error & { code?: string };
       error.code = 'FILEFN_OFFLINE_UNSUPPORTED';
       throw error;
     }
-
-    const store = new OPFSStore({ rootDir: config.offline.opfsDir });
-    // Initialize lazily but ensure it's started
-    store.init().catch(() => {});
-    offlineStore = store;
-
-    offlineSync = new OfflineSync({
-      store,
-      client: {
-        uploadFile: async (input) => {
-          const manager = new UploadManager(httpClient, preprocessors);
-          // startUpload returns UploadResult which matches what we need
-          return manager.startUpload(input);
+    if (!offlineStore || !offlineSync) {
+      const store = new OPFSStore({ rootDir: config.offline.opfsDir });
+      store.init().catch(() => {});
+      offlineStore = store;
+      offlineSync = new OfflineSync({
+        store,
+        client: {
+          uploadFile: async (input) => {
+            const manager = new UploadManager(httpClient);
+            manager.bindAbortSignal(input.signal);
+            return manager.startUpload(input);
+          }
         }
-      }
-    });
-
-    offlineSync.startAutoSync();
+      });
+      offlineSync.startAutoSync();
+    }
+    return { store: offlineStore, sync: offlineSync };
   }
 
   return {
-    uploadFile(input: UploadInput): UploadHandle {
+    uploadFile(input: UploadInput): UploadHandleWithFileId {
       const normalizedInput: UploadInput = {
         ...input,
         fileId: input.fileId ?? generateFileId(),
       };
 
-      if (offlineSync && offlineStore && shouldUseOfflineMode(config.offline?.enabled ?? false)) {
+      if (config.offline?.enabled && shouldUseOfflineMode(true)) {
+        const { store: activeOfflineStore, sync: activeOfflineSync } = ensureOfflineSupport();
         const uploadSessionId = generateOfflineSessionId();
-        const stagePromise = (async () => {
-          const prepared = await prepareUploadInput(normalizedInput, [
-            ...preprocessors,
-            ...(normalizedInput.preprocessors || []),
-          ]);
-          const fileData = await prepared.file.arrayBuffer();
-          const pending: PendingUpload = {
-            uploadSessionId,
-            fileId: prepared.fileId,
-            policy: prepared.policy,
-            fileName: prepared.fileName,
-            size: prepared.size,
-            mimeType: prepared.mimeType,
-            fileData,
-            localSource: prepared.localSource,
-            metadata: prepared.metadata,
-            createdAt: new Date().toISOString(),
-            retryCount: 0
-          };
-          await offlineStore!.stagePendingUpload(pending);
-        })();
-        
-        const handle: UploadHandle = {
+        let aborted = false;
+        let rejectStage: ((reason?: unknown) => void) | undefined;
+        const stagePromise = new Promise<void>((resolve, reject) => {
+          rejectStage = reject;
+          void (async () => {
+            try {
+              const prepared = await prepareUploadInput(normalizedInput, [
+                ...preprocessors,
+                ...(normalizedInput.preprocessors || []),
+              ]);
+              if (aborted) {
+                throw createAbortError();
+              }
+
+              const fileData = await prepared.file.arrayBuffer();
+              if (aborted) {
+                throw createAbortError();
+              }
+
+              const pending: PendingUpload = {
+                uploadSessionId,
+                fileId: prepared.fileId,
+                policy: prepared.policy,
+                idempotencyKey: prepared.idempotencyKey,
+                fileName: prepared.fileName,
+                size: prepared.size,
+                mimeType: prepared.mimeType,
+                fileData,
+                localSource: prepared.localSource,
+                metadata: prepared.metadata,
+                createdAt: new Date().toISOString(),
+                retryCount: 0
+              };
+              await activeOfflineStore.stagePendingUpload(pending);
+              if (aborted) {
+                await activeOfflineStore.deletePendingUpload(uploadSessionId);
+                throw createAbortError();
+              }
+              if (activeOfflineSync.isOnline()) {
+                void activeOfflineSync.syncUpload(uploadSessionId).catch(() => {});
+              }
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          })();
+        });
+        void stagePromise.catch(() => {});
+
+        const handle: UploadHandleWithFileId = {
           uploadSessionId,
           fileId: normalizedInput.fileId!,
           abort: () => {
-            // Staging abort not implemented
+            if (aborted) {
+              return;
+            }
+            aborted = true;
+            void activeOfflineSync.cancelUpload(uploadSessionId, createAbortError());
+            rejectStage?.(createAbortError());
           },
           onProgress: (_cb) => {
             // Staging progress not implemented
           },
           done: async () => {
+            if (aborted) {
+              throw createAbortError();
+            }
             await stagePromise;
+            if (aborted) {
+              throw createAbortError();
+            }
             // Wait for sync to complete when online
-            return offlineSync!.waitForUpload(uploadSessionId);
+            return activeOfflineSync.waitForUpload(uploadSessionId);
           }
         };
-        
+
         return handle;
       }
 
       const manager = new UploadManager(httpClient, preprocessors);
-      return manager.createHandle(normalizedInput, () => manager.startUpload(normalizedInput));
+      return manager.createHandle(
+        normalizedInput,
+        (handle) => manager.startUpload(normalizedInput, handle),
+      ) as UploadHandleWithFileId;
     },
 
-    resumeUpload(uploadSessionId: string, file: Blob, options?: { uploadSessionToken?: string }): UploadHandle {
+    resumeUpload(uploadSessionId: string, file: Blob, options?: { uploadSessionToken?: string; fileId?: string }): UploadHandle {
       const manager = new UploadManager(httpClient);
-      const dummyInput: UploadInput = { policy: '', file };
+      const dummyInput: UploadInput = { policy: '', file, fileId: options?.fileId };
       return manager.createHandle(
         dummyInput,
-        () => manager.resumeUpload(uploadSessionId, file, options?.uploadSessionToken)
+        (handle) => manager.resumeUpload(uploadSessionId, file, options?.uploadSessionToken, handle),
+        {
+          uploadSessionId,
+          uploadSessionToken: options?.uploadSessionToken,
+          fileId: options?.fileId,
+        },
       );
     },
 
@@ -324,8 +392,8 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     },
 
     async resolveRenderable(input): Promise<RenderDescriptor> {
-      if (input.preferLocal && offlineStore) {
-        const pending = await offlineStore.getPendingLocalDescriptor(input.fileId);
+      if (input.preferLocal && !input.versionId && config.offline?.enabled && OPFSStore.isSupported()) {
+        const pending = await (offlineStore ?? ensureOfflineSupport().store).getPendingLocalDescriptor(input.fileId);
         if (pending) {
           return resolvePendingLocalRenderable({ intent: input.intent }, pending);
         }
@@ -342,10 +410,10 @@ export function createFileFnClient(config: FileFnClientConfig): FileFnClient {
     },
 
     async getPendingLocalDescriptor(fileId: string): Promise<PendingLocalDescriptor | null> {
-      if (!offlineStore) {
+      if (!config.offline?.enabled || !OPFSStore.isSupported()) {
         return null;
       }
-      return offlineStore.getPendingLocalDescriptor(fileId);
+      return (offlineStore ?? ensureOfflineSupport().store).getPendingLocalDescriptor(fileId);
     },
   };
 }

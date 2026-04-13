@@ -48,7 +48,13 @@ export function generateOpenApiDocument(input: GenerateOpenApiDocumentInput): Re
     const normalizedPath = normalizeOpenApiPath(route.path);
     const normalizedMethod = route.method.toLowerCase();
     const operations = pathEntries.get(normalizedPath) ?? new Map<string, Record<string, unknown>>();
-    operations.set(normalizedMethod, buildOperation(meta));
+    if (operations.has(normalizedMethod)) {
+      throw new OpenApiGenerationError("duplicate OpenAPI operation for method and path", {
+        method: route.method,
+        path: normalizedPath
+      });
+    }
+    operations.set(normalizedMethod, buildOperation(meta, normalizedPath, route.method));
     pathEntries.set(normalizedPath, operations);
   }
 
@@ -77,7 +83,11 @@ function collectRoutes(routers: GenerateOpenApiDocumentInput["routers"]): Route[
   return routers.flatMap((router) => router.getRoutes());
 }
 
-function buildOperation(meta: OpenApiRouteMeta): Record<string, unknown> {
+function buildOperation(
+  meta: OpenApiRouteMeta,
+  normalizedPath: string,
+  method: string
+): Record<string, unknown> {
   const operation: Record<string, unknown> = {
     operationId: meta.operationId
   };
@@ -105,12 +115,21 @@ function buildOperation(meta: OpenApiRouteMeta): Record<string, unknown> {
     };
   }
 
-  operation.responses = createResponses(meta.responseSchemas);
+  const pathParameters = createPathParameters(normalizedPath);
+  if (pathParameters.length > 0) {
+    operation.parameters = pathParameters;
+  }
+
+  operation.responses = createResponses(meta.responseSchemas, {
+    method,
+    path: normalizedPath,
+  });
   return operation;
 }
 
 function createResponses(
-  responseSchemas: OpenApiRouteMeta["responseSchemas"]
+  responseSchemas: OpenApiRouteMeta["responseSchemas"],
+  details: OpenApiGenerationErrorDetails
 ): Record<string, Record<string, unknown>> {
   if (!responseSchemas || Object.keys(responseSchemas).length === 0) {
     return {
@@ -129,7 +148,7 @@ function createResponses(
           description: `HTTP ${statusCode} response`,
           content: {
             "application/json": {
-              schema: sortObject(schema as Record<string, unknown>)
+              schema: sortObject(assertSchemaObject(schema, details))
             }
           }
         }
@@ -141,8 +160,21 @@ function normalizeOpenApiPath(path: string): string {
   return path.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
 }
 
+function createPathParameters(path: string): Array<Record<string, unknown>> {
+  const matches = path.matchAll(/\{([A-Za-z0-9_]+)\}/g);
+  return [...matches].map((match) => ({
+    name: match[1],
+    in: "path",
+    required: true,
+    schema: {
+      type: "string"
+    }
+  }));
+}
+
 function compareMethods(left: string, right: string): number {
-  return getMethodOrder(left) - getMethodOrder(right);
+  const orderDiff = getMethodOrder(left) - getMethodOrder(right);
+  return orderDiff !== 0 ? orderDiff : left.localeCompare(right);
 }
 
 function getMethodOrder(method: string): number {
@@ -169,4 +201,15 @@ function sortValue(value: unknown): unknown {
   }
 
   return value;
+}
+
+function assertSchemaObject(
+  schema: unknown,
+  details: OpenApiGenerationErrorDetails
+): Record<string, unknown> {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    throw new OpenApiGenerationError("route OpenAPI response schema must be an object", details);
+  }
+
+  return schema as Record<string, unknown>;
 }

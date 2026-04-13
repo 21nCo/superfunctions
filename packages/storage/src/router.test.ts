@@ -131,4 +131,38 @@ describe('createRoutedStorageAdapter', () => {
       target: 'temporary',
     });
   });
+
+  it('does not forward the outer target into a delegated routed adapter', async () => {
+    const calls: string[] = [];
+    const capabilities = {
+      signedUploadUrls: true,
+      signedDownloadUrls: true,
+      multipart: true,
+      proxyStreamingUpload: true,
+      proxyStreamingDownload: true,
+    } satisfies StorageAdapterCapabilities;
+
+    const nested = createRoutedStorageAdapter({
+      adapters: {
+        archive: makeAdapter('archive', capabilities, calls),
+      },
+      defaultTarget: 'archive',
+    });
+
+    const storage = createRoutedStorageAdapter({
+      adapters: {
+        durable: nested,
+      },
+      defaultTarget: 'durable',
+    });
+
+    const descriptor = await storage.signDownloadUrl?.({
+      key: 'files/nested',
+      target: 'durable',
+      expiresInSeconds: 60,
+    });
+
+    expect(descriptor?.url).toBe('https://archive.example/files/nested');
+    expect(calls).toEqual(['archive:download:files/nested']);
+  });
 });

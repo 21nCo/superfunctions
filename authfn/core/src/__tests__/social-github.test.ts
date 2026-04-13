@@ -262,8 +262,10 @@ describe('@authfn/core github social oauth', () => {
     expect(location).toBeTruthy();
     const redirectTarget = new URL(location!);
     expect(redirectTarget.protocol).toBe('memotron:');
-    expect(redirectTarget.searchParams.get('token')).toMatch(/^st_/);
-    expect(redirectTarget.searchParams.get('sessionId')).toMatch(/^sess_/);
+    const fragment = new URLSearchParams(redirectTarget.hash.replace(/^#/, ''));
+    expect(fragment.get('token')).toMatch(/^st_/);
+    expect(fragment.get('sessionId')).toMatch(/^sess_/);
+    expect(redirectTarget.searchParams.get('token')).toBeNull();
   });
 });
 

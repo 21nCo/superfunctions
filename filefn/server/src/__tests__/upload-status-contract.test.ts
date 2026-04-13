@@ -160,6 +160,7 @@ describe('PHASE_00 UPLOAD-001/API-001 upload status contract', () => {
     expect(statusBody.requestId).toBe('req_004');
     expect(statusBody.data).toMatchObject({
       uploadSessionId,
+      fileId: expect.any(String),
       status: expect.any(String),
       totalParts: expect.any(Number),
       recordedParts: expect.any(Array),

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 6003",
-    "prebuild": "node ./scripts/ensure-docs-deps.mjs",
+    "prebuild": "npm --prefix ../../packages/docs-theme run build && node ./scripts/ensure-docs-deps.mjs",
     "build": "next build",
     "start": "next start"
   },

@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-import random
 import secrets
+from tempfile import SpooledTemporaryFile
 from typing import Any, Dict, List, Optional, Protocol
 
 from pydantic import BaseModel
@@ -44,6 +44,7 @@ class UploadSessionServiceConfig(BaseModel):
     file_write_checker: Optional[Any] = None
     processing_service: Optional[Any] = None
     namespace: str = "filefn"
+    allow_anonymous_uploads: bool = True
     default_chunk_size_bytes: int = 8 * 1024 * 1024
     upload_session_ttl_seconds: int = 86400
     signed_url_ttl_seconds: int = 900
@@ -74,12 +75,13 @@ class UploadSessionService:
         self.file_write_checker = config.file_write_checker
         self.processing_service = config.processing_service
         self.namespace = config.namespace
+        self.allow_anonymous_uploads = config.allow_anonymous_uploads
         self.default_chunk_size_bytes = config.default_chunk_size_bytes
         self.upload_session_ttl_seconds = config.upload_session_ttl_seconds
         self.signed_url_ttl_seconds = config.signed_url_ttl_seconds
 
     def _generate_id(self) -> str:
-        return f"upl_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 100000)}"
+        return f"upl_{secrets.token_urlsafe(16)}"
 
     def _hash_payload(self, input: CreateSessionInput, ctx: FileProviderContext) -> str:
         payload = {
@@ -92,10 +94,23 @@ class UploadSessionService:
             "pr": ctx.principalId,
             "tn": ctx.tenantId,
         }
-        return hashlib.md5(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
     def _hash_session_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    async def _issue_anonymous_session_token(self, upload_session_id: str) -> str:
+        upload_session_token = secrets.token_urlsafe(32)
+        await self.db.update(
+            model="uploadSessions",
+            where=[{"field": "uploadSessionId", "operator": "eq", "value": upload_session_id}],
+            data={
+                "uploadSessionToken": None,
+                "sessionTokenHash": self._hash_session_token(upload_session_token),
+            },
+            namespace=self.namespace,
+        )
+        return upload_session_token
 
     def _extract_upload_session_token(self, ctx: Any) -> Optional[str]:
         for attr in ("uploadSessionToken", "upload_session_token", "sessionToken", "session_token"):
@@ -193,6 +208,9 @@ class UploadSessionService:
     async def create_session(self, input: CreateSessionInput, ctx: FileProviderContext) -> Dict[str, Any]:
         warnings: List[str] = []
 
+        if not ctx.principalId and not self.allow_anonymous_uploads:
+            raise errors.auth_required()
+
         if input.idempotencyKey:
             existing_data = await self.db.find_one(
                 model="uploadSessions",
@@ -207,6 +225,7 @@ class UploadSessionService:
 
                 result = {
                     "uploadSessionId": existing.uploadSessionId,
+                    "fileId": existing.fileId,
                     "uploadMode": existing.uploadMode,
                     "chunkSizeBytes": existing.chunkSizeBytes,
                     "totalParts": existing.totalParts,
@@ -214,18 +233,9 @@ class UploadSessionService:
                     "warnings": [],
                 }
                 if existing.ownerId == "anonymous":
-                    upload_session_token = existing_data.get("uploadSessionToken")
-                    if not upload_session_token:
-                      upload_session_token = secrets.token_urlsafe(32)
-                      await self.db.update(
-                          model="uploadSessions",
-                          where=[{"field": "uploadSessionId", "operator": "eq", "value": existing.uploadSessionId}],
-                          data={
-                              "uploadSessionToken": upload_session_token,
-                              "sessionTokenHash": self._hash_session_token(upload_session_token),
-                          },
-                          namespace=self.namespace,
-                      )
+                    upload_session_token = await self._issue_anonymous_session_token(
+                        existing.uploadSessionId,
+                    )
                     result["uploadSessionToken"] = upload_session_token
                 return result
 
@@ -269,8 +279,8 @@ class UploadSessionService:
         now = datetime.now(timezone.utc)
         expires_at = (now + timedelta(seconds=self.upload_session_ttl_seconds)).isoformat()
 
-        file_id = input.fileId or f"file_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 10000)}"
-        version_id = f"ver_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 10000)}"
+        file_id = input.fileId or f"file_{secrets.token_urlsafe(12)}"
+        version_id = f"ver_{secrets.token_urlsafe(12)}"
 
         class StoragePathContext:
             def __init__(self, **kwargs: Any):
@@ -321,7 +331,7 @@ class UploadSessionService:
                 "metadata": input.metadata or {},
                 "idempotencyKey": input.idempotencyKey,
                 "idempotencyPayloadHash": self._hash_payload(input, ctx) if input.idempotencyKey else None,
-                "uploadSessionToken": upload_session_token,
+                "uploadSessionToken": None,
                 "sessionTokenHash": session_token_hash,
                 "expiresAt": expires_at,
                 "createdAt": now.isoformat(),
@@ -347,6 +357,7 @@ class UploadSessionService:
 
         result: Dict[str, Any] = {
             "uploadSessionId": upload_session_id,
+            "fileId": file_id,
             "uploadMode": upload_mode,
             "chunkSizeBytes": chunk_size_bytes,
             "totalParts": total_parts,
@@ -374,6 +385,7 @@ class UploadSessionService:
 
         return {
             "uploadSessionId": upload_session_id,
+            "fileId": session.fileId,
             "status": session.status,
             "totalParts": session.totalParts,
             "recordedParts": recorded_parts,
@@ -506,6 +518,28 @@ class UploadSessionService:
             raise errors.no_supported_upload_mode()
 
         etag = hashlib.md5(data).hexdigest()
+        if session.status == "aborted":
+            raise errors.upload_aborted()
+        if session.status == "completed":
+            raise errors.upload_already_completed()
+        if self._is_expired(session.expiresAt):
+            raise errors.upload_expired()
+        if part_number < 1 or part_number > session.totalParts:
+            raise errors.invalid_part_number()
+
+        existing = await self.db.find_one(
+            model="uploadParts",
+            where=[
+                {"field": "uploadSessionId", "operator": "eq", "value": upload_session_id},
+                {"field": "partNumber", "operator": "eq", "value": part_number},
+            ],
+            namespace=self.namespace,
+        )
+        if existing:
+            if existing.get("etag") == etag and existing.get("size") == len(data):
+                return {"etag": etag, "size": len(data), "recorded": True}
+            raise errors.part_conflict(upload_session_id, part_number)
+
         part_key = self._proxy_part_key(session, part_number)
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
@@ -522,20 +556,21 @@ class UploadSessionService:
     async def _finalize_proxy_upload(self, session: UploadSessionRecord, parts: List[Dict[str, Any]]) -> None:
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
-        chunks: List[bytes] = []
         sorted_parts = sorted(parts, key=lambda p: p["partNumber"])
-        for part in sorted_parts:
-            part_key = self._proxy_part_key(session, part["partNumber"])
-            stream = await self.storage.open_download_stream(key=part_key, target=storage_target)
-            async for chunk in stream:
-                chunks.append(chunk)
+        with SpooledTemporaryFile(max_size=8 * 1024 * 1024) as payload:
+            for part in sorted_parts:
+                part_key = self._proxy_part_key(session, part["partNumber"])
+                stream = await self.storage.open_download_stream(key=part_key, target=storage_target)
+                async for chunk in stream:
+                    payload.write(chunk)
 
-        await self.storage.put_object(
-            key=session.storageKey,
-            data=b"".join(chunks),
-            metadata={"contentType": session.mimeType},
-            target=storage_target,
-        )
+            payload.seek(0)
+            await self.storage.put_object(
+                key=session.storageKey,
+                data=payload,
+                metadata={"contentType": session.mimeType},
+                target=storage_target,
+            )
 
         for part in sorted_parts:
             part_key = self._proxy_part_key(session, part["partNumber"])
@@ -569,6 +604,9 @@ class UploadSessionService:
         )
         if len(parts_data) != session.totalParts:
             raise errors.upload_incomplete()
+        uploaded_size = sum(int(part.get("size") or 0) for part in parts_data)
+        if uploaded_size != session.size:
+            raise errors.upload_size_mismatch(session.size, uploaded_size)
 
         policy = self.policies.get(session.policy)
         storage_target = resolve_storage_target(policy)
@@ -586,7 +624,7 @@ class UploadSessionService:
 
         now_str = datetime.now(timezone.utc).isoformat()
         file_id = session.fileId
-        version_id = f"ver_{datetime.now(timezone.utc).timestamp()}"
+        version_id = f"ver_{secrets.token_urlsafe(12)}"
         metadata = session_data.get("metadata") or {}
 
         final_storage_key = session.storageKey
@@ -755,14 +793,29 @@ class UploadSessionService:
 
     async def garbage_collect_expired_sessions(self) -> Dict[str, int]:
         now = datetime.now(timezone.utc)
-        sessions = await self.db.find_many(
+        sessions: List[Dict[str, Any]] = []
+        seen_session_ids: set[str] = set()
+        for status in ("pending", "in_progress", "aborted", "expired"):
+            status_rows = await self.db.find_many(
+                model="uploadSessions",
+                where=[{"field": "status", "operator": "eq", "value": status}],
+                namespace=self.namespace,
+            )
+            for row in status_rows:
+                upload_session_id = row.get("uploadSessionId")
+                if not upload_session_id or upload_session_id in seen_session_ids:
+                    continue
+                seen_session_ids.add(upload_session_id)
+                sessions.append(row)
+
+        completed_sessions = await self.db.find_many(
             model="uploadSessions",
-            where=[],
+            where=[{"field": "status", "operator": "eq", "value": "completed"}],
             namespace=self.namespace,
         )
 
         deleted_sessions = 0
-        preserved_completed_sessions = 0
+        preserved_completed_sessions = len(completed_sessions)
 
         for session_data in sessions:
             status = session_data.get("status")
@@ -771,9 +824,6 @@ class UploadSessionService:
                 continue
 
             expires_at = self._as_utc(expires_at_raw)
-            if status == "completed":
-                preserved_completed_sessions += 1
-                continue
             if expires_at > now:
                 continue
 
