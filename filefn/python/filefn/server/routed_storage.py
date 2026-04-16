@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
-
+from typing import Any, Dict, Optional, cast
 
 STORAGE_TARGET_NOT_CONFIGURED = "FILEFN_STORAGE_TARGET_NOT_CONFIGURED"
 
@@ -30,8 +28,8 @@ def _merge_capabilities(adapters: Dict[str, Any]) -> Dict[str, bool]:
 
 def get_storage_capabilities(adapter: Any, target: Optional[str] = None) -> Dict[str, bool]:
     if target and hasattr(adapter, "capabilities_for_target"):
-        return adapter.capabilities_for_target(target)
-    return getattr(adapter, "capabilities", {}) or {}
+        return cast(Dict[str, bool], adapter.capabilities_for_target(target))
+    return cast(Dict[str, bool], getattr(adapter, "capabilities", {}) or {})
 
 
 class RoutedStorageAdapter:
@@ -77,7 +75,7 @@ class RoutedStorageAdapter:
         adapter, _ = self._pick(target)
         await adapter.delete_object(key=key)
 
-    async def open_download_stream(self, key: str, target: Optional[str] = None):
+    async def open_download_stream(self, key: str, target: Optional[str] = None) -> Any:
         adapter, _ = self._pick(target)
         return await adapter.open_download_stream(key=key)
 
@@ -85,7 +83,8 @@ class RoutedStorageAdapter:
         adapter, resolved = self._pick(target)
         if not hasattr(adapter, "sign_download_url"):
             raise RuntimeError(f"Storage target '{resolved}' does not support signed download URLs")
-        return await adapter.sign_download_url(key=key, expires_in_seconds=expires_in_seconds)
+        result = await adapter.sign_download_url(key=key, expires_in_seconds=expires_in_seconds)
+        return cast(Dict[str, Any], result)
 
     async def create_multipart_upload(
         self,
@@ -114,13 +113,14 @@ class RoutedStorageAdapter:
         adapter, resolved = self._pick(target)
         if not hasattr(adapter, "sign_multipart_upload_part_url"):
             raise RuntimeError(f"Storage target '{resolved}' does not support multipart uploads")
-        return await adapter.sign_multipart_upload_part_url(
+        result = await adapter.sign_multipart_upload_part_url(
             key=key,
             upload_id=upload_id,
             part_number=part_number,
             expires_in_seconds=expires_in_seconds,
             constraints=constraints,
         )
+        return cast(Dict[str, Any], result)
 
     async def upload_part(
         self,
@@ -133,7 +133,8 @@ class RoutedStorageAdapter:
         adapter, resolved = self._pick(target)
         if not hasattr(adapter, "upload_part"):
             raise RuntimeError(f"Storage target '{resolved}' does not support multipart uploads")
-        return await adapter.upload_part(key=key, upload_id=upload_id, part_number=part_number, data=data)
+        result = await adapter.upload_part(key=key, upload_id=upload_id, part_number=part_number, data=data)
+        return str(result)
 
     async def complete_multipart_upload(
         self,
