@@ -85,6 +85,9 @@ jobs:
       - name: Ensure Rollup native package
         run: node scripts/ci-install-rollup-native.mjs
 
+      - name: Install Rust WASM target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Show plan
         run: |
           echo "base: ${{ needs.plan.outputs.base_ref }}"

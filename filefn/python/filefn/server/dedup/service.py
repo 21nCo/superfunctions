@@ -72,7 +72,7 @@ class DeduplicationService:
         if tenant_id:
             where_conditions.append({'field': 'tenantId', 'operator': 'eq', 'value': tenant_id})
         else:
-            where_conditions.append({'field': 'tenantId', 'operator': 'is', 'value': ''})
+            where_conditions.append({'field': 'tenantId', 'operator': 'is-null'})
 
         existing_versions = await self.db.find_many(
             model='fileVersions',

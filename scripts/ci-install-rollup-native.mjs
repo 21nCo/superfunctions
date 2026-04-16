@@ -34,16 +34,22 @@ let rollupVersion;
 try {
   const rollupPackageJson = require.resolve("rollup/package.json", { paths: [process.cwd()] });
   ({ version: rollupVersion } = require(rollupPackageJson));
-} catch {
-  console.log("Rollup is not installed in this workspace; skipping native package install.");
-  process.exit(0);
+} catch (error) {
+  if (error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND") {
+    console.log("Rollup is not installed in this workspace; skipping native package install.");
+    process.exit(0);
+  }
+  throw error;
 }
 
 try {
   require.resolve(`${packageName}/package.json`, { paths: [process.cwd()] });
   console.log(`${packageName} is already installed.`);
   process.exit(0);
-} catch {
+} catch (error) {
+  if (!(error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND")) {
+    throw error;
+  }
   // Install the native package only when npm misses the optional dependency.
 }
 

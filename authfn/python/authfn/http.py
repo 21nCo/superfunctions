@@ -6,7 +6,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from urllib.parse import parse_qs, urlparse
 
 from superfunctions.http import HttpMethod, Response, Route, RouteContext, SetCookie
@@ -1574,16 +1574,16 @@ def _with_url(request: Any, url: str) -> Any:
             self.url = resolved_url
 
         @property
-        def method(self) -> str:
-            return self._base.method
+        def method(self) -> Optional[str]:
+            return getattr(self._base, "method", None)
 
         @property
-        def path(self) -> str:
-            return self._base.path
+        def path(self) -> Optional[str]:
+            return getattr(self._base, "path", None)
 
         @property
         def headers(self) -> Dict[str, str]:
-            return self._base.headers
+            return cast(Dict[str, str], getattr(self._base, "headers", {}))
 
         @property
         def query_params(self) -> Dict[str, Any]:

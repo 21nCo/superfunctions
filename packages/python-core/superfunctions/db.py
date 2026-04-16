@@ -210,31 +210,31 @@ class Adapter(Protocol):
     capabilities: AdapterCapabilities
 
     async def create(self, params: Optional[CreateParams] = None, **kwargs: Any) -> Dict[str, Any]:
-        ...
+        pass
 
     async def create_many(self, params: Optional[CreateManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
-        ...
+        pass
 
     async def find_one(self, params: Optional[FindOneParams] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        ...
+        pass
 
     async def find_many(self, params: Optional[FindManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
-        ...
+        pass
 
     async def update(self, params: Optional[UpdateParams] = None, **kwargs: Any) -> Dict[str, Any]:
-        ...
+        pass
 
     async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
-        ...
+        pass
 
     async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
-        ...
+        pass
 
     async def delete_many(self, params: Optional[DeleteManyParams] = None, **kwargs: Any) -> int:
-        ...
+        pass
 
     async def upsert(self, params: Optional[UpsertParams] = None, **kwargs: Any) -> Dict[str, Any]:
-        ...
+        pass
 
     async def count(self, params: Optional[CountParams] = None, **kwargs: Any) -> int:
-        ...
+        pass

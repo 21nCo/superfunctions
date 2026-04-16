@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, cast
 
+from . import errors
+
 STORAGE_TARGET_NOT_CONFIGURED = "FILEFN_STORAGE_TARGET_NOT_CONFIGURED"
 
 
@@ -134,7 +136,13 @@ class RoutedStorageAdapter:
         if not hasattr(adapter, "upload_part"):
             raise RuntimeError(f"Storage target '{resolved}' does not support multipart uploads")
         result = await adapter.upload_part(key=key, upload_id=upload_id, part_number=part_number, data=data)
-        return str(result)
+        if isinstance(result, str) and result:
+            return result
+        if isinstance(result, dict):
+            etag = result.get("etag") or result.get("ETag")
+            if isinstance(etag, str) and etag:
+                return etag
+        raise errors.invalid_etag()
 
     async def complete_multipart_upload(
         self,

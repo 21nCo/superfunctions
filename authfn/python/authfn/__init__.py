@@ -14,6 +14,11 @@ from .plugins.multi_region import (
     MultiRegionRegionConfig,
     MultiRegionService,
 )
+from .plugins.social_oauth import (
+    SocialOAuthPluginConfig,
+    SocialOAuthService,
+    SocialProviderConfig,
+)
 from .plugins.two_factor import TwoFactorPluginConfig, TwoFactorService
 from .schema import AUTHFN_SCHEMA_VERSION, get_schema
 from .types import (

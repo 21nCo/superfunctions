@@ -223,6 +223,7 @@ def create_router(
 
         # Register route based on method
         method_lower = route.method.value.lower()
+        routes_before = len(router.routes)
 
         if method_lower == "get":
             router.get(fastapi_path)(handler)
@@ -239,10 +240,12 @@ def create_router(
         elif method_lower == "head":
             router.head(fastapi_path)(handler)
 
-        if router.routes:
-            registered_route = cast(APIRoute, router.routes[-1])
-            setattr(registered_route.endpoint, SUPERFUNCTIONS_ROUTE_ATTR, route)
-            setattr(registered_route.endpoint, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
+        if len(router.routes) == routes_before:
+            raise ValueError(f"Unsupported HTTP method: {route.method.value}")
+
+        registered_route = cast(APIRoute, router.routes[-1])
+        setattr(registered_route.endpoint, SUPERFUNCTIONS_ROUTE_ATTR, route)
+        setattr(registered_route.endpoint, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
 
     return router
 

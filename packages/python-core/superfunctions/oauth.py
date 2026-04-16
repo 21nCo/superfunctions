@@ -336,6 +336,10 @@ class OAuthFlowService:
             error = OAuthHttpError("OAuth callback did not match state", code="OAUTH_CALLBACK_MISMATCH", status=400)
             await self._emit_failure(provider_id, request_id, error, normalized_state.subject)
             raise error
+        if _parse_utc_timestamp(normalized_state.expires_at) <= _as_utc(self.config.now()):
+            error = OAuthHttpError("OAuth state has expired", code="OAUTH_STATE_INVALID", status=400)
+            await self._emit_failure(provider_id, request_id, error, normalized_state.subject)
+            raise error
 
         consumed = await self.config.state_store.consume(input["state"], consumed_at)
         if consumed is None:
@@ -347,6 +351,7 @@ class OAuthFlowService:
             raise error
 
         try:
+            consumed_subject = resolve_oauth_stored_subject(consumed)
             token_response = await self.config.token_http_client.exchange_token(
                 OAuthTokenEndpointRequest.model_validate(
                     {
@@ -355,7 +360,7 @@ class OAuthFlowService:
                         "clientSecret": runtime.client_secret,
                         "clientSecretResolver": runtime.client_secret_resolver,
                         "grantType": "authorization_code",
-                        "redirectUri": input["redirectUri"],
+                        "redirectUri": consumed.redirect_uri,
                         "code": input["code"],
                         "codeVerifier": consumed.code_verifier,
                         "scopes": consumed.requested_scopes,
@@ -366,7 +371,7 @@ class OAuthFlowService:
                 OAuthFlowResolveIdentityInput.model_validate(
                     {
                         "providerId": provider_id,
-                        "subject": consumed.subject.model_dump(by_alias=True, exclude_none=True),
+                        "subject": consumed_subject.model_dump(by_alias=True, exclude_none=True),
                         "tokenSet": token_response.model_dump(by_alias=True, exclude_none=True),
                     }
                 )
@@ -396,7 +401,7 @@ class OAuthFlowService:
 
             result = OAuthFlowCallbackResult.model_validate(
                 {
-                    "subject": consumed.subject.model_dump(by_alias=True, exclude_none=True),
+                    "subject": consumed_subject.model_dump(by_alias=True, exclude_none=True),
                     "resolvedIdentity": resolved_identity.model_dump(by_alias=True, exclude_none=True),
                     "connectionId": resolved_identity.connection_id,
                 }
@@ -410,7 +415,7 @@ class OAuthFlowService:
                         "ok": True,
                         "providerId": provider_id,
                         "requestId": request_id,
-                        "subjectKind": consumed.subject.kind,
+                        "subjectKind": consumed_subject.kind,
                         "connectionId": resolved_identity.connection_id,
                     }
                 )
@@ -438,7 +443,14 @@ class OAuthFlowService:
                 )
             )
         except Exception as error:
-            await self._emit_failure(provider_id, input.request_id, error, None, input.connection_id)
+            await self._emit_failure(
+                provider_id,
+                input.request_id,
+                error,
+                None,
+                input.connection_id,
+                event_name="oauth.flow.disconnect.failed",
+            )
             raise
 
     async def _emit_event(self, event: OAuthFlowEvent) -> None:
@@ -453,11 +465,12 @@ class OAuthFlowService:
         error: Exception,
         subject: Optional[OAuthBrowserAuthSubject] = None,
         connection_id: Optional[str] = None,
+        event_name: str = "oauth.flow.callback.failed",
     ) -> None:
         await self._emit_event(
             OAuthFlowEvent.model_validate(
                 {
-                    "name": "oauth.flow.callback.failed",
+                    "name": event_name,
                     "ok": False,
                     "providerId": provider_id,
                     "requestId": request_id,
@@ -509,13 +522,22 @@ def _isoformat(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    return _as_utc(parsed)
+
+
 def _expires_at(created_at: str, expires_in: Optional[int]) -> Optional[str]:
     if expires_in is None:
         return None
     base = datetime.fromisoformat(created_at)
-    if base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
-    return _isoformat(base + timedelta(seconds=expires_in))
+    return _isoformat(_as_utc(base) + timedelta(seconds=expires_in))
 
 
 async def _maybe_await(value: Any) -> Any:

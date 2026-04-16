@@ -151,6 +151,10 @@ class ApiKeyService:
             raise ApiKeyRevokedError("API key has been revoked")
         expires_at = _as_utc(row.get("expiresAt"))
         now = self.plugin_config.now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        else:
+            now = now.astimezone(timezone.utc)
         if expires_at is not None and expires_at <= now:
             raise ExpiredCredentialsError("API key has expired")
         await self.config.database.update(

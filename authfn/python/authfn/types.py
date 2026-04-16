@@ -268,7 +268,7 @@ class AuthFnPlugin:
     routes_factory: Optional[Callable[[AuthFnPluginRuntimeContext], List[Dict[str, Any]]]] = None
     hooks: Optional[AuthFnHooks] = None
     validate_config: Optional[Callable[[AuthFnConfig], None]] = None
-    _authfn_config: Any = field(default_factory=dict)
+    _authfn_config: Any = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def schema(self, config: AuthFnConfig) -> List[TableSchema]:
         return self.schema_factory(config) if self.schema_factory else []
