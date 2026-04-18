@@ -5,61 +5,96 @@ import process from "node:process";
 const require = createRequire(import.meta.url);
 
 if (process.platform !== "linux") {
-  console.log("Skipping Rollup native package install on non-Linux runner.");
+  console.log("Skipping optional native package install on non-Linux runner.");
   process.exit(0);
 }
-
-const packageNamesByArch = {
-  arm64: {
-    gnu: "@rollup/rollup-linux-arm64-gnu",
-    musl: "@rollup/rollup-linux-arm64-musl",
-  },
-  x64: {
-    gnu: "@rollup/rollup-linux-x64-gnu",
-    musl: "@rollup/rollup-linux-x64-musl",
-  },
-};
 
 const libcFamily =
   process.report?.getReport?.().header?.glibcVersionRuntime != null ? "gnu" : "musl";
-const packageName = packageNamesByArch[process.arch]?.[libcFamily];
 
-if (!packageName) {
-  console.log(`No Rollup native package mapping for linux/${process.arch}; skipping.`);
-  process.exit(0);
+const packages = [
+  {
+    packageName: "rollup",
+    nativePackages: {
+      arm64: {
+        gnu: "@rollup/rollup-linux-arm64-gnu",
+        musl: "@rollup/rollup-linux-arm64-musl",
+      },
+      x64: {
+        gnu: "@rollup/rollup-linux-x64-gnu",
+        musl: "@rollup/rollup-linux-x64-musl",
+      },
+    },
+  },
+  {
+    packageName: "lightningcss",
+    nativePackages: {
+      arm64: {
+        gnu: "lightningcss-linux-arm64-gnu",
+        musl: "lightningcss-linux-arm64-musl",
+      },
+      arm: {
+        gnu: "lightningcss-linux-arm-gnueabihf",
+      },
+      x64: {
+        gnu: "lightningcss-linux-x64-gnu",
+        musl: "lightningcss-linux-x64-musl",
+      },
+    },
+  },
+];
+
+function isModuleNotFound(error) {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND");
 }
 
-let rollupVersion;
-
-try {
-  const rollupPackageJson = require.resolve("rollup/package.json", { paths: [process.cwd()] });
-  ({ version: rollupVersion } = require(rollupPackageJson));
-} catch (error) {
-  if (error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND") {
-    console.log("Rollup is not installed in this workspace; skipping native package install.");
-    process.exit(0);
-  }
-  throw error;
-}
-
-try {
-  require.resolve(`${packageName}/package.json`, { paths: [process.cwd()] });
-  console.log(`${packageName} is already installed.`);
-  process.exit(0);
-} catch (error) {
-  if (!(error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND")) {
+function resolvePackageVersion(packageName) {
+  try {
+    const packageJsonPath = require.resolve(`${packageName}/package.json`, { paths: [process.cwd()] });
+    return require(packageJsonPath).version;
+  } catch (error) {
+    if (isModuleNotFound(error)) {
+      console.log(`${packageName} is not installed in this workspace; skipping native package install.`);
+      return null;
+    }
     throw error;
   }
-  // Install the native package only when npm misses the optional dependency.
 }
 
-console.log(`Installing ${packageName}@${rollupVersion} for Rollup.`);
+function ensureNativePackage({ packageName, nativePackages }) {
+  const nativePackageName = nativePackages[process.arch]?.[libcFamily];
 
-execFileSync(
-  process.platform === "win32" ? "npm.cmd" : "npm",
-  ["install", "--no-save", "--ignore-scripts", `${packageName}@${rollupVersion}`],
-  {
-    cwd: process.cwd(),
-    stdio: "inherit",
-  },
-);
+  if (!nativePackageName) {
+    console.log(`No ${packageName} native package mapping for linux/${process.arch}/${libcFamily}; skipping.`);
+    return;
+  }
+
+  const packageVersion = resolvePackageVersion(packageName);
+  if (!packageVersion) {
+    return;
+  }
+
+  try {
+    require.resolve(`${nativePackageName}/package.json`, { paths: [process.cwd()] });
+    console.log(`${nativePackageName} is already installed.`);
+    return;
+  } catch (error) {
+    if (!isModuleNotFound(error)) {
+      throw error;
+    }
+  }
+
+  console.log(`Installing ${nativePackageName}@${packageVersion} for ${packageName}.`);
+  execFileSync(
+    process.platform === "win32" ? "npm.cmd" : "npm",
+    ["install", "--no-save", "--ignore-scripts", `${nativePackageName}@${packageVersion}`],
+    {
+      cwd: process.cwd(),
+      stdio: "inherit",
+    },
+  );
+}
+
+for (const entry of packages) {
+  ensureNativePackage(entry);
+}
