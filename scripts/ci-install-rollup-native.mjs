@@ -44,6 +44,35 @@ const packages = [
       },
     },
   },
+  {
+    packageName: "@tailwindcss/oxide",
+    nativePackages: {
+      arm64: {
+        gnu: "@tailwindcss/oxide-linux-arm64-gnu",
+        musl: "@tailwindcss/oxide-linux-arm64-musl",
+      },
+      arm: {
+        gnu: "@tailwindcss/oxide-linux-arm-gnueabihf",
+      },
+      x64: {
+        gnu: "@tailwindcss/oxide-linux-x64-gnu",
+        musl: "@tailwindcss/oxide-linux-x64-musl",
+      },
+    },
+  },
+  {
+    packageName: "next",
+    nativePackages: {
+      arm64: {
+        gnu: "@next/swc-linux-arm64-gnu",
+        musl: "@next/swc-linux-arm64-musl",
+      },
+      x64: {
+        gnu: "@next/swc-linux-x64-gnu",
+        musl: "@next/swc-linux-x64-musl",
+      },
+    },
+  },
 ];
 
 function isModuleNotFound(error) {
