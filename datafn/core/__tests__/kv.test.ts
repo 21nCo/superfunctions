@@ -65,6 +65,66 @@ describe("ensureBuiltinKv", () => {
     expect(result.resources[0]).toEqual(existingKv);
   });
 
+  it("expands an explicit built-in kv placeholder", () => {
+    const schema: DatafnSchema = {
+      resources: [
+        {
+          name: "kv",
+          version: 1,
+          fields: [],
+        },
+      ],
+    };
+
+    const result = ensureBuiltinKv(schema);
+
+    expect(result).not.toBe(schema);
+    expect(result.resources[0]).toEqual({
+      name: "kv",
+      version: 1,
+      idPrefix: "kv",
+      fields: [
+        { name: "id", type: "string", required: true },
+        { name: "value", type: "json", required: false },
+      ],
+      indices: ["id"],
+      permissions: {
+        read: { fields: ["id", "value"] },
+        write: { fields: ["id", "value"] },
+      },
+    });
+  });
+
+  it("expands a legacy built-in kv placeholder that only declares value", () => {
+    const schema: DatafnSchema = {
+      resources: [
+        {
+          name: "kv",
+          version: 1,
+          fields: [{ name: "value", type: "string", required: false }],
+        },
+      ],
+    };
+
+    const result = ensureBuiltinKv(schema);
+
+    expect(result).not.toBe(schema);
+    expect(result.resources[0]).toEqual({
+      name: "kv",
+      version: 1,
+      idPrefix: "kv",
+      fields: [
+        { name: "id", type: "string", required: true },
+        { name: "value", type: "json", required: false },
+      ],
+      indices: ["id"],
+      permissions: {
+        read: { fields: ["id", "value"] },
+        write: { fields: ["id", "value"] },
+      },
+    });
+  });
+
   it("rejects an incompatible existing kv resource instead of rewriting it", () => {
     const schema: DatafnSchema = {
       resources: [
