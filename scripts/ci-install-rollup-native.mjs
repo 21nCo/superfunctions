@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
 import process from "node:process";
 
 const require = createRequire(import.meta.url);
@@ -48,15 +50,56 @@ function isModuleNotFound(error) {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "MODULE_NOT_FOUND");
 }
 
-function resolvePackageVersion(packageName) {
+function findPackageJsonPath(packageName) {
   try {
-    const packageJsonPath = require.resolve(`${packageName}/package.json`, { paths: [process.cwd()] });
-    return require(packageJsonPath).version;
+    const packageEntryPath = require.resolve(packageName, { paths: [process.cwd()] });
+    let directory = path.dirname(packageEntryPath);
+
+    while (true) {
+      const packageJsonPath = path.join(directory, "package.json");
+
+      if (existsSync(packageJsonPath)) {
+        const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+
+        if (packageJson.name === packageName) {
+          return packageJsonPath;
+        }
+      }
+
+      const parentDirectory = path.dirname(directory);
+      if (parentDirectory === directory) {
+        throw new Error(`Could not locate package.json for ${packageName} from ${packageEntryPath}`);
+      }
+
+      directory = parentDirectory;
+    }
   } catch (error) {
     if (isModuleNotFound(error)) {
       console.log(`${packageName} is not installed in this workspace; skipping native package install.`);
       return null;
     }
+    throw error;
+  }
+}
+
+function resolvePackageVersion(packageName) {
+  const packageJsonPath = findPackageJsonPath(packageName);
+  if (!packageJsonPath) {
+    return null;
+  }
+
+  return JSON.parse(readFileSync(packageJsonPath, "utf8")).version;
+}
+
+function hasInstalledPackage(packageName) {
+  try {
+    require.resolve(packageName, { paths: [process.cwd()] });
+    return true;
+  } catch (error) {
+    if (isModuleNotFound(error)) {
+      return false;
+    }
+
     throw error;
   }
 }
@@ -74,14 +117,9 @@ function ensureNativePackage({ packageName, nativePackages }) {
     return;
   }
 
-  try {
-    require.resolve(`${nativePackageName}/package.json`, { paths: [process.cwd()] });
+  if (hasInstalledPackage(nativePackageName)) {
     console.log(`${nativePackageName} is already installed.`);
     return;
-  } catch (error) {
-    if (!isModuleNotFound(error)) {
-      throw error;
-    }
   }
 
   console.log(`Installing ${nativePackageName}@${packageVersion} for ${packageName}.`);
