@@ -104,35 +104,60 @@ function hasInstalledPackage(packageName) {
   }
 }
 
-function ensureNativePackage({ packageName, nativePackages }) {
+function getMissingNativePackage({ packageName, nativePackages }) {
   const nativePackageName = nativePackages[process.arch]?.[libcFamily];
 
   if (!nativePackageName) {
     console.log(`No ${packageName} native package mapping for linux/${process.arch}/${libcFamily}; skipping.`);
-    return;
+    return null;
   }
 
   const packageVersion = resolvePackageVersion(packageName);
   if (!packageVersion) {
-    return;
+    return null;
   }
 
   if (hasInstalledPackage(nativePackageName)) {
     console.log(`${nativePackageName} is already installed.`);
-    return;
+    return null;
   }
 
-  console.log(`Installing ${nativePackageName}@${packageVersion} for ${packageName}.`);
-  execFileSync(
-    process.platform === "win32" ? "npm.cmd" : "npm",
-    ["install", "--no-save", "--ignore-scripts", `${nativePackageName}@${packageVersion}`],
-    {
-      cwd: process.cwd(),
-      stdio: "inherit",
-    },
-  );
+  return {
+    packageName,
+    nativePackageName,
+    packageVersion,
+  };
 }
 
-for (const entry of packages) {
-  ensureNativePackage(entry);
+const missingNativePackages = packages
+  .map(getMissingNativePackage)
+  .filter(Boolean);
+
+if (missingNativePackages.length === 0) {
+  console.log("All optional native packages are already installed.");
+  process.exit(0);
 }
+
+for (const { nativePackageName, packageVersion, packageName } of missingNativePackages) {
+  console.log(`Queueing ${nativePackageName}@${packageVersion} for ${packageName}.`);
+}
+
+console.log(
+  `Installing ${missingNativePackages
+    .map(({ nativePackageName, packageVersion }) => `${nativePackageName}@${packageVersion}`)
+    .join(", ")}.`,
+);
+
+execFileSync(
+  process.platform === "win32" ? "npm.cmd" : "npm",
+  [
+    "install",
+    "--no-save",
+    "--ignore-scripts",
+    ...missingNativePackages.map(({ nativePackageName, packageVersion }) => `${nativePackageName}@${packageVersion}`),
+  ],
+  {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  },
+);
