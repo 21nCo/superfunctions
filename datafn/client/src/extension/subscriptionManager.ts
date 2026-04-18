@@ -17,6 +17,8 @@ export interface RemoteSubscriptionAdapter {
 
 interface RemoteSubscription {
   subscriptionId?: string;
+  subscribePromise?: Promise<string>;
+  unsubscribePromise?: Promise<void>;
   filter: EventFilter | undefined;
   localSubscriberCount: number;
   pendingUnsubscribe?: boolean;
@@ -40,6 +42,55 @@ export class ExtensionSubscriptionManager {
 
   constructor(private adapter: RemoteSubscriptionAdapter) {}
 
+  private async startRemoteSubscription(
+    key: string,
+    remoteSub: RemoteSubscription,
+  ): Promise<string> {
+    const subscribePromise = this.adapter.subscribeRemote(remoteSub.filter);
+    remoteSub.subscribePromise = subscribePromise;
+
+    try {
+      const subscriptionId = await subscribePromise;
+      const current = this.remoteSubscriptions.get(key);
+
+      if (!current) {
+        await this.adapter.unsubscribeRemote(subscriptionId);
+        return subscriptionId;
+      }
+
+      current.subscribePromise = undefined;
+      current.subscriptionId = subscriptionId;
+
+      if (current.localSubscriberCount === 0 && current.pendingUnsubscribe) {
+        const unsubscribePromise = this.adapter.unsubscribeRemote(subscriptionId);
+        current.unsubscribePromise = unsubscribePromise;
+        try {
+          await unsubscribePromise;
+        } finally {
+          current.unsubscribePromise = undefined;
+          current.subscriptionId = undefined;
+          if (
+            this.remoteSubscriptions.get(key) === current &&
+            current.localSubscriberCount === 0 &&
+            current.pendingUnsubscribe
+          ) {
+            this.remoteSubscriptions.delete(key);
+          }
+        }
+      }
+
+      return subscriptionId;
+    } catch (error) {
+      const current = this.remoteSubscriptions.get(key);
+      if (current === remoteSub) {
+        current.subscribePromise = undefined;
+        current.subscriptionId = undefined;
+        this.remoteSubscriptions.delete(key);
+      }
+      throw error;
+    }
+  }
+
   /**
    * Register a local subscriber. Opens remote subscription if needed.
    * Returns a cleanup function to decrement the ref count.
@@ -53,33 +104,22 @@ export class ExtensionSubscriptionManager {
     if (!remoteSub) {
       remoteSub = {
         filter,
-        localSubscriberCount: 1,
+        localSubscriberCount: 0,
         pendingUnsubscribe: false,
       };
       this.remoteSubscriptions.set(key, remoteSub);
+    }
 
-      try {
-        // First subscriber with this filter - open remote subscription
-        const subscriptionId = await this.adapter.subscribeRemote(filter);
-        const current = this.remoteSubscriptions.get(key);
+    remoteSub.localSubscriberCount++;
+    remoteSub.pendingUnsubscribe = false;
 
-        if (!current) {
-          await this.adapter.unsubscribeRemote(subscriptionId);
-        } else {
-          current.subscriptionId = subscriptionId;
+    if (remoteSub.unsubscribePromise) {
+      await remoteSub.unsubscribePromise;
+    }
 
-          if (current.localSubscriberCount === 0 || current.pendingUnsubscribe) {
-            this.remoteSubscriptions.delete(key);
-            await this.adapter.unsubscribeRemote(subscriptionId);
-          }
-        }
-      } catch (error) {
-        this.remoteSubscriptions.delete(key);
-        throw error;
-      }
-    } else {
-      // Existing remote subscription - increment ref count
-      remoteSub.localSubscriberCount++;
+    if (!remoteSub.subscriptionId) {
+      await (remoteSub.subscribePromise ??
+        this.startRemoteSubscription(key, remoteSub));
     }
 
     // Return cleanup function
@@ -90,12 +130,38 @@ export class ExtensionSubscriptionManager {
       sub.localSubscriberCount--;
 
       if (sub.localSubscriberCount === 0) {
+        sub.pendingUnsubscribe = true;
+
+        if (sub.unsubscribePromise) {
+          await sub.unsubscribePromise;
+          return;
+        }
+
+        if (sub.subscribePromise) {
+          await sub.subscribePromise.catch(() => undefined);
+          return;
+        }
+
         if (sub.subscriptionId) {
           // Last subscriber removed - close remote subscription
-          this.remoteSubscriptions.delete(key);
-          await this.adapter.unsubscribeRemote(sub.subscriptionId);
+          const subscriptionId = sub.subscriptionId;
+          const unsubscribePromise = this.adapter.unsubscribeRemote(subscriptionId);
+          sub.unsubscribePromise = unsubscribePromise;
+          try {
+            await unsubscribePromise;
+          } finally {
+            sub.unsubscribePromise = undefined;
+            sub.subscriptionId = undefined;
+            if (
+              this.remoteSubscriptions.get(key) === sub &&
+              sub.localSubscriberCount === 0 &&
+              sub.pendingUnsubscribe
+            ) {
+              this.remoteSubscriptions.delete(key);
+            }
+          }
         } else {
-          sub.pendingUnsubscribe = true;
+          this.remoteSubscriptions.delete(key);
         }
       }
     };
@@ -105,16 +171,41 @@ export class ExtensionSubscriptionManager {
    * Close all remote subscriptions (for cleanup)
    */
   async closeAll(): Promise<void> {
-    const subs = Array.from(this.remoteSubscriptions.values());
-    this.remoteSubscriptions.clear();
+    const entries = Array.from(this.remoteSubscriptions.entries());
 
-    await Promise.all(
-      subs
-        .filter((sub): sub is RemoteSubscription & { subscriptionId: string } =>
-          typeof sub.subscriptionId === "string",
-        )
-        .map((sub) => this.adapter.unsubscribeRemote(sub.subscriptionId)),
-    );
+    for (const [key, sub] of entries) {
+      sub.localSubscriberCount = 0;
+      sub.pendingUnsubscribe = true;
+
+      if (sub.subscribePromise) {
+        await sub.subscribePromise.catch(() => undefined);
+      }
+
+      if (sub.unsubscribePromise) {
+        await sub.unsubscribePromise.catch(() => undefined);
+      }
+
+      const current = this.remoteSubscriptions.get(key);
+      if (!current) {
+        continue;
+      }
+
+      if (current.subscriptionId) {
+        const unsubscribePromise = this.adapter.unsubscribeRemote(current.subscriptionId);
+        current.unsubscribePromise = unsubscribePromise;
+        try {
+          await unsubscribePromise;
+        } finally {
+          current.unsubscribePromise = undefined;
+          current.subscriptionId = undefined;
+          if (this.remoteSubscriptions.get(key) === current) {
+            this.remoteSubscriptions.delete(key);
+          }
+        }
+      } else {
+        this.remoteSubscriptions.delete(key);
+      }
+    }
   }
 
   ownsSubscriptionId(subscriptionId: string): boolean {

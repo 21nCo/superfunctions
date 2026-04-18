@@ -603,6 +603,95 @@ async function resolveAccessLevelFromV2(
   return null;
 }
 
+export async function hasResourceScopeOwnerAccess(
+  db: Adapter,
+  resource: string,
+  actorId: string | undefined,
+  namespace: string,
+): Promise<boolean> {
+  if (!actorId) {
+    return false;
+  }
+
+  const principalResult = await resolveEffectivePrincipals({
+    namespace,
+    actorId,
+    store: {
+      getDirectMemberships: async ({ namespace: actorNamespace, actorId: actor }) => {
+        const rows = await db.findMany({
+          model: PRINCIPAL_MEMBERSHIPS_TABLE,
+          where: [{ field: "actorId", operator: "eq", value: actor }],
+          namespace: actorNamespace,
+        });
+        return rows
+          .map((row) => row as Record<string, unknown>)
+          .filter((row) => isGrantActive(row))
+          .map((row) =>
+            typeof row.principalId === "string" ? row.principalId : "",
+          )
+          .filter((principalId) => principalId.length > 0);
+      },
+      getHierarchyParents: async ({ namespace: actorNamespace, principalIds }) => {
+        const edges: Array<{ principalId: string; parentPrincipalId: string }> = [];
+        for (const principalId of principalIds) {
+          const rows = await db.findMany({
+            model: PRINCIPAL_HIERARCHY_TABLE,
+            where: [{ field: "principalId", operator: "eq", value: principalId }],
+            namespace: actorNamespace,
+          });
+          for (const row of rows) {
+            const edge = row as Record<string, unknown>;
+            if (!isGrantActive(edge)) {
+              continue;
+            }
+            if (
+              typeof edge.principalId === "string" &&
+              typeof edge.parentPrincipalId === "string"
+            ) {
+              edges.push({
+                principalId: edge.principalId,
+                parentPrincipalId: edge.parentPrincipalId,
+              });
+            }
+          }
+        }
+        return edges;
+      },
+    },
+  });
+
+  if (principalResult.effectivePrincipals.includes(namespace)) {
+    return true;
+  }
+
+  for (const principalId of principalResult.effectivePrincipals) {
+    const rows = await db.findMany({
+      model: GLOBAL_PERMISSIONS_TABLE,
+      where: [
+        { field: "resourceType", operator: "eq", value: resource },
+        { field: "resourceNs", operator: "eq", value: namespace },
+        { field: "principalId", operator: "eq", value: principalId },
+        { field: "level", operator: "eq", value: "owner" },
+      ],
+      namespace,
+    });
+
+    const hasScopeOwnerGrant = rows.some((row) => {
+      const grant = row as Record<string, unknown>;
+      if (!isGrantActive(grant)) {
+        return false;
+      }
+      return grant.grantKind === "scope" || grant.resourceId === null;
+    });
+
+    if (hasScopeOwnerGrant) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export async function resolveAccessLevel(
   db: Adapter,
   schema: DatafnSchema,
@@ -724,7 +813,14 @@ export async function validateShareableOperationAccess(input: {
     (input.operation === "share" || input.operation === "unshare") &&
     (typeof input.id !== "string" || input.id.length === 0)
   ) {
-    if (!input.actorId) {
+    if (
+      !(await hasResourceScopeOwnerAccess(
+        input.db,
+        input.resource,
+        input.actorId,
+        input.namespace,
+      ))
+    ) {
       return {
         ok: false,
         code: "FORBIDDEN",

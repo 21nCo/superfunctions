@@ -274,49 +274,62 @@ class OAuthFlowService:
         state_id = _create_identifier("oauth_state")
         code_verifier = secrets.token_urlsafe(48)
         nonce = secrets.token_urlsafe(24)
+        requested_scopes = list(input.scopes or provider.default_scopes)
 
-        state_record = OAuthStateRecord.model_validate(
-            {
-                "stateId": state_id,
-                "providerId": input.provider_id,
-                "redirectUri": input.redirect_uri,
-                "requestedScopes": list(input.scopes),
-                "codeVerifier": code_verifier,
-                "nonce": nonce,
-                "subject": input.subject.model_dump(by_alias=True, exclude_none=True),
-                "createdAt": created_at,
-                "expiresAt": expires_at,
-            }
-        )
-        await self.config.state_store.put(state_record)
+        try:
+            self._assert_redirect_uri_allowed(runtime, input.redirect_uri)
 
-        authorization_url = self._build_authorization_url(
-            provider=provider,
-            runtime=runtime,
-            redirect_uri=input.redirect_uri,
-            scopes=input.scopes or provider.default_scopes,
-            state_id=state_id,
-            code_verifier=code_verifier,
-            nonce=nonce,
-        )
-        await self._emit_event(
-            OAuthFlowEvent.model_validate(
+            state_record = OAuthStateRecord.model_validate(
                 {
-                    "name": "oauth.flow.started",
-                    "ok": True,
+                    "stateId": state_id,
                     "providerId": input.provider_id,
-                    "requestId": input.request_id,
-                    "subjectKind": input.subject.kind,
+                    "redirectUri": input.redirect_uri,
+                    "requestedScopes": requested_scopes,
+                    "codeVerifier": code_verifier,
+                    "nonce": nonce,
+                    "subject": input.subject.model_dump(by_alias=True, exclude_none=True),
+                    "createdAt": created_at,
+                    "expiresAt": expires_at,
                 }
             )
-        )
-        return OAuthFlowStartResult.model_validate(
-            {
-                "authorizationUrl": authorization_url,
-                "stateId": state_id,
-                "expiresAt": expires_at,
-            }
-        )
+            await self.config.state_store.put(state_record)
+
+            authorization_url = self._build_authorization_url(
+                provider=provider,
+                runtime=runtime,
+                redirect_uri=input.redirect_uri,
+                scopes=requested_scopes,
+                state_id=state_id,
+                code_verifier=code_verifier,
+                nonce=nonce,
+            )
+            await self._emit_event(
+                OAuthFlowEvent.model_validate(
+                    {
+                        "name": "oauth.flow.started",
+                        "ok": True,
+                        "providerId": input.provider_id,
+                        "requestId": input.request_id,
+                        "subjectKind": input.subject.kind,
+                    }
+                )
+            )
+            return OAuthFlowStartResult.model_validate(
+                {
+                    "authorizationUrl": authorization_url,
+                    "stateId": state_id,
+                    "expiresAt": expires_at,
+                }
+            )
+        except Exception as error:
+            await self._emit_failure(
+                input.provider_id,
+                input.request_id,
+                error,
+                input.subject,
+                event_name="oauth.flow.start.failed",
+            )
+            raise
 
     async def handle_callback(self, input: Dict[str, Any]) -> OAuthFlowCallbackResult:
         provider_id = input["providerId"]
@@ -505,6 +518,22 @@ class OAuthFlowService:
             params["code_challenge"] = _pkce_challenge(code_verifier)
             params["code_challenge_method"] = "S256"
         return f"{provider.authorization_url}?{urlencode(params)}"
+
+    def _assert_redirect_uri_allowed(
+        self,
+        runtime: OAuthProviderRuntimeConfig,
+        redirect_uri: str,
+    ) -> None:
+        if (
+            runtime.allowlisted_redirect_uris
+            and redirect_uri not in runtime.allowlisted_redirect_uris
+        ):
+            raise OAuthHttpError(
+                "OAuth redirect URI is not allowlisted",
+                code="OAUTH_REDIRECT_DISALLOWED",
+                status=400,
+                details={"redirectUri": redirect_uri},
+            )
 
 
 def _create_identifier(prefix: str) -> str:
