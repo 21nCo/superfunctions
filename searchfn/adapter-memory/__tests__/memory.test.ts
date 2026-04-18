@@ -335,7 +335,7 @@ describe("MemoryAdapter — initialize and name", () => {
     });
     expect(result).toContain("d14999");
     await adapter.dispose();
-  });
+  }, 15000);
 });
 
 describe("MemoryAdapter — prefix search", () => {

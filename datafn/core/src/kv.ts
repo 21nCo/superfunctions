@@ -2,7 +2,7 @@
  * Built-in KV resource utilities
  */
 
-import type { DatafnSchema, DatafnResourceSchema } from "./types.js";
+import type { DatafnFieldSchema, DatafnSchema, DatafnResourceSchema } from "./types.js";
 
 /**
  * Canonical KV resource name
@@ -34,8 +34,13 @@ export function ensureBuiltinKv(schema: DatafnSchema): DatafnSchema {
   const existingKv = schema.resources.find((r) => r.name === KV_RESOURCE_NAME);
 
   if (existingKv) {
-    validateBuiltinKv(existingKv);
-    return schema;
+    const normalizedKv = normalizeBuiltinKv(existingKv);
+    return {
+      ...schema,
+      resources: schema.resources.map((resource) =>
+        resource.name === KV_RESOURCE_NAME ? normalizedKv : resource,
+      ),
+    };
   }
 
   // Append KV resource definition
@@ -99,4 +104,57 @@ function validateBuiltinKv(resource: DatafnResourceSchema): void {
       throw new Error(`KV resource permissions must allow read/write access to "${fieldName}"`);
     }
   }
+}
+
+function normalizeBuiltinKv(resource: DatafnResourceSchema): DatafnResourceSchema {
+  const normalizedFields = [...resource.fields];
+
+  for (const [fieldName, expected] of REQUIRED_KV_FIELDS) {
+    const existingIndex = normalizedFields.findIndex(
+      (candidate) => candidate.name === fieldName,
+    );
+    const normalizedField = {
+      ...normalizedFields[existingIndex],
+      name: fieldName,
+      type: expected.type as DatafnFieldSchema["type"],
+      required: expected.required,
+    } satisfies DatafnFieldSchema;
+
+    if (existingIndex >= 0) {
+      normalizedFields[existingIndex] = normalizedField;
+    } else {
+      normalizedFields.push(normalizedField);
+    }
+  }
+
+  const normalizedIndices = Array.isArray(resource.indices)
+    ? [...new Set([...resource.indices, "id"])]
+    : {
+        base: [...new Set([...(resource.indices?.base ?? []), "id"])],
+        search: [...(resource.indices?.search ?? [])],
+        vector: [...(resource.indices?.vector ?? [])],
+      };
+
+  const readFields = new Set(resource.permissions?.read?.fields ?? []);
+  const writeFields = new Set(resource.permissions?.write?.fields ?? []);
+  for (const fieldName of ["id", "value"]) {
+    readFields.add(fieldName);
+    writeFields.add(fieldName);
+  }
+
+  const normalized: DatafnResourceSchema = {
+    ...resource,
+    version: 1,
+    idPrefix: resource.idPrefix ?? KV_RESOURCE_NAME,
+    fields: normalizedFields,
+    indices: normalizedIndices,
+    permissions: {
+      ...resource.permissions,
+      read: { fields: [...readFields] },
+      write: { fields: [...writeFields] },
+    },
+  };
+
+  validateBuiltinKv(normalized);
+  return normalized;
 }

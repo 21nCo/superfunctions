@@ -16,9 +16,10 @@ export interface RemoteSubscriptionAdapter {
 }
 
 interface RemoteSubscription {
-  subscriptionId: string;
+  subscriptionId?: string;
   filter: EventFilter | undefined;
   localSubscriberCount: number;
+  pendingUnsubscribe?: boolean;
 }
 
 /**
@@ -50,14 +51,32 @@ export class ExtensionSubscriptionManager {
     let remoteSub = this.remoteSubscriptions.get(key);
 
     if (!remoteSub) {
-      // First subscriber with this filter - open remote subscription
-      const subscriptionId = await this.adapter.subscribeRemote(filter);
       remoteSub = {
-        subscriptionId,
         filter,
         localSubscriberCount: 1,
+        pendingUnsubscribe: false,
       };
       this.remoteSubscriptions.set(key, remoteSub);
+
+      try {
+        // First subscriber with this filter - open remote subscription
+        const subscriptionId = await this.adapter.subscribeRemote(filter);
+        const current = this.remoteSubscriptions.get(key);
+
+        if (!current) {
+          await this.adapter.unsubscribeRemote(subscriptionId);
+        } else {
+          current.subscriptionId = subscriptionId;
+
+          if (current.localSubscriberCount === 0 || current.pendingUnsubscribe) {
+            this.remoteSubscriptions.delete(key);
+            await this.adapter.unsubscribeRemote(subscriptionId);
+          }
+        }
+      } catch (error) {
+        this.remoteSubscriptions.delete(key);
+        throw error;
+      }
     } else {
       // Existing remote subscription - increment ref count
       remoteSub.localSubscriberCount++;
@@ -71,9 +90,13 @@ export class ExtensionSubscriptionManager {
       sub.localSubscriberCount--;
 
       if (sub.localSubscriberCount === 0) {
-        // Last subscriber removed - close remote subscription
-        await this.adapter.unsubscribeRemote(sub.subscriptionId);
-        this.remoteSubscriptions.delete(key);
+        if (sub.subscriptionId) {
+          // Last subscriber removed - close remote subscription
+          this.remoteSubscriptions.delete(key);
+          await this.adapter.unsubscribeRemote(sub.subscriptionId);
+        } else {
+          sub.pendingUnsubscribe = true;
+        }
       }
     };
   }
@@ -86,7 +109,11 @@ export class ExtensionSubscriptionManager {
     this.remoteSubscriptions.clear();
 
     await Promise.all(
-      subs.map((sub) => this.adapter.unsubscribeRemote(sub.subscriptionId)),
+      subs
+        .filter((sub): sub is RemoteSubscription & { subscriptionId: string } =>
+          typeof sub.subscriptionId === "string",
+        )
+        .map((sub) => this.adapter.unsubscribeRemote(sub.subscriptionId)),
     );
   }
 

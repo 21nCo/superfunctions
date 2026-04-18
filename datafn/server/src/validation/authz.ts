@@ -6,6 +6,7 @@
 import type { DatafnSchema, DatafnResourceSchema, DatafnPermissionsPolicy } from "../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import { resolveCapabilities, getCapabilityFields } from "@datafn/core";
+import type { CapabilityEntry, ShareableCapability } from "@datafn/core";
 import { canonicalizeActorPrincipal, resolveEffectivePrincipals } from "../execution/auth/principal-resolver.js";
 import { resolveEffectiveLevel, type AccessGrant } from "../execution/auth/access-resolver.js";
 import {
@@ -33,6 +34,10 @@ export type AuthzOptions = {
   /** VAL-009: Debug mode — when false, strip field/schema details from error messages. Default: true. */
   debug?: boolean;
 };
+
+function isShareableCapability(entry: CapabilityEntry): entry is ShareableCapability {
+  return typeof entry === "object" && entry !== null && "shareable" in entry;
+}
 
 function getCapabilityFieldSets(
   schema: DatafnSchema,
@@ -476,15 +481,10 @@ function canonicalizePrincipalFromUserId(value: string): string {
 }
 
 function getShareableCapability(resource: DatafnResourceSchema, schema: DatafnSchema):
-  | { shareable: { levels: string[]; default: "private" | "shared" } }
+  | ShareableCapability
   | undefined {
   const resolved = resolveCapabilities(schema.capabilities as any, resource.capabilities as any);
-  return resolved.find(
-    (entry: unknown): entry is { shareable: { levels: string[]; default: "private" | "shared" } } =>
-      typeof entry === "object" &&
-      entry !== null &&
-      "shareable" in (entry as Record<string, unknown>),
-  );
+  return resolved.find(isShareableCapability);
 }
 
 export function isPrivateShareableResource(
@@ -717,6 +717,21 @@ export async function validateShareableOperationAccess(input: {
   if (
     input.operation === "insert"
   ) {
+    return { ok: true };
+  }
+
+  if (
+    (input.operation === "share" || input.operation === "unshare") &&
+    (typeof input.id !== "string" || input.id.length === 0)
+  ) {
+    if (!input.actorId) {
+      return {
+        ok: false,
+        code: "FORBIDDEN",
+        message: "Authorization denied",
+        path: "operation",
+      };
+    }
     return { ok: true };
   }
 

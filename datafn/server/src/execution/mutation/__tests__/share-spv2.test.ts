@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { createDatafnServer } from "../../../server.js";
+import type { DatafnSchema } from "../../../core-types.js";
 
 const namespace = "user:owner";
 const globalPermissionsTable = "__datafn_permissions_global";
@@ -37,7 +38,7 @@ const schema = {
     },
   ],
   relations: [],
-};
+} satisfies DatafnSchema;
 
 describe("share SPV2 mutation semantics", () => {
   let db: any;
