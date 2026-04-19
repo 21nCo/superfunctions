@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -11,14 +11,17 @@ Role = Literal["system", "user", "assistant", "tool"]
 class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    total_tokens: int = 0
+
+    @computed_field(return_type=int)
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
 
     @classmethod
     def from_counts(cls, prompt_tokens: int = 0, completion_tokens: int = 0) -> "TokenUsage":
         return cls(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            total_tokens=prompt_tokens + completion_tokens,
         )
 
 

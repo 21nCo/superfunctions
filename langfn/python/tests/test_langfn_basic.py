@@ -1,10 +1,11 @@
 import asyncio
+from typing import Any
 
 import pytest
 
 from langfn import LangFn
 from langfn.core.errors import RateLimitError, UnsupportedProviderError, ValidationError
-from langfn.core.types import CompletionResponse
+from langfn.core.types import CompletionResponse, ContentEvent, EndEvent, TokenUsage
 from langfn.models import MockChatModel
 from langfn.observability import CostMeter
 from langfn.observability.cost_meter import Price
@@ -39,6 +40,47 @@ async def test_langfn_stream_unified_events():
     assert events[0].type == "content"
     assert events[-1].type == "end"
     assert all(e.trace_id is not None for e in events)
+
+
+@pytest.mark.asyncio
+async def test_langfn_stream_sse_for_prompt_preserves_options():
+    observed: dict[str, Any] = {}
+    lang = LangFn(model=MockChatModel())
+
+    async def fake_stream(input_value, *, timeout=None, cancel_token=None, metadata=None):
+        observed["input"] = input_value
+        observed["timeout"] = timeout
+        observed["cancel_token"] = cancel_token
+        observed["metadata"] = metadata
+        yield ContentEvent(content="hello", delta="hello", trace_id="trace_1")
+        yield EndEvent(trace_id="trace_1")
+
+    lang.stream = fake_stream  # type: ignore[method-assign]
+    cancel_token = object()
+    frames = [
+        frame
+        async for frame in lang.stream_sse(
+            "hello",
+            timeout=1.25,
+            cancel_token=cancel_token,  # type: ignore[arg-type]
+            metadata={"tenantId": "tenant_1"},
+        )
+    ]
+
+    assert len(frames) == 2
+    assert observed == {
+        "input": "hello",
+        "timeout": 1.25,
+        "cancel_token": cancel_token,
+        "metadata": {"tenantId": "tenant_1"},
+    }
+
+
+def test_token_usage_total_tokens_is_derived():
+    usage = TokenUsage(prompt_tokens=2, completion_tokens=3)
+
+    assert usage.total_tokens == 5
+    assert usage.model_dump()["total_tokens"] == 5
 
 
 @pytest.mark.asyncio

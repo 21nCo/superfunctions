@@ -269,7 +269,13 @@ class LangFn:
         metadata: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[str]:
         if isinstance(input, str):
-            async for chunk in to_sse(self, input):
+            async for chunk in to_sse(
+                self,
+                input,
+                timeout=timeout,
+                cancel_token=cancel_token,
+                metadata=metadata,
+            ):
                 yield chunk
             return
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 from ..core.errors import ValidationError
 from ..core.types import (
@@ -18,6 +18,7 @@ from ..core.types import (
 
 if TYPE_CHECKING:
     from ..client import LangFn
+    from ..utils.cancel import CancellationToken
 
 
 def normalize_stream_event(event: Any, trace_id: str) -> StreamEvent:
@@ -85,6 +86,18 @@ def to_sse_frame(event: StreamEvent) -> str:
     return f"data: {json.dumps(event.model_dump(exclude_none=True))}\n\n"
 
 
-async def to_sse(lang: LangFn, prompt: str) -> AsyncIterator[str]:
-    async for event in lang.stream(prompt):
+async def to_sse(
+    lang: LangFn,
+    prompt: str,
+    *,
+    timeout: Optional[float] = None,
+    cancel_token: Optional[CancellationToken] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> AsyncIterator[str]:
+    async for event in lang.stream(
+        prompt,
+        timeout=timeout,
+        cancel_token=cancel_token,
+        metadata=metadata,
+    ):
         yield to_sse_frame(event)

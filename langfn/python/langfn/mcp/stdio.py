@@ -35,7 +35,6 @@ class StdioMCPTransport:
 
     async def close(self, timeout_s: Optional[float] = None) -> None:
         proc = self._proc
-        self._proc = None
         if proc is None:
             return
 
@@ -51,11 +50,15 @@ class StdioMCPTransport:
             proc.stdin.close()
 
         proc.terminate()
+        wait_timeout = self.close_timeout_s if timeout_s is None else timeout_s
         try:
-            await asyncio.wait_for(proc.wait(), timeout=timeout_s or self.close_timeout_s)
+            await asyncio.wait_for(proc.wait(), timeout=wait_timeout)
         except asyncio.TimeoutError as exc:
+            proc.kill()
+            await proc.wait()
             raise MCPTransportError("MCP process shutdown timed out") from exc
         finally:
+            self._proc = None
             self._reader_task = None
 
     async def request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:

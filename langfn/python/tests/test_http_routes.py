@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 import pytest
 
 from langfn import LangFn
+from langfn.core.errors import ValidationError
 from langfn.core.types import CompletionResponse
 from langfn.http import LangFnAuthConfig, LangFnRateLimitConfig, create_routes
 from langfn.http.rate_limit import RateLimitDecision
@@ -111,6 +112,48 @@ async def test_non_health_routes_require_auth():
 
     assert response.status == 401
     assert response.body["error"]["code"] == "AUTH_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_invalid_auth_session_payload_maps_to_auth_required():
+    routes = create_routes(
+        LangFn(model=MockChatModel(responses=["hello"])),
+        auth=LangFnAuthConfig(validate_bearer_token=lambda _token, _request: {"id": "sess_1", "type": "bearer"}),
+    )
+    response, _context = await run_route(
+        routes,
+        FakeRequest(
+            method="POST",
+            path="/complete",
+            body={"prompt": "hello"},
+            headers={"authorization": "Bearer ok", "content-type": "application/json"},
+        ),
+    )
+
+    assert response.status == 401
+    assert response.body["error"]["code"] == "AUTH_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_unexpected_auth_provider_errors_propagate():
+    def broken_validator(_token, _request):
+        raise RuntimeError("auth backend offline")
+
+    routes = create_routes(
+        LangFn(model=MockChatModel(responses=["hello"])),
+        auth=LangFnAuthConfig(validate_bearer_token=broken_validator),
+    )
+
+    with pytest.raises(RuntimeError, match="auth backend offline"):
+        await run_route(
+            routes,
+            FakeRequest(
+                method="POST",
+                path="/complete",
+                body={"prompt": "hello"},
+                headers={"authorization": "Bearer ok", "content-type": "application/json"},
+            ),
+        )
 
 
 @pytest.mark.asyncio

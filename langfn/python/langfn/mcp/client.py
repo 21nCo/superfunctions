@@ -20,11 +20,14 @@ class SSEMCPTransport:
     async def request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         payload = {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params or {}}
         self._next_id += 1
-        response = await self.client.post(
-            self.url,
-            headers={"accept": "text/event-stream", "content-type": "application/json"},
-            json=payload,
-        )
+        try:
+            response = await self.client.post(
+                self.url,
+                headers={"accept": "text/event-stream", "content-type": "application/json"},
+                json=payload,
+            )
+        except httpx.HTTPError as exc:
+            raise MCPTransportError("SSE transport request failed") from exc
         if response.status_code >= 400:
             raise MCPTransportError(
                 "SSE transport returned a non-success status",

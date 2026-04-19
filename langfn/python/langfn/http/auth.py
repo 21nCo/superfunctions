@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from superfunctions.auth import AuthProvider, AuthSession, validate_auth_session
+from superfunctions.auth import AuthProvider, AuthSession, AuthValidationError, validate_auth_session
 from superfunctions.http import Request, Response
 
 from .validation import LangFnRouteContext, error_envelope
@@ -26,17 +26,21 @@ def create_auth_middleware(config: Optional[LangFnAuthConfig] = None):
     async def middleware(request: Request, context: LangFnRouteContext, next_handler):
         try:
             session = await _authenticate(request, config)
-        except Exception:
+            validated = validate_auth_session(session) if isinstance(session, dict) else session
+        except AuthValidationError:
             session = None
+            validated = None
+        except Exception:
+            raise
 
-        if session is None:
+        if validated is None:
             return Response(
                 status=401,
                 headers={"content-type": "application/json"},
                 body=error_envelope("AUTH_REQUIRED", "Authentication required"),
             )
 
-        context.auth = validate_auth_session(session) if isinstance(session, dict) else session
+        context.auth = validated
         return await next_handler(request, context)
 
     return middleware

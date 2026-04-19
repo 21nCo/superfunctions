@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from ..core.errors import ValidationError
 
@@ -19,7 +20,10 @@ class EvaluationDataset(BaseModel):
 
     @classmethod
     def from_items(cls, items: List[DatasetItem | Dict[str, Any]]) -> "EvaluationDataset":
-        normalized = [item if isinstance(item, DatasetItem) else DatasetItem.model_validate(item) for item in items]
+        try:
+            normalized = [item if isinstance(item, DatasetItem) else DatasetItem.model_validate(item) for item in items]
+        except PydanticValidationError as exc:
+            raise ValidationError("evaluation dataset items are invalid", metadata={"errors": exc.errors()}) from exc
         if not normalized:
             raise ValidationError("evaluation dataset must contain at least one item")
         with_ids = [

@@ -44,7 +44,7 @@ class PlanExecuteAgent:
             )
 
         step_results: List[str] = []
-        execution_limit = self._max_execution_steps or len(plan)
+        execution_limit = len(plan) if self._max_execution_steps is None else self._max_execution_steps
         for step_index, step in enumerate(plan):
             if step_index >= execution_limit:
                 raise AgentMaxIterationsError(

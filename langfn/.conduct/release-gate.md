@@ -25,4 +25,4 @@ npm run gate:langfn-release
 - package imports resolve from the published surfaces
 - HTTP, MCP, and observability smoke checks pass in both languages
 - the LangFn duplication gate stays under the `5%` threshold
-- docs and release artifacts remain portable and contain no machine-specific absolute paths
+- docs remain portable and contain no machine-specific absolute paths

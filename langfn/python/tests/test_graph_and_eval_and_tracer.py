@@ -193,6 +193,15 @@ async def test_plan_execute_and_multi_agent_coordination():
         await empty_plan.run("fail")
     assert error.value.code == "VALIDATION_ERROR"
 
+    zero_limit = PlanExecuteAgent(
+        planner=lambda _goal: _async(["step 1"]),
+        executor=lambda step, _ctx: _async(step),
+        max_execution_steps=0,
+    )
+    with pytest.raises(AgentMaxIterationsError) as zero_error:
+        await zero_limit.run("blocked")
+    assert zero_error.value.metadata["max_execution_steps"] == 0
+
 
 @pytest.mark.asyncio
 async def test_evaluator_exact_match():
@@ -241,6 +250,14 @@ async def test_evaluator_empty_dataset_is_validation_error():
     evaluator = Evaluator(lang=LangFn(model=MockChatModel()))
     with pytest.raises(ValidationError) as error:
         await evaluator.run([])
+    assert error.value.code == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_evaluator_invalid_dataset_item_is_validation_error():
+    evaluator = Evaluator(lang=LangFn(model=MockChatModel()))
+    with pytest.raises(ValidationError) as error:
+        await evaluator.run([{"input": "missing expected"}])
     assert error.value.code == "VALIDATION_ERROR"
 
 
