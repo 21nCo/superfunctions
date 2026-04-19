@@ -42,7 +42,9 @@
   },
   "dependencies": {
     "recfn": "*",
+    "@superfunctions/db": "*",
     "@superfunctions/http": "*",
+    "@superfunctions/storage": "*",
     "@superfunctions/webhooks": "*",
     "@superfunctions/metrics": "*",
     "@superfunctions/config": "*",
@@ -61,6 +63,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@superfunctions/storage-local": "*",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
   }

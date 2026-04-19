@@ -12,6 +12,9 @@ export interface RecorderOptions {
   mimeType?: string;
   videoBitsPerSecond?: number;
   audioBitsPerSecond?: number;
+  stopAfterMs?: number;
+  signal?: AbortSignal;
+  now?: () => number;
 }
 
 export interface RecorderResult {
@@ -68,16 +71,59 @@ export async function recordStreams(
     if (e.data.size > 0) chunks.push(e.data);
   };
 
-  const startTime = Date.now();
+  const now = options.now ?? (() => Date.now());
+  const startTime = now();
   recorder.start(1000);
 
   await new Promise<void>((resolve, reject) => {
-    recorder.onstop = () => resolve();
-    recorder.onerror = () => reject(new Error('MediaRecorder error'));
-    setTimeout(() => recorder.stop(), 2000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const trackCleanup: Array<() => void> = [];
+    const stop = () => {
+      if (recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+    };
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (options.signal) {
+        options.signal.removeEventListener('abort', stop);
+      }
+      for (const remove of trackCleanup) {
+        remove();
+      }
+    };
+
+    recorder.onstop = () => {
+      cleanup();
+      resolve();
+    };
+    recorder.onerror = () => {
+      cleanup();
+      reject(new Error('MediaRecorder error'));
+    };
+
+    if (typeof options.stopAfterMs === 'number') {
+      timer = setTimeout(stop, options.stopAfterMs);
+    }
+
+    if (options.signal) {
+      if (options.signal.aborted) {
+        stop();
+      } else {
+        options.signal.addEventListener('abort', stop, { once: true });
+      }
+    }
+
+    for (const track of stream.getTracks()) {
+      const onEnded = () => stop();
+      track.addEventListener('ended', onEnded, { once: true });
+      trackCleanup.push(() => track.removeEventListener('ended', onEnded));
+    }
   });
 
-  const duration = (Date.now() - startTime) / 1000;
+  const duration = (now() - startTime) / 1000;
   const blob = new Blob(chunks, { type: mimeType });
   const buffer = await blob.arrayBuffer();
   const data = new Uint8Array(buffer);

@@ -1,10 +1,12 @@
 import { createRouter, type Router, RouterError } from '@superfunctions/http';
 import { RecFnError } from 'recfn';
 import type { RecFnStore } from './store/types.js';
+import { assertProductionStore } from './store/db.js';
 import type { ValidateApiKey } from './middleware/auth.js';
 import type { QueueAdapter } from './integrations/flowfn.js';
-import type { Logger } from './integrations/logfn.js';
-import type { StorageAdapter } from './integrations/filefn.js';
+import { MemoryLogger, type Logger } from './integrations/logfn.js';
+import type { StorageAdapter } from './integrations/storage.js';
+import { assertProductionStorage } from './integrations/storage.js';
 import type { SearchFnClient } from './integrations/searchfn.js';
 import { createBotRoutes } from './routes/bots.js';
 import { createRecordingRoutes } from './routes/recordings.js';
@@ -20,6 +22,15 @@ import { createCalendarRoutes } from './routes/calendars.js';
 import type { CalendarTokenStore } from './calendar/token-store.js';
 import type { GoogleCalendarClient } from './calendar/google.js';
 import type { OutlookCalendarClient } from './calendar/outlook.js';
+import type { OAuthTokenHttpClient } from '@superfunctions/oauth-http';
+import {
+  createCalendarRuntimeService,
+  createCalendarService,
+  type CalendarRefreshProviderConfig,
+  type CalendarRuntimeConfig,
+  type CalendarRuntimeService,
+  type CalendarService,
+} from './calendar/service.js';
 import type { MetricsEmitter } from './integrations/watchfn.js';
 
 import { loadLimitsConfig, loadRateLimitConfig } from './config.js';
@@ -31,10 +42,16 @@ export interface RecFnServerConfig {
   queue?: QueueAdapter;
   logger?: Logger;
   storage?: StorageAdapter;
+  environment?: 'production' | 'development' | 'test';
   searchClient?: SearchFnClient | null;
   tokenStore?: CalendarTokenStore;
   googleCalendarClient?: GoogleCalendarClient;
   outlookCalendarClient?: OutlookCalendarClient;
+  calendarTokenHttpClient?: OAuthTokenHttpClient;
+  calendarRefreshProviders?: Partial<
+    Record<'google' | 'outlook', CalendarRefreshProviderConfig>
+  >;
+  calendarRuntime?: CalendarRuntimeConfig & { enabled?: boolean };
   /** If false, rate limiting is disabled. Default true. */
   rateLimit?: boolean;
   /** Optional metrics emitter (e.g. watchfn track). When provided, metrics are emitted. */
@@ -43,6 +60,23 @@ export interface RecFnServerConfig {
 
 export interface RecFnServer {
   router: Router;
+  calendarService?: CalendarService;
+  calendarRuntime?: CalendarRuntimeService;
+}
+
+function resolveEnvironment(
+  environment?: RecFnServerConfig['environment'],
+): 'production' | 'development' | 'test' {
+  if (environment) {
+    return environment;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    return 'production';
+  }
+  if (process.env.NODE_ENV === 'test') {
+    return 'test';
+  }
+  return 'development';
 }
 
 export function createRecFnServer(config: RecFnServerConfig): RecFnServer {
@@ -52,23 +86,34 @@ export function createRecFnServer(config: RecFnServerConfig): RecFnServer {
     queue,
     logger,
     storage,
+    environment,
     searchClient,
     tokenStore,
     googleCalendarClient,
     outlookCalendarClient,
+    calendarTokenHttpClient,
+    calendarRefreshProviders,
+    calendarRuntime,
     rateLimit = true,
     metrics,
   } = config;
+  const runtime = resolveEnvironment(environment);
+  const resolvedLogger = logger ?? new MemoryLogger();
+
+  if (runtime === 'production') {
+    assertProductionStore(store);
+    assertProductionStorage(storage);
+  }
 
   const limits = loadLimitsConfig();
   const rateLimitCfg = loadRateLimitConfig();
 
   const baseDeps = { store, validateApiKey, limits };
-  const botDeps = { ...baseDeps, queue, logger, metrics };
+  const botDeps = { ...baseDeps, queue, logger: resolvedLogger, metrics };
   const recordingDeps = { ...baseDeps, storage };
   const uploadDeps =
-    storage && logger
-      ? { ...baseDeps, storage, queue, logger, metrics }
+    storage
+      ? { ...baseDeps, storage, queue, logger: resolvedLogger, metrics }
       : null;
 
   const transcriptDeps = { ...baseDeps, queue };
@@ -76,15 +121,40 @@ export function createRecFnServer(config: RecFnServerConfig): RecFnServer {
   const analyticsDeps = { ...baseDeps };
   const searchDeps = { ...baseDeps, searchClient: searchClient ?? null };
 
-  const calendarDepsWithLimits =
+  const calendarService =
     tokenStore && googleCalendarClient && outlookCalendarClient
+      ? createCalendarService({
+          store,
+          tokenStore,
+          googleClient: googleCalendarClient,
+          outlookClient: outlookCalendarClient,
+          queue,
+          logger: resolvedLogger,
+          metrics,
+          tokenHttpClient: calendarTokenHttpClient,
+          refreshProviders: calendarRefreshProviders,
+        })
+      : null;
+
+  const calendarDepsWithLimits =
+    tokenStore && googleCalendarClient && outlookCalendarClient && calendarService
       ? {
           ...baseDeps,
           tokenStore,
           googleClient: googleCalendarClient,
           outlookClient: outlookCalendarClient,
+          calendarService,
         }
       : null;
+
+  const startedCalendarRuntime =
+    calendarService && calendarRuntime?.enabled
+      ? createCalendarRuntimeService(calendarService, calendarRuntime)
+      : undefined;
+
+  if (startedCalendarRuntime) {
+    startedCalendarRuntime.start();
+  }
 
   const middleware: import('@superfunctions/http').Middleware[] = [];
   if (rateLimit) {
@@ -136,10 +206,16 @@ export function createRecFnServer(config: RecFnServerConfig): RecFnServer {
     },
   });
 
-  return { router };
+  return {
+    router,
+    calendarService: calendarService ?? undefined,
+    calendarRuntime: startedCalendarRuntime,
+  };
 }
 
 export { createMemoryStore } from './store/memory.js';
+export { createDbStore, assertProductionStore } from './store/db.js';
+export { REC_FN_STORE_SCHEMA } from './store/schema.js';
 export type { RecFnStore } from './store/types.js';
 export type { ValidateApiKey, AuthResult } from './middleware/auth.js';
 export { ok, err } from './middleware/envelope.js';
@@ -153,8 +229,15 @@ export { MemoryQueueAdapter, QUEUE_NAMES } from './integrations/flowfn.js';
 export type { QueueAdapter, JobPayload } from './integrations/flowfn.js';
 export { MemoryLogger, createNoopLogger } from './integrations/logfn.js';
 export type { Logger, LogEntry } from './integrations/logfn.js';
-export { MemoryStorageAdapter, DEFAULT_SIGNED_URL_EXPIRY } from './integrations/filefn.js';
-export type { StorageAdapter, UploadOptions } from './integrations/filefn.js';
+export {
+  MemoryStorageAdapter,
+  DEFAULT_SIGNED_URL_EXPIRY,
+  uploadObject,
+  createDownloadUrl,
+  createDownloadResponse,
+  assertProductionStorage,
+} from './integrations/storage.js';
+export type { StorageAdapter, UploadOptions } from './integrations/storage.js';
 export { captureFromStream } from './recording/capture.js';
 export type { CaptureResult, CaptureOptions } from './recording/capture.js';
 export { uploadRecording } from './recording/storage.js';
@@ -185,6 +268,16 @@ export { createOutlookCalendarClient } from './calendar/outlook.js';
 export type { OutlookCalendarClient } from './calendar/outlook.js';
 export { pollAndSchedule } from './calendar/scheduler.js';
 export type { CalendarSchedulerDeps, SchedulerConfig } from './calendar/scheduler.js';
+export {
+  createCalendarService,
+  createCalendarRuntimeService,
+} from './calendar/service.js';
+export type {
+  CalendarRefreshProviderConfig,
+  CalendarRuntimeConfig,
+  CalendarRuntimeService,
+  CalendarService,
+} from './calendar/service.js';
 export type { RecFnLimitsConfig, RecFnRateLimitConfig } from './config.js';
 export { loadLimitsConfig, loadRateLimitConfig, DEFAULT_LIMITS, DEFAULT_RATE_LIMIT } from './config.js';
 export { createRateLimitMiddleware } from './middleware/rate-limit.js';
@@ -193,4 +286,13 @@ export type { TokenRefreshProvider, TokenRefreshResult } from './calendar/token-
 export { createMetricsEmitter } from './integrations/watchfn.js';
 export type { MetricsEmitter } from './integrations/watchfn.js';
 export { recordJoinLatency } from './observability/latency.js';
-export { METRICS, emitBotsActive, emitRecordingsCount, emitAsrLatency, emitJoinLatency, emitWebhookDelivery, emitApiRequest } from './observability/metrics.js';
+export {
+  METRICS,
+  emitBotsActive,
+  emitRecordingsCount,
+  emitAsrLatency,
+  emitJoinLatency,
+  emitWebhookDelivery,
+  emitCalendarScheduleDecision,
+  emitApiRequest,
+} from './observability/metrics.js';

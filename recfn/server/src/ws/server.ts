@@ -1,12 +1,27 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
-import { authenticateWebSocket } from './auth.js';
+import {
+  authenticateWebSocket,
+  authorizeTranscriptSubscription,
+  type VerifyBotAccess,
+  type WsAuthFailureCode,
+} from './auth.js';
 import { TranscriptStreamManager } from './transcript-stream.js';
 import { createErrorFrame } from './frames.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
+import type { Logger } from '../integrations/logfn.js';
 
 export interface WsServerDeps {
   validateApiKey: ValidateApiKey;
+  verifyBotAccess: VerifyBotAccess;
+  logger?: Logger;
+}
+
+function getAuthFailureMessage(code: WsAuthFailureCode): string {
+  if (code === 'WS_NAMESPACE_FORBIDDEN') {
+    return 'Token does not grant access to this bot.';
+  }
+  return 'Invalid token.';
 }
 
 export class RecFnWebSocketServer {
@@ -26,10 +41,19 @@ export class RecFnWebSocketServer {
       }
 
       try {
-        const authResult = await authenticateWebSocket(req, this.deps.validateApiKey);
+        const authResult = await authenticateWebSocket(
+          req,
+          this.deps.validateApiKey,
+          this.deps.verifyBotAccess,
+          this.deps.logger,
+        );
 
         if (!authResult.ok && !authResult.deferred) {
-          socket.write('HTTP/1.1 401 Unauthorized\\r\\n\\r\\n');
+          const statusLine =
+            authResult.httpStatus === 403
+              ? 'HTTP/1.1 403 Forbidden\\r\\n\\r\\n'
+              : 'HTTP/1.1 401 Unauthorized\\r\\n\\r\\n';
+          socket.write(statusLine);
           socket.destroy();
           return;
         }
@@ -60,22 +84,44 @@ export class RecFnWebSocketServer {
         ws.once('message', async (message: string | Buffer) => {
           try {
             const data = JSON.parse(message.toString());
-            if (data.type === 'auth' && data.token) {
-              const res = await this.deps.validateApiKey(data.token);
-              if (res) {
+            if (data.type === 'auth' && typeof data.token === 'string') {
+              const authResult = await authorizeTranscriptSubscription(
+                botId,
+                data.token,
+                this.deps.validateApiKey,
+                this.deps.verifyBotAccess,
+                this.deps.logger,
+              );
+              if (authResult.ok) {
                 clearTimeout(authTimeout);
                 this.streamManager.addConnection(botId, ws);
-                
-                // If it was a ping masked as auth, we should handle it properly, but we only expect auth
               } else {
-                ws.send(createErrorFrame('UNAUTHORIZED', 'Invalid token.'));
-                ws.close(1008, 'Unauthorized');
+                clearTimeout(authTimeout);
+                ws.send(
+                  createErrorFrame(
+                    authResult.code ?? 'UNAUTHORIZED',
+                    getAuthFailureMessage(authResult.code ?? 'UNAUTHORIZED'),
+                  ),
+                );
+                ws.close(
+                  1008,
+                  authResult.code === 'WS_NAMESPACE_FORBIDDEN'
+                    ? 'Namespace Forbidden'
+                    : 'Unauthorized',
+                );
               }
             } else {
+              clearTimeout(authTimeout);
               ws.send(createErrorFrame('UNAUTHORIZED', 'Expected auth frame.'));
               ws.close(1008, 'Unauthorized');
             }
           } catch (e) {
+            clearTimeout(authTimeout);
+            this.deps.logger?.warn('ws.auth.failed', {
+              botId,
+              code: 'UNAUTHORIZED',
+              reason: 'invalid_auth_payload',
+            });
             ws.send(createErrorFrame('UNAUTHORIZED', 'Invalid auth payload.'));
             ws.close(1008, 'Unauthorized');
           }

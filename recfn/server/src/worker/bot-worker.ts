@@ -1,6 +1,11 @@
-import type { PlatformAdapter, Bot } from 'recfn';
+import { ErrorCode, RecFnError, type Bot, type PlatformAdapter } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
-import type { QueueAdapter, JobPayload } from '../integrations/flowfn.js';
+import type {
+  BotJoinJobData,
+  JobPayload,
+  QueueAdapter,
+  RecordingUploadJobData,
+} from '../integrations/flowfn.js';
 import { QUEUE_NAMES } from '../integrations/flowfn.js';
 import type { Logger } from '../integrations/logfn.js';
 import { transitionBot, type LifecycleDeps, type WebhookDeliverer } from './lifecycle.js';
@@ -9,12 +14,20 @@ import { deliverWebhookEvent } from '../integrations/plugfn.js';
 import { createAutoLeaveTimer, type AutoLeaveTimer } from './auto-leave.js';
 import type { RealtimeTranscriptionPipeline } from '../transcription/realtime.js';
 import type { TranscriptStreamManager } from '../ws/transcript-stream.js';
+import type { StorageAdapter } from '../integrations/storage.js';
+import {
+  assertCaptureHasData,
+  captureFromStream,
+  type CaptureResult,
+} from '../recording/capture.js';
+import { uploadRecording } from '../recording/storage.js';
 
 export interface BotWorkerConfig {
   store: RecFnStore;
   queue: QueueAdapter;
   logger: Logger;
   platformAdapters: Map<string, PlatformAdapter>;
+  storage?: StorageAdapter;
   realtimePipeline?: RealtimeTranscriptionPipeline;
   streamManager?: TranscriptStreamManager;
   metrics?: import('../integrations/watchfn.js').MetricsEmitter;
@@ -25,8 +38,23 @@ export interface BotWorker {
   getAutoLeaveTimer(): AutoLeaveTimer;
 }
 
+interface ActiveBotSession {
+  botId: string;
+  namespace: string;
+  adapter: PlatformAdapter;
+  capturePromise: Promise<CaptureResult>;
+}
+
 export function createBotWorker(config: BotWorkerConfig): BotWorker {
-  const { store, queue, logger, realtimePipeline, streamManager, metrics } = config;
+  const {
+    store,
+    queue,
+    logger,
+    realtimePipeline,
+    streamManager,
+    metrics,
+    storage,
+  } = config;
   const webhookDeliverer: WebhookDeliverer = {
     deliver: (ns, ev, pl) => deliverWebhookEvent(ns, ev, pl, { store, metrics }),
   };
@@ -37,12 +65,182 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     realtimePipeline,
     webhookDeliverer,
     metrics,
+    queue,
   };
   const autoLeaveTimer = createAutoLeaveTimer(lifecycleDeps);
+  const activeSessions = new Map<string, ActiveBotSession>();
+
+  async function persistMetadataSnapshot(
+    bot: Bot,
+    adapter: PlatformAdapter,
+      stage: 'joined' | 'recording' | 'leaving' | 'done',
+  ): Promise<void> {
+    try {
+      const [existingMetadata, persistedChatMessages, adapterMetadata] =
+        await Promise.all([
+          store.getMetadata(bot.id, bot.namespace),
+          store.getChatMessages(bot.id, bot.namespace),
+          adapter.getMetadata(),
+        ]);
+
+      const now = new Date().toISOString();
+      const metadataStartTime =
+        adapterMetadata.startTime ??
+        existingMetadata?.startTime ??
+        (stage === 'joined' || stage === 'recording' ? now : undefined);
+      const metadataEndTime =
+        adapterMetadata.endTime ??
+        existingMetadata?.endTime ??
+        (stage === 'leaving' || stage === 'done' ? now : undefined);
+
+      await store.upsertMetadata(
+        bot.id,
+        {
+          id:
+            adapterMetadata.id ||
+            existingMetadata?.id ||
+            `meta_${bot.id}`,
+          botId: bot.id,
+          title: adapterMetadata.title ?? existingMetadata?.title,
+          startTime: metadataStartTime,
+          endTime: metadataEndTime,
+          platform: adapterMetadata.platform ?? bot.platform,
+          chatMessages:
+            persistedChatMessages.length > 0
+              ? persistedChatMessages
+              : (adapterMetadata.chatMessages ?? existingMetadata?.chatMessages ?? []),
+        },
+        bot.namespace,
+      );
+    } catch (error) {
+      logger.warn('bot.worker.metadata_snapshot_failed', {
+        botId: bot.id,
+        stage,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  function startCaptureSession(bot: Bot, adapter: PlatformAdapter): Promise<CaptureResult> {
+    let recordingStream = adapter.getAudioStream();
+    if (bot.config.enableRealTimeTranscript && config.realtimePipeline) {
+      const [realtimeStream, finalizedRecordingStream] = recordingStream.tee();
+      recordingStream = finalizedRecordingStream;
+      void config.realtimePipeline.start(bot.id, realtimeStream, {
+        language: bot.config.language ?? 'en-US',
+        platform: bot.platform,
+        asrProvider: bot.config.asrProvider ?? 'whisper',
+      });
+    }
+
+    return captureFromStream(recordingStream, {
+      recordingFormat: bot.config.recordingFormat ?? 'mp4',
+    });
+  }
+
+  async function processFinalizeRecordingJob(payload: JobPayload): Promise<void> {
+    const { botId, namespace } = payload.data as unknown as RecordingUploadJobData;
+    const bot = await store.getBot(botId, namespace);
+    if (!bot) {
+      logger.error('recording.finalization.bot_not_found', { botId, namespace });
+      return;
+    }
+
+    const session = activeSessions.get(botId);
+    if (!session) {
+      logger.error('recording.finalization.failed', {
+        botId,
+        namespace,
+        code: ErrorCode.RECORDING_FINALIZATION_FAILED,
+        error: 'No active capture session found.',
+      });
+      await transitionBot(
+        lifecycleDeps,
+        botId,
+        namespace,
+        'error',
+        `${ErrorCode.RECORDING_FINALIZATION_FAILED}: no active capture session found.`,
+      );
+      return;
+    }
+
+    if (!storage) {
+      logger.error('recording.finalization.failed', {
+        botId,
+        namespace,
+        code: ErrorCode.RECORDING_FINALIZATION_FAILED,
+        error: 'No storage adapter configured for recording finalization.',
+      });
+      activeSessions.delete(botId);
+      await transitionBot(
+        lifecycleDeps,
+        botId,
+        namespace,
+        'error',
+        `${ErrorCode.RECORDING_FINALIZATION_FAILED}: storage is not configured.`,
+      );
+      return;
+    }
+
+    logger.info('recording.finalization.start', { botId, namespace });
+
+    try {
+      await transitionBot(lifecycleDeps, botId, namespace, 'finalizing');
+      await persistMetadataSnapshot(bot, session.adapter, 'leaving');
+      await session.adapter.leave();
+
+      const capture = await session.capturePromise;
+      assertCaptureHasData(capture);
+      const { recording } = await uploadRecording(
+        {
+          botId,
+          namespace,
+          capture,
+          source: 'bot_finalization',
+        },
+        {
+          storage,
+          store,
+          logger,
+          webhookDeliverer,
+          metrics,
+        },
+      );
+
+      await persistMetadataSnapshot(bot, session.adapter, 'done');
+      await transitionBot(lifecycleDeps, botId, namespace, 'done');
+      logger.info('recording.finalization.complete', {
+        botId,
+        namespace,
+        recordingId: recording.id,
+      });
+    } catch (error) {
+      const errorCode =
+        error instanceof RecFnError
+          ? error.code
+          : ErrorCode.RECORDING_FINALIZATION_FAILED;
+      logger.error('recording.finalization.failed', {
+        botId,
+        namespace,
+        code: errorCode,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await transitionBot(
+        lifecycleDeps,
+        botId,
+        namespace,
+        'error',
+        `${errorCode}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      activeSessions.delete(botId);
+    }
+  }
 
   async function processJoinJob(payload: JobPayload): Promise<void> {
-    const botId = payload.data.botId as string;
-    const namespace = payload.data.namespace as string;
+    const { botId, namespace } = payload.data as unknown as BotJoinJobData;
 
     const bot = await store.getBot(botId, namespace);
     if (!bot) {
@@ -80,7 +278,11 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     const joinTimeout = bot.config.joinTimeout ?? 30_000;
 
     try {
-      const joinPromise = adapter.join(bot.meetingUrl, bot.config);
+      const joinConfig = {
+        ...bot.config,
+        __botId: bot.id,
+      } as typeof bot.config & { __botId: string };
+      const joinPromise = adapter.join(bot.meetingUrl, joinConfig);
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('Join timeout exceeded')),
@@ -104,6 +306,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
 
     // Successfully joined
     await transitionBot(lifecycleDeps, botId, namespace, 'joined');
+    await persistMetadataSnapshot(bot, adapter, 'joined');
 
     // Send consent message before recording (BOT-008, SEC-006)
     const consentMsg =
@@ -112,6 +315,14 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
 
     // Transition to recording (only after consent message sent)
     await transitionBot(lifecycleDeps, botId, namespace, 'recording');
+    await persistMetadataSnapshot(bot, adapter, 'recording');
+    const capturePromise = startCaptureSession(bot, adapter);
+    activeSessions.set(botId, {
+      botId,
+      namespace,
+      adapter,
+      capturePromise,
+    });
 
     // Set up participant monitoring for auto-leave
     setupParticipantMonitoring(bot, adapter);
@@ -125,6 +336,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       // Ensure consent default: pending when bot joins, unknown if platform omits
       const p = {
         ...participant,
+        botId,
         consent: participant.consent ?? 'pending',
       };
       await store.addParticipant(botId, p, bot.namespace);
@@ -139,17 +351,15 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       }
       webhookDeliverer.deliver(bot.namespace, 'participant.left', buildParticipantLeftPayload(botId, participantId)).catch(() => {});
     });
-
-    if (bot.config.enableRealTimeTranscript && config.realtimePipeline) {
-      const audioStream = adapter.getAudioStream();
-      if (audioStream) {
-        config.realtimePipeline.start(botId, audioStream).catch(e => {
-          logger.error('bot.worker.realtime_error', { botId, error: String(e) });
-        });
-      } else {
-        logger.warn('bot.worker.no_audio_stream', { botId });
-      }
-    }
+    adapter.onChatMessage(async (message) => {
+      const persistedMessage = {
+        participantId: message.participantId,
+        text: message.text,
+        timestamp: message.timestamp || new Date().toISOString(),
+      };
+      await store.addChatMessage(botId, persistedMessage, bot.namespace);
+      await persistMetadataSnapshot(bot, adapter, 'recording');
+    });
   }
 
   function setupParticipantMonitoring(
@@ -175,11 +385,17 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
 
   return {
     async processNext(): Promise<boolean> {
-      const job = await queue.dequeue(QUEUE_NAMES.BOT_JOIN);
+      const job =
+        (await queue.dequeue(QUEUE_NAMES.BOT_JOIN)) ??
+        (await queue.dequeue(QUEUE_NAMES.RECORDING_UPLOAD));
       if (!job) return false;
 
       try {
-        await processJoinJob(job);
+        if (job.type === 'recording.finalize') {
+          await processFinalizeRecordingJob(job);
+        } else {
+          await processJoinJob(job);
+        }
       } catch (e) {
         logger.error('bot.worker.error', {
           error: e instanceof Error ? e.message : String(e),

@@ -1,4 +1,5 @@
 import type { AudioChunk, RecordingFormat } from 'recfn';
+import { ErrorCode, createError } from 'recfn';
 
 export interface CaptureResult {
   data: Uint8Array;
@@ -53,4 +54,13 @@ export async function captureFromStream(
     duration,
     size: combined.byteLength,
   };
+}
+
+export function assertCaptureHasData(capture: CaptureResult): void {
+  if (capture.size <= 0) {
+    throw createError(
+      ErrorCode.RECORDING_FINALIZATION_FAILED,
+      'Captured recording stream was empty.',
+    );
+  }
 }

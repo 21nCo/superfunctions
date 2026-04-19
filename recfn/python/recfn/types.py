@@ -50,6 +50,24 @@ class Bot:
 
 
 @dataclass
+class AggregateBotDetail(Bot):
+    """Aggregate bot detail including nested related resources."""
+
+    participants: List["Participant"] = None
+    recordings: List["Recording"] = None
+    metadata: Optional["MeetingMetadata"] = None
+    chat_messages: List["ChatMessage"] = None
+
+    def __post_init__(self) -> None:
+        if self.participants is None:
+            self.participants = []
+        if self.recordings is None:
+            self.recordings = []
+        if self.chat_messages is None:
+            self.chat_messages = []
+
+
+@dataclass
 class Recording:
     """Recording entity."""
 
@@ -256,4 +274,43 @@ def _parse_participant(d: dict[str, Any]) -> Participant:
         joined_at=d.get("joinedAt", ""),
         left_at=d.get("leftAt"),
         consent=d.get("consent", "unknown"),
+    )
+
+
+def _parse_chat_message(d: dict[str, Any]) -> ChatMessage:
+    return ChatMessage(
+        participant_id=d.get("participantId", ""),
+        text=d.get("text", ""),
+        timestamp=d.get("timestamp", ""),
+    )
+
+
+def _parse_metadata(d: dict[str, Any]) -> MeetingMetadata:
+    return MeetingMetadata(
+        id=d.get("id", ""),
+        bot_id=d.get("botId", ""),
+        title=d.get("title"),
+        start_time=d.get("startTime"),
+        end_time=d.get("endTime"),
+        platform=d.get("platform", ""),
+        chat_messages=[_parse_chat_message(m) for m in d.get("chatMessages", [])],
+    )
+
+
+def _parse_aggregate_bot_detail(d: dict[str, Any]) -> AggregateBotDetail:
+    bot = _parse_bot(d)
+    return AggregateBotDetail(
+        id=bot.id,
+        namespace=bot.namespace,
+        meeting_url=bot.meeting_url,
+        platform=bot.platform,
+        status=bot.status,
+        config=bot.config,
+        error_message=bot.error_message,
+        created_at=bot.created_at,
+        updated_at=bot.updated_at,
+        participants=[_parse_participant(p) for p in d.get("participants", [])],
+        recordings=[_parse_recording(r) for r in d.get("recordings", [])],
+        metadata=_parse_metadata(d["metadata"]) if isinstance(d.get("metadata"), dict) else None,
+        chat_messages=[_parse_chat_message(m) for m in d.get("chatMessages", [])],
     )

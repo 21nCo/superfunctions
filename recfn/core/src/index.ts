@@ -29,6 +29,15 @@ export type {
 
 export type { AsrAdapter, AsrOpts } from './adapters/asr.js';
 export type { PlatformAdapter } from './adapters/platform.js';
+export type {
+  TranscriptStreamFrameType,
+  TranscriptStreamFrameDataMap,
+  TranscriptStreamFrame,
+  TranscriptStreamServerFrame,
+  TranscriptStreamParticipantLeftData,
+  TranscriptStreamStatusData,
+  TranscriptStreamErrorData,
+} from './ws.js';
 
 export {
   ErrorCode,
@@ -66,3 +75,9 @@ export {
   computeSilencePercentage,
   computeTopicSegments,
 } from './analytics/index.js';
+
+export {
+  TRANSCRIPT_STREAM_FRAME_SCHEMA,
+  parseTranscriptStreamFrame,
+  serializeTranscriptStreamFrame,
+} from './ws.js';

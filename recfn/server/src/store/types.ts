@@ -12,6 +12,12 @@ import type {
   Webhook,
 } from 'recfn';
 
+export interface RecFnStoreCapabilities {
+  durable: boolean;
+  backend: 'memory' | 'db';
+  adapterName: string;
+}
+
 export interface ListOptions {
   limit?: number;
   cursor?: string;
@@ -35,6 +41,8 @@ export interface CreateBotInput {
 }
 
 export interface RecFnStore {
+  readonly capabilities: RecFnStoreCapabilities;
+
   createBot(input: CreateBotInput): Promise<Bot>;
   getBot(id: string, namespace: string): Promise<Bot | null>;
   listBots(namespace: string, opts: ListBotsOptions): Promise<ListResult<Bot>>;
@@ -76,8 +84,18 @@ export interface RecFnStore {
     updates: Partial<Pick<Participant, 'leftAt' | 'consent'>>,
   ): Promise<Participant | null>;
 
+  addChatMessage(
+    botId: string,
+    message: ChatMessage,
+    namespace: string,
+  ): Promise<ChatMessage>;
   getChatMessages(botId: string, namespace: string): Promise<ChatMessage[]>;
 
+  upsertMetadata(
+    botId: string,
+    metadata: MeetingMetadata,
+    namespace: string,
+  ): Promise<MeetingMetadata>;
   getMetadata(
     botId: string,
     namespace: string,

@@ -1,14 +1,18 @@
-import type { Recording, RecordingFormat } from 'recfn';
-import type { StorageAdapter } from '../integrations/filefn.js';
+import { ErrorCode, createError, type Recording, type RecordingFormat } from 'recfn';
+import type { StorageAdapter } from '../integrations/storage.js';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
 import type { CaptureResult } from './capture.js';
 import type { WebhookDeliverer } from '../worker/lifecycle.js';
 import type { MetricsEmitter } from '../integrations/watchfn.js';
+import { uploadObject } from '../integrations/storage.js';
 import { buildRecordingReadyPayload } from '../webhooks/events.js';
 import { checkRecordingDuration } from '../middleware/limits.js';
 import { loadLimitsConfig } from '../config.js';
-import { emitRecordingsCount } from '../observability/metrics.js';
+import {
+  emitRecordingsCount,
+  emitRecordingUploadLatency,
+} from '../observability/metrics.js';
 
 function generateRecordingId(): string {
   const ts = Date.now().toString(36);
@@ -44,6 +48,7 @@ export interface UploadRecordingInput {
   botId: string;
   namespace: string;
   capture: CaptureResult;
+  source?: 'bot_finalization' | 'manual_upload';
 }
 
 export interface UploadRecordingResult {
@@ -60,7 +65,7 @@ export async function uploadRecording(
     metrics?: MetricsEmitter;
   },
 ): Promise<UploadRecordingResult> {
-  const { botId, namespace, capture } = input;
+  const { botId, namespace, capture, source = 'manual_upload' } = input;
   const { storage, store, logger, webhookDeliverer, metrics } = deps;
 
   if (capture.duration > 0) {
@@ -76,44 +81,75 @@ export async function uploadRecording(
     recordingId,
     format: capture.format,
     size: capture.size,
+    source,
   });
 
   const startTime = Date.now();
+  try {
+    await uploadObject(storage, key, capture.data, {
+      contentType: contentTypeForFormat(capture.format),
+      encryption: true,
+    });
 
-  await storage.upload(key, capture.data, {
-    contentType: contentTypeForFormat(capture.format),
-    encryption: true,
-  });
+    const uploadDuration = Date.now() - startTime;
 
-  const uploadDuration = Date.now() - startTime;
+    logger.info('recording.upload.complete', {
+      botId,
+      recordingId,
+      uploadDurationMs: uploadDuration,
+      storageRef: key,
+      source,
+    });
 
-  logger.info('recording.upload.complete', {
-    botId,
-    recordingId,
-    uploadDurationMs: uploadDuration,
-    storageRef: key,
-  });
+    const recording: Recording = {
+      id: recordingId,
+      botId,
+      format: capture.format,
+      duration: capture.duration,
+      storageRef: key,
+      size: capture.size,
+      createdAt: new Date().toISOString(),
+    };
 
-  const recording: Recording = {
-    id: recordingId,
-    botId,
-    format: capture.format,
-    duration: capture.duration,
-    storageRef: key,
-    size: capture.size,
-    createdAt: new Date().toISOString(),
-  };
+    await store.createRecording(recording, namespace);
 
-  await store.createRecording(recording, namespace);
+    if (webhookDeliverer) {
+      webhookDeliverer
+        .deliver(
+          namespace,
+          'recording.ready',
+          buildRecordingReadyPayload(recording, botId),
+        )
+        .catch(() => {});
+    }
 
-  if (webhookDeliverer) {
-    webhookDeliverer.deliver(namespace, 'recording.ready', buildRecordingReadyPayload(recording, botId)).catch(() => {});
+    if (metrics) {
+      emitRecordingUploadLatency(metrics, uploadDuration, {
+        botId,
+        recordingId,
+        namespace,
+      });
+      const recordings = await store.getRecordings(botId, namespace);
+      emitRecordingsCount(metrics, recordings.length, namespace);
+    }
+
+    return { recording };
+  } catch (error) {
+    logger.error('recording.upload.failed', {
+      botId,
+      recordingId,
+      source,
+      code: ErrorCode.RECORDING_FINALIZATION_FAILED,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw createError(
+      ErrorCode.RECORDING_FINALIZATION_FAILED,
+      `Recording upload failed for ${botId}.`,
+      {
+        botId,
+        recordingId,
+        source,
+      },
+    );
   }
-
-  if (metrics) {
-    const recordings = await store.getRecordings(botId, namespace);
-    emitRecordingsCount(metrics, recordings.length, namespace);
-  }
-
-  return { recording };
 }

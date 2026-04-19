@@ -1,39 +1,456 @@
-import type { AudioChunk } from 'recfn';
+import { createError, type AudioChunk } from 'recfn';
 import type { Page } from 'playwright';
+import {
+  TEAMS_AUDIO_CAPTURE_POLL_INTERVAL_MS,
+  TEAMS_AUDIO_CAPTURE_TIMESLICE_MS,
+} from './browser.js';
 
 /**
- * Captures audio from Microsoft Teams via injected script.
- * Teams uses WebRTC; full capture requires CDP or virtual audio device.
- * Returns stub stream for interface compliance.
+ * Captures Teams audio through browser display-media capture with MediaRecorder.
+ * Tests can inject canned chunks via window.__REC_FN_TEAMS_TEST_AUDIO_CHUNKS__.
  */
+interface TeamsCaptureStartResult {
+  ok: boolean;
+  sessionId?: string;
+  reason?: string;
+  details?: Record<string, unknown>;
+  sampleRate?: number;
+  channels?: number;
+}
+
+interface TeamsCapturePollResult {
+  chunks: number[][];
+  done: boolean;
+  error?: string | null;
+  sampleRate?: number;
+  channels?: number;
+}
+
+function createTeamsCaptureUnavailableError(
+  message: string,
+  details?: Record<string, unknown>,
+) {
+  return createError(
+    'PLATFORM_CAPTURE_UNAVAILABLE' as unknown as Parameters<typeof createError>[0],
+    message,
+    {
+      platform: 'teams',
+      ...(details ?? {}),
+    },
+  );
+}
+
 export function createTeamsAudioStream(
   page: Page,
-  _options?: { sampleRate?: number },
+  options?: { sampleRate?: number },
 ): ReadableStream<AudioChunk> {
+  let activeSessionId: string | undefined;
+  let activePollTimeout: ReturnType<typeof setTimeout> | undefined;
+
   return new ReadableStream<AudioChunk>({
     async start(controller) {
-      try {
-        const supported = await page.evaluate(() => {
-          const w = typeof window !== 'undefined' ? window : null;
-          if (!w) return false;
-          const ac = (w as unknown as { AudioContext?: unknown }).AudioContext;
-          return !!ac;
-        });
-        if (!supported) {
-          controller.close();
+      let closed = false;
+      let sawData = false;
+
+      const clearPendingPoll = () => {
+        if (activePollTimeout) {
+          clearTimeout(activePollTimeout);
+          activePollTimeout = undefined;
+        }
+      };
+
+      const stopCapture = () => {
+        clearPendingPoll();
+        if (!activeSessionId) {
           return;
         }
-        const chunk: AudioChunk = {
-          data: new Uint8Array(0),
-          timestamp: Date.now(),
-          sampleRate: 48000,
-          channels: 1,
+
+        void page
+          .evaluate((sessionId) => {
+            const w = window as typeof window & {
+              __REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__?: Record<
+                string,
+                {
+                  recorder?: MediaRecorder;
+                  stream?: MediaStream;
+                  audioStream?: MediaStream;
+                }
+              >;
+            };
+            const sessions = w.__REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__;
+            const activeSession = sessions?.[sessionId];
+            if (!activeSession) {
+              return;
+            }
+
+            if (
+              activeSession.recorder &&
+              activeSession.recorder.state !== 'inactive'
+            ) {
+              activeSession.recorder.stop();
+            }
+            activeSession.audioStream?.getTracks().forEach((track) => track.stop());
+            activeSession.stream?.getTracks().forEach((track) => track.stop());
+            if (sessions) {
+              delete sessions[sessionId];
+            }
+          }, activeSessionId)
+          .catch(() => {});
+      };
+
+      try {
+        const startResult = await page.evaluate(
+          async ({
+            sampleRate,
+            timesliceMs,
+          }: {
+            sampleRate?: number;
+            timesliceMs: number;
+          }): Promise<TeamsCaptureStartResult> => {
+            const w = window as typeof window & {
+              webkitAudioContext?: typeof AudioContext;
+              __REC_FN_TEAMS_TEST_AUDIO_CHUNKS__?: number[][];
+              __REC_FN_TEAMS_TEST_SAMPLE_RATE__?: number;
+              __REC_FN_TEAMS_TEST_CHANNELS__?: number;
+              __REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__?: Record<
+                string,
+                {
+                  queue: number[][];
+                  done: boolean;
+                  error: string | null;
+                  sampleRate: number;
+                  channels: number;
+                  recorder?: MediaRecorder;
+                  stream?: MediaStream;
+                  audioStream?: MediaStream;
+                }
+              >;
+            };
+
+            const sessions =
+              w.__REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__ ??
+              (w.__REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__ = {});
+            const sessionId = `teams_capture_${Date.now()}_${Math.random()
+              .toString(36)
+              .slice(2, 8)}`;
+
+            if (Array.isArray(w.__REC_FN_TEAMS_TEST_AUDIO_CHUNKS__)) {
+              sessions[sessionId] = {
+                queue: w.__REC_FN_TEAMS_TEST_AUDIO_CHUNKS__.map((chunk) => [...chunk]),
+                done: true,
+                error: null,
+                sampleRate: w.__REC_FN_TEAMS_TEST_SAMPLE_RATE__ ?? sampleRate ?? 48_000,
+                channels: w.__REC_FN_TEAMS_TEST_CHANNELS__ ?? 1,
+              };
+              return {
+                ok: true,
+                sessionId,
+                sampleRate: sessions[sessionId].sampleRate,
+                channels: sessions[sessionId].channels,
+              };
+            }
+
+            const missingCapabilities: string[] = [];
+            if (!navigator.mediaDevices?.getDisplayMedia) {
+              missingCapabilities.push('getDisplayMedia');
+            }
+            const AudioContextClass = w.AudioContext ?? w.webkitAudioContext;
+            if (!AudioContextClass) {
+              missingCapabilities.push('AudioContext');
+            }
+            if (typeof MediaRecorder === 'undefined') {
+              missingCapabilities.push('MediaRecorder');
+            }
+            if (missingCapabilities.length > 0) {
+              return {
+                ok: false,
+                reason:
+                  'Teams audio capture requires display-media capture support in this browser runtime.',
+                details: { missingCapabilities },
+              };
+            }
+
+            try {
+              const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: true,
+                audio: {
+                  echoCancellation: false,
+                  noiseSuppression: false,
+                  autoGainControl: false,
+                },
+              });
+              const audioTracks = stream.getAudioTracks();
+              if (audioTracks.length === 0) {
+                stream.getTracks().forEach((track) => track.stop());
+                return {
+                  ok: false,
+                  reason:
+                    'Teams audio capture is unavailable because the browser did not expose a system audio track.',
+                  details: { missingCapabilities: ['system-audio-track'] },
+                };
+              }
+
+              const audioStream = new MediaStream(audioTracks);
+              const mimeType = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/ogg;codecs=opus',
+              ].find(
+                (candidate) =>
+                  typeof MediaRecorder !== 'undefined' &&
+                  typeof MediaRecorder.isTypeSupported === 'function' &&
+                  MediaRecorder.isTypeSupported(candidate),
+              );
+              const recorder = mimeType
+                ? new MediaRecorder(audioStream, { mimeType })
+                : new MediaRecorder(audioStream);
+
+              sessions[sessionId] = {
+                queue: [],
+                done: false,
+                error: null,
+                sampleRate: sampleRate ?? 48_000,
+                channels: Math.max(audioTracks.length, 1),
+                recorder,
+                stream,
+                audioStream,
+              };
+
+              recorder.ondataavailable = async (event) => {
+                if (!event.data || event.data.size === 0) {
+                  return;
+                }
+                const activeSession = sessions[sessionId];
+                if (!activeSession) {
+                  return;
+                }
+                const buffer = await event.data.arrayBuffer();
+                activeSession.queue.push(Array.from(new Uint8Array(buffer)));
+              };
+              recorder.onerror = (event) => {
+                const activeSession = sessions[sessionId];
+                if (!activeSession) {
+                  return;
+                }
+                activeSession.error =
+                  event.error?.message ?? 'Teams MediaRecorder failed.';
+                activeSession.done = true;
+              };
+              recorder.onstop = () => {
+                const activeSession = sessions[sessionId];
+                if (!activeSession) {
+                  return;
+                }
+                activeSession.done = true;
+              };
+
+              const markEnded = () => {
+                const activeSession = sessions[sessionId];
+                if (!activeSession) {
+                  return;
+                }
+                activeSession.done = true;
+                if (recorder.state !== 'inactive') {
+                  recorder.stop();
+                }
+              };
+              audioTracks.forEach((track) => {
+                track.onended = markEnded;
+              });
+
+              recorder.start(timesliceMs);
+              return {
+                ok: true,
+                sessionId,
+                sampleRate: sessions[sessionId].sampleRate,
+                channels: sessions[sessionId].channels,
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                reason:
+                  error instanceof Error
+                    ? error.message
+                    : 'Teams audio capture could not start.',
+              };
+            }
+          },
+          {
+            sampleRate: options?.sampleRate,
+            timesliceMs: TEAMS_AUDIO_CAPTURE_TIMESLICE_MS,
+          },
+        );
+
+        if (!startResult.ok || !startResult.sessionId) {
+          controller.error(
+            createTeamsCaptureUnavailableError(
+              startResult.reason ?? 'Teams audio capture prerequisites are unavailable.',
+              startResult.details,
+            ),
+          );
+          return;
+        }
+
+        activeSessionId = startResult.sessionId;
+
+        const poll = async () => {
+          if (closed || !activeSessionId) {
+            return;
+          }
+
+          try {
+            const result = await page.evaluate(
+              (sessionId): TeamsCapturePollResult => {
+                const w = window as typeof window & {
+                  __REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__?: Record<
+                    string,
+                    {
+                      queue: number[][];
+                      done: boolean;
+                      error: string | null;
+                      sampleRate: number;
+                      channels: number;
+                    }
+                  >;
+                };
+                const sessions = w.__REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__ ?? {};
+                const activeSession = sessions[sessionId];
+                if (!activeSession) {
+                  return {
+                    chunks: [],
+                    done: true,
+                    error: null,
+                    sampleRate: 48_000,
+                    channels: 1,
+                  };
+                }
+
+                const chunks = activeSession.queue.splice(
+                  0,
+                  activeSession.queue.length,
+                );
+                const snapshot: TeamsCapturePollResult = {
+                  chunks,
+                  done: activeSession.done && chunks.length === 0,
+                  error: activeSession.error,
+                  sampleRate: activeSession.sampleRate,
+                  channels: activeSession.channels,
+                };
+                if (snapshot.done) {
+                  delete sessions[sessionId];
+                }
+                return snapshot;
+              },
+              activeSessionId,
+            );
+
+            if (result.error) {
+              closed = true;
+              controller.error(
+                createTeamsCaptureUnavailableError(result.error, {
+                  sessionId: activeSessionId,
+                }),
+              );
+              return;
+            }
+
+            for (const rawChunk of result.chunks) {
+              if (rawChunk.length === 0) {
+                continue;
+              }
+              sawData = true;
+              controller.enqueue({
+                data: new Uint8Array(rawChunk),
+                timestamp: Date.now(),
+                sampleRate: result.sampleRate ?? options?.sampleRate ?? 48_000,
+                channels: result.channels ?? 1,
+              });
+            }
+
+            if (result.done) {
+              closed = true;
+              controller.close();
+              stopCapture();
+              return;
+            }
+
+            activePollTimeout = setTimeout(
+              poll,
+              TEAMS_AUDIO_CAPTURE_POLL_INTERVAL_MS,
+            );
+          } catch (error) {
+            closed = true;
+            if (sawData) {
+              controller.close();
+              stopCapture();
+              return;
+            }
+
+            controller.error(
+              createTeamsCaptureUnavailableError(
+                error instanceof Error
+                  ? error.message
+                  : 'Teams audio capture could not be read.',
+                { sessionId: activeSessionId },
+              ),
+            );
+          }
         };
-        controller.enqueue(chunk);
-      } catch {
-        // Non-fatal
+
+        await poll();
+      } catch (error) {
+        controller.error(
+          createTeamsCaptureUnavailableError(
+            error instanceof Error
+              ? error.message
+              : 'Teams audio capture could not be initialized.',
+          ),
+        );
+      } finally {
+        if (closed) {
+          clearPendingPoll();
+        }
       }
-      controller.close();
+    },
+    cancel() {
+      if (activePollTimeout) {
+        clearTimeout(activePollTimeout);
+        activePollTimeout = undefined;
+      }
+      if (!activeSessionId) {
+        return;
+      }
+      void page
+        .evaluate((sessionId) => {
+          const w = window as typeof window & {
+            __REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__?: Record<
+              string,
+              {
+                recorder?: MediaRecorder;
+                stream?: MediaStream;
+                audioStream?: MediaStream;
+              }
+            >;
+          };
+          const sessions = w.__REC_FN_TEAMS_AUDIO_CAPTURE_SESSIONS__;
+          const activeSession = sessions?.[sessionId];
+          if (!activeSession) {
+            return;
+          }
+          if (
+            activeSession.recorder &&
+            activeSession.recorder.state !== 'inactive'
+          ) {
+            activeSession.recorder.stop();
+          }
+          activeSession.audioStream?.getTracks().forEach((track) => track.stop());
+          activeSession.stream?.getTracks().forEach((track) => track.stop());
+          if (sessions) {
+            delete sessions[sessionId];
+          }
+        }, activeSessionId)
+        .catch(() => {});
+      activeSessionId = undefined;
     },
   });
 }

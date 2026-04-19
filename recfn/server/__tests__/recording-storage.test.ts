@@ -4,6 +4,7 @@ import { MemoryStorageAdapter } from '../src/integrations/filefn.js';
 import { MemoryLogger } from '../src/integrations/logfn.js';
 import { createMemoryStore } from '../src/store/memory.js';
 import type { CaptureResult } from '../src/recording/capture.js';
+import { createMetricsEmitter } from '../src/integrations/watchfn.js';
 
 describe('uploadRecording', () => {
   it('uploads recording to storage and creates store entry (TV-INT-002)', async () => {
@@ -154,5 +155,128 @@ describe('uploadRecording', () => {
     const uploadComplete = logger.findByEvent('recording.upload.complete');
     expect(uploadComplete).toHaveLength(1);
     expect(uploadComplete[0].data.uploadDurationMs).toBeTypeOf('number');
+  });
+
+  it('emits recording.ready and upload latency metrics for automatic finalization (TV-BOT-001, TV-OBS-001)', async () => {
+    const storage = new MemoryStorageAdapter();
+    const store = createMemoryStore();
+    const logger = new MemoryLogger();
+    const webhookEvents: Array<{ namespace: string; eventType: string }> = [];
+    const metricEvents: Array<{ event: string; props?: Record<string, unknown> }> = [];
+    const metrics = createMetricsEmitter((event, props) => {
+      metricEvents.push({ event, props });
+    });
+
+    const bot = await store.createBot({
+      meetingUrl: 'https://zoom.us/j/123',
+      platform: 'zoom',
+      config: {
+        displayName: 'RecFn Bot',
+        joinTimeout: 30000,
+        autoLeaveOnEmpty: true,
+        autoLeaveEmptyTimeout: 30000,
+        consentMessage: 'This meeting is being recorded',
+        enableRealTimeTranscript: false,
+        asrProvider: 'whisper',
+        recordingFormat: 'mp4',
+        language: 'en-US',
+      },
+      namespace: 'ns_test',
+    });
+
+    const capture: CaptureResult = {
+      data: new Uint8Array([1, 2, 3, 4, 5]),
+      format: 'mp4',
+      duration: 1800000,
+      size: 5,
+    };
+
+    const result = await uploadRecording(
+      {
+        botId: bot.id,
+        namespace: 'ns_test',
+        capture,
+        source: 'bot_finalization',
+      },
+      {
+        storage,
+        store,
+        logger,
+        metrics,
+        webhookDeliverer: {
+          async deliver(namespace, eventType) {
+            webhookEvents.push({ namespace, eventType });
+          },
+        },
+      },
+    );
+
+    expect(result.recording.botId).toBe(bot.id);
+    expect(webhookEvents).toContainEqual({
+      namespace: 'ns_test',
+      eventType: 'recording.ready',
+    });
+    expect(metricEvents).toContainEqual({
+      event: 'recfn.recording.upload_latency_ms',
+      props: expect.objectContaining({
+        botId: bot.id,
+        recordingId: result.recording.id,
+        namespace: 'ns_test',
+      }),
+    });
+  });
+
+  it('fails with deterministic finalization code on storage errors (TV-BOT-001 negative)', async () => {
+    class FailingStorageAdapter extends MemoryStorageAdapter {
+      override async openUploadStream(): Promise<WritableStream<Uint8Array>> {
+        throw new Error('storage offline');
+      }
+    }
+
+    const storage = new FailingStorageAdapter();
+    const store = createMemoryStore();
+    const logger = new MemoryLogger();
+
+    const bot = await store.createBot({
+      meetingUrl: 'https://zoom.us/j/123',
+      platform: 'zoom',
+      config: {
+        displayName: 'RecFn Bot',
+        joinTimeout: 30000,
+        autoLeaveOnEmpty: true,
+        autoLeaveEmptyTimeout: 30000,
+        consentMessage: 'This meeting is being recorded',
+        enableRealTimeTranscript: false,
+        asrProvider: 'whisper',
+        recordingFormat: 'mp4',
+        language: 'en-US',
+      },
+      namespace: 'ns_test',
+    });
+
+    const capture: CaptureResult = {
+      data: new Uint8Array([1, 2, 3]),
+      format: 'mp4',
+      duration: 1000,
+      size: 3,
+    };
+
+    await expect(
+      uploadRecording(
+        {
+          botId: bot.id,
+          namespace: 'ns_test',
+          capture,
+          source: 'bot_finalization',
+        },
+        { storage, store, logger },
+      ),
+    ).rejects.toMatchObject({
+      code: 'RECORDING_FINALIZATION_FAILED',
+    });
+
+    const failures = logger.findByEvent('recording.upload.failed');
+    expect(failures).toHaveLength(1);
+    expect(failures[0].data.code).toBe('RECORDING_FINALIZATION_FAILED');
   });
 });

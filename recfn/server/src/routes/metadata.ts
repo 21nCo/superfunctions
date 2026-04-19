@@ -27,14 +27,6 @@ export function createMetadataRoutes(deps: MetadataRouteDeps): Route[] {
           ctx.params.botId,
           auth.namespace,
         );
-        if (!meta) {
-          return ok({
-            id: '',
-            botId: ctx.params.botId,
-            platform: bot.platform,
-            chatMessages: [],
-          });
-        }
         return ok(meta);
       },
     },

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { PlatformAdapter, Participant } from 'recfn';
+import type { AudioChunk, PlatformAdapter, Participant } from 'recfn';
 import {
   createMemoryStore,
   createBotWorker,
@@ -7,16 +7,37 @@ import {
   MemoryLogger,
   QUEUE_NAMES,
   transitionBot,
+  MemoryStorageAdapter,
 } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
-import type { QueueAdapter } from '../src/integrations/flowfn.js';
 
 function createMockPlatformAdapter(
-  opts: { joinDelay?: number; joinError?: string } = {},
+  opts: {
+    joinDelay?: number;
+    joinError?: string;
+    audioChunks?: AudioChunk[];
+    leaveError?: string;
+  } = {},
 ): PlatformAdapter {
   const participantJoinCbs: ((p: Participant) => void)[] = [];
   const participantLeaveCbs: ((id: string) => void)[] = [];
   const participants: Participant[] = [];
+  const audioChunks =
+    opts.audioChunks ??
+    [
+      {
+        data: new Uint8Array([1, 2, 3]),
+        timestamp: 1000,
+        sampleRate: 48000,
+        channels: 1,
+      },
+      {
+        data: new Uint8Array([4, 5, 6]),
+        timestamp: 2000,
+        sampleRate: 48000,
+        channels: 1,
+      },
+    ];
 
   return {
     platform: 'zoom',
@@ -28,9 +49,20 @@ function createMockPlatformAdapter(
         throw new Error(opts.joinError);
       }
     },
-    async leave() {},
+    async leave() {
+      if (opts.leaveError) {
+        throw new Error(opts.leaveError);
+      }
+    },
     getAudioStream() {
-      return new ReadableStream();
+      return new ReadableStream<AudioChunk>({
+        start(controller) {
+          for (const chunk of audioChunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
     },
     async getParticipants() {
       return participants;
@@ -119,6 +151,62 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     expect(statusChanges[1].data.to).toBe('joined');
     expect(statusChanges[2].data.from).toBe('joined');
     expect(statusChanges[2].data.to).toBe('recording');
+  });
+
+  it('finalizes and uploads a recording automatically after leave (TV-BOT-001)', async () => {
+    const storage = new MemoryStorageAdapter();
+    const bot = await store.createBot({
+      meetingUrl: 'https://zoom.us/j/123',
+      platform: 'zoom',
+      config: {
+        displayName: 'RecFn Bot',
+        joinTimeout: 30000,
+        autoLeaveOnEmpty: true,
+        autoLeaveEmptyTimeout: 30000,
+        consentMessage: 'This meeting is being recorded',
+        enableRealTimeTranscript: false,
+        asrProvider: 'whisper',
+        recordingFormat: 'mp4',
+        language: 'en-US',
+      },
+      namespace: 'ns_test',
+    });
+
+    await queue.enqueue(QUEUE_NAMES.BOT_JOIN, {
+      type: 'bot.join',
+      data: { botId: bot.id, namespace: 'ns_test' },
+      createdAt: new Date().toISOString(),
+    });
+
+    const worker = createBotWorker({
+      store,
+      queue,
+      logger,
+      storage,
+      platformAdapters: new Map([['zoom', createMockPlatformAdapter()]]),
+    });
+
+    expect(await worker.processNext()).toBe(true);
+
+    await transitionBot({ store, logger, queue }, bot.id, 'ns_test', 'leaving');
+    expect(queue.size(QUEUE_NAMES.RECORDING_UPLOAD)).toBe(1);
+
+    expect(await worker.processNext()).toBe(true);
+
+    const updated = await store.getBot(bot.id, 'ns_test');
+    const recordings = await store.getRecordings(bot.id, 'ns_test');
+
+    expect(updated!.status).toBe('done');
+    expect(recordings).toHaveLength(1);
+    expect(storage.has(recordings[0].storageRef)).toBe(true);
+
+    const transitions = logger
+      .findByEvent('bot.status_change')
+      .map((entry) => `${entry.data.from}→${entry.data.to}`);
+    expect(transitions).toContain('recording→leaving');
+    expect(transitions).toContain('leaving→finalizing');
+    expect(transitions).toContain('finalizing→done');
+    expect(logger.findByEvent('recording.finalization.complete')).toHaveLength(1);
   });
 
   it('transitions through leaving → left → done (TV-BOT-003 terminal)', async () => {
@@ -253,6 +341,57 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       'leaving→left',
       'left→done',
     ]);
+  });
+
+  it('transitions to error when automatic finalization upload fails (TV-BOT-001 negative)', async () => {
+    class FailingStorageAdapter extends MemoryStorageAdapter {
+      override async openUploadStream(): Promise<WritableStream<Uint8Array>> {
+        throw new Error('storage offline');
+      }
+    }
+
+    const bot = await store.createBot({
+      meetingUrl: 'https://zoom.us/j/123',
+      platform: 'zoom',
+      config: {
+        displayName: 'RecFn Bot',
+        joinTimeout: 30000,
+        autoLeaveOnEmpty: true,
+        autoLeaveEmptyTimeout: 30000,
+        consentMessage: 'Recording',
+        enableRealTimeTranscript: false,
+        asrProvider: 'whisper',
+        recordingFormat: 'mp4',
+        language: 'en-US',
+      },
+      namespace: 'ns_test',
+    });
+
+    await queue.enqueue(QUEUE_NAMES.BOT_JOIN, {
+      type: 'bot.join',
+      data: { botId: bot.id, namespace: 'ns_test' },
+      createdAt: new Date().toISOString(),
+    });
+
+    const worker = createBotWorker({
+      store,
+      queue,
+      logger,
+      storage: new FailingStorageAdapter(),
+      platformAdapters: new Map([['zoom', createMockPlatformAdapter()]]),
+    });
+
+    await worker.processNext();
+    await transitionBot({ store, logger, queue }, bot.id, 'ns_test', 'leaving');
+    await worker.processNext();
+
+    const updated = await store.getBot(bot.id, 'ns_test');
+    expect(updated!.status).toBe('error');
+    expect(updated!.errorMessage).toContain('RECORDING_FINALIZATION_FAILED');
+
+    const failures = logger.findByEvent('recording.finalization.failed');
+    expect(failures).toHaveLength(1);
+    expect(failures[0].data.code).toBe('RECORDING_FINALIZATION_FAILED');
   });
 
   it('join timeout transitions to error (TV-BOT-011)', async () => {

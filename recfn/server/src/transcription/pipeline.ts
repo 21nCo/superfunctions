@@ -1,4 +1,4 @@
-import type { Segment, Transcript } from 'recfn';
+import type { Transcript } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
 import type { AsrRegistry } from './registry.js';
@@ -10,18 +10,12 @@ import { indexTranscript } from '../search/indexer.js';
 import { checkTranscriptSegments } from '../middleware/limits.js';
 import { loadLimitsConfig } from '../config.js';
 import { emitAsrLatency } from '../observability/metrics.js';
+import { sortSegmentsDeterministically } from 'recfn-shared-cloud';
 
-function generateTranscriptId(): string {
+export function generateTranscriptId(): string {
   const ts = Date.now().toString(36);
   const rand = Math.random().toString(36).substring(2, 8);
   return `trx_${ts}${rand}`;
-}
-
-function sortSegments(segments: Segment[]): Segment[] {
-  return [...segments].sort((a, b) => {
-    if (a.startTime !== b.startTime) return a.startTime - b.startTime;
-    return a.speakerId.localeCompare(b.speakerId);
-  });
 }
 
 export interface TranscriptionJobInput {
@@ -99,7 +93,7 @@ export async function processTranscriptionJob(
     const limits = loadLimitsConfig();
     checkTranscriptSegments(rawSegments.length, limits);
 
-    const sortedSegments = sortSegments(rawSegments);
+    const sortedSegments = sortSegmentsDeterministically(rawSegments);
 
     await store.updateTranscript(transcriptId, namespace, {
       status: 'ready',

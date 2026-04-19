@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { captureFromStream } from '../src/recording/capture.js';
-import type { AudioChunk } from 'recfn';
+import {
+  assertCaptureHasData,
+  captureFromStream,
+} from '../src/recording/capture.js';
+import {
+  ErrorCode,
+  createError,
+  type AudioChunk,
+} from 'recfn';
 
 function createAudioStream(chunks: AudioChunk[]): ReadableStream<AudioChunk> {
   return new ReadableStream<AudioChunk>({
@@ -65,5 +72,52 @@ describe('captureFromStream', () => {
 
     expect(result.duration).toBe(0); // single chunk: same first/last timestamp
     expect(result.size).toBe(5);
+  });
+
+  it('rejects empty captured media for finalization', async () => {
+    const stream = createAudioStream([]);
+    const result = await captureFromStream(stream, { recordingFormat: 'mp4' });
+
+    expect(() => assertCaptureHasData(result)).toThrow(
+      'Captured recording stream was empty.',
+    );
+  });
+
+  it('preserves capture prerequisite failures from platform streams', async () => {
+    const stream = new ReadableStream<AudioChunk>({
+      start(controller) {
+        controller.error(
+          createError(
+            ErrorCode.PLATFORM_CAPTURE_UNAVAILABLE,
+            'Meet audio capture requires display-media capture support in this browser runtime.',
+          ),
+        );
+      },
+    });
+
+    await expect(
+      captureFromStream(stream, { recordingFormat: 'mp4' }),
+    ).rejects.toMatchObject({
+      code: ErrorCode.PLATFORM_CAPTURE_UNAVAILABLE,
+    });
+  });
+
+  it('preserves Teams capture prerequisite failures from platform streams', async () => {
+    const stream = new ReadableStream<AudioChunk>({
+      start(controller) {
+        controller.error(
+          createError(
+            ErrorCode.PLATFORM_CAPTURE_UNAVAILABLE,
+            'Teams audio capture requires display-media capture support in this browser runtime.',
+          ),
+        );
+      },
+    });
+
+    await expect(
+      captureFromStream(stream, { recordingFormat: 'mp4' }),
+    ).rejects.toMatchObject({
+      code: ErrorCode.PLATFORM_CAPTURE_UNAVAILABLE,
+    });
   });
 });

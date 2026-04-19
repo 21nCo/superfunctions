@@ -2,7 +2,7 @@ import type { Route, RouteContext } from '@superfunctions/http';
 import { ErrorCode } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
-import type { StorageAdapter } from '../integrations/filefn.js';
+import type { StorageAdapter } from '../integrations/storage.js';
 import type { QueueAdapter } from '../integrations/flowfn.js';
 import { QUEUE_NAMES } from '../integrations/flowfn.js';
 import type { Logger } from '../integrations/logfn.js';
@@ -83,6 +83,7 @@ export function createUploadRoutes(deps: UploadRouteDeps): Route[] {
               duration: 0,
               size: data.byteLength,
             },
+            source: 'manual_upload',
           },
           { storage, store, logger, metrics },
         );

@@ -1,5 +1,13 @@
 import type { AsrAdapter, AsrOpts } from 'recfn';
 import type { Segment } from 'recfn';
+import {
+  fetchArrayBufferOrThrow,
+  fetchJsonOrThrow,
+  normalizeSpeakerId,
+  pollUntil,
+  readAudioChunkStream,
+  sortSegmentsDeterministically,
+} from 'recfn-shared-cloud';
 
 export interface GoogleSttAdapterConfig {
   apiKey: string;
@@ -54,18 +62,20 @@ function wordsToSegments(words: GoogleSttWord[], opts: AsrOpts): Segment[] {
   if (words.length === 0) return [];
 
   const segments: Segment[] = [];
-  let currentSpeaker = opts.speakerDiarization && words[0]?.speakerTag != null
-    ? `speaker_${words[0].speakerTag}`
-    : 'speaker_0';
+  let currentSpeaker = normalizeSpeakerId(
+    opts.speakerDiarization && words[0]?.speakerTag != null
+      ? words[0].speakerTag
+      : undefined,
+  );
   let currentStart = parseGoogleTime(words[0]!.startTime);
   let currentEnd = parseGoogleTime(words[0]!.endTime);
   let currentText = words[0]!.word;
 
   for (let i = 1; i < words.length; i++) {
     const w = words[i]!;
-    const speaker = opts.speakerDiarization && w.speakerTag != null
-      ? `speaker_${w.speakerTag}`
-      : 'speaker_0';
+    const speaker = normalizeSpeakerId(
+      opts.speakerDiarization && w.speakerTag != null ? w.speakerTag : undefined,
+    );
 
     if (speaker === currentSpeaker) {
       currentEnd = parseGoogleTime(w.endTime);
@@ -96,13 +106,6 @@ function wordsToSegments(words: GoogleSttWord[], opts: AsrOpts): Segment[] {
   return segments;
 }
 
-function sortSegments(segments: Segment[]): Segment[] {
-  return [...segments].sort((a, b) => {
-    if (a.startTime !== b.startTime) return a.startTime - b.startTime;
-    return a.speakerId.localeCompare(b.speakerId);
-  });
-}
-
 const SUPPORTED_LANGUAGES = [
   'en', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 'zh',
   'nl', 'pl', 'tr', 'ar', 'hi', 'id', 'th', 'vi', 'sv', 'da',
@@ -123,8 +126,17 @@ export class GoogleSttAdapter implements AsrAdapter {
     audio: ReadableStream<Uint8Array>,
     opts: AsrOpts,
   ): AsyncIterable<Segment> {
-    const buffer = await this.streamToBuffer(audio);
-    const segments = await this.transcribeFromBuffer(buffer, opts);
+    const chunks = await readAudioChunkStream(
+      audio as ReadableStream<Uint8Array | import('recfn').AudioChunk>,
+    );
+    const combinedSize = chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0);
+    const combined = new Uint8Array(combinedSize);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk.data, offset);
+      offset += chunk.data.byteLength;
+    }
+    const segments = await this.transcribeFromBuffer(combined.buffer, opts);
     for (const seg of segments) {
       yield seg;
     }
@@ -134,7 +146,11 @@ export class GoogleSttAdapter implements AsrAdapter {
     if (audioRef.startsWith('gs://')) {
       return this.transcribeFromUri(audioRef, opts);
     }
-    const buffer = await this.fetchFn(audioRef).then((r) => r.arrayBuffer());
+    const buffer = await fetchArrayBufferOrThrow(
+      this.fetchFn,
+      audioRef,
+      'Google STT audio fetch error',
+    );
     return this.transcribeFromBuffer(buffer, opts);
   }
 
@@ -142,7 +158,10 @@ export class GoogleSttAdapter implements AsrAdapter {
     const lang = extractLanguageCode(opts.language);
     const url = `https://speech.googleapis.com/v1/speech:longrunningrecognize?key=${this.apiKey}`;
 
-    const res = await this.fetchFn(url, {
+    const data = await fetchJsonOrThrow<{ name?: string }>(
+      this.fetchFn,
+      url,
+      {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -154,58 +173,40 @@ export class GoogleSttAdapter implements AsrAdapter {
         },
         audio: { uri },
       }),
-    });
-
-    if (!res.ok) throw new Error(`Google STT API error: ${res.status} ${await res.text()}`);
-    const data = (await res.json()) as { name?: string };
+      },
+      'Google STT API error',
+    );
     if (!data.name) throw new Error('No operation name');
 
-    for (let i = 0; i < 120; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const pollRes = await this.fetchFn(
-        `https://speech.googleapis.com/v1/${data.name}?key=${this.apiKey}`,
-      );
-      if (!pollRes.ok) throw new Error(`Google STT poll error: ${pollRes.status}`);
-      const pollData = (await pollRes.json()) as { done?: boolean; response?: GoogleSttResponse };
+    const pollData = await pollUntil(
+      () =>
+        fetchJsonOrThrow<{ done?: boolean; response?: GoogleSttResponse }>(
+          this.fetchFn,
+          `https://speech.googleapis.com/v1/${data.name}?key=${this.apiKey}`,
+          {},
+          'Google STT poll error',
+        ),
+      {
+        intervalMs: 1000,
+        maxAttempts: 120,
+        isDone: (result) => result.done === true,
+        onExhausted: () => new Error('Google STT transcription timeout'),
+      },
+    );
 
-      if (pollData.done && pollData.response) {
-        const words = pollData.response.results?.flatMap(
-          (r) => r.alternatives?.[0]?.words ?? [],
-        ) ?? [];
-        return sortSegments(wordsToSegments(words, opts));
-      }
-    }
-
-    throw new Error('Google STT transcription timeout');
-  }
-
-  private async streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
-    const chunks: Uint8Array[] = [];
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-    const buffer = new Uint8Array(totalLen);
-    let offset = 0;
-    for (const c of chunks) {
-      buffer.set(c, offset);
-      offset += c.length;
-    }
-    return buffer.buffer;
+    const words =
+      pollData.response?.results?.flatMap(
+        (result) => result.alternatives?.[0]?.words ?? [],
+      ) ?? [];
+    return sortSegmentsDeterministically(wordsToSegments(words, opts));
   }
 
   private async transcribeFromBuffer(buffer: ArrayBuffer, opts: AsrOpts): Promise<Segment[]> {
     const lang = extractLanguageCode(opts.language);
     const base64 = Buffer.from(buffer).toString('base64');
 
-    const res = await this.fetchFn(
+    const data = await fetchJsonOrThrow<GoogleSttResponse>(
+      this.fetchFn,
       `https://speech.googleapis.com/v1/speech:recognize?key=${this.apiKey}`,
       {
         method: 'POST',
@@ -220,12 +221,10 @@ export class GoogleSttAdapter implements AsrAdapter {
           audio: { content: base64 },
         }),
       },
+      'Google STT API error',
     );
-
-    if (!res.ok) throw new Error(`Google STT API error: ${res.status} ${await res.text()}`);
-    const data = (await res.json()) as GoogleSttResponse;
     const words = data.results?.flatMap((r) => r.alternatives?.[0]?.words ?? []) ?? [];
-    return sortSegments(wordsToSegments(words, opts));
+    return sortSegmentsDeterministically(wordsToSegments(words, opts));
   }
 
   supportedLanguages(): string[] {
