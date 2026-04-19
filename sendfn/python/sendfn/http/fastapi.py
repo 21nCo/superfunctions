@@ -5,10 +5,19 @@ This module provides FastAPI integration using superfunctions_fastapi adapter.
 
 from typing import Optional
 
-from superfunctions_fastapi import create_router as create_fastapi_router
-
+from ..errors import SendfnError
 from ..client import Sendfn
 from .routes import create_sendfn_routes
+
+try:
+    from superfunctions_fastapi import create_router as create_fastapi_router
+except ImportError as exc:
+    error = SendfnError(
+        "FastAPI integration requires the `fastapi` extra",
+        code="SENDFN_OPTIONAL_DEPENDENCY_MISSING",
+        retryable=False,
+    )
+    raise error from exc
 
 
 def create_sendfn_router(

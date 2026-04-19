@@ -5,10 +5,13 @@ from typing import Optional
 
 from superfunctions.db import Adapter
 
+from .._concurrency import map_with_concurrency, resolve_concurrency
 from ..errors import PushProviderError
 from ..models import Platform, PushNotification, SendPushParams
 from .device_manager import DeviceTokenManager
 from .provider import PushProvider
+
+PLATFORM_ORDER: tuple[Platform, ...] = ("android", "ios", "web")
 
 
 class PushService:
@@ -19,6 +22,7 @@ class PushService:
         providers: dict[Platform, PushProvider],
         db: Adapter,
         device_manager: DeviceTokenManager,
+        bulk_concurrency: int = 5,
     ) -> None:
         """Initialize push service.
 
@@ -30,6 +34,7 @@ class PushService:
         self.providers = providers
         self.db = db
         self.device_manager = device_manager
+        self.bulk_concurrency = resolve_concurrency(bulk_concurrency, 5)
 
     async def send_push(self, params: SendPushParams) -> PushNotification:
         """Send a push notification.
@@ -83,10 +88,17 @@ class PushService:
             )
             return notification
 
-        # Send to each platform
-        last_notification: Optional[PushNotification] = None
+        ordered_platforms = [
+            platform for platform in PLATFORM_ORDER if platform_tokens.get(platform)
+        ]
+        logical_notification_id: Optional[str] = None
+        notification_ids: list[str] = []
+        aggregate_sent_count = 0
+        aggregate_failed_count = 0
+        logical_sent_at: Optional[datetime] = None
 
-        for platform, p_tokens in platform_tokens.items():
+        for platform in ordered_platforms:
+            p_tokens = platform_tokens[platform]
             provider = self.providers.get(platform)
 
             if not provider:
@@ -110,6 +122,9 @@ class PushService:
                     "metadata": params.metadata or {},
                 },
             )
+            notification_ids.append(str(notification.id))
+            if logical_notification_id is None:
+                logical_notification_id = str(notification.id)
 
             try:
                 # Send via provider
@@ -131,6 +146,9 @@ class PushService:
                     )
                 )
 
+                if response.invalid_tokens:
+                    await self.device_manager.deactivate_tokens(response.invalid_tokens)
+
                 # Update record
                 await update_push_notification(
                     self.db,
@@ -146,10 +164,6 @@ class PushService:
                         },
                     },
                 )
-
-                # Handle invalid tokens
-                if response.invalid_tokens:
-                    await self.device_manager.deactivate_tokens(response.invalid_tokens)
 
                 # Record event
                 await record_event(
@@ -171,8 +185,10 @@ class PushService:
                     },
                 )
 
-                # Get updated notification
-                last_notification = await get_push_notification(self.db, str(notification.id))
+                aggregate_sent_count += response.success_count
+                aggregate_failed_count += response.failed_count
+                if logical_sent_at is None:
+                    logical_sent_at = response.timestamp
 
             except Exception as error:
                 # Update notification as failed
@@ -204,10 +220,30 @@ class PushService:
 
                 raise error
 
-        if not last_notification:
+        if not logical_notification_id:
             raise PushProviderError("Failed to process push for any platform")
 
-        return last_notification
+        existing_logical_notification = await get_push_notification(
+            self.db,
+            logical_notification_id,
+        )
+        logical_notification = await update_push_notification(
+            self.db,
+            logical_notification_id,
+            {
+                "status": "sent" if aggregate_sent_count > 0 else "failed",
+                "sentCount": aggregate_sent_count,
+                "failedCount": aggregate_failed_count,
+                "sentAt": logical_sent_at,
+                "metadata": {
+                    **(existing_logical_notification.metadata if existing_logical_notification else {}),
+                    **(params.metadata or {}),
+                    "notificationIds": notification_ids,
+                },
+            },
+        )
+
+        return logical_notification
 
     async def send_bulk_push(
         self, notifications: list[SendPushParams]
@@ -220,7 +256,8 @@ class PushService:
         Returns:
             List of push notification records
         """
-        results: list[PushNotification] = []
-        for notification in notifications:
-            results.append(await self.send_push(notification))
-        return results
+        return await map_with_concurrency(
+            notifications,
+            self.bulk_concurrency,
+            lambda notification, _index: self.send_push(notification),
+        )

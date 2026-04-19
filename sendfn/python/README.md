@@ -26,6 +26,22 @@ For all features:
 pip install sendfn[all]
 ```
 
+For FastAPI integration:
+
+```bash
+pip install sendfn[fastapi]
+```
+
+## Verify From Repo Root
+
+Use a Python 3.10+ interpreter when running the repo-local package commands.
+
+```bash
+python -m pip install -e ./packages/python-core
+python -m pip install -e './sendfn/python[dev,email,push,fastapi]'
+python -m pytest sendfn/python/tests
+```
+
 ## Quick Start
 
 ### Email Sending
@@ -132,8 +148,8 @@ for event in events:
 - ✅ **Suppression Lists** - Automatic bounce and complaint handling
 - ✅ **Event Tracking** - Track delivery, bounces, opens, clicks
 - ✅ **Database Agnostic** - Works with any database via adapters
-- ⏳ **Push Notifications** - FCM and APNS support (coming soon)
-- ⏳ **SMS** - SMS sending support (coming soon)
+- ✅ **Push Notifications** - FCM and APNS support with the `push` extra
+- ✅ **SMS** - Basic SMS provider abstraction and console provider support
 
 ## Configuration
 
@@ -188,18 +204,20 @@ adapter = create_adapter({
 ## Development
 
 ```bash
-# Install dependencies
-make install
-
-# Run tests
-make test
-
-# Lint code
-make lint
-
-# Format code
-make format
+python -m pip install -e ./packages/python-core
+python -m pip install -e './sendfn/python[dev,email,push,fastapi]'
+python -m pytest sendfn/python/tests
 ```
+
+## Webhook Setup
+
+AWS SES webhook endpoints must receive the full SNS envelope unchanged. The handler contract expects the original SNS signature fields (`Signature`, `SigningCertURL`, `Timestamp`, and `Message`) so signature verification can run before lifecycle events are trusted. Do not strip the SNS wrapper or forward only the inner SES JSON.
+
+## Examples
+
+- `examples/basic_email.py`
+- `examples/templates.py`
+- `examples/suppression.py`
 
 ## License
 

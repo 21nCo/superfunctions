@@ -7,6 +7,7 @@ from uuid import uuid4
 from superfunctions.db import Adapter
 
 from ..models import DeviceToken, Platform, RegisterDeviceParams
+from ..errors import ValidationError
 
 
 class DeviceTokenManager:
@@ -29,7 +30,7 @@ class DeviceTokenManager:
         Returns:
             Device token record
         """
-        now = datetime.now()
+        now = datetime.utcnow()
 
         # Check if device already exists (userId + token + platform)
         # Using find to check for existing token
@@ -49,10 +50,10 @@ class DeviceTokenManager:
             return await update_device_token(
                 self.db,
                 device_id=str(existing.id),
-                is_active=True,
-                last_used_at=now,
-                app_version=params.app_version,
-                device_info=params.device_info,
+                isActive=True,
+                lastUsedAt=now,
+                appVersion=params.app_version,
+                deviceInfo=params.device_info,
             )
         else:
             # Create new device token
@@ -61,15 +62,15 @@ class DeviceTokenManager:
             return await create_device_token(
                 self.db,
                 id=uuid4(),
-                user_id=params.user_id,
+                userId=params.user_id,
                 token=params.token,
                 platform=params.platform,
-                app_version=params.app_version,
-                device_info=params.device_info,
-                is_active=True,
-                last_used_at=now,
-                created_at=now,
-                updated_at=now,
+                appVersion=params.app_version,
+                deviceInfo=params.device_info,
+                isActive=True,
+                lastUsedAt=now,
+                createdAt=now,
+                updatedAt=now,
             )
 
     async def get_active_devices(
@@ -102,6 +103,48 @@ class DeviceTokenManager:
         from ..database.helpers import deactivate_device_tokens
 
         await deactivate_device_tokens(self.db, tokens=tokens)
+
+    async def refresh_device_token(
+        self,
+        old_token: str,
+        new_token: str,
+        user_id: str,
+        platform: Platform,
+    ) -> DeviceToken:
+        """Replace an old device token with a new active token."""
+        from ..database.helpers import find_device_token
+
+        existing = await find_device_token(
+            self.db,
+            user_id=user_id,
+            token=old_token,
+            platform=platform,
+        )
+        if existing is None:
+            raise ValidationError(
+                "Old device token was not found for the supplied user and platform"
+            )
+
+        await self.deactivate_tokens([old_token])
+        return await self.register_device(
+            RegisterDeviceParams(
+                userId=user_id,
+                token=new_token,
+                platform=platform,
+                appVersion=existing.app_version,
+                deviceInfo=existing.device_info,
+            )
+        )
+
+    async def cleanup_inactive_devices(self, older_than: datetime) -> int:
+        """Delete inactive device records older than the provided cutoff."""
+        from ..database.helpers import delete_device_tokens, find_inactive_device_tokens
+
+        inactive_devices = await find_inactive_device_tokens(self.db, older_than=older_than)
+        return await delete_device_tokens(
+            self.db,
+            device_ids=[device.id for device in inactive_devices],
+        )
 
     async def delete_device(self, device_id: str) -> None:
         """Delete a device token.

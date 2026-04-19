@@ -3,6 +3,8 @@ import { PushProvider, PushProviderCapabilities, SendPushRequest, SendPushRespon
 import { FcmConfig } from '../types';
 import { PushProviderError } from '../errors';
 
+const MAX_FCM_BATCH_SIZE = 500;
+
 export class FcmProvider implements PushProvider {
   readonly name = 'fcm';
   readonly platform = 'android'; // Also supports web, but spec says Android primarily for FCM
@@ -33,9 +35,15 @@ export class FcmProvider implements PushProvider {
   }
 
   async sendPush(params: SendPushRequest): Promise<SendPushResponse> {
-    // FCM Multicast
-    const message: admin.messaging.MulticastMessage = {
-      tokens: params.deviceTokens,
+    const invalidTokens: string[] = [];
+    const results: { token: string; success: boolean; error?: string }[] = [];
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (let start = 0; start < params.deviceTokens.length; start += MAX_FCM_BATCH_SIZE) {
+      const chunkTokens = params.deviceTokens.slice(start, start + MAX_FCM_BATCH_SIZE);
+      const message: admin.messaging.MulticastMessage = {
+      tokens: chunkTokens,
       notification: {
         title: params.title,
         body: params.body,
@@ -55,35 +63,38 @@ export class FcmProvider implements PushProvider {
 
     try {
       const response = await this.app.messaging().sendEachForMulticast(message);
-      
-      const invalidTokens: string[] = [];
-      const results = response.responses.map((res, idx) => {
+
+      successCount += response.successCount;
+      failedCount += response.failureCount;
+
+      const chunkResults = response.responses.map((res, idx) => {
         if (!res.success) {
             if (res.error?.code === 'messaging/registration-token-not-registered' || 
                 res.error?.code === 'messaging/invalid-registration-token') {
-                invalidTokens.push(params.deviceTokens[idx]);
+                invalidTokens.push(chunkTokens[idx]);
             }
         }
         return {
-            token: params.deviceTokens[idx],
+            token: chunkTokens[idx],
             success: res.success,
             error: res.error?.message
         };
       });
 
+      results.push(...chunkResults);
+    } catch (error: any) {
+        throw new PushProviderError(`FCM Error: ${error.message}`);
+    }
+    }
+
       return {
-        success: response.failureCount === 0, // Partial success is still success-ish, but overall... let's say true if at least one worked? 
-        // Actually typical pattern is if method didn't throw, it "succeeded" to execute.
-        successCount: response.successCount,
-        failedCount: response.failureCount,
+        success: failedCount === 0,
+        successCount,
+        failedCount,
         invalidTokens,
         results,
         timestamp: new Date(),
       };
-
-    } catch (error: any) {
-        throw new PushProviderError(`FCM Error: ${error.message}`);
-    }
   }
 
   async sendBulkPush(params: SendPushRequest[]): Promise<SendPushResponse[]> {

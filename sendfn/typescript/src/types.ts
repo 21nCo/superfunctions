@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Adapter } from '@superfunctions/db';
 import { EmailProvider } from './email/provider';
 import { SmsProvider } from './sms/provider';
+import type { AwsSesWebhookHandler } from './events/webhook-handler';
 
 // --- Configuration ---
 
@@ -62,6 +63,7 @@ export interface SendfnOptions {
   retryAttempts?: number; // default: 3
   retryDelay?: number; // default: 1000ms
   eventTracking?: boolean; // default: true
+  bulkConcurrency?: number; // default: 5
   logger?: any; // Replace with proper logger interface if needed
 }
 
@@ -248,3 +250,59 @@ export type CreateSuppression = Omit<SuppressionList, 'id' | 'createdAt'>;
 export type CreateEvent = Omit<CommunicationEvent, 'id' | 'createdAt'>;
 
 export type Platform = 'ios' | 'android' | 'web';
+
+export type SendfnErrorDetails = Record<string, unknown>;
+
+export interface QueryEventsParams {
+  referenceId?: string;
+  referenceType?: 'email' | 'push' | 'sms';
+  providerMessageId?: string;
+  provider?: string;
+  userId?: string;
+  eventType?: CommunicationEvent['eventType'];
+  startAt?: Date;
+  endAt?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SuppressionCheckResult {
+  suppressed: boolean;
+  entry?: SuppressionList | null;
+  reason?: string;
+}
+
+export type AddSuppressionParams = CreateSuppression;
+
+export interface SendfnClient {
+  email(params: SendEmailParams): Promise<EmailTransaction>;
+  bulkEmail(recipients: SendEmailParams[]): Promise<EmailTransaction[]>;
+  sms(params: SendSmsParams): Promise<SmsTransaction>;
+  push(params: SendPushParams): Promise<PushNotification>;
+  bulkPush(notifications: SendPushParams[]): Promise<PushNotification[]>;
+  registerDevice(params: RegisterDeviceParams): Promise<DeviceToken>;
+  getDevices(userId: string, platform?: Platform): Promise<DeviceToken[]>;
+  deactivateDevice(token: string): Promise<void>;
+  refreshDeviceToken(
+    oldToken: string,
+    newToken: string,
+    userId: string,
+    platform: Platform
+  ): Promise<DeviceToken>;
+  cleanupInactiveDevices(olderThan: Date): Promise<number>;
+  registerTemplate(template: EmailTemplate): Promise<void>;
+  getTemplate(templateId: string): Promise<EmailTemplate | undefined>;
+  listTemplates(): Promise<EmailTemplate[]>;
+  getEmailEvents(transactionId: string): Promise<CommunicationEvent[]>;
+  getPushEvents(notificationId: string): Promise<CommunicationEvent[]>;
+  getSmsEvents(transactionId: string): Promise<CommunicationEvent[]>;
+  queryEvents(params: QueryEventsParams): Promise<CommunicationEvent[]>;
+  checkSuppressionList(email: string): Promise<SuppressionCheckResult>;
+  addToSuppressionList(params: AddSuppressionParams): Promise<SuppressionList>;
+  bulkAddToSuppressionList(entries: AddSuppressionParams[]): Promise<void>;
+  exportSuppressionList(limit?: number, offset?: number): Promise<SuppressionList[]>;
+  removeFromSuppressionList(email: string): Promise<void>;
+  getWebhookHandlers(): { awsSes: AwsSesWebhookHandler };
+  close(): Promise<void>;
+  router?: unknown;
+}

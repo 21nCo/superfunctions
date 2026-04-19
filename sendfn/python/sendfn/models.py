@@ -105,6 +105,14 @@ class SuppressionList(BaseModel):
 
     model_config = {"populate_by_name": True}
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: Any) -> Any:
+        """Normalize suppression emails before validation."""
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
 
 class CommunicationEvent(BaseModel):
     """Communication event record."""
@@ -195,6 +203,7 @@ class SendfnOptions(BaseModel):
     retry_attempts: int = Field(3, alias="retryAttempts")
     retry_delay: int = Field(1000, alias="retryDelay")  # milliseconds
     event_tracking: bool = Field(True, alias="eventTracking")
+    bulk_concurrency: int = Field(5, alias="bulkConcurrency")
 
     model_config = {"populate_by_name": True}
 

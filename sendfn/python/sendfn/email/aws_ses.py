@@ -87,7 +87,7 @@ class AwsSesProvider:
                 success=False,
                 timestamp=datetime.utcnow(),
                 error={
-                    "code": type(e).__name__,
+                    "code": self._error_code(e),
                     "message": str(e),
                     "retryable": self._is_retryable_error(e),
                 },
@@ -257,8 +257,15 @@ class AwsSesProvider:
         error_name = type(error).__name__
         retryable_errors = [
             "Throttling",
+            "ThrottlingException",
             "ServiceUnavailable",
             "InternalFailure",
             "RequestTimeout",
         ]
         return error_name in retryable_errors
+
+    def _error_code(self, error: Exception) -> str:
+        """Map provider exceptions to stable provider-facing codes."""
+        if self._is_retryable_error(error):
+            return "THROTTLING"
+        return type(error).__name__

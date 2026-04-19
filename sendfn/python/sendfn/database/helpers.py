@@ -5,7 +5,7 @@ with sendfn-specific logic.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 from superfunctions.db import (
@@ -18,6 +18,7 @@ from superfunctions.db import (
     WhereClause,
 )
 
+from ..errors import ValidationError
 from ..models import (
     CommunicationEvent,
     DeviceToken,
@@ -27,6 +28,35 @@ from ..models import (
     SmsTransaction,
     SuppressionList,
 )
+
+DEFAULT_EVENT_QUERY_LIMIT = 50
+MAX_EVENT_QUERY_LIMIT = 200
+
+
+def normalize_suppression_email(email: str) -> str:
+    """Normalize suppression email keys."""
+    return email.strip().lower()
+
+
+def _resolve_event_limit(limit: Optional[int]) -> int:
+    if limit is None:
+        return DEFAULT_EVENT_QUERY_LIMIT
+    if limit < 0:
+        raise ValidationError("`limit` must be a non-negative number")
+    return min(limit, MAX_EVENT_QUERY_LIMIT)
+
+
+def _resolve_offset(offset: Optional[int]) -> Optional[int]:
+    if offset is None:
+        return None
+    if offset < 0:
+        raise ValidationError("`offset` must be a non-negative number")
+    return offset
+
+
+def _validate_event_window(start_at: Optional[datetime], end_at: Optional[datetime]) -> None:
+    if start_at and end_at and start_at >= end_at:
+        raise ValidationError("`startAt` must be earlier than `endAt`")
 
 
 # --- Email Transaction Helpers ---
@@ -71,6 +101,46 @@ async def get_email_transaction(db: Adapter, id: str) -> Optional[EmailTransacti
     return EmailTransaction.model_validate(result) if result else None
 
 
+async def get_email_transaction_by_provider_message_id(
+    db: Adapter, provider_message_id: str
+) -> Optional[EmailTransaction]:
+    """Get an email transaction by provider message ID."""
+    result = await db.find_one(
+        FindOneParams(
+            model="email_transactions",
+            where=[
+                WhereClause(
+                    field="providerMessageId",
+                    operator="eq",
+                    value=provider_message_id,
+                )
+            ],
+        )
+    )
+    return EmailTransaction.model_validate(result) if result else None
+
+
+async def _get_reference_record(
+    db: Adapter, reference_id: str, reference_type: str
+) -> Optional[dict[str, Any]]:
+    """Get the underlying transaction or notification for an event."""
+    model_by_reference_type = {
+        "email": "email_transactions",
+        "sms": "sms_transactions",
+        "push": "push_notifications",
+    }
+    model = model_by_reference_type.get(reference_type)
+    if model is None:
+        return None
+
+    return await db.find_one(
+        FindOneParams(
+            model=model,
+            where=[WhereClause(field="id", operator="eq", value=reference_id)],
+        )
+    )
+
+
 # --- Event Helpers ---
 
 
@@ -108,6 +178,10 @@ async def get_events_by_reference(
 
 async def find_events(db: Adapter, params: dict) -> list[CommunicationEvent]:
     """Find communication events matching criteria."""
+    start_at = params.get("start_at")
+    end_at = params.get("end_at")
+    _validate_event_window(start_at, end_at)
+
     where = []
     if params.get("reference_id"):
         where.append(WhereClause(field="referenceId", operator="eq", value=params["reference_id"]))
@@ -115,16 +189,53 @@ async def find_events(db: Adapter, params: dict) -> list[CommunicationEvent]:
         where.append(WhereClause(field="referenceType", operator="eq", value=params["reference_type"]))
     if params.get("event_type"):
         where.append(WhereClause(field="eventType", operator="eq", value=params["event_type"]))
+    if params.get("provider"):
+        where.append(WhereClause(field="provider", operator="eq", value=params["provider"]))
+    if start_at:
+        where.append(WhereClause(field="eventTimestamp", operator="gte", value=start_at))
+    if end_at:
+        where.append(WhereClause(field="eventTimestamp", operator="lt", value=end_at))
+    if params.get("provider_message_id") and params.get("reference_type") == "push":
+        return []
 
     results = await db.find_many(
         FindManyParams(
             model="communication_events",
             where=where if where else None,
-            limit=params.get("limit"),
-            offset=params.get("offset"),
+            limit=_resolve_event_limit(params.get("limit")),
+            offset=_resolve_offset(params.get("offset")),
+            order_by=[{"field": "eventTimestamp", "direction": "asc"}],
         )
     )
-    return [CommunicationEvent.model_validate(r) for r in results]
+
+    provider_message_id = params.get("provider_message_id")
+    user_id = params.get("user_id")
+    if not provider_message_id and not user_id:
+        return [CommunicationEvent.model_validate(r) for r in results]
+
+    reference_cache: dict[tuple[str, str], Optional[dict[str, Any]]] = {}
+    filtered_results: list[dict[str, Any]] = []
+
+    for result in results:
+        reference_key = (result["referenceType"], result["referenceId"])
+        if reference_key not in reference_cache:
+            reference_cache[reference_key] = await _get_reference_record(
+                db, result["referenceId"], result["referenceType"]
+            )
+
+        reference = reference_cache[reference_key]
+        if not reference:
+            continue
+
+        if provider_message_id and reference.get("providerMessageId") != provider_message_id:
+            continue
+
+        if user_id and reference.get("userId") != user_id:
+            continue
+
+        filtered_results.append(result)
+
+    return [CommunicationEvent.model_validate(r) for r in filtered_results]
 
 
 # --- Suppression List Helpers ---
@@ -141,7 +252,13 @@ async def get_suppression_list_entry(db: Adapter, email: str) -> Optional[Suppre
     result = await db.find_one(
         FindOneParams(
             model="suppression_list",
-            where=[WhereClause(field="email", operator="eq", value=email)],
+            where=[
+                WhereClause(
+                    field="email",
+                    operator="eq",
+                    value=normalize_suppression_email(email),
+                )
+            ],
         )
     )
     return SuppressionList.model_validate(result) if result else None
@@ -149,15 +266,21 @@ async def get_suppression_list_entry(db: Adapter, email: str) -> Optional[Suppre
 
 async def add_to_suppression_list(db: Adapter, data: dict) -> SuppressionList:
     """Add an email to the suppression list."""
+    normalized_email = normalize_suppression_email(data["email"])
     # Check if already exists
-    existing = await get_suppression_list_entry(db, data["email"])
+    existing = await get_suppression_list_entry(db, normalized_email)
     if existing:
         return existing
 
     result = await db.create(
         CreateParams(
             model="suppression_list",
-            data={**data, "id": str(uuid4()), "createdAt": datetime.utcnow()},
+            data={
+                **data,
+                "email": normalized_email,
+                "id": str(uuid4()),
+                "createdAt": datetime.utcnow(),
+            },
         )
     )
     return SuppressionList.model_validate(result)
@@ -187,6 +310,7 @@ async def find_suppression_list(db: Adapter, params: dict) -> list[SuppressionLi
             where=where if where else None,
             limit=params.get("limit"),
             offset=params.get("offset"),
+            order_by=[{"field": "email", "direction": "asc"}],
         )
     )
     return [SuppressionList.model_validate(r) for r in results]
@@ -200,7 +324,10 @@ async def create_device_token(db: Adapter, **data) -> DeviceToken:
     result = await db.create(
         CreateParams(
             model="device_tokens",
-            data=data,
+            data={
+                **data,
+                "id": str(data.get("id", uuid4())),
+            },
         )
     )
     return DeviceToken.model_validate(result)
@@ -211,7 +338,7 @@ async def update_device_token(db: Adapter, device_id: str, **data) -> DeviceToke
     result = await db.update(
         UpdateParams(
             model="device_tokens",
-            where=[WhereClause(field="id", operator="eq", value=device_id)],
+            where=[WhereClause(field="id", operator="eq", value=str(device_id))],
             data={**data, "updatedAt": datetime.utcnow()},
         )
     )
@@ -262,6 +389,23 @@ async def find_device_tokens(
     return [DeviceToken.model_validate(r) for r in results]
 
 
+async def find_inactive_device_tokens(
+    db: Adapter,
+    older_than: datetime,
+) -> list[DeviceToken]:
+    """Find inactive device tokens older than the provided cutoff."""
+    results = await db.find_many(
+        FindManyParams(
+            model="device_tokens",
+            where=[
+                WhereClause(field="isActive", operator="eq", value=False),
+                WhereClause(field="lastUsedAt", operator="lt", value=older_than),
+            ],
+        )
+    )
+    return [DeviceToken.model_validate(r) for r in results]
+
+
 async def deactivate_device_tokens(db: Adapter, tokens: list[str]) -> None:
     """Deactivate device tokens by token values."""
     for token in tokens:
@@ -278,20 +422,29 @@ async def deactivate_device_tokens(db: Adapter, tokens: list[str]) -> None:
             await db.update(
                 UpdateParams(
                     model="device_tokens",
-                    where=[WhereClause(field="id", operator="eq", value=device["id"])],
+                    where=[WhereClause(field="id", operator="eq", value=str(device["id"]))],
                     data={"isActive": False, "updatedAt": datetime.utcnow()},
                 )
             )
 
 
-async def delete_device_token(db: Adapter, device_id: str) -> None:
+async def delete_device_token(db: Adapter, device_id: Any) -> None:
     """Delete a device token."""
     await db.delete(
         DeleteParams(
             model="device_tokens",
-            where=[WhereClause(field="id", operator="eq", value=device_id)],
+            where=[WhereClause(field="id", operator="eq", value=str(device_id))],
         )
     )
+
+
+async def delete_device_tokens(db: Adapter, device_ids: list[Any]) -> int:
+    """Delete multiple device tokens and return the deletion count."""
+    deleted = 0
+    for device_id in device_ids:
+        await delete_device_token(db, device_id=device_id)
+        deleted += 1
+    return deleted
 
 
 # --- Push Notification Helpers ---

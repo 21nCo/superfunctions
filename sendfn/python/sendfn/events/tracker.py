@@ -86,7 +86,12 @@ class EventTracker:
         self,
         reference_id: Optional[str] = None,
         reference_type: Optional[ReferenceType] = None,
+        provider_message_id: Optional[str] = None,
+        provider: Optional[str] = None,
+        user_id: Optional[str] = None,
         event_type: Optional[EventType] = None,
+        start_at: Optional[datetime] = None,
+        end_at: Optional[datetime] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
     ) -> list[CommunicationEvent]:
@@ -105,7 +110,12 @@ class EventTracker:
         params = {
             "reference_id": reference_id,
             "reference_type": reference_type,
+            "provider_message_id": provider_message_id,
+            "provider": provider,
+            "user_id": user_id,
             "event_type": event_type,
+            "start_at": start_at,
+            "end_at": end_at,
             "limit": limit,
             "offset": offset,
         }
