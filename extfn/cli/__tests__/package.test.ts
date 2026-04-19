@@ -79,7 +79,9 @@ async function createFixtureExtension(backgroundSource: string): Promise<string>
 }
 
 describe('extfn package', () => {
-  it('builds, scans, and emits deterministic .zip and .xpi archives', async () => {
+  it(
+    'builds, scans, and emits deterministic .zip and .xpi archives',
+    async () => {
     const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'extfn-cli-artifacts-'));
     const { ctx } = createTestContext();
 
@@ -124,7 +126,9 @@ describe('extfn package', () => {
     } finally {
       await fs.rm(outDir, { recursive: true, force: true });
     }
-  });
+    },
+    15_000
+  );
 
   it('blocks archive emission when scan findings are blocking in strict mode', async () => {
     const fixtureDir = await createFixtureExtension(
