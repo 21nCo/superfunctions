@@ -4,6 +4,7 @@ Google Maps geocoding provider
 
 import httpx
 from typing import Optional, List
+from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import (
     GeoProvider,
     GeoLocation,
@@ -30,7 +31,7 @@ class GoogleMapsProvider:
     async def reverse_geocode(self, location: GeoLocation) -> ReverseGeocodeResult:
         """Convert coordinates to address"""
         if not self.api_key:
-            raise ValueError("Google Maps API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Google Maps API key is required", provider=self.name)
         
         params = {
             'latlng': f'{location.lat},{location.lng}',
@@ -46,7 +47,7 @@ class GoogleMapsProvider:
             data = response.json()
         
         if data['status'] != 'OK':
-            raise Exception(f"Google Maps API error: {data['status']}")
+            raise BrowseFnError("PROVIDER_ERROR", f"Google Maps API error: {data['status']}", provider=self.name)
         
         result = data['results'][0]
         components = {c['types'][0]: c for c in result.get('address_components', [])}
@@ -75,7 +76,7 @@ class GoogleMapsProvider:
     async def geocode(self, address: str, options: GeocodeOptions) -> List[ReverseGeocodeResult]:
         """Convert address to coordinates"""
         if not self.api_key:
-            raise ValueError("Google Maps API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Google Maps API key is required", provider=self.name)
         
         params = {
             'address': address,
@@ -105,7 +106,7 @@ class GoogleMapsProvider:
             data = response.json()
         
         if data['status'] != 'OK':
-            raise Exception(f"Google Maps API error: {data['status']}")
+            raise BrowseFnError("PROVIDER_ERROR", f"Google Maps API error: {data['status']}", provider=self.name)
         
         results = []
         for result in data['results'][:options.limit or 5]:
@@ -139,7 +140,7 @@ class GoogleMapsProvider:
     async def search(self, options: GeoSearchOptions) -> List[GeoPlace]:
         """Search for places"""
         if not self.api_key:
-            raise ValueError("Google Maps API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Google Maps API key is required", provider=self.name)
         
         params = {
             'query': options.query,
@@ -174,7 +175,7 @@ class GoogleMapsProvider:
             data = response.json()
         
         if data['status'] != 'OK':
-            raise Exception(f"Google Maps API error: {data['status']}")
+            raise BrowseFnError("PROVIDER_ERROR", f"Google Maps API error: {data['status']}", provider=self.name)
         
         results = []
         for result in data['results'][:options.limit or 20]:
@@ -204,7 +205,7 @@ class GoogleMapsProvider:
     async def get_place_details(self, place_id: str, fields: Optional[List[str]] = None) -> GeoPlace:
         """Get details for a specific place"""
         if not self.api_key:
-            raise ValueError("Google Maps API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Google Maps API key is required", provider=self.name)
         
         # Default fields
         requested_fields = fields or ['name', 'formatted_address', 'geometry', 'rating', 'opening_hours']
@@ -224,7 +225,7 @@ class GoogleMapsProvider:
             data = response.json()
         
         if data['status'] != 'OK':
-            raise Exception(f"Google Maps API error: {data['status']}")
+            raise BrowseFnError("PROVIDER_ERROR", f"Google Maps API error: {data['status']}", provider=self.name)
         
         result = data['result']
         loc_data = result.get('geometry', {}).get('location', {})

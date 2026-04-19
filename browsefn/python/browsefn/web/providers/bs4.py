@@ -1,139 +1,99 @@
-"""
-BeautifulSoup provider for web scraping (static HTML only)
-"""
+"""Static HTML provider for the canonical Python web surface."""
+
+from datetime import datetime
+import json
+from typing import Dict, Optional
 
 import httpx
-import json
-from bs4 import BeautifulSoup
-from typing import Optional
-from datetime import datetime
+
+from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import (
-    WebProvider,
-    ProviderCapabilities,
     GetPageOptions,
+    PageMetadata,
     PageResult,
-    PageMetadata
+    ProviderCapabilities,
 )
-from browsefn.utils.html_utils import (
-    extract_text,
-    extract_links,
-    extract_images,
-    extract_metadata,
-    html_to_markdown
-)
+from browsefn.utils.html_utils import extract_images, extract_links, extract_metadata, extract_text, html_to_markdown
 
 
 class BeautifulSoupProvider:
-    """BeautifulSoup-based web scraper for static HTML"""
-    
-    name = "bs4"
+    """Static HTML provider exposed under the canonical `cheerio` id."""
+
+    name = "cheerio"
     capabilities = ProviderCapabilities(
-        formats=['html', 'markdown', 'text', 'json'],
+        formats=["html", "markdown", "text", "json"],
         javascript=False,
         screenshots=False,
         cookies=True,
         headers=True,
-        selectors=True,
-        proxy=True
+        selectors=False,
+        proxy=True,
     )
 
     async def get_page(self, url: str, options: GetPageOptions) -> PageResult:
-        """Fetch and parse a web page"""
         start_time = datetime.now()
-        
-        timeout = (options.timeout or 30000) / 1000  # Convert ms to seconds
+        timeout = (options.timeout or 30000) / 1000
         headers = options.headers or {}
-        
-        # Build HTTP client config
-        client_config = {
-            'timeout': timeout,
-            'headers': headers,
-            'follow_redirects': True
+        cookies = {
+            cookie.name: cookie.value
+            for cookie in (options.cookies or [])
+        } or None
+
+        client_config: Dict[str, object] = {
+            "timeout": timeout,
+            "headers": headers,
+            "follow_redirects": True,
         }
-        
         if options.proxy:
-            client_config['proxies'] = options.proxy
-        
-        # Fetch page
+            client_config["proxy"] = options.proxy
+
         async with httpx.AsyncClient(**client_config) as client:
-            response = await client.get(url, cookies=options.cookies or None)
+            response = await client.get(url, cookies=cookies)
             response.raise_for_status()
             html_content = response.text
-        
-        soup = BeautifulSoup(html_content, 'html.parser')
-        
-        # Apply selectors if provided
-        if options.selectors:
-            if options.selectors.exclude:
-                for selector in options.selectors.exclude:
-                    for element in soup.select(selector):
-                        element.decompose()
-            
-            if options.selectors.include:
-                # Keep only included selectors
-                included_elements = []
-                for selector in options.selectors.include:
-                    included_elements.extend(soup.select(selector))
-                
-                # Create new soup with only included elements
-                if included_elements:
-                    new_soup = BeautifulSoup('', 'html.parser')
-                    for element in included_elements:
-                        new_soup.append(element)
-                    soup = new_soup
-        
-        # Format content based on requested format
-        format_type = options.format or 'html'
-        
-        if format_type == 'html':
-            content = str(soup)
-        elif format_type == 'markdown':
-            content = html_to_markdown(str(soup))
-        elif format_type == 'text':
-            content = extract_text(str(soup))
-        elif format_type == 'json':
-            # Extract structured data
-            content = json.dumps({
-                'title': soup.title.string if soup.title else None,
-                'headings': [h.get_text().strip() for h in soup.find_all(['h1', 'h2', 'h3'])],
-                'paragraphs': [p.get_text().strip() for p in soup.find_all('p')],
-                'links': extract_links(str(soup), url),
-                'images': extract_images(str(soup), url)
-            }, indent=2)
-        else:
-            content = str(soup)
-        
-        # Extract metadata
-        metadata_dict = extract_metadata(str(soup))
+
+        metadata_dict = extract_metadata(html_content)
         metadata = PageMetadata(
             url=url,
-            title=metadata_dict.get('title'),
-            description=metadata_dict.get('description'),
-            keywords=metadata_dict.get('keywords'),
-            author=metadata_dict.get('author'),
-            favicon=metadata_dict.get('favicon'),
-            openGraph=metadata_dict.get('openGraph'),
-            twitter=metadata_dict.get('twitter')
+            title=metadata_dict.get("title"),
+            description=metadata_dict.get("description"),
+            keywords=metadata_dict.get("keywords"),
+            author=metadata_dict.get("author"),
+            favicon=metadata_dict.get("favicon"),
+            openGraph=metadata_dict.get("openGraph"),
+            twitter=metadata_dict.get("twitter"),
         )
-        
-        # Extract links and images
-        links = extract_links(str(soup), url)
-        images = extract_images(str(soup), url)
-        
-        # Calculate duration
+
+        content_format = options.format or "html"
+        if content_format == "html":
+            content = html_content
+        elif content_format == "markdown":
+            content = html_to_markdown(html_content)
+        elif content_format == "text":
+            content = extract_text(html_content)
+        elif content_format == "json":
+            content = json.dumps(
+                {
+                    "title": metadata.title,
+                    "description": metadata.description,
+                    "links": extract_links(html_content, url),
+                    "images": extract_images(html_content, url),
+                }
+            )
+        else:
+            raise BrowseFnError("INVALID_ARGUMENT", f"Invalid format: {content_format}")
+
         duration = (datetime.now() - start_time).total_seconds() * 1000
-        
+
         return PageResult(
             url=url,
             content=content,
             metadata=metadata,
-            links=links,
-            images=images,
+            links=extract_links(html_content, url) if options.include_links else None,
+            images=extract_images(html_content, url) if options.include_images else None,
             provider=self.name,
-            duration=duration
+            duration=duration,
         )
 
     async def is_available(self) -> bool:
-        """Check if provider is available"""
         return True
-

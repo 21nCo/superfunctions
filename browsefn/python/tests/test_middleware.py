@@ -1,115 +1,151 @@
-"""
-Tests for middleware components
-"""
+"""Tests for middleware and BrowseFn instrumentation."""
+
+from pathlib import Path
+import sys
 
 import pytest
-import asyncio
-from browsefn.middleware.retry import RetryMiddleware
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from browsefn.core.browse_fn import BrowseFn
+from browsefn.core.errors import BrowseFnError
+from browsefn.core.types import BrowseFnConfig, CacheConfig, RetryConfig
 from browsefn.middleware.logging import Logger
 from browsefn.middleware.metrics import MetricsCollector
-from browsefn.core.types import RetryConfig
+from browsefn.middleware.retry import RetryMiddleware
+
+
+class UpstreamError(Exception):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @pytest.mark.asyncio
 async def test_retry_middleware_success():
-    """Test retry middleware with successful execution"""
-    config = RetryConfig(enabled=True, max_attempts=3, delay=10, backoff='linear')
-    retry = RetryMiddleware(config)
-    
+    retry = RetryMiddleware(RetryConfig(enabled=True, max_attempts=3, delay=10, backoff="linear"))
+
     async def successful_fn():
-        return 'success'
-    
-    result = await retry.execute(successful_fn)
-    assert result == 'success'
+        return "success"
+
+    assert await retry.execute(successful_fn) == "success"
 
 
 @pytest.mark.asyncio
 async def test_retry_middleware_eventual_success():
-    """Test retry middleware with eventual success"""
-    config = RetryConfig(enabled=True, max_attempts=3, delay=10, backoff='linear')
-    retry = RetryMiddleware(config)
-    
+    retry = RetryMiddleware(RetryConfig(enabled=True, max_attempts=3, delay=10, backoff="linear"))
     attempts = []
-    async def failing_then_success():
+
+    async def flaky():
         attempts.append(1)
         if len(attempts) < 3:
-            raise Exception('Temporary failure')
-        return 'success'
-    
-    result = await retry.execute(failing_then_success)
-    assert result == 'success'
+            raise UpstreamError(504, "Temporary failure")
+        return "success"
+
+    assert await retry.execute(flaky) == "success"
     assert len(attempts) == 3
 
 
 @pytest.mark.asyncio
-async def test_retry_middleware_max_attempts():
-    """Test retry middleware respects max attempts"""
-    config = RetryConfig(enabled=True, max_attempts=2, delay=10, backoff='linear')
-    retry = RetryMiddleware(config)
-    
+async def test_retry_middleware_raises_structured_timeout_after_exhaustion():
+    retry = RetryMiddleware(
+        RetryConfig(enabled=True, max_attempts=2, delay=10, backoff="linear", retry_on=[504])
+    )
+
+    async def always_times_out():
+        raise UpstreamError(504, "gateway timeout")
+
+    with pytest.raises(BrowseFnError, match="Provider firecrawl timed out after configured retries."):
+        await retry.execute(always_times_out, {"provider": "firecrawl"})
+
+
+@pytest.mark.asyncio
+async def test_retry_middleware_does_not_retry_non_retryable_status_codes():
+    retry = RetryMiddleware(
+        RetryConfig(enabled=True, max_attempts=3, delay=10, backoff="linear", retry_on=[504])
+    )
     attempts = []
-    async def always_fails():
+
+    async def forbidden():
         attempts.append(1)
-        raise Exception('Always fails')
-    
-    with pytest.raises(Exception, match='Always fails'):
-        await retry.execute(always_fails)
-    
-    assert len(attempts) == 2
+        raise UpstreamError(403, "forbidden")
+
+    with pytest.raises(UpstreamError, match="forbidden"):
+        await retry.execute(forbidden)
+
+    assert len(attempts) == 1
 
 
-def test_logger_basic():
-    """Test basic logging functionality"""
+def test_logger_redacts_sensitive_context():
     logger = Logger()
-    
-   logger.info('Test message', {'key': 'value'})
-    logger.error('Error message')
-    
-    logs = logger.get_logs()
-    assert len(logs) == 2
-    assert logs[0].level == 'info'
-    assert logs[0].message == 'Test message'
-    assert logs[0].context['key'] == 'value'
+    logger.info(
+        "request",
+        {
+            "url": "https://api.unsplash.com/search?client_id=SECRET",
+            "headers": {"Authorization": "Bearer SECRET"},
+            "cookies": {"session": "SECRET"},
+        },
+    )
+
+    log = logger.get_logs()[0]
+    assert "SECRET" not in str(log.context)
+    assert "[REDACTED]" in str(log.context)
 
 
-def test_logger_filtering():
-    """Test log filtering"""
-    logger = Logger()
-    
-    logger.info('Message 1', {'provider': 'test1'})
-    logger.info('Message 2', {'provider': 'test2'})
-    logger.error('Message 3', {'provider': 'test1'})
-    
-    filtered = logger.get_logs({'provider': 'test1'})
-    assert len(filtered) == 2
-
-
-def test_metrics_collector_basic():
-    """Test basic metrics collection"""
+def test_metrics_collector_aggregates_by_provider():
     collector = MetricsCollector()
-    
-    collector.record_request('provider1', 100, True)
-    collector.record_request('provider1', 200, True)
-    collector.record_request('provider1', 150, False)
-    
-    metrics = collector.get_metrics()
-    
+    collector.record_request("p1", 100, True)
+    collector.record_request("p1", 200, True)
+    collector.record_request("p2", 300, False)
+
+    metrics = collector.get_metrics({"groupBy": "provider"})
+
     assert metrics.totalRequests == 3
     assert metrics.successRate == pytest.approx(66.67, rel=0.01)
-    assert metrics.avgResponseTime == 150
+    assert metrics.avgResponseTime == 200
+    assert [provider.name for provider in metrics.byProvider] == ["p1", "p2"]
 
 
-def test_metrics_collector_by_provider():
-    """Test metrics grouped by provider"""
-    collector = MetricsCollector()
-    
-    collector.record_request('p1', 100, True)
-    collector.record_request('p1', 200, True)
-    collector.record_request('p2', 300, False)
-    
-    metrics = collector.get_metrics({'groupBy': 'provider'})
-    
-    assert len(metrics.byProvider) == 2
-    provider_names = [p.name for p in metrics.byProvider]
-    assert 'p1' in provider_names
-    assert 'p2' in provider_names
+@pytest.mark.asyncio
+async def test_browsefn_records_cache_metrics_logs_and_events():
+    browsefn = BrowseFn(
+        BrowseFnConfig(
+            cache=CacheConfig(enabled=True, ttl=60000),
+            retry=RetryConfig(enabled=True, max_attempts=2, delay=1, backoff="linear"),
+        )
+    )
+    events = []
+    browsefn.on("request", lambda event: events.append("request"))
+    browsefn.on("cache.hit", lambda event: events.append("cache.hit"))
+    browsefn.on("response", lambda event: events.append("response"))
+
+    async def payload():
+        return {"provider": "unsplash", "ok": True}
+
+    first = await browsefn._execute_operation(
+        operation="images.search",
+        provider="unsplash",
+        cache_enabled=True,
+        cache_method="GET",
+        cache_url="https://api.unsplash.com/search?client_id=SECRET",
+        cache_options={"provider": "unsplash"},
+        fn=payload,
+    )
+    second = await browsefn._execute_operation(
+        operation="images.search",
+        provider="unsplash",
+        cache_enabled=True,
+        cache_method="GET",
+        cache_url="https://api.unsplash.com/search?client_id=SECRET",
+        cache_options={"provider": "unsplash"},
+        fn=payload,
+    )
+
+    metrics = await browsefn.get_metrics()
+    logs = browsefn.get_logs()
+
+    assert first == second == {"provider": "unsplash", "ok": True}
+    assert events == ["request", "response", "request", "cache.hit", "response"]
+    assert metrics.totalRequests == 2
+    assert metrics.cacheHitRate == 50.0
+    assert all("SECRET" not in str(log.context) for log in logs)

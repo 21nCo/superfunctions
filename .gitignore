@@ -106,6 +106,7 @@ venv
 **/*.js.map
 .docsfn/
 docsfn/.tmp/
+.tmp/browsefn-*/
 
 # Apple / Xcode user artifacts
 DerivedData/

@@ -5,11 +5,26 @@
 // ===== Common Types =====
 
 export type Provider = string;
+export type CanonicalWebProviderId =
+  | 'cheerio'
+  | 'puppeteer'
+  | 'playwright'
+  | 'firecrawl'
+  | 'jina';
+export type CanonicalImageProviderId =
+  | 'unsplash'
+  | 'pixabay'
+  | 'pexels';
+export type CanonicalGeoProviderId =
+  | 'nominatim'
+  | 'google-maps'
+  | 'mapbox';
 
 export interface ProviderConfig {
   apiKey?: string;
   endpoint?: string;
   timeout?: number;
+  userAgent?: string;
   rateLimit?: RateLimitConfig;
   [key: string]: any;
 }
@@ -22,6 +37,7 @@ export interface RateLimitConfig {
 export interface CacheConfig {
   enabled: boolean;
   ttl?: number;
+  defaultTTL?: number;
   storage?: 'memory' | 'indexeddb' | 'file' | 'database';
   maxSize?: number;
   keyGenerator?: (method: string, url: string, options: any) => string;
@@ -48,13 +64,27 @@ export type BrowseFnEvent =
   | 'provider.fallback';
 
 export interface EventData {
+  event: BrowseFnEvent;
+  operation?: string;
   method?: string;
   url?: string;
   provider?: string;
   duration?: number;
-  error?: Error;
+  error?: {
+    name?: string;
+    message: string;
+    code?: string;
+    statusCode?: number;
+  };
   key?: string;
   timestamp: number;
+  requestId?: string;
+  cached?: boolean;
+  outcome?: 'success' | 'error' | 'fallback' | 'rate-limited';
+  fallbackFrom?: string;
+  fallbackTo?: string;
+  retryAttempt?: number;
+  details?: Record<string, unknown>;
 }
 
 export type EventHandler = (event: EventData) => void;
@@ -81,6 +111,9 @@ export interface RateLimitStatus {
   remaining: number;
   resetAt: number;
   limit: number;
+  allowed?: boolean;
+  provider?: string;
+  retryAfterMs?: number;
 }
 
 // ===== Web Scraping Types =====
@@ -97,6 +130,8 @@ export interface WebConfig {
 export interface GetPageOptions {
   provider?: string;
   format?: 'html' | 'markdown' | 'text' | 'json';
+  includeLinks?: boolean;
+  includeImages?: boolean;
   selectors?: {
     include?: string[];
     exclude?: string[];
@@ -158,7 +193,7 @@ export interface PageResult {
   metadata: PageMetadata;
   links?: string[];
   images?: string[];
-  screenshot?: Buffer;
+  screenshot?: Uint8Array;
   provider: string;
   cached?: boolean;
   duration?: number;
@@ -169,6 +204,7 @@ export interface MetadataOptions {
   timeout?: number;
   concurrency?: number;
   cache?: boolean;
+  maxBatchOverride?: number;
   onProgress?: (completed: number, total: number) => void;
 }
 
@@ -189,12 +225,17 @@ export interface ProviderCapabilities {
   headers: boolean;
   selectors?: boolean;
   proxy?: boolean;
+  scriptExecution?: boolean;
 }
 
 export interface WebProvider {
   name: string;
   capabilities: ProviderCapabilities;
   getPage(url: string, options: GetPageOptions): Promise<PageResult>;
+  scrape?<T>(
+    url: string,
+    options: GetPageOptions & { script: (page: unknown) => Promise<T> | T }
+  ): Promise<T>;
   isAvailable(): Promise<boolean>;
 }
 
@@ -282,6 +323,9 @@ export interface ImageDownloadOptions {
   };
   metadata?: boolean;
   overwrite?: boolean;
+  allowPrivateHosts?: boolean;
+  maxRedirects?: number;
+  maxPayloadBytes?: number;
   onProgress?: (bytes: number, total: number) => void;
 }
 

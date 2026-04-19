@@ -1,59 +1,87 @@
-# BrowseFn
+# BrowseFn TypeScript
 
-> Self-hosted web browsing and data extraction platform for developers
+The TypeScript package published from this directory is `browsefn`.
 
-BrowseFn is a comprehensive developer-first browsing solution that combines web scraping, batch metadata extraction, image browsing/downloading, and geolocation services into a single self-hosted platform.
-
-## Features
-
-- **Web Scraping & Crawling**: Multiple provider support (Firecrawl, Puppeteer, Playwright, Cheerio, Jina AI)
-- **Batch Metadata Extraction**: Extract metadata from multiple URLs efficiently
-- **Image Search & Download**: Browse and download images from Unsplash, Pixabay, Pexels
-- **Geolocation Services**: Geocoding, reverse geocoding, and place search
-- **Provider-Agnostic**: Unified interface with automatic fallback
-- **Performance**: Built-in caching, rate limiting, and retry logic
-- **Type-Safe**: Full TypeScript support with type inference
-
-## Installation
+## Install
 
 ```bash
 npm install browsefn
 ```
 
-### Optional Dependencies
+Optional peer dependencies:
 
 ```bash
-# For Puppeteer support
 npm install puppeteer
-
-# For Playwright support
 npm install playwright
 ```
 
-## Quick Start
+## Public Exports
 
-```typescript
+```ts
+import {
+  browseFn,
+  BrowseFn,
+  CheerioProvider,
+  FirecrawlProvider,
+  JinaProvider,
+  PuppeteerProvider,
+  PlaywrightProvider,
+  UnsplashProvider,
+  PixabayProvider,
+  PexelsProvider,
+  NominatimProvider,
+  GoogleMapsProvider,
+  MapboxProvider,
+  createBrowseFnRouter,
+} from 'browsefn';
+```
+
+The package also exports the documented config/result types and the canonical provider-registry helpers.
+
+## Canonical Provider IDs
+
+- Web: `cheerio`, `puppeteer`, `playwright`, `firecrawl`, `jina`
+- Images: `unsplash`, `pixabay`, `pexels`
+- Geo: `nominatim`, `google-maps`, `mapbox`
+
+Accepted aliases normalize before internal use. For example, `googleMaps` is accepted as input and emitted as `google-maps`.
+
+## Example
+
+```ts
 import { browseFn } from 'browsefn';
 
 const browse = browseFn({
   web: {
     defaultProvider: 'cheerio',
-    cache: { enabled: true }
-  }
+    fallbackChain: ['cheerio'],
+  },
+  cache: {
+    enabled: true,
+    ttl: 60_000,
+  },
 });
 
-// Scrape a webpage
 const page = await browse.web.getPage('https://example.com', {
-  format: 'markdown'
+  format: 'markdown',
+  includeLinks: true,
+  includeImages: true,
 });
 
-console.log(page.content);
+console.log(page.provider);
+console.log(page.links?.length ?? 0);
+console.log(page.images?.length ?? 0);
 ```
 
-## Documentation
+## Repo-Root Verification
 
-See [SPEC.md](../SPEC.md) for full API documentation.
+```bash
+npm --prefix browsefn/typescript run build
+npm --prefix browsefn/typescript run typecheck
+npm --prefix browsefn/typescript run test -- --run web-scraper web-providers image-browser image-providers geocoder geo-providers
+```
 
-## License
+## Related Files
 
-Apache-2.0
+- [Package overview](../README.md)
+- [Examples](./examples/)
