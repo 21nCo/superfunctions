@@ -1,155 +1,137 @@
-import { ChatModel } from "./base.js";
-import { 
-  ChatRequest, 
-  ChatResponse, 
-  CompletionRequest, 
-  CompletionResponse, 
+import {
+  ChatRequest,
+  ChatResponse,
+  CompletionRequest,
+  CompletionResponse,
   StreamEvent,
-  Message,
-  TokenUsage
+  ToolCall,
+  ToolSpec,
+  tokenUsage
 } from "../core/types.js";
+import {
+  ContextLengthError,
+  NotConfiguredError,
+  ProviderAuthError,
+  ProviderError,
+  RateLimitError
+} from "../core/errors.js";
+import { ChatModel } from "./base.js";
+import { getTransportClient } from "./transport.js";
+import { type Message } from "../core/types.js";
+import { type SecretProvider, resolveSecret } from "../tools/policy.js";
 
 export interface AnthropicConfig {
-  apiKey: string;
+  apiKey?: string;
+  apiKeyRef?: string;
   model?: string;
   baseUrl?: string;
   version?: string;
+  timeout?: number;
+  fetchImpl?: typeof fetch;
+  secretProvider?: SecretProvider;
 }
 
 export class AnthropicChatModel extends ChatModel {
-  provider = "anthropic";
-  model: string;
-  private apiKey: string;
-  private baseUrl: string;
-  private version: string;
+  readonly provider = "anthropic";
+  readonly model: string;
+  private readonly rawApiKey: string;
+  private readonly apiKeyRef?: string;
+  private readonly baseUrl: string;
+  private readonly version: string;
+  private readonly timeout: number;
+  private readonly fetchImpl?: typeof fetch;
+  private readonly secretProvider?: SecretProvider;
 
-  constructor(config: AnthropicConfig) {
+  constructor(config: AnthropicConfig = {}) {
     super();
-    this.apiKey = config.apiKey;
-    this.model = config.model || "claude-3-opus-20240229";
-    this.baseUrl = config.baseUrl || "https://api.anthropic.com/v1";
-    this.version = config.version || "2023-06-01";
+    this.rawApiKey = config.apiKey ?? "";
+    this.apiKeyRef = config.apiKeyRef;
+    this.model = config.model ?? "claude-3-opus-20240229";
+    this.baseUrl = config.baseUrl ?? "https://api.anthropic.com/v1";
+    this.version = config.version ?? "2023-06-01";
+    this.timeout = config.timeout ?? 60_000;
+    this.fetchImpl = config.fetchImpl;
+    this.secretProvider = config.secretProvider;
   }
 
-  private async fetch(path: string, options: RequestInit): Promise<Response> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers: {
-        "x-api-key": this.apiKey,
-        "anthropic-version": this.version,
-        "content-type": "application/json",
-        ...options.headers,
-      }
-    });
+  private get apiKey(): string {
+    return this.rawApiKey || resolveSecret(this.apiKeyRef, this.secretProvider) || "";
+  }
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Anthropic API Error ${response.status}: ${error}`);
+  private get client() {
+    const apiKey = this.apiKey;
+    if (!apiKey) {
+      throw new NotConfiguredError("Anthropic API key is required");
     }
-
-    return response;
+    return getTransportClient({
+      baseUrl: this.baseUrl,
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": this.version
+      },
+      timeout: this.timeout,
+      fetchImpl: this.fetchImpl
+    });
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
-    const chatResp = await this.chat({
-      messages: [{ role: "user", content: request.prompt }],
-      metadata: request.metadata
-    });
-
-    return {
-      content: chatResp.message.content,
-      usage: chatResp.usage,
-      raw: chatResp.raw,
-      trace_id: chatResp.trace_id
-    };
+    return await this.completeFromChat(request);
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    // Anthropic requires system prompt to be top-level, separate from messages
-    let system: string | undefined;
-    const messages = request.messages.filter(m => {
-      if (m.role === "system") {
-        system = m.content;
-        return false;
-      }
-      return true;
-    });
-
-    // Format tools if present
-    let tools: any[] | undefined;
-    if (request.tools && request.tools.length > 0) {
-      tools = request.tools.map(t => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.parameters
-      }));
-    }
-
-    const body: any = {
+    const { system, messages } = splitSystemMessage(request.messages);
+    const payload: Record<string, unknown> = {
       model: this.model,
-      messages: messages.map(m => ({
-        role: m.role === "tool" ? "user" : m.role, // Mapping might need adjustment based on specific Anthropic tool use syntax
-        content: m.content
-      })),
-      max_tokens: 4096,
-      system,
-      tools
+      messages,
+      max_tokens: 4096
     };
-
-    if (request.tool_choice) {
-       // Simplified mapping
-       if (typeof request.tool_choice === 'string' && request.tool_choice !== 'auto') {
-           body.tool_choice = { type: 'tool', name: request.tool_choice };
-       } else if (typeof request.tool_choice === 'object') {
-           body.tool_choice = request.tool_choice;
-       } else if (request.tool_choice === 'auto') {
-           body.tool_choice = { type: 'auto' };
-       }
+    if (system) payload.system = system;
+    if (request.tools?.length) payload.tools = request.tools.map(toAnthropicTool);
+    if (request.tool_choice !== undefined) {
+      payload.tool_choice =
+        typeof request.tool_choice === "string"
+          ? request.tool_choice === "auto"
+            ? { type: "auto" }
+            : { type: "tool", name: request.tool_choice }
+          : request.tool_choice;
     }
 
-
-    const response = await this.fetch("/messages", {
+    const response = await this.client.request("/messages", {
       method: "POST",
-      body: JSON.stringify(body)
+      body: JSON.stringify(payload)
     });
-
+    await raiseForStatus(this.provider, response);
     const data = await response.json();
-    
-    // Extract content
-    let content = "";
-    const tool_calls: any[] = [];
-    
-    for (const block of data.content) {
-      if (block.type === "text") {
-        content += block.text;
-      } else if (block.type === "tool_use") {
-        tool_calls.push({
-          id: block.id,
-          name: block.name,
-          arguments: block.input
-        });
-      }
-    }
-
-    const usage: TokenUsage | undefined = data.usage ? {
-      prompt_tokens: data.usage.input_tokens,
-      completion_tokens: data.usage.output_tokens,
-      total_tokens: data.usage.input_tokens + data.usage.output_tokens
-    } : undefined;
+    const blocks = Array.isArray(data?.content) ? data.content : [];
+    const content = blocks
+      .filter((block: Record<string, any>) => block.type === "text")
+      .map((block: Record<string, any>) => String(block.text ?? ""))
+      .join("");
+    const toolCalls = blocks
+      .filter((block: Record<string, any>) => block.type === "tool_use")
+      .map(
+        (block: Record<string, any>) =>
+          ({
+            id: String(block.id ?? ""),
+            name: String(block.name ?? ""),
+            arguments: (block.input ?? {}) as Record<string, unknown>
+          }) satisfies ToolCall
+      );
 
     return {
-      message: {
-        role: "assistant",
-        content,
-      },
-      tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
-      usage,
+      message: { role: "assistant", content },
+      toolCalls: toolCalls.length ? toolCalls : undefined,
+      tool_calls: toolCalls.length ? toolCalls : undefined,
+      usage: data?.usage
+        ? tokenUsage(Number(data.usage.input_tokens ?? 0), Number(data.usage.output_tokens ?? 0))
+        : undefined,
       raw: data
     };
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
-    const response = await this.fetch("/messages", {
+    const response = await this.client.request("/messages", {
       method: "POST",
       body: JSON.stringify({
         model: this.model,
@@ -158,8 +140,10 @@ export class AnthropicChatModel extends ChatModel {
         stream: true
       })
     });
-
-    if (!response.body) throw new Error("No response body");
+    await raiseForStatus(this.provider, response);
+    if (!response.body) {
+      throw new ProviderError("Anthropic stream response was empty", { provider: this.provider });
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -168,36 +152,128 @@ export class AnthropicChatModel extends ChatModel {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      buffer = lines.pop() ?? "";
 
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        
-        const dataStr = line.slice(6).trim();
-        if (dataStr === "[DONE]") continue;
-
-        try {
-          const event = JSON.parse(dataStr);
-          if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-             const delta = event.delta.text;
-             yield {
-                type: "content",
-                content: delta,
-                delta: delta
-             };
-          } else if (event.type === "message_stop") {
-             yield { type: "end", finish_reason: "stop" };
-          }
-        } catch (e) {
-          // ignore parse errors
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith("data:")) continue;
+        const chunk = line.slice(5).trim();
+        if (!chunk) continue;
+        const event = JSON.parse(chunk);
+        if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+          const delta = String(event.delta.text ?? "");
+          yield { type: "content", content: delta, delta };
+        }
+        if (event.type === "message_stop") {
+          yield { type: "end", finish_reason: "stop" };
+          return;
         }
       }
     }
-    
-    // Ensure end event is sent if not encountered in stream
+
     yield { type: "end", finish_reason: "stop" };
   }
+}
+
+function toAnthropicTool(tool: ToolSpec): Record<string, unknown> {
+  return {
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.input_schema ?? { type: "object", properties: {} }
+  };
+}
+
+function splitSystemMessage(messages: Message[]): {
+  system?: string;
+  messages: Array<{ role: "user" | "assistant"; content: unknown }>;
+} {
+  let system: string | undefined;
+  const result: Array<{ role: "user" | "assistant"; content: unknown }> = [];
+
+  for (const message of messages as Array<Message & Record<string, unknown>>) {
+    if (message.role === "system") {
+      system = message.content;
+      continue;
+    }
+
+    if (message.role === "tool") {
+      result.push({
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: message.tool_call_id,
+            content: message.content
+          }
+        ]
+      });
+      continue;
+    }
+
+    if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+      const content: Array<Record<string, unknown>> = [];
+      if (message.content) {
+        content.push({ type: "text", text: message.content });
+      }
+      for (const rawCall of message.tool_calls as Array<Record<string, unknown>>) {
+        const fn = (rawCall.function ?? {}) as Record<string, unknown>;
+        let input: Record<string, unknown> = {};
+        try {
+          input =
+            typeof fn.arguments === "string"
+              ? (JSON.parse(fn.arguments) as Record<string, unknown>)
+              : ((fn.arguments ?? {}) as Record<string, unknown>);
+        } catch {
+          input = {};
+        }
+        content.push({
+          type: "tool_use",
+          id: rawCall.id,
+          name: fn.name,
+          input
+        });
+      }
+      result.push({ role: "assistant", content });
+      continue;
+    }
+
+    result.push({
+      role: message.role,
+      content: message.content
+    });
+  }
+
+  return { system, messages: result };
+}
+
+async function raiseForStatus(provider: string, response: Response): Promise<void> {
+  if (response.ok) return;
+  const text = await response.text();
+  let body: unknown = text;
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    body = text;
+  }
+
+  if (response.status === 401) {
+    throw new ProviderAuthError(undefined, { provider, metadata: { status: response.status, body } });
+  }
+  if (response.status === 429) {
+    throw new RateLimitError(undefined, { provider, metadata: { status: response.status, body } });
+  }
+  if (response.status === 400) {
+    const error = typeof body === "object" && body ? (body as Record<string, any>).error ?? {} : {};
+    const message = String(error.message ?? "");
+    if (String(error.type ?? "") === "invalid_request_error" && message.includes("prompt is too long")) {
+      throw new ContextLengthError(undefined, { provider, metadata: { status: response.status, body } });
+    }
+  }
+
+  throw new ProviderError(`Anthropic request failed (${response.status})`, {
+    provider,
+    metadata: { status: response.status, body }
+  });
 }

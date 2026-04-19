@@ -1,40 +1,73 @@
-import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { LangFnError, ToolExecutionError, ToolSchemaError } from "../core/errors.js";
+import { ToolPolicy } from "./policy.js";
+
+export interface ToolSchema<TArgs = unknown> {
+  parse(data: unknown): TArgs;
+  jsonSchema?: Record<string, unknown>;
+}
 
 export interface ToolContext {
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
+  policy: ToolPolicy;
 }
 
-export interface ToolConfig<T extends z.ZodType> {
+export interface ToolConfig<TArgs, TResult> {
   name: string;
   description: string;
-  schema: T;
-  execute: (args: z.infer<T>, context: ToolContext) => Promise<any>;
+  schema: ToolSchema<TArgs>;
+  execute: (args: TArgs, context: ToolContext) => Promise<TResult> | TResult;
 }
 
-export class Tool<T extends z.ZodType, R = any> {
+export interface ProviderToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export class Tool<TArgs = unknown, TResult = unknown> {
   readonly name: string;
   readonly description: string;
-  readonly schema: T;
-  private readonly _execute: (args: z.infer<T>, context: ToolContext) => Promise<R>;
+  readonly schema: ToolSchema<TArgs>;
+  private readonly executeHandler: ToolConfig<TArgs, TResult>["execute"];
 
-  constructor(config: ToolConfig<T>) {
+  constructor(config: ToolConfig<TArgs, TResult>) {
     this.name = config.name;
     this.description = config.description;
     this.schema = config.schema;
-    this._execute = config.execute;
+    this.executeHandler = config.execute;
   }
 
-  json_schema(): any {
+  json_schema(): ProviderToolDefinition {
     return {
       name: this.name,
       description: this.description,
-      parameters: zodToJsonSchema(this.schema)
+      parameters: this.schema.jsonSchema ?? { type: "object", properties: {} }
     };
   }
 
-  async run(args: any, context?: ToolContext): Promise<R> {
-    const parsed = this.schema.parse(args);
-    return this._execute(parsed, context || { metadata: {} });
+  async run(args: unknown, context: ToolContext = { metadata: {}, policy: new ToolPolicy() }): Promise<TResult> {
+    let parsed: TArgs;
+    try {
+      parsed = this.schema.parse(args);
+    } catch (error) {
+      const metadata =
+        typeof error === "object" && error && "issues" in error
+          ? { tool: this.name, errors: (error as any).issues }
+          : { tool: this.name, errors: [{ message: error instanceof Error ? error.message : String(error) }] };
+      throw new ToolSchemaError("Tool args do not match schema", { metadata, cause: error });
+    }
+
+    try {
+      const result = await this.executeHandler(parsed, context);
+      return context.policy.sanitize(result) as TResult;
+    } catch (error) {
+      if (error instanceof LangFnError) {
+        throw error;
+      }
+      throw new ToolExecutionError(`Tool '${this.name}' failed: ${error instanceof Error ? error.message : String(error)}`, {
+        metadata: { tool: this.name },
+        cause: error
+      });
+    }
   }
 }

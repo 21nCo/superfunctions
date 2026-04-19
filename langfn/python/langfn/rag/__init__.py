@@ -1,6 +1,7 @@
-from .base import Document, Embeddings, Retriever, VectorStore
+from .base import Document, Embeddings, RetrievalChain, RetrievalResult, Retriever, VectorStore, VectorStoreRetriever
 from .db_vector_store import DbVectorStore
 from .memory import InMemoryVectorStore
+from .memoryfn import MemoryFnRetriever
 from .openai import OpenAIEmbeddings
 
 __all__ = [
@@ -8,7 +9,11 @@ __all__ = [
     "Embeddings",
     "Retriever",
     "VectorStore",
+    "VectorStoreRetriever",
+    "RetrievalChain",
+    "RetrievalResult",
     "DbVectorStore",
     "InMemoryVectorStore",
+    "MemoryFnRetriever",
     "OpenAIEmbeddings",
 ]

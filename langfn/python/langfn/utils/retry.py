@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import random
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Optional, TypeVar, Union
+from typing import Awaitable, Callable, Optional, TypeVar
 
-from ..core.errors import LangFnError, RateLimitError, TimeoutError
+from ..core.errors import LangFnError, RateLimitError
 
 T = TypeVar("T")
 
@@ -16,7 +16,7 @@ class RetryConfig:
     base_delay_s: float = 0.25
     max_delay_s: float = 5.0
 
-    retry_on_codes: frozenset[str] = frozenset({"RATE_LIMIT", "TIMEOUT"})
+    retry_on_codes: frozenset[str] = frozenset({"PROVIDER_RATE_LIMIT", "PROVIDER_TIMEOUT"})
 
 
 def _default_should_retry(err: Exception, cfg: RetryConfig) -> bool:
@@ -49,4 +49,3 @@ async def retry_async(
                 delay = max(delay, float(exc.retry_after))
 
             await asyncio.sleep(delay)
-

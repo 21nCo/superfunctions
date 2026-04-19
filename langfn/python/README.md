@@ -1,31 +1,60 @@
 # LangFn (Python)
 
-Comprehensive AI Development SDK for LLM-based workflows.
+LangFn for Python ships the canonical `langfn` package with the same workflow surface area as the TypeScript SDK, adapted to Python naming conventions.
 
-## Features
+Current release target: `0.1.0`.
 
-- **Model Abstraction**: Unified interface for OpenAI, Anthropic, Ollama, and more.
-- **Orchestration**: Sequential, Parallel, and Map-Reduce chains.
-- **Graph Workflows**: Stateful workflows with `StateGraph`.
-- **Agents**: Functional `ToolAgent` and `ReActAgent`.
-- **Structured Output**: Type-safe output parsing with Pydantic.
-- **RAG**: Embeddings and Vector Store support.
-- **Observability**: Built-in tracing with `watchfn` integration.
+## Install
 
-## Usage
-
-```python
-from langfn import LangFn
-from langfn.models.openai import OpenAIChatModel
-
-lang = LangFn(
-    model=OpenAIChatModel(api_key="your-api-key")
-)
-
-response = await lang.complete("Hello world")
-print(response.content)
+```bash
+pip install langfn==0.1.0
 ```
 
-## Documentation
+TypeScript users in the same release line install:
 
-See the [main documentation](https://docs.superfunctions.dev/langfn) for more details.
+```bash
+npm install langfn@0.1.0
+```
+
+## Supported imports
+
+```python
+from langfn import LangFn, create_http_routes
+from langfn.models import OpenAIChatModel, MockChatModel
+from langfn.prompts import PromptTemplate, ChatTemplate
+from langfn.observability import Tracer, CostMeter, Budgets
+from langfn.mcp import MCPClient, MCPServer
+```
+
+## Quick start
+
+```python
+import asyncio
+
+from langfn import LangFn
+from langfn.models import MockChatModel
+from langfn.prompts import PromptTemplate
+
+
+async def main() -> None:
+    client = LangFn(model=MockChatModel(responses=["Hello Ada"]))
+    prompt = PromptTemplate(template="Say hi to {name}", variables=["name"])
+    response = await client.complete(prompt.format({"name": "Ada"}))
+    print(response.content)
+
+
+asyncio.run(main())
+```
+
+## Release checks
+
+From the repository root:
+
+```bash
+python3 -m pytest langfn/python/tests -q
+npm run gate:langfn-release
+```
+
+## Compatibility
+
+See [../COMPATIBILITY.md](../COMPATIBILITY.md) for first-party provider support across completion, chat, streaming, tools, embeddings, and evaluation.

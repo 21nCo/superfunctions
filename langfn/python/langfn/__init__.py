@@ -1,26 +1,55 @@
 from .client import LangFn
+from .http import create_routes as create_http_routes
 from .core.errors import (
+    AgentMaxIterationsError,
     AbortError,
     ContextLengthError,
+    GraphInterruptError,
+    GraphMaxStepsError,
+    InternalError,
     LangFnError,
+    MCPProtocolError,
+    MCPTransportError,
+    NonProductionBackendError,
+    TraceNotFoundError,
     ProviderAuthError,
     RateLimitError,
     SchemaValidationError,
+    NotConfiguredError,
     TimeoutError,
+    ToolDisabledError,
     ToolExecutionError,
+    ToolPolicyViolationError,
+    ToolSchemaError,
+    UnsupportedProviderError,
+    ValidationError,
 )
 
 __all__ = [
     "LangFn",
+    "create_http_routes",
     "LangFnError",
+    "MCPTransportError",
+    "MCPProtocolError",
+    "InternalError",
+    "GraphMaxStepsError",
+    "GraphInterruptError",
+    "AgentMaxIterationsError",
+    "NonProductionBackendError",
+    "TraceNotFoundError",
     "RateLimitError",
     "ProviderAuthError",
     "ToolExecutionError",
+    "ToolSchemaError",
+    "ToolPolicyViolationError",
+    "ToolDisabledError",
+    "NotConfiguredError",
     "SchemaValidationError",
     "TimeoutError",
     "ContextLengthError",
     "AbortError",
+    "ValidationError",
+    "UnsupportedProviderError",
 ]
 
 __version__ = "0.1.0"
-

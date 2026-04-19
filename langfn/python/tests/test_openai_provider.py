@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 
+from langfn.core.errors import ProviderAuthError, RateLimitError
 from langfn.core.types import ChatRequest, CompletionRequest
 from langfn.models import OpenAIChatModel
 
@@ -86,3 +87,34 @@ async def test_openai_stream_yields_content_events():
     assert [e.type for e in events] == ["content", "content", "end"]
     assert events[0].content == "he"
     assert events[1].content == "llo"
+
+
+@pytest.mark.asyncio
+async def test_openai_normalizes_auth_and_rate_limit_errors():
+    responses = iter(
+        [
+            httpx.Response(401, json={"error": {"message": "bad key"}}),
+            httpx.Response(429, json={"error": {"message": "slow down"}}, headers={"retry-after": "2"}),
+        ]
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    model = OpenAIChatModel(api_key="sk-test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ProviderAuthError) as auth_error:
+        await model.complete(CompletionRequest(prompt="x", metadata={}))
+    assert auth_error.value.code == "PROVIDER_AUTH"
+
+    with pytest.raises(RateLimitError) as rate_limit_error:
+        await model.complete(CompletionRequest(prompt="x", metadata={}))
+    assert rate_limit_error.value.code == "PROVIDER_RATE_LIMIT"
+    assert rate_limit_error.value.retry_after == 2.0
+
+
+def test_openai_transport_helper_reuses_clients():
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}], "usage": {}}))
+    model = OpenAIChatModel(api_key="sk-test", transport=transport)
+
+    assert model._client() is model._client()

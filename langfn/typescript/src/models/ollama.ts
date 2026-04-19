@@ -1,100 +1,110 @@
-import { ChatModel } from "./base.js";
-import { 
-  ChatRequest, 
-  ChatResponse, 
-  CompletionRequest, 
-  CompletionResponse, 
+import {
+  ChatRequest,
+  ChatResponse,
+  CompletionRequest,
+  CompletionResponse,
   StreamEvent,
-  TokenUsage
+  tokenUsage
 } from "../core/types.js";
+import { ProviderError } from "../core/errors.js";
+import { ChatModel } from "./base.js";
+import { getTransportClient } from "./transport.js";
 
 export interface OllamaConfig {
   model?: string;
   baseUrl?: string;
+  timeout?: number;
+  fetchImpl?: typeof fetch;
 }
 
 export class OllamaChatModel extends ChatModel {
-  provider = "ollama";
-  model: string;
-  private baseUrl: string;
+  readonly provider = "ollama";
+  readonly model: string;
+  private readonly baseUrl: string;
+  private readonly timeout: number;
+  private readonly fetchImpl?: typeof fetch;
 
   constructor(config: OllamaConfig = {}) {
     super();
-    this.model = config.model || "llama3";
-    this.baseUrl = config.baseUrl || "http://localhost:11434";
+    this.model = config.model ?? "llama3";
+    this.baseUrl = config.baseUrl ?? "http://localhost:11434";
+    this.timeout = config.timeout ?? 60_000;
+    this.fetchImpl = config.fetchImpl;
   }
 
-  private async fetch(path: string, options: RequestInit): Promise<Response> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      }
+  private get client() {
+    return getTransportClient({
+      baseUrl: this.baseUrl,
+      headers: { "content-type": "application/json" },
+      timeout: this.timeout,
+      fetchImpl: this.fetchImpl
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Ollama API Error ${response.status}: ${error}`);
-    }
-
-    return response;
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
-    const chatResp = await this.chat({
-      messages: [{ role: "user", content: request.prompt }],
-      metadata: request.metadata
-    });
-
-    return {
-      content: chatResp.message.content,
-      usage: chatResp.usage,
-      raw: chatResp.raw,
-      trace_id: chatResp.trace_id
-    };
+    return await this.completeFromChat(request);
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const response = await this.fetch("/api/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        model: this.model,
-        messages: request.messages,
-        stream: false
-      })
-    });
+    let response: Response;
+    try {
+      response = await this.client.request("/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          model: this.model,
+          messages: request.messages,
+          stream: false
+        })
+      });
+    } catch (error) {
+      throw new ProviderError("Could not connect to Ollama", { provider: this.provider, cause: error });
+    }
+
+    if (!response.ok) {
+      throw new ProviderError(`Ollama request failed (${response.status})`, {
+        provider: this.provider,
+        metadata: { status: response.status, body: await response.text() }
+      });
+    }
 
     const data = await response.json();
-    const message = data.message;
-
-    const usage: TokenUsage | undefined = data.eval_count ? {
-      prompt_tokens: data.prompt_eval_count || 0,
-      completion_tokens: data.eval_count || 0,
-      total_tokens: (data.prompt_eval_count || 0) + (data.eval_count || 0)
-    } : undefined;
-
     return {
       message: {
-        role: message.role,
-        content: message.content || "",
+        role: data?.message?.role ?? "assistant",
+        content: data?.message?.content ?? ""
       },
-      usage,
+      usage:
+        data?.eval_count !== undefined
+          ? tokenUsage(Number(data.prompt_eval_count ?? 0), Number(data.eval_count ?? 0))
+          : undefined,
       raw: data
     };
   }
 
   async *stream(request: CompletionRequest): AsyncIterable<StreamEvent> {
-    const response = await this.fetch("/api/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        model: this.model,
-        messages: [{ role: "user", content: request.prompt }],
-        stream: true
-      })
-    });
+    let response: Response;
+    try {
+      response = await this.client.request("/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          model: this.model,
+          messages: [{ role: "user", content: request.prompt }],
+          stream: true
+        })
+      });
+    } catch (error) {
+      throw new ProviderError("Could not connect to Ollama", { provider: this.provider, cause: error });
+    }
 
-    if (!response.body) throw new Error("No response body");
+    if (!response.ok) {
+      throw new ProviderError(`Ollama request failed (${response.status})`, {
+        provider: this.provider,
+        metadata: { status: response.status, body: await response.text() }
+      });
+    }
+    if (!response.body) {
+      throw new ProviderError("Ollama stream response was empty", { provider: this.provider });
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -103,29 +113,20 @@ export class OllamaChatModel extends ChatModel {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      buffer = lines.pop() ?? "";
 
       for (const line of lines) {
         if (!line.trim()) continue;
-        try {
-          const chunk = JSON.parse(line);
-          if (chunk.done) {
-            yield { type: "end", finish_reason: "stop" };
-            return;
-          }
-          const delta = chunk.message?.content;
-          if (delta) {
-            yield {
-              type: "content",
-              content: delta,
-              delta: delta
-            };
-          }
-        } catch (e) {
-          // ignore
+        const chunk = JSON.parse(line);
+        if (chunk.done) {
+          yield { type: "end", finish_reason: "stop" };
+          return;
+        }
+        const delta = String(chunk.message?.content ?? "");
+        if (delta) {
+          yield { type: "content", content: delta, delta };
         }
       }
     }

@@ -1,0 +1,13 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-04-02T14:30:10.768836Z,gpt-5-codex,Codex Desktop,spec,spec,,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec
+2026-04-02T15:49:55Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_00,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_00-2026-04-02-m8q2k7p4-report.md
+2026-04-02T16:26:11Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_01,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_01-2026-04-02-q7m2v9kc-report.md
+2026-04-02T16:39:20Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_02,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_02-2026-04-02-k4t9m2qd-report.md
+2026-04-02T17:23:30Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_03,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_03-2026-04-02-jlxw072p-report.md
+2026-04-05T09:19:39Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_04,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_04-2026-04-05-4f8lzspo-report.md
+2026-04-05T09:27:46Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_05,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_05-2026-04-05-rqmw96qp-report.md
+2026-04-05T09:46:21Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_06,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_06-2026-04-05-u7x4w2pk-report.md
+2026-04-05T12:46:05Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_07,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_07-2026-04-05-3qjv8mtn-report.md
+2026-04-05T13:52:38Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_08,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_08-2026-04-05-c6m2qv9r-report.md
+2026-04-05T14:12:09Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_09,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_09-2026-04-05-ljbmoj0b-report.md
+2026-04-05T14:39:28Z,gpt-5-codex,Codex Desktop,execute,unknown-agent,PHASE_10,langfn/.conduct/specs/2026-04-02-audit-fix-ejpk40n9-spec/phase-reports/PHASE_10-2026-04-05-n8v2q6lm-report.md

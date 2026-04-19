@@ -1,32 +1,58 @@
 # LangFn (TypeScript)
 
-Comprehensive AI Development SDK for LLM-based workflows.
+LangFn for TypeScript ships the canonical `langfn` package plus the documented subpath exports used throughout the SDK examples and tests.
 
-## Features
+Current release target: `0.1.0`.
 
-- **Model Abstraction**: Unified interface for OpenAI, Anthropic, Ollama, and more.
-- **Orchestration**: Sequential, Parallel, and Map-Reduce chains.
-- **Graph Workflows**: Stateful workflows with `StateGraph`.
-- **Agents**: Functional `ToolAgent` and `ReActAgent`.
-- **Structured Output**: Type-safe output parsing with Zod.
-- **RAG**: Embeddings and Vector Store support.
-- **Observability**: Built-in tracing.
+## Install
 
-## Usage
+```bash
+npm install langfn@0.1.0
+```
+
+Python users in the same release line install:
+
+```bash
+pip install langfn==0.1.0
+```
+
+## Supported imports
 
 ```typescript
-import { langfn, models } from "langfn";
+import { LangFn, langfn } from "langfn";
+import { OpenAIChatModel, MockChatModel } from "langfn/models";
+import { PromptTemplate } from "langfn/prompts";
+import { createLangFnRouter } from "langfn/http";
+import { ReActAgent } from "langfn/agents";
+```
 
-const lang = langfn({
-  model: new models.OpenAIChatModel({
-    apiKey: process.env.OPENAI_API_KEY
-  })
+## Quick start
+
+```typescript
+import { langfn } from "langfn";
+import { MockChatModel } from "langfn/models";
+import { PromptTemplate } from "langfn/prompts";
+
+const client = langfn({
+  model: new MockChatModel({ responses: ["Hello Ada"] })
 });
 
-const response = await lang.complete("Hello world");
+const prompt = new PromptTemplate({ template: "Say hi to {name}" });
+const response = await client.complete(prompt.format({ name: "Ada" }));
+
 console.log(response.content);
 ```
 
-## Documentation
+## Release checks
 
-See the [main documentation](https://docs.superfunctions.dev/langfn) for more details.
+From the repository root:
+
+```bash
+npm --prefix langfn/typescript run build
+npm --prefix langfn/typescript test
+npm run gate:langfn-release
+```
+
+## Compatibility
+
+See [../COMPATIBILITY.md](../COMPATIBILITY.md) for first-party provider support across completion, chat, streaming, tools, embeddings, and evaluation.

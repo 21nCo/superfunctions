@@ -5,6 +5,10 @@ export interface modelCost {
   completion: number; // per 1k tokens
 }
 
+export interface Budgets {
+  perRequestUsd?: number;
+}
+
 const COST_MAP: Record<string, Record<string, modelCost>> = {
   openai: {
     "gpt-4": { prompt: 0.03, completion: 0.06 },
@@ -21,15 +25,21 @@ const COST_MAP: Record<string, Record<string, modelCost>> = {
 };
 
 export class CostMeter {
+  private readonly prices: Record<string, Record<string, modelCost>>;
+
+  constructor(options: { prices?: Record<string, Record<string, modelCost>> } = {}) {
+    this.prices = options.prices ?? COST_MAP;
+  }
+
   estimate(provider: string, model: string, usage: TokenUsage): Cost {
-    const rates = COST_MAP[provider]?.[model] || { prompt: 0, completion: 0 };
-    
+    const rates = this.prices[provider]?.[model] || { prompt: 0, completion: 0 };
+
     const promptCost = (usage.prompt_tokens / 1000) * rates.prompt;
     const completionCost = (usage.completion_tokens / 1000) * rates.completion;
-    
+
     return {
-      prompt: promptCost,
-      completion: completionCost,
+      input: promptCost,
+      output: completionCost,
       total: promptCost + completionCost,
       currency: "USD"
     };
