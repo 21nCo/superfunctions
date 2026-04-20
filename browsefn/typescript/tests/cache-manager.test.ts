@@ -106,4 +106,25 @@ describe("CacheManager", () => {
 
     expect(result).toBeNull();
   });
+
+  it("should normalize defaultTTL to ttl", () => {
+    const normalized = CacheManager.normalizeConfig({
+      enabled: true,
+      defaultTTL: 1200,
+      storage: "memory",
+    });
+
+    expect(normalized.ttl).toBe(1200);
+    expect(normalized.storage).toBe("memory");
+  });
+
+  it("should reject unsupported backends", () => {
+    expect(
+      () =>
+        new CacheManager({
+          enabled: true,
+          storage: "redis" as never,
+        })
+    ).toThrowError("Unsupported cache storage: redis");
+  });
 });

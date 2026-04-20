@@ -1,6 +1,6 @@
 {
-  "name": "@browsefn/core",
-  "version": "0.0.1",
+  "name": "browsefn",
+  "version": "0.1.0",
   "description": "Self-hosted web browsing and data extraction platform with web scraping, image search, and geolocation services",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -37,14 +37,14 @@
     "superfunctions"
   ],
   "author": "21n",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/21nCo/super-functions.git",
-    "directory": "browsefn/ts-sdk"
+    "directory": "browsefn/typescript"
   },
   "publishConfig": {
     "access": "public"
@@ -55,8 +55,9 @@
     "namespace": "browsefn"
   },
   "dependencies": {
-    "cheerio": "^1.0.0-rc.12",
-    "@superfunctions/http": "*"
+    "@superfunctions/http": "*",
+    "@superfunctions/middleware": "*",
+    "cheerio": "^1.0.0-rc.12"
   },
   "peerDependencies": {
     "puppeteer": ">=21.0.0",

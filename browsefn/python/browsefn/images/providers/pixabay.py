@@ -1,11 +1,7 @@
-"""
-Pixabay image provider
-"""
-
 import httpx
 from typing import Optional
+from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import (
-    ImageProvider,
     ImageSearchOptions,
     ImageSearchResult,
     ImageResult,
@@ -16,6 +12,7 @@ from browsefn.core.types import (
     DownloadResult,
     ProviderConfig
 )
+from ._shared import build_search_result, download_image, passes_dimension_filters
 
 
 class PixabayProvider:
@@ -31,7 +28,7 @@ class PixabayProvider:
     async def search(self, query: str, options: ImageSearchOptions) -> ImageSearchResult:
         """Search for images on Pixabay"""
         if not self.api_key:
-            raise ValueError("Pixabay API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Pixabay API key is required", provider=self.name)
         
         # Build request params
         params = {
@@ -59,22 +56,14 @@ class PixabayProvider:
             response.raise_for_status()
             data = response.json()
         
-        # Parse results
         results = []
         for item in data.get('hits', []):
-            # Apply filters if specified
-            if options.filters:
-                width = item.get('imageWidth', 0)
-                height = item.get('imageHeight', 0)
-                
-                if options.filters.min_width and width < options.filters.min_width:
-                    continue
-                if options.filters.min_height and height < options.filters.min_height:
-                    continue
-                if options.filters.max_width and width > options.filters.max_width:
-                    continue
-                if options.filters.max_height and height > options.filters.max_height:
-                    continue
+            if not passes_dimension_filters(
+                options.filters,
+                width=item.get('imageWidth', 0),
+                height=item.get('imageHeight', 0),
+            ):
+                continue
             
             tags = item.get('tags', '').split(', ') if item.get('tags') else []
             
@@ -105,34 +94,17 @@ class PixabayProvider:
             )
             results.append(result)
         
-        return ImageSearchResult(
+        return build_search_result(
             query=query,
             total=data.get('totalHits', 0),
             page=params['page'],
-            perPage=params['per_page'],
+            per_page=params['per_page'],
             results=results,
-            nextPage=params['page'] + 1 if len(results) > 0 else None,
-            provider=self.name
+            provider=self.name,
         )
     
     async def download(self, url: str, options: ImageDownloadOptions) -> DownloadResult:
-        """Download image from URL"""
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                
-                return DownloadResult(
-                    success=True,
-                    path=options.filename or 'image.jpg',
-                    size=len(response.content),
-                    format='jpeg'
-                )
-        except Exception as error:
-            return DownloadResult(
-                success=False,
-                error=str(error)
-            )
+        return await download_image(url, options)
     
     async def is_available(self) -> bool:
         """Check if Pixabay API is available"""

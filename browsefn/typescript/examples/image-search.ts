@@ -1,15 +1,10 @@
-/**
- * Image search example using Unsplash
- */
+import { browseFn } from 'browsefn';
 
-import { browseFn } from '../src/index.js';
-
-async function main() {
+async function main(): Promise<void> {
   const apiKey = process.env.UNSPLASH_ACCESS_KEY;
 
   if (!apiKey) {
-    console.error('Please set UNSPLASH_ACCESS_KEY environment variable');
-    process.exit(1);
+    throw new Error('Set UNSPLASH_ACCESS_KEY before running this example.');
   }
 
   const browse = browseFn({
@@ -18,48 +13,31 @@ async function main() {
       providers: {
         unsplash: {
           apiKey,
-          rateLimit: { requests: 50, window: 3600000 } // 50 requests per hour
-        }
+        },
       },
-      cache: {
-        enabled: true,
-        defaultTTL: 3600000
-      }
-    }
+    },
   });
 
-  console.log('Searching for mountain landscape images...\n');
-
-  // Search for images
   const results = await browse.images.search('mountain landscape', {
+    provider: 'unsplash',
     page: 1,
     perPage: 10,
     orientation: 'landscape',
-    orderBy: 'relevant',
     filters: {
       minWidth: 1920,
-      minHeight: 1080
-    }
+      safeSearch: true,
+    },
   });
 
-  console.log(`Found ${results.total} images`);
-  console.log(`Showing page ${results.page} (${results.results.length} results)\n`);
+  console.log('Provider:', results.provider);
+  console.log('Results:', results.results.length);
 
-  results.results.forEach((image, index) => {
-    console.log(`${index + 1}. ${image.description || 'No description'}`);
-    console.log(`   By: ${image.author?.name}`);
-    console.log(`   Size: ${image.width}x${image.height}`);
-    console.log(`   URL: ${image.url}`);
-    console.log(`   Downloads: ${Object.keys(image.downloads || {}).join(', ')}`);
-    console.log();
-  });
-
-  // Check rate limit status
-  const rateLimitStatus = browse.getRateLimitStatus('unsplash');
-  console.log('Rate Limit Status:');
-  console.log('  Remaining:', rateLimitStatus.remaining);
-  console.log('  Limit:', rateLimitStatus.limit);
-  console.log('  Resets at:', new Date(rateLimitStatus.resetAt).toISOString());
+  for (const image of results.results.slice(0, 3)) {
+    console.log(image.id, image.source.provider, image.width, image.height);
+  }
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -1,89 +1,46 @@
-# Installation and Testing Guide
+# BrowseFn Python Testing
 
-## Installation
+Use these commands from the repository root.
 
-The browsefn Python SDK has been fully implemented. To test it, you'll need to install dependencies:
-
-### Option 1: Using Virtual Environment (Recommended)
+## Install Editable Package
 
 ```bash
-cd /Users/ar/dev/superfunctions/browsefn/python
-
-# Create virtual environment
 python3 -m venv .venv
-
-# Activate it
 source .venv/bin/activate
-
-# Install package in development mode
-pip install -e .
-
-# Install optional dependencies for testing
-pip install -e ".[test]"
+pip install -e "browsefn/python[test]"
 ```
 
-### Option 2: Using System Python (if allowed)
+## Sanity Check
 
 ```bash
-cd /Users/ar/dev/superfunctions/browsefn/python
-pip install --user -e .
+python3 - <<'PY'
+from browsefn import __version__, browse_fn
+
+print(__version__)
+print(type(browse_fn()).__name__)
+PY
 ```
 
-## Quick Test
+Expected output:
 
-After installation, test the implementation:
+- `0.1.0`
+- `BrowseFn`
 
-```python
-import asyncio
-from browsefn import browse_fn, BrowseFnConfig, WebConfig, CacheConfig
-
-async def main():
-    # Initialize browsefn
-    browse = browse_fn(BrowseFnConfig(
-        web=WebConfig(default_provider='bs4'),
-        cache=CacheConfig(enabled=True, ttl=60000)
-    ))
-
-    print("✓ BrowseFn initialized successfully")
-
-    # Test web scraping
-    page = await browse.web.get_page('https://example.com')
-    print(f"✓ Page fetched: {page.metadata.title}")
-
-    # Test cache
-    stats = await browse.cache.get_stats()
-    print(f"✓ Cache working: {stats.size} items")
-
-    # Test metrics
-    metrics = await browse.get_metrics()
-    print(f"✓ Metrics tracking: {metrics.totalRequests} requests")
-
-asyncio.run(main())
-```
-
-## Running Tests
+## Core Python Verification
 
 ```bash
-# Install test dependencies
-pip install -e ".[test]"
-
-# Run tests (when test suite is created)
-pytest tests/ -v
+python3 -m compileall browsefn/python/browsefn browsefn/python/tests
+python3 -m pytest browsefn/python/tests/test_cache_manager.py browsefn/python/tests/test_rate_limiter.py browsefn/python/tests/test_provider_manager.py browsefn/python/tests/test_middleware.py -q
 ```
 
-## Verification Checklist
+## API And Router Verification
 
-- [ ] Install dependencies in virtual environment
-- [ ] Run import test: `python -c "import browsefn; print(browsefn.__version__)"`
-- [ ] Run basic initialization test (see Quick Test above)
-- [ ] Test BS4 provider with real URL
-- [ ] Test cache functionality
-- [ ] Test rate limiting
-- [ ] Test metrics collection
+```bash
+python3 -m pytest browsefn/python/tests/test_web.py browsefn/python/tests/test_images.py browsefn/python/tests/test_geo.py browsefn/python/tests/test_router.py -q
+```
 
-## Next Steps
+## Notes
 
-1. Install dependencies using one of the methods above
-2. Run the quick test to verify basic functionality
-3. Create comprehensive test suite in `tests/` directory (as outlined in implementation plan)
-4. Test with actual API keys for image and geo providers
+- The Python router relies on the shared package in `packages/python-core/`
+- The test harness adds both repo-local Python package roots automatically
+- Canonical emitted web provider id is `cheerio`; `bs4` and `beautifulsoup` remain accepted aliases

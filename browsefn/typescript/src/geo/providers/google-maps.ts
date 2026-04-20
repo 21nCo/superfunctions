@@ -11,7 +11,7 @@ import type {
   GeoSearchOptions,
   GeoPlace,
   ProviderConfig,
-} from "../core/types.js";
+} from "../../core/types.js";
 
 export class GoogleMapsProvider implements GeoProvider {
   name = "google-maps";

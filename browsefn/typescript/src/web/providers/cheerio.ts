@@ -16,7 +16,8 @@ export class CheerioProvider implements WebProvider {
     screenshots: false,
     cookies: false,
     headers: true,
-    selectors: true
+    selectors: true,
+    scriptExecution: false
   };
 
   constructor(private config: { timeout?: number } = {}) {}
@@ -65,8 +66,8 @@ export class CheerioProvider implements WebProvider {
     }
     
     // Extract links and images if needed
-    const links = options.includeLinks !== false ? extractLinks(html, sanitizedUrl) : undefined;
-    const images = options.includeImages !== false ? extractImages(html, sanitizedUrl) : undefined;
+    const links = options.includeLinks ? extractLinks(html, sanitizedUrl) : undefined;
+    const images = options.includeImages ? extractImages(html, sanitizedUrl) : undefined;
     
     return {
       url: sanitizedUrl,

@@ -1,11 +1,21 @@
-"""Utils package for browsefn"""
+"""Lazy utility module exports for browsefn."""
 
-from browsefn.utils import url_utils
-from browsefn.utils import html_utils
-from browsefn.utils import validation
+from importlib import import_module
+from typing import Any, Dict
 
-__all__ = [
-    'url_utils',
-    'html_utils',
-    'validation',
-]
+_EXPORTS: Dict[str, str] = {
+    "url_utils": "browsefn.utils.url_utils",
+    "html_utils": "browsefn.utils.html_utils",
+    "validation": "browsefn.utils.validation",
+}
+
+__all__ = list(_EXPORTS.keys())
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _EXPORTS:
+        raise AttributeError(f"module 'browsefn.utils' has no attribute {name!r}")
+
+    module = import_module(_EXPORTS[name])
+    globals()[name] = module
+    return module

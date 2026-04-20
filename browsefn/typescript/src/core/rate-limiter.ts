@@ -1,127 +1,205 @@
 /**
- * Rate limiter implementation for API requests
+ * Rate limiter wrapper that delegates to the shared middleware package.
  */
 
+import {
+  createRateLimiter,
+  type RateLimiter as SharedRateLimiter,
+} from '@superfunctions/middleware/rate-limit';
+
+import { BrowseFnError } from './errors.js';
 import type { RateLimitConfig, RateLimitStatus } from './types.js';
 
-interface RateLimitEntry {
-  count: number;
-  windowStart: number;
-}
+type RateLimitListener = (status: RateLimitStatus) => void;
+
+const UNBOUNDED_STATUS: RateLimitStatus = {
+  remaining: Number.POSITIVE_INFINITY,
+  resetAt: 0,
+  limit: Number.POSITIVE_INFINITY,
+  allowed: true,
+  retryAfterMs: 0,
+};
 
 export class RateLimiter {
-  private limits = new Map<string, RateLimitEntry>();
-  private configs = new Map<string, RateLimitConfig>();
+  private readonly providerLimiters = new Map<string, SharedRateLimiter>();
+  private readonly globalLimiter?: SharedRateLimiter;
+  private readonly configs = new Map<string, RateLimitConfig>();
+  private readonly listeners = new Set<RateLimitListener>();
+  private readonly lastStatus = new Map<string, RateLimitStatus>();
 
   constructor(
-    private globalConfig?: RateLimitConfig,
+    private readonly globalConfig?: RateLimitConfig,
     perProviderConfigs?: Record<string, RateLimitConfig>
   ) {
     if (perProviderConfigs) {
       Object.entries(perProviderConfigs).forEach(([provider, config]) => {
         this.configs.set(provider, config);
+        this.providerLimiters.set(
+          provider,
+          this.createSharedLimiter(config, `browsefn:${provider}:`)
+        );
+      });
+    }
+
+    if (globalConfig) {
+      this.globalLimiter = this.createSharedLimiter(globalConfig, 'browsefn:global:');
+    }
+  }
+
+  getImportPath(): string {
+    return '@superfunctions/middleware/rate-limit';
+  }
+
+  onRateLimited(listener: RateLimitListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  async check(provider: string): Promise<RateLimitStatus> {
+    const config = this.configs.get(provider) ?? this.globalConfig;
+    if (!config) {
+      return { ...UNBOUNDED_STATUS, provider };
+    }
+
+    const limiter = this.getLimiter(provider, config);
+    const result = await limiter.check({ key: provider });
+
+    const resetAt = new Date(result.resetAt).getTime();
+    const status: RateLimitStatus = {
+      allowed: result.allowed,
+      remaining: result.remaining,
+      resetAt,
+      limit: result.total,
+      provider,
+      retryAfterMs: Math.max(0, resetAt - Date.now()),
+    };
+
+    this.lastStatus.set(provider, status);
+
+    if (!result.allowed) {
+      this.listeners.forEach((listener) => listener(status));
+    }
+
+    return status;
+  }
+
+  async checkLimit(provider: string): Promise<boolean> {
+    const status = await this.check(provider);
+    return status.allowed !== false;
+  }
+
+  async waitForLimit(provider: string): Promise<void> {
+    const config = this.configs.get(provider) ?? this.globalConfig;
+    if (!config) {
+      return;
+    }
+
+    for (;;) {
+      const status = await this.check(provider);
+      if (status.allowed !== false) {
+        return;
+      }
+
+      const delayMs = Math.max(25, status.retryAfterMs ?? status.resetAt - Date.now());
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  getStatus(provider: string): RateLimitStatus {
+    const config = this.configs.get(provider) ?? this.globalConfig;
+    if (!config) {
+      return { ...UNBOUNDED_STATUS, provider };
+    }
+
+    const lastKnown = this.lastStatus.get(provider);
+    if (!lastKnown) {
+      return {
+        remaining: config.requests,
+        resetAt: Date.now() + config.window,
+        limit: config.requests,
+        allowed: true,
+        provider,
+        retryAfterMs: config.window,
+      };
+    }
+
+    if (Date.now() >= lastKnown.resetAt) {
+      return {
+        remaining: config.requests,
+        resetAt: Date.now() + config.window,
+        limit: config.requests,
+        allowed: true,
+        provider,
+        retryAfterMs: config.window,
+      };
+    }
+
+    return lastKnown;
+  }
+
+  async consume(provider: string): Promise<void> {
+    const status = await this.check(provider);
+    if (status.allowed === false) {
+      throw new BrowseFnError({
+        code: 'RATE_LIMITED',
+        message: `Rate limit exceeded for provider ${provider}.`,
+        provider,
+        retryAfterMs: status.retryAfterMs,
       });
     }
   }
 
-  /**
-   * Check if a request is allowed for the given provider
-   */
-  async checkLimit(provider: string): Promise<boolean> {
-    const config = this.configs.get(provider) || this.globalConfig;
-    if (!config) return true;
-
-    const key = provider;
-    const now = Date.now();
-    const entry = this.limits.get(key);
-
-    if (!entry) {
-      this.limits.set(key, { count: 1, windowStart: now });
-      return true;
-    }
-
-    // Check if window has expired
-    if (now - entry.windowStart >= config.window) {
-      this.limits.set(key, { count: 1, windowStart: now });
-      return true;
-    }
-
-    // Check if under limit
-    if (entry.count < config.requests) {
-      entry.count++;
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Wait until rate limit allows the request
-   */
-  async waitForLimit(provider: string): Promise<void> {
-    const config = this.configs.get(provider) || this.globalConfig;
-    if (!config) return;
-
-    while (!(await this.checkLimit(provider))) {
-      const status = this.getStatus(provider);
-      const waitTime = status.resetAt - Date.now();
-      if (waitTime > 0) {
-        await new Promise(resolve => setTimeout(resolve, Math.min(waitTime, 1000)));
-      }
-    }
-  }
-
-  /**
-   * Get rate limit status for a provider
-   */
-  getStatus(provider: string): RateLimitStatus {
-    const config = this.configs.get(provider) || this.globalConfig;
-    if (!config) {
-      return { remaining: Infinity, resetAt: 0, limit: Infinity };
-    }
-
-    const entry = this.limits.get(provider);
-    if (!entry) {
-      return {
-        remaining: config.requests,
-        resetAt: Date.now() + config.window,
-        limit: config.requests
-      };
-    }
-
-    const now = Date.now();
-    const windowEnd = entry.windowStart + config.window;
-
-    if (now >= windowEnd) {
-      return {
-        remaining: config.requests,
-        resetAt: now + config.window,
-        limit: config.requests
-      };
-    }
-
-    return {
-      remaining: Math.max(0, config.requests - entry.count),
-      resetAt: windowEnd,
-      limit: config.requests
-    };
-  }
-
-  /**
-   * Reset rate limit for a provider
-   */
-  reset(provider?: string): void {
+  async reset(provider?: string): Promise<void> {
     if (provider) {
-      this.limits.delete(provider);
-    } else {
-      this.limits.clear();
+      const config = this.configs.get(provider) ?? this.globalConfig;
+      if (config) {
+        await this.getLimiter(provider, config).reset(provider);
+      }
+      this.lastStatus.delete(provider);
+      return;
     }
+
+    const providers = new Set<string>([
+      ...this.configs.keys(),
+      ...this.lastStatus.keys(),
+    ]);
+
+    await Promise.all(
+      Array.from(providers).map(async (name) => {
+        const config = this.configs.get(name) ?? this.globalConfig;
+        if (config) {
+          await this.getLimiter(name, config).reset(name);
+        }
+        this.lastStatus.delete(name);
+      })
+    );
   }
 
-  /**
-   * Set rate limit config for a provider
-   */
   setConfig(provider: string, config: RateLimitConfig): void {
     this.configs.set(provider, config);
+    this.providerLimiters.set(
+      provider,
+      this.createSharedLimiter(config, `browsefn:${provider}:`)
+    );
+    this.lastStatus.delete(provider);
+  }
+
+  private getLimiter(provider: string, config: RateLimitConfig): SharedRateLimiter {
+    return (
+      this.providerLimiters.get(provider) ??
+      this.globalLimiter ??
+      this.createSharedLimiter(config, `browsefn:${provider}:`)
+    );
+  }
+
+  private createSharedLimiter(
+    config: RateLimitConfig,
+    keyPrefix: string
+  ): SharedRateLimiter {
+    return createRateLimiter({
+      windowMs: config.window,
+      maxRequests: config.requests,
+      keyPrefix,
+    });
   }
 }

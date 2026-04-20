@@ -1,9 +1,9 @@
-"""
-Logging middleware for request/response tracking
-"""
+"""Logging middleware for request/response tracking."""
 
 from typing import List, Dict, Any, Optional, Literal
 from datetime import datetime
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
 from pydantic import BaseModel
 
 
@@ -19,26 +19,68 @@ class LogEntry(BaseModel):
 
 
 class Logger:
-    """Logger for tracking browsefn events"""
-    
+    """Logger for tracking browsefn events."""
+
+    SENSITIVE_KEYS = {
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "cookies",
+        "client_id",
+        "token",
+        "signature",
+    }
+
     def __init__(self):
         self.logs: List[LogEntry] = []
-    
+
+    def _sanitize_url(self, value: str) -> str:
+        parsed = urlparse(value)
+        query = []
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+            if key.lower() in self.SENSITIVE_KEYS:
+                query.append((key, "[REDACTED]"))
+            else:
+                query.append((key, item))
+        return urlunparse(parsed._replace(query=urlencode(query)))
+
+    def _sanitize(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            sanitized: Dict[str, Any] = {}
+            for key, item in value.items():
+                if key.lower() in self.SENSITIVE_KEYS:
+                    sanitized[key] = "[REDACTED]"
+                    continue
+                if key.lower() == "url" and isinstance(item, str):
+                    sanitized[key] = self._sanitize_url(item)
+                    continue
+                sanitized[key] = self._sanitize(item)
+            return sanitized
+
+        if isinstance(value, list):
+            return [self._sanitize(item) for item in value]
+
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return self._sanitize_url(value)
+
+        return value
+
     def log(
         self,
         level: LogLevel,
         message: str,
         context: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Add a log entry"""
+        """Add a sanitized log entry."""
         entry = LogEntry(
             timestamp=datetime.now().timestamp() * 1000,
             level=level,
             message=message,
-            context=context or {}
+            context=self._sanitize(context or {})
         )
         self.logs.append(entry)
-    
+
     def debug(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
         """Log debug message"""
         self.log('debug', message, context)
