@@ -1,6 +1,7 @@
 {
   "title": "Core Concepts",
   "pages": [
+    "nested",
     "index",
     "configuration",
     "content-format",

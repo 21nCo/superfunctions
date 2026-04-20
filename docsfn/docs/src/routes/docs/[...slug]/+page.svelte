@@ -36,6 +36,6 @@
 
 <style>
   .docs-page-article {
-    margin-top: 1rem;
+    margin-top: 0.5rem;
   }
 </style>

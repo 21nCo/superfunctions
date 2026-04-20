@@ -1,68 +1,145 @@
-/* @docsfn/svelte — structural base theme (layout only, no colors or fonts)
+/* @docsfn/svelte — structural base theme
  *
- * Use this if you want to provide your own color scheme and only need the
- * structural rules (display, flex, grid, position, overflow, padding).
+ * Use this when you want docsfn to provide complete docs layout, spacing,
+ * alignment, sizing, and interaction structure while your app provides the
+ * visual skin.
+ *
+ * theme-base.css intentionally avoids choosing a color palette. It relies on
+ * CSS custom properties with sensible fallbacks so consumers can override any
+ * token without rewriting component rules.
  *
  * Usage:
  *   import "@docsfn/svelte/theme-base.css";
  */
 
-/* ─── Three-column page layout ──────────────────────────────────────────── */
+:root {
+  --docsfn-sidebar-width: 16rem;
+  --docsfn-toc-width: 14rem;
+  --docsfn-main-padding-inline: 2rem;
+  --docsfn-sticky-top-offset: 0px;
+  --docsfn-main-column-max-width: none;
+  --docsfn-docs-shell-max-width: none;
+  --docsfn-main-padding-block: 1rem;
+
+  --docsfn-font-sans:
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --docsfn-font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 .docsfn-layout {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: var(--docsfn-font-sans);
 }
 
 .docsfn-container {
   display: grid;
-  grid-template-columns: 16rem 1fr 14rem;
   flex: 1;
-  max-width: 90rem;
-  margin: 0 auto;
   width: 100%;
+  max-width: var(--docsfn-docs-shell-max-width, none);
+  margin-inline: auto;
+  box-sizing: border-box;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.docsfn-container:has(.docsfn-sidebar-col) {
+  grid-template-columns: var(--docsfn-sidebar-width) minmax(0, 1fr);
+}
+
+.docsfn-container:has(.docsfn-toc-col):not(:has(.docsfn-sidebar-col)) {
+  grid-template-columns: minmax(0, 1fr) var(--docsfn-toc-width);
+}
+
+.docsfn-container:has(.docsfn-sidebar-col):has(.docsfn-toc-col) {
+  grid-template-columns: var(--docsfn-sidebar-width) minmax(0, 1fr) var(--docsfn-toc-width);
 }
 
 .docsfn-sidebar-col {
   position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
+  align-self: start;
+  top: var(--docsfn-sticky-top-offset);
+  height: calc(100vh - var(--docsfn-sticky-top-offset));
+  max-height: calc(100vh - var(--docsfn-sticky-top-offset));
+  overflow: visible;
   padding: 1rem 0.75rem;
+  box-sizing: border-box;
+  background: var(--docsfn-sidebar-panel-bg, transparent);
+  border-right: 1px solid var(--docsfn-color-border, transparent);
+}
+
+.docsfn-sidebar-col::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  right: 100%;
+  width: 100vw;
+  background: var(--docsfn-sidebar-panel-bg, transparent);
+  pointer-events: none;
+}
+
+.docsfn-sidebar-col > * {
+  position: relative;
+  z-index: 1;
 }
 
 .docsfn-main {
   min-width: 0;
-  padding: 1.5rem 2rem;
+  width: 100%;
+  max-width: var(--docsfn-main-column-max-width, none);
+  justify-self: center;
+  padding: var(--docsfn-main-padding-block) var(--docsfn-main-padding-inline);
+  box-sizing: border-box;
 }
 
 .docsfn-toc-col {
   position: sticky;
-  top: 0;
-  height: 100vh;
+  align-self: start;
+  top: var(--docsfn-sticky-top-offset);
+  height: calc(100vh - var(--docsfn-sticky-top-offset));
+  max-height: calc(100vh - var(--docsfn-sticky-top-offset));
   overflow-y: auto;
   padding: 1rem 0.75rem;
+  border-left: 1px solid var(--docsfn-color-border, transparent);
 }
 
 @media (max-width: 1279px) {
-  .docsfn-container {
-    grid-template-columns: 16rem 1fr;
+  .docsfn-container:has(.docsfn-sidebar-col):has(.docsfn-toc-col) {
+    grid-template-columns: var(--docsfn-sidebar-width) minmax(0, 1fr);
   }
+
   .docsfn-toc-col {
     display: none;
   }
 }
 
 @media (max-width: 1023px) {
-  .docsfn-container {
-    grid-template-columns: 1fr;
+  .docsfn-container:has(.docsfn-sidebar-col),
+  .docsfn-container:not(:has(.docsfn-sidebar-col)) {
+    grid-template-columns: minmax(0, 1fr);
   }
+
   .docsfn-sidebar-col {
+    display: none;
+  }
+
+  .docsfn-sidebar-col::before {
     display: none;
   }
 }
 
-/* ─── Top bar container ──────────────────────────────────────────────────── */
+.docsfn-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid var(--docsfn-color-border, transparent);
+}
+
 .docsfn-topbar-container {
   display: flex;
   flex-wrap: wrap;
@@ -79,11 +156,20 @@
   gap: 0.25rem 1rem;
 }
 
+.docsfn-topbar-link,
+.docsfn-topbar-dropdown-item {
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
 .docsfn-topbar-dropdown-trigger {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
   font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
   background: transparent;
   border: none;
   cursor: pointer;
@@ -92,6 +178,10 @@
 
 .docsfn-sidebar {
   width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .docsfn-sidebar-nav {
@@ -105,13 +195,19 @@
   display: block;
   padding: 0.35rem 0.5rem;
   border-radius: 0.375rem;
+  font-size: 0.875rem;
   text-decoration: none;
   line-height: 1.35;
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.12s ease;
 }
 
 .docsfn-sidebar-separator {
   border: none;
-  border-top-width: 1px;
+  border-top: 1px solid var(--docsfn-color-border, transparent);
   margin: 0.5rem 0;
 }
 
@@ -119,24 +215,61 @@
   margin: 0.15rem 0;
 }
 
+.docsfn-sidebar-group > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.docsfn-sidebar-group > summary::-webkit-details-marker {
+  display: none;
+}
+
 .docsfn-sidebar-group-trigger {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: space-between;
+  gap: 0.5rem;
   width: 100%;
   padding: 0.35rem 0.5rem;
   margin: 0;
   font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
   list-style: none;
   cursor: pointer;
   border-radius: 0.375rem;
   background: transparent;
   border: none;
   text-align: left;
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .docsfn-sidebar-group-text {
   flex: 1;
+  min-width: 0;
+}
+
+.docsfn-sidebar-group-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.docsfn-sidebar-group .docsfn-sidebar-group-icon svg {
+  display: block;
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+}
+
+.docsfn-sidebar-group[open] > .docsfn-sidebar-group-trigger .docsfn-sidebar-group-icon svg,
+.docsfn-sidebar-group[data-state="open"] > .docsfn-sidebar-group-trigger .docsfn-sidebar-group-icon svg {
+  transform: rotate(90deg);
 }
 
 .docsfn-sidebar-group-content {
@@ -145,16 +278,19 @@
   gap: 0.05rem;
   padding: 0.15rem 0 0.25rem 0.5rem;
   margin: 0.1rem 0 0.25rem;
-  border-left-width: 1px;
+  border-left: 1px solid var(--docsfn-color-border, transparent);
 }
 
 .docsfn-sidebar-viewport {
-  max-height: min(100vh - 4rem, 100%);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .docsfn-breadcrumbs {
   margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
 }
 
 .docsfn-breadcrumbs-list {
@@ -171,15 +307,37 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
+}
+
+.docsfn-breadcrumb-link {
+  text-decoration: none;
+}
+
+.docsfn-breadcrumb-separator-wrapper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .docsfn-breadcrumb-separator {
+  display: block;
   flex-shrink: 0;
 }
 
 .docsfn-pagination {
   margin-top: 2.5rem;
   padding-top: 1.5rem;
+  border-top: 1px solid var(--docsfn-color-border, transparent);
+}
+
+.docsfn-pagination-context {
+  margin-bottom: 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .docsfn-pagination-links {
@@ -201,13 +359,36 @@
   gap: 0.65rem;
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
-  border-width: 1px;
+  border: 1px solid var(--docsfn-color-border, transparent);
   text-decoration: none;
   color: inherit;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.docsfn-pagination-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.docsfn-pagination-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
 }
 
 .docsfn-pagination-spacer {
   min-height: 1px;
+}
+
+.docsfn-toc-title {
+  margin: 0 0 0.65rem;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .docsfn-toc-list {
@@ -226,6 +407,7 @@
   line-height: 1.35;
   padding: 0.2rem 0;
   border-radius: 0.25rem;
+  transition: color 0.12s ease;
 }
 
 .docsfn-toc-viewport {
@@ -236,6 +418,44 @@
 .docsfn-content {
   font-size: 1rem;
   line-height: 1.65;
+  font-family: var(--docsfn-font-sans);
+}
+
+.docsfn-content :where(h1, h2, h3, h4, h5, h6) {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  scroll-margin-top: 1rem;
+}
+
+.docsfn-content :where(h1) {
+  font-size: 1.75rem;
+  margin: 0 0 0.75rem;
+}
+
+.docsfn-content :where(h2) {
+  font-size: 1.35rem;
+  margin: 1.75rem 0 0.65rem;
+}
+
+.docsfn-content :where(h3) {
+  font-size: 1.15rem;
+  margin: 1.35rem 0 0.5rem;
+}
+
+.docsfn-content :where(h4, h5, h6) {
+  margin: 1.15rem 0 0.4rem;
+}
+
+.docsfn-content :where(p) {
+  margin: 0.75rem 0;
+}
+
+.docsfn-content :where(p:first-child) {
+  margin-top: 0;
+}
+
+.docsfn-content :where(p:last-child) {
+  margin-bottom: 0;
 }
 
 .docsfn-content :where(ul, ol) {
@@ -247,18 +467,26 @@
   margin: 0.3rem 0;
 }
 
+.docsfn-content :where(a):not([data-docsfn-tabs] a) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .docsfn-content :not(pre) > code {
+  font-family: var(--docsfn-font-mono);
   font-size: 0.9em;
   padding: 0.12em 0.35em;
   border-radius: 0.25rem;
+  border: 1px solid var(--docsfn-color-code-border, transparent);
 }
 
 .docsfn-content pre[data-docsfn-code="true"],
 .docsfn-content pre[data-docsfn-mermaid="true"] {
   padding: 1rem 1.1rem;
   border-radius: 0.5rem;
-  border-width: 1px;
+  border: 1px solid var(--docsfn-color-code-border, transparent);
   overflow-x: auto;
+  font-family: var(--docsfn-font-mono);
   font-size: 0.875rem;
   line-height: 1.5;
 }
@@ -267,12 +495,20 @@
   margin: 1.25rem 0;
   padding: 0.85rem 1rem;
   border-radius: 0.5rem;
-  border-width: 1px;
+  border: 1px solid var(--docsfn-color-border, transparent);
+}
+
+.docsfn-content aside[data-docsfn-callout] :where(p:first-child) {
+  margin-top: 0;
+}
+
+.docsfn-content aside[data-docsfn-callout] :where(p:last-child) {
+  margin-bottom: 0;
 }
 
 .docsfn-content [data-docsfn-tabs="true"] {
   margin: 1.25rem 0;
-  border-width: 1px;
+  border: 1px solid var(--docsfn-color-border, transparent);
   border-radius: 0.5rem;
   overflow: hidden;
 }
@@ -282,15 +518,25 @@
   flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0.5rem;
+  border-bottom: 1px solid var(--docsfn-color-border, transparent);
 }
 
 .docsfn-content [data-docsfn-tabs="true"] button[role="tab"] {
   font: inherit;
+  font-size: 0.8rem;
   padding: 0.35rem 0.65rem;
   border-radius: 0.375rem;
-  border-width: 1px;
+  border: 1px solid transparent;
   background: transparent;
   cursor: pointer;
+}
+
+.docsfn-content [data-docsfn-tabs="true"] [role="tabpanel"] pre {
+  margin: 0;
+  padding: 1rem;
+  border: none;
+  font-family: var(--docsfn-font-mono);
+  font-size: 0.8rem;
 }
 
 .docsfn-content table {
@@ -301,7 +547,7 @@
 
 .docsfn-content :where(th, td) {
   padding: 0.5rem 0.75rem;
-  border-width: 1px;
+  border: 1px solid var(--docsfn-color-border, transparent);
   text-align: left;
 }
 
