@@ -14,7 +14,17 @@ import { ok, err } from '../middleware/envelope.js';
 import type { QueueAdapter } from '../integrations/flowfn.js';
 import { QUEUE_NAMES } from '../integrations/flowfn.js';
 import type { Logger } from '../integrations/logfn.js';
-import type { BotStatus, Platform } from 'recfn';
+import { transitionBot } from '../worker/lifecycle.js';
+import { assertRealtimeTranscriptionSupported } from '../transcription/realtime.js';
+import type {
+  Bot,
+  BotStatus,
+  ChatMessage,
+  MeetingMetadata,
+  Participant,
+  Platform,
+  Recording,
+} from 'recfn';
 
 export interface BotRouteDeps {
   store: RecFnStore;
@@ -23,6 +33,13 @@ export interface BotRouteDeps {
   queue?: QueueAdapter;
   logger?: Logger;
 }
+
+type AggregateBotView = Bot & {
+  participants: Participant[];
+  recordings: Recording[];
+  metadata: MeetingMetadata | null;
+  chatMessages: ChatMessage[];
+};
 
 export function createBotRoutes(deps: BotRouteDeps): Route[] {
   const { store, validateApiKey, limits } = deps;
@@ -51,6 +68,9 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
         const config = validateBotConfig(
           body.config as Parameters<typeof validateBotConfig>[0],
         );
+        if (config.enableRealTimeTranscript) {
+          assertRealtimeTranscriptionSupported(platform, config.asrProvider);
+        }
 
         const bot = await store.createBot({
           meetingUrl: body.meetingUrl,
@@ -120,7 +140,23 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
         if (!bot) {
           return err(ErrorCode.BOT_NOT_FOUND, 'Bot not found.');
         }
-        return ok(bot);
+        const [participants, recordings, metadata, chatMessages] =
+          await Promise.all([
+            store.getParticipants(bot.id, auth.namespace),
+            store.getRecordings(bot.id, auth.namespace),
+            store.getMetadata(bot.id, auth.namespace),
+            store.getChatMessages(bot.id, auth.namespace),
+          ]);
+
+        const aggregate: AggregateBotView = {
+          ...bot,
+          participants,
+          recordings,
+          metadata,
+          chatMessages,
+        };
+
+        return ok(aggregate);
       },
     },
 
@@ -156,9 +192,34 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
           );
         }
 
-        await store.updateBot(bot.id, auth.namespace, {
-          status: 'leaving',
-        });
+        await transitionBot(
+          {
+            store,
+            logger: deps.logger ?? { info() {}, warn() {}, error() {} },
+            queue: deps.queue,
+          },
+          bot.id,
+          auth.namespace,
+          'leaving',
+        );
+
+        const existingMetadata = await store.getMetadata(bot.id, auth.namespace);
+        const now = new Date().toISOString();
+        await store.upsertMetadata(
+          bot.id,
+          {
+            id: existingMetadata?.id ?? `meta_${bot.id}`,
+            botId: bot.id,
+            title: existingMetadata?.title,
+            startTime: existingMetadata?.startTime,
+            endTime: existingMetadata?.endTime ?? now,
+            platform: existingMetadata?.platform ?? bot.platform,
+            chatMessages:
+              existingMetadata?.chatMessages ??
+              (await store.getChatMessages(bot.id, auth.namespace)),
+          },
+          auth.namespace,
+        );
 
         return ok({ botId: bot.id, status: 'leaving' });
       },

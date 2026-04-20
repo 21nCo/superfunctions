@@ -1,5 +1,5 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import { ErrorCode } from 'recfn';
+import { ErrorCode, type Bot, type MeetingMetadata } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import { authenticate } from '../middleware/auth.js';
@@ -8,6 +8,15 @@ import { ok, err } from '../middleware/envelope.js';
 export interface MetadataRouteDeps {
   store: RecFnStore;
   validateApiKey: ValidateApiKey;
+}
+
+function createPlaceholderMetadata(bot: Bot): MeetingMetadata {
+  return {
+    id: bot.id,
+    botId: bot.id,
+    platform: bot.platform,
+    chatMessages: [],
+  };
 }
 
 export function createMetadataRoutes(deps: MetadataRouteDeps): Route[] {
@@ -27,15 +36,7 @@ export function createMetadataRoutes(deps: MetadataRouteDeps): Route[] {
           ctx.params.botId,
           auth.namespace,
         );
-        if (!meta) {
-          return ok({
-            id: '',
-            botId: ctx.params.botId,
-            platform: bot.platform,
-            chatMessages: [],
-          });
-        }
-        return ok(meta);
+        return ok(meta ?? createPlaceholderMetadata(bot));
       },
     },
   ];

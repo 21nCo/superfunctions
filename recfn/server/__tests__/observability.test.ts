@@ -9,7 +9,9 @@ import {
   emitAsrLatency,
   emitJoinLatency,
   emitWebhookDelivery,
+  emitCalendarScheduleDecision,
 } from '../src/index.js';
+import { sanitizeLogData } from '../src/integrations/logfn.js';
 
 describe('Observability (TV-OBS-001, TV-OBS-002, TV-OBS-003)', () => {
   it('createMetricsEmitter no-op when no trackFn', () => {
@@ -96,5 +98,61 @@ describe('Observability (TV-OBS-001, TV-OBS-002, TV-OBS-003)', () => {
     expect(events[3].event).toBe(METRICS.JOIN_LATENCY_MS);
     expect(events[4].event).toBe(METRICS.WEBHOOK_DELIVERY);
     expect(events[5].event).toBe(METRICS.WEBHOOK_DELIVERY_FAILED);
+  });
+
+  it('redacts secrets and transcript-like payloads before they are logged', () => {
+    const sanitized = sanitizeLogData({
+      accessToken: 'secret-token',
+      nested: {
+        refreshToken: 'refresh-token',
+        segmentText: 'hello world',
+      },
+      chatMessages: [
+        {
+          text: 'sensitive transcript body',
+        },
+      ],
+      count: 2,
+    });
+
+    expect(sanitized).toEqual({
+      accessToken: '[REDACTED]',
+      nested: {
+        refreshToken: '[REDACTED]',
+        segmentText: '[REDACTED]',
+      },
+      chatMessages: '[REDACTED]',
+      count: 2,
+    });
+  });
+
+  it('emits calendar scheduler metrics with the canonical event name', () => {
+    const events: Array<{ event: string; props?: Record<string, unknown> }> = [];
+    const metrics = createMetricsEmitter((e, p) => events.push({ event: e, props: p }));
+
+    emitCalendarScheduleDecision(metrics, {
+      decision: 'created',
+      namespace: 'ns_test',
+      calendarId: 'cal_123',
+      provider: 'google',
+      eventId: 'evt_123',
+      botId: 'bot_123',
+      platform: 'meet',
+    });
+
+    expect(events).toEqual([
+      {
+        event: METRICS.CALENDAR_SCHEDULE_DECISION,
+        props: {
+          decision: 'created',
+          namespace: 'ns_test',
+          calendarId: 'cal_123',
+          provider: 'google',
+          eventId: 'evt_123',
+          botId: 'bot_123',
+          platform: 'meet',
+        },
+      },
+    ]);
   });
 });

@@ -9,6 +9,16 @@ export interface JobPayload {
   createdAt: string;
 }
 
+export interface BotJoinJobData {
+  botId: string;
+  namespace: string;
+}
+
+export interface RecordingUploadJobData {
+  botId: string;
+  namespace: string;
+}
+
 export type QueueAdapter = SharedQueueAdapter<JobPayload>;
 export const MemoryQueueAdapter = SharedMemoryQueueAdapter as unknown as new () => QueueAdapter;
 

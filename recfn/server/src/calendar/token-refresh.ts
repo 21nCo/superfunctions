@@ -1,4 +1,7 @@
-import { createOAuthFlowService } from '@superfunctions/oauth-flow';
+import {
+  createOAuthFlowService,
+  type OAuthFlowProviderRuntimeConfig,
+} from '@superfunctions/oauth-flow';
 import type { OAuthTokenEndpointRequest, OAuthTokenHttpClient } from '@superfunctions/oauth-http';
 import { MemoryOAuthStateStore, MemoryTokenVault, type TokenRecord } from '@superfunctions/oauth-storage';
 import type { CalendarTokenStore } from './token-store.js';
@@ -55,6 +58,14 @@ export async function refreshCalendarToken(input: {
 
   await tokenVault.put(tokenRecord);
 
+  const providerRuntimeConfig: Record<string, OAuthFlowProviderRuntimeConfig> = {
+    [input.provider.id]: {
+      clientId: input.provider.clientId,
+      clientSecret: input.provider.clientSecret,
+      allowlistedRedirectUris: [input.provider.redirectUri],
+    },
+  } as unknown as Record<string, OAuthFlowProviderRuntimeConfig>;
+
   const flow = createOAuthFlowService({
     providers: {
       [input.provider.id]: {
@@ -68,13 +79,7 @@ export async function refreshCalendarToken(input: {
         tokenAuthMethod: 'client_secret_post',
       },
     },
-    providerRuntimeConfig: {
-      [input.provider.id]: {
-        clientId: input.provider.clientId,
-        clientSecret: input.provider.clientSecret,
-        allowlistedRedirectUris: [input.provider.redirectUri],
-      },
-    },
+    providerRuntimeConfig,
     stateStore: new MemoryOAuthStateStore(),
     tokenVault,
     tokenHttpClient: input.tokenHttpClient,

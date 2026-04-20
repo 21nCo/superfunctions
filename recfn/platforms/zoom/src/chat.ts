@@ -29,7 +29,7 @@ export function createChatTracker(sdk: ZoomMeetingSdk): ChatTracker {
 
   return {
     getMessages(): ChatMessage[] {
-      return [...messages];
+      return messages.map((message) => ({ ...message }));
     },
 
     onMessage(cb: (msg: ChatMessage) => void): void {

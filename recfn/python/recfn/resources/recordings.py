@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..client import RecFnHttpClient
 from ..types import _parse_recording
 
@@ -59,5 +61,75 @@ def create_recordings_resource(client: RecFnHttpClient) -> object:
                     },
                 }
             return {"ok": True, "data": resp}
+
+        async def upload(
+            self,
+            file_bytes: bytes | bytearray | memoryview,
+            options: dict[str, Any],
+        ) -> dict:
+            bot_id = options.get("bot_id") or options.get("botId")
+            if not isinstance(bot_id, str) or not bot_id:
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "BAD_REQUEST",
+                        "message": "bot_id is required.",
+                        "details": {},
+                    },
+                }
+
+            transcribe = options.get("transcribe") is True
+            path = (
+                f"/api/v1/recordings/upload?botId={bot_id}"
+                f"{'&transcribe=true' if transcribe else ''}"
+            )
+            payload = bytes(file_bytes)
+            resp = await client.request_multipart(
+                "POST",
+                path,
+                files={
+                    "file": (
+                        options.get("filename", "recording.webm"),
+                        payload,
+                        options.get("content_type", "application/octet-stream"),
+                    )
+                },
+            )
+
+            if not resp.is_success:
+                try:
+                    data = resp.json()
+                    err = data.get("error", {})
+                    return {
+                        "ok": False,
+                        "error": {
+                            "code": err.get("code", "HTTP_ERROR"),
+                            "message": err.get("message", f"HTTP {resp.status_code}"),
+                            "details": err.get("details", {}),
+                        },
+                    }
+                except Exception:
+                    return {
+                        "ok": False,
+                        "error": {
+                            "code": "HTTP_ERROR",
+                            "message": f"HTTP {resp.status_code}",
+                            "details": {},
+                        },
+                    }
+
+            data = resp.json()
+            if isinstance(data, dict) and data.get("ok") is True and data.get("data"):
+                return {"ok": True, "data": _parse_recording(data["data"])}
+            if isinstance(data, dict) and data.get("ok") is False and data.get("error"):
+                return {"ok": False, "error": data["error"]}
+            return {
+                "ok": False,
+                "error": {
+                    "code": "PARSE_ERROR",
+                    "message": "Unexpected response format",
+                    "details": {},
+                },
+            }
 
     return RecordingsResource()

@@ -1,31 +1,99 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { deliverWebhookEvent } from '../src/integrations/plugfn.js';
-import type { PlatformAdapter, Segment } from 'recfn';
+import { ZoomAdapter } from '../../platforms/zoom/src/index.js';
+import type {
+  ZoomAudioFrame,
+  ZoomChatMessageInfo,
+  ZoomMeetingSdk,
+  ZoomMeetingSdkConfig,
+  ZoomParticipantInfo,
+  ZoomVideoFrame,
+} from '../../platforms/zoom/src/meeting-sdk.js';
 import {
-  createRecFnServer,
-  createMemoryStore,
-  MemoryStorageAdapter,
-  MemoryQueueAdapter,
-  MemoryLogger,
-  QUEUE_NAMES,
-  createBotWorker,
-  processTranscriptionJob,
-  createAsrRegistry,
-  createSearchFnClient,
   createMetricsEmitter,
+  createRecFnServer,
+  createSearchFnClient,
+  createBotWorker,
+  MemoryLogger,
+  MemoryQueueAdapter,
+  MemoryStorageAdapter,
 } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
+import { createMemoryStore } from '../src/store/memory.js';
+
+type EventMap = {
+  'audio-frame': (frame: ZoomAudioFrame) => void;
+  'participant-audio-frame': (frame: ZoomAudioFrame) => void;
+  'video-frame': (frame: ZoomVideoFrame) => void;
+  'participant-joined': (info: ZoomParticipantInfo) => void;
+  'participant-left': (info: { participantId: string }) => void;
+  'chat-message': (msg: ZoomChatMessageInfo) => void;
+  'meeting-ended': () => void;
+};
+
+function createMockSdk(): ZoomMeetingSdk & {
+  emit<K extends keyof EventMap>(event: K, ...args: Parameters<EventMap[K]>): void;
+} {
+  const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  const sdk: ZoomMeetingSdk & {
+    emit<K extends keyof EventMap>(event: K, ...args: Parameters<EventMap[K]>): void;
+  } = {
+    init: vi.fn(async () => {}),
+    join: vi.fn(async () => {}),
+    leave: vi.fn(async () => {
+      sdk.emit('meeting-ended');
+    }),
+    getMeetingInfo: vi.fn(() => ({
+      meetingNumber: '1234567890',
+      meetingTopic: 'Quarterly Planning',
+      hostName: 'Host User',
+    })),
+    getParticipants: vi.fn(() => []),
+    sendChat: vi.fn(async () => {}),
+    startRawAudio: vi.fn(),
+    stopRawAudio: vi.fn(),
+    startRawVideo: vi.fn(),
+    stopRawVideo: vi.fn(),
+    isInMeeting: vi.fn(() => true),
+    on(event: string, cb: (...args: unknown[]) => void) {
+      if (!listeners.has(event)) {
+        listeners.set(event, []);
+      }
+      listeners.get(event)!.push(cb);
+    },
+    off(event: string, cb: (...args: unknown[]) => void) {
+      const callbacks = listeners.get(event);
+      if (!callbacks) {
+        return;
+      }
+      const index = callbacks.indexOf(cb);
+      if (index >= 0) {
+        callbacks.splice(index, 1);
+      }
+    },
+    emit(event: string, ...args: unknown[]) {
+      for (const callback of listeners.get(event) ?? []) {
+        callback(...args);
+      }
+    },
+  };
+
+  return sdk;
+}
 
 const API_KEYS: Record<string, { namespace: string; apiKey: string }> = {
   'sk-valid-key': { namespace: 'ns_e2e', apiKey: 'sk-valid-key' },
 };
 
-describe('End-to-end integration (Phase 20)', () => {
+const SDK_CONFIG: ZoomMeetingSdkConfig = {
+  sdkKey: 'sdk-key',
+  sdkSecret: 'sdk-secret',
+};
+
+describe('End-to-end integration (Zoom production path)', () => {
   let store: RecFnStore;
   let queue: MemoryQueueAdapter;
   let logger: MemoryLogger;
-  const webhookDeliveries: Array<{ event: string; payload: unknown }> = [];
-  const metricsEvents: Array<{ event: string; props?: Record<string, unknown> }> = [];
 
   const originalFetch = globalThis.fetch;
 
@@ -33,15 +101,11 @@ describe('End-to-end integration (Phase 20)', () => {
     store = createMemoryStore();
     queue = new MemoryQueueAdapter();
     logger = new MemoryLogger();
-    webhookDeliveries.length = 0;
-    metricsEvents.length = 0;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string | URL, init?: RequestInit) => {
-        const u = typeof url === 'string' ? url : url.toString();
-        if (u.includes('webhook.example.com')) {
-          const payload = JSON.parse((init?.body as string) ?? '{}');
-          webhookDeliveries.push({ event: payload.event, payload });
+      vi.fn(async (url: string | URL) => {
+        const target = typeof url === 'string' ? url : url.toString();
+        if (target.includes('webhook.example.com')) {
           return new Response('OK', { status: 200 });
         }
         return new Response('Not Found', { status: 404 });
@@ -53,10 +117,12 @@ describe('End-to-end integration (Phase 20)', () => {
     vi.stubGlobal('fetch', originalFetch);
   });
 
-  it('full flow: create bot → join (mock) → record → transcribe → analytics → search → webhook delivery', async () => {
+  it('Zoom full flow yields aggregate bot data with recording, metadata, participants, and chat (TV-PLAT-001)', async () => {
     const storage = new MemoryStorageAdapter();
     const searchClient = createSearchFnClient();
-    const metrics = createMetricsEmitter((e, p) => metricsEvents.push({ event: e, props: p }));
+    const metrics = createMetricsEmitter();
+    const sdk = createMockSdk();
+    const zoomAdapter = new ZoomAdapter({ sdk, sdkConfig: SDK_CONFIG });
 
     const server = createRecFnServer({
       store,
@@ -69,17 +135,6 @@ describe('End-to-end integration (Phase 20)', () => {
       validateApiKey: (key: string) => API_KEYS[key] ?? null,
     });
 
-    await store.createWebhook(
-      {
-        id: 'wh_e2e',
-        url: 'https://webhook.example.com/callback',
-        events: ['bot.joined', 'recording.ready', 'transcript.ready'],
-        secret: 'whsec_test',
-        createdAt: new Date().toISOString(),
-      },
-      'ns_e2e',
-    );
-
     const createRes = await server.router.handle(
       new Request('http://localhost/api/v1/bots', {
         method: 'POST',
@@ -87,135 +142,108 @@ describe('End-to-end integration (Phase 20)', () => {
           Authorization: 'Bearer sk-valid-key',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ meetingUrl: 'https://zoom.us/j/123456' }),
+        body: JSON.stringify({ meetingUrl: 'https://zoom.us/j/1234567890?pwd=abc123' }),
       }),
     );
     expect(createRes.status).toBe(201);
-    const createBody = (await createRes.json()) as { ok: boolean; data: { id: string } };
+    const createBody = (await createRes.json()) as { data: { id: string } };
     const botId = createBody.data.id;
-
-    const mockAdapter: PlatformAdapter = {
-      platform: 'zoom',
-      async join() {},
-      async leave() {},
-      getAudioStream: () => new ReadableStream(),
-      async getParticipants() { return []; },
-      onParticipantJoin() {},
-      onParticipantLeave() {},
-      async getChatMessages() { return []; },
-      onChatMessage() {},
-      async sendChatMessage() {},
-      async getMetadata() {
-        return { id: 'meta_1', botId: '', platform: 'zoom', chatMessages: [] };
-      },
-      isConnected: () => true,
-    };
 
     const worker = createBotWorker({
       store,
       queue,
       logger,
-      platformAdapters: new Map([['zoom', mockAdapter]]),
+      storage,
+      platformAdapters: new Map([['zoom', zoomAdapter]]),
       metrics,
     });
 
-    const processed = await worker.processNext();
-    expect(processed).toBe(true);
+    expect(await worker.processNext()).toBe(true);
 
-    const bot = await store.getBot(botId, 'ns_e2e');
-    expect(bot).not.toBeNull();
-    expect(bot!.status).toBe('recording');
-
-    const uploadForm = new FormData();
-    uploadForm.append('file', new Blob([new Uint8Array([1, 2, 3, 4, 5])]), 'rec.webm');
-
-    const uploadRes = await server.router.handle(
-      new Request(`http://localhost/api/v1/recordings/upload?botId=${botId}`, {
-        method: 'POST',
-        headers: { Authorization: 'Bearer sk-valid-key' },
-        body: uploadForm,
-      }),
-    );
-    expect(uploadRes.status).toBe(201);
-    const uploadBody = (await uploadRes.json()) as { ok: boolean; data: { id: string } };
-    const recordingId = uploadBody.data.id;
-
-    const transcribeRes = await server.router.handle(
-      new Request(`http://localhost/api/v1/recordings/${recordingId}/transcribe`, {
-        method: 'POST',
-        headers: {
-          Authorization: 'Bearer sk-valid-key',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ asrProvider: 'whisper', language: 'en-US' }),
-      }),
-    );
-    expect(transcribeRes.status).toBe(202);
-
-    const transcriptJob = await queue.dequeue(QUEUE_NAMES.TRANSCRIPTION);
-    expect(transcriptJob).not.toBeNull();
-
-    const registry = createAsrRegistry();
-    registry.register({
-      name: 'whisper',
-      async *transcribeStream() { throw new Error('Not used'); },
-      async transcribeBatch(): Promise<Segment[]> {
-        return [
-          { speakerId: 's1', startTime: 0, endTime: 5000, text: 'Hello world', confidence: 0.95 },
-          { speakerId: 's2', startTime: 6000, endTime: 10000, text: 'Action items discussed', confidence: 0.92 },
-        ];
-      },
-      supportedLanguages: () => ['en'],
+    sdk.emit('participant-joined', {
+      participantId: 'par_1',
+      name: 'Alice',
+      email: 'alice@example.com',
+      isHost: true,
+    });
+    sdk.emit('chat-message', {
+      senderId: 'par_1',
+      senderName: 'Alice',
+      message: 'Budget review starts now',
+      timestamp: Date.now(),
+    });
+    sdk.emit('audio-frame', {
+      buffer: new Uint8Array([1, 2, 3, 4]),
+      sampleRate: 48000,
+      channels: 1,
+    });
+    sdk.emit('audio-frame', {
+      buffer: new Uint8Array([5, 6, 7, 8]),
+      sampleRate: 48000,
+      channels: 1,
     });
 
-    const webhookDeliverer = {
-      deliver: (ns: string, ev: string, pl: unknown) =>
-        deliverWebhookEvent(ns, ev, pl as import('../src/webhooks/events.js').WebhookPayload, { store, metrics }),
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const leaveRes = await server.router.handle(
+      new Request(`http://localhost/api/v1/bots/${botId}/leave`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer sk-valid-key' },
+      }),
+    );
+    expect(leaveRes.status).toBe(200);
+    expect(await worker.processNext()).toBe(true);
+
+    const aggregateRes = await server.router.handle(
+      new Request(`http://localhost/api/v1/bots/${botId}`, {
+        headers: { Authorization: 'Bearer sk-valid-key' },
+      }),
+    );
+    expect(aggregateRes.status).toBe(200);
+    const aggregate = (await aggregateRes.json()) as {
+      ok: true;
+      data: {
+        id: string;
+        status: string;
+        participants: Array<{ id: string; botId: string; name: string }>;
+        recordings: Array<{ id: string; botId: string; storageRef: string; size: number }>;
+        metadata: { botId: string; title?: string; startTime?: string; endTime?: string } | null;
+        chatMessages: Array<{ participantId: string; text: string }>;
+      };
     };
 
-    const transcript = await processTranscriptionJob(
-      {
-        recordingId: transcriptJob!.data.recordingId as string,
-        namespace: transcriptJob!.data.namespace as string,
-        audioRef: transcriptJob!.data.audioRef as string,
-        asrProvider: 'whisper',
-        language: 'en-US',
-        transcriptId: transcriptJob!.data.transcriptId as string,
-      },
-      {
-        store,
-        logger,
-        asrRegistry: registry,
-        webhookDeliverer,
-        searchClient,
-        metrics,
-      },
-    );
-    expect(transcript.status).toBe('ready');
-    expect(transcript.segments).toHaveLength(2);
+    expect(aggregate.data.status).toBe('done');
+    expect(aggregate.data.participants).toHaveLength(1);
+    expect(aggregate.data.participants[0]).toMatchObject({
+      id: 'par_1',
+      botId,
+      name: 'Alice',
+    });
+    expect(aggregate.data.chatMessages).toHaveLength(1);
+    expect(aggregate.data.chatMessages[0]).toMatchObject({
+      participantId: 'par_1',
+      text: 'Budget review starts now',
+    });
+    expect(aggregate.data.metadata).not.toBeNull();
+    expect(aggregate.data.metadata).toMatchObject({
+      botId,
+      title: 'Quarterly Planning',
+    });
+    expect(aggregate.data.metadata?.startTime).toBeDefined();
+    expect(aggregate.data.metadata?.endTime).toBeDefined();
+    expect(aggregate.data.recordings).toHaveLength(1);
+    expect(aggregate.data.recordings[0].botId).toBe(botId);
+    expect(aggregate.data.recordings[0].storageRef).toContain(`recordings/ns_e2e/`);
+    expect(aggregate.data.recordings[0].size).toBeGreaterThan(0);
 
-    const analyticsRes = await server.router.handle(
-      new Request(`http://localhost/api/v1/recordings/${recordingId}/analytics`, {
-        headers: { Authorization: 'Bearer sk-valid-key' },
-      }),
-    );
-    expect(analyticsRes.status).toBe(200);
-    const analyticsBody = (await analyticsRes.json()) as { ok: boolean; data: { totalDuration: number } };
-    expect(analyticsBody.data.totalDuration).toBe(0);
+    const persistedParticipants = await store.getParticipants(botId, 'ns_e2e');
+    const persistedMetadata = await store.getMetadata(botId, 'ns_e2e');
+    const persistedChat = await store.getChatMessages(botId, 'ns_e2e');
+    const persistedRecordings = await store.getRecordings(botId, 'ns_e2e');
 
-    const searchRes = await server.router.handle(
-      new Request('http://localhost/api/v1/transcripts/search?q=action+items&limit=5', {
-        headers: { Authorization: 'Bearer sk-valid-key' },
-      }),
-    );
-    expect(searchRes.status).toBe(200);
-    const searchBody = (await searchRes.json()) as { ok: boolean; data: { results: unknown[] } };
-    expect(Array.isArray(searchBody.data.results)).toBe(true);
-
-    expect(webhookDeliveries.some((d) => d.event === 'bot.joined')).toBe(true);
-    expect(logger.findByEvent('bot.status_change').length).toBeGreaterThan(0);
-    expect(logger.findByEvent('bot.join_latency').length).toBe(1);
-    expect(metricsEvents.some((e) => e.event === 'recfn.bots.active')).toBe(true);
-    expect(metricsEvents.some((e) => e.event === 'recfn.asr.latency_ms')).toBe(true);
+    expect(persistedParticipants[0].botId).toBe(botId);
+    expect(persistedMetadata?.botId).toBe(botId);
+    expect(persistedChat[0].participantId).toBe('par_1');
+    expect(persistedRecordings[0].botId).toBe(botId);
   });
 });

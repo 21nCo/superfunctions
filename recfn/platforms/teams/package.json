@@ -32,6 +32,7 @@
     "access": "public"
   },
   "dependencies": {
+    "recfn-browser-core": "*",
     "recfn": "*",
     "playwright": "^1.49.0"
   },

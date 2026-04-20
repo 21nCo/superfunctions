@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getCaptureStreams,
   createMockCaptureProvider,
+  stopCaptureStreams,
 } from '../src/capture.js';
 
 describe('capture', () => {
@@ -20,5 +21,14 @@ describe('capture', () => {
     expect(sources).toHaveLength(1);
     expect(sources[0]!.id).toBe('mock-source');
     expect(sources[0]!.name).toBe('Mock Screen');
+  });
+
+  it('stopCaptureStreams stops all active tracks', () => {
+    const provider = createMockCaptureProvider();
+    return provider.getStream('mock-source').then((streams) => {
+      stopCaptureStreams(streams);
+      expect(streams.video.getTracks().every((track) => track.readyState === 'ended')).toBe(true);
+      expect((streams.audio?.getTracks() ?? []).every((track) => track.readyState === 'ended')).toBe(true);
+    });
   });
 });

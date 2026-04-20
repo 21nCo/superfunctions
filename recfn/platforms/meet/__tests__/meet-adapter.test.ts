@@ -2,10 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MeetAdapter } from '../src/index.js';
 import type { Page } from 'playwright';
 
-function createMockPage(): Page {
-  const evaluate = vi.fn()
-    .mockResolvedValueOnce(false)
-    .mockResolvedValue([]);
+function createMockPage(evaluateResults: unknown[] = []): Page {
+  const queuedResults = [...evaluateResults];
+  const evaluate = vi.fn(async () => {
+    if (queuedResults.length === 0) {
+      return [];
+    }
+    return queuedResults.shift();
+  });
   const waitForSelector = vi.fn().mockRejectedValue(new Error('timeout'));
   const waitForTimeout = vi.fn().mockResolvedValue(undefined);
   const $ = vi.fn().mockResolvedValue({ fill: vi.fn().mockResolvedValue(undefined) });
@@ -29,7 +33,7 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
   let adapter: MeetAdapter;
 
   beforeEach(() => {
-    mockPage = createMockPage();
+    mockPage = createMockPage([false, [], []]);
     adapter = new MeetAdapter({ testPage: mockPage });
   });
 
@@ -69,7 +73,27 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
     expect(Array.isArray(participants)).toBe(true);
   });
 
-  it('getAudioStream returns ReadableStream', async () => {
+  it('getAudioStream yields non-empty audio chunks when prerequisites are satisfied', async () => {
+    mockPage = createMockPage([
+      false,
+      [],
+      [],
+      {
+        ok: true,
+        sessionId: 'capture_session',
+        sampleRate: 48000,
+        channels: 1,
+      },
+      {
+        chunks: [[1, 2, 3, 4]],
+        done: true,
+        error: null,
+        sampleRate: 48000,
+        channels: 1,
+      },
+    ]);
+    adapter = new MeetAdapter({ testPage: mockPage });
+
     await adapter.join('https://meet.google.com/abc-defg-hij', {
       displayName: 'Bot',
       joinTimeout: 30000,
@@ -84,6 +108,43 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
 
     const stream = adapter.getAudioStream();
     expect(stream).toBeInstanceOf(ReadableStream);
+    const reader = stream.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(Array.from(first.value!.data)).toEqual([1, 2, 3, 4]);
+    expect(first.value!.data.byteLength).toBeGreaterThan(0);
+  });
+
+  it('fails with PLATFORM_CAPTURE_UNAVAILABLE when Meet capture prerequisites are missing', async () => {
+    mockPage = createMockPage([
+      false,
+      [],
+      [],
+      {
+        ok: false,
+        reason: 'Meet audio capture requires display-media capture support in this browser runtime.',
+        details: { missingCapabilities: ['getDisplayMedia'] },
+      },
+    ]);
+    adapter = new MeetAdapter({ testPage: mockPage });
+
+    await adapter.join('https://meet.google.com/abc-defg-hij', {
+      displayName: 'Bot',
+      joinTimeout: 30000,
+      autoLeaveOnEmpty: true,
+      autoLeaveEmptyTimeout: 30000,
+      consentMessage: 'Recording',
+      enableRealTimeTranscript: false,
+      asrProvider: 'whisper',
+      recordingFormat: 'mp4',
+      language: 'en-US',
+    });
+
+    const stream = adapter.getAudioStream();
+    const reader = stream.getReader();
+    await expect(reader.read()).rejects.toMatchObject({
+      code: 'PLATFORM_CAPTURE_UNAVAILABLE',
+    });
   });
 
   it('getMetadata returns MeetingMetadata', async () => {

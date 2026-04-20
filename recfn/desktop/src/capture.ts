@@ -39,6 +39,18 @@ export async function getCaptureStreams(
 }
 
 /**
+ * Stop all active capture tracks so a recording session can end under caller control.
+ */
+export function stopCaptureStreams(streams: CaptureStreams): void {
+  for (const track of streams.video.getTracks()) {
+    track.stop();
+  }
+  for (const track of streams.audio?.getTracks() ?? []) {
+    track.stop();
+  }
+}
+
+/**
  * Create a mock capture provider for testing.
  */
 export function createMockCaptureProvider(streams?: CaptureStreams): CaptureProvider {

@@ -1,12 +1,23 @@
-import type { Segment, Participant } from 'recfn';
+import type {
+  Participant,
+  Segment,
+  TranscriptStreamErrorData,
+  TranscriptStreamFrame,
+  TranscriptStreamParticipantLeftData,
+  TranscriptStreamStatusData,
+} from 'recfn';
+import {
+  TRANSCRIPT_STREAM_FRAME_SCHEMA,
+  parseTranscriptStreamFrame,
+} from 'recfn';
 import type { RecFnHttpClient } from './client.js';
 
 export interface TranscriptStreamEvents {
   segment: (data: Segment) => void;
   participant_joined: (data: Participant) => void;
-  participant_left: (data: { participantId: string }) => void;
-  status: (data: { botStatus: string }) => void;
-  error: (data: { code: string; message: string }) => void;
+  participant_left: (data: TranscriptStreamParticipantLeftData) => void;
+  status: (data: TranscriptStreamStatusData) => void;
+  error: (data: TranscriptStreamErrorData) => void;
 }
 
 export interface TranscriptStream {
@@ -20,6 +31,9 @@ export interface TranscriptStream {
   ): void;
   close(): void;
 }
+
+export { TRANSCRIPT_STREAM_FRAME_SCHEMA };
+export type TranscriptStreamCanonicalFrame = TranscriptStreamFrame;
 
 /**
  * Creates a WebSocket connection to the transcript stream for a bot.
@@ -69,20 +83,16 @@ export function createTranscriptStream(
 
   ws.onmessage = (ev) => {
     try {
-      const msg = JSON.parse(ev.data as string) as {
-        type: string;
-        data?: unknown;
-      };
-      if (msg.type === 'pong') return;
-      if (msg.type === 'segment') emit('segment', msg.data as Segment);
-      else if (msg.type === 'participant_joined')
-        emit('participant_joined', msg.data as Participant);
-      else if (msg.type === 'participant_left')
-        emit('participant_left', msg.data as { participantId: string });
-      else if (msg.type === 'status')
-        emit('status', msg.data as { botStatus: string });
-      else if (msg.type === 'error')
-        emit('error', msg.data as { code: string; message: string });
+      const raw = JSON.parse(String(ev.data));
+      const frame = parseTranscriptStreamFrame(raw);
+      if (!frame || frame.type === 'pong' || frame.type === 'ping') {
+        return;
+      }
+      if (frame.type === 'segment') emit('segment', frame.data);
+      else if (frame.type === 'participant_joined') emit('participant_joined', frame.data);
+      else if (frame.type === 'participant_left') emit('participant_left', frame.data);
+      else if (frame.type === 'status') emit('status', frame.data);
+      else if (frame.type === 'error') emit('error', frame.data);
     } catch {
       // Ignore parse errors
     }
