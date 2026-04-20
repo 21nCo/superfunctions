@@ -145,6 +145,8 @@ export interface DocsSiteConfig {
   basePath?: `/${string}`;
   canonicalUrl?: string;
   defaultLocale?: string;
+  /** When `false`, site shells (e.g. SvelteKit layout) can omit the global footer. Default: shown. */
+  showFooter?: boolean;
   theme?: Record<string, unknown>;
   editLink?: Record<string, unknown>;
   pageActions?: Array<Record<string, unknown>>;

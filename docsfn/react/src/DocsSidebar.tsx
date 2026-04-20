@@ -66,6 +66,7 @@ function SidebarGroup({
     return (
       <Collapsible className="docsfn-sidebar-group" data-depth={depth} defaultOpen={defaultOpen}>
         <CollapsibleTrigger className="docsfn-sidebar-group-trigger">
+          <span className="docsfn-sidebar-group-text">{item.text}</span>
           <span className="docsfn-sidebar-group-icon" aria-hidden="true">
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path
@@ -77,7 +78,6 @@ function SidebarGroup({
               />
             </svg>
           </span>
-          <span className="docsfn-sidebar-group-text">{item.text}</span>
         </CollapsibleTrigger>
 
         <CollapsibleContent className="docsfn-sidebar-group-content">

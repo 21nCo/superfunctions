@@ -11,23 +11,25 @@ See also: [Configuration](./configuration).
 
 ## CSS custom properties (`--docsfn-*`)
 
-`generateThemeCSS` emits variables **only for keys you set**. Supported outputs today:
+`generateThemeCSS` emits variables **only for keys you set**. Supported outputs today (these match **`@docsfn/svelte/theme.css`** and **`@docsfn/react/theme.css`**):
 
 | Token | CSS variable |
 | --- | --- |
-| `colors.primary` | `--docsfn-primary` |
-| `colors.secondary` | `--docsfn-secondary` |
-| `colors.background` | `--docsfn-background` |
-| `colors.foreground` | `--docsfn-foreground` |
-| `colors.muted` | `--docsfn-muted` |
-| `colors.accent` | `--docsfn-accent` |
-| `colors.border` | `--docsfn-border` |
+| `colors.primary` | `--docsfn-color-primary` |
+| `colors.secondary` | `--docsfn-color-secondary` |
+| `colors.background` | `--docsfn-color-bg` |
+| `colors.foreground` | `--docsfn-color-fg` |
+| `colors.muted` | `--docsfn-color-muted` |
+| `colors.accent` | `--docsfn-color-accent-soft` |
+| `colors.border` | `--docsfn-color-border` |
 | `fonts.sans` | `--docsfn-font-sans` |
 | `fonts.mono` | `--docsfn-font-mono` |
 | `spacing.container` | `--docsfn-container` |
 | `spacing.section` | `--docsfn-section` |
 
-**Note:** `ThemeConfig.colors.destructive` is a valid config field for your own UI, but **`generateThemeCSS` does not yet emit** a `--docsfn-destructive` variable. Set it manually in CSS if needed.
+**Default theme CSS** also defines related tokens (override in your own CSS after importing the theme): `--docsfn-color-surface`, `--docsfn-color-surface-raised`, `--docsfn-color-primary-hover`, `--docsfn-color-primary-fg`, and code-block colors.
+
+**Note:** `ThemeConfig.colors.destructive` is a valid config field for your own UI, but **`generateThemeCSS` does not yet emit** a matching variable. Set it manually in CSS if needed.
 
 ## `ThemeConfig` structure
 
@@ -72,10 +74,13 @@ Because tokens are ordinary custom properties, you can override them in global C
 
 ```css
 :root {
-  --docsfn-primary: hsl(220 90% 56%);
-  --docsfn-border: hsl(214 32% 91%);
+  --docsfn-color-primary: hsl(220 90% 56%);
+  --docsfn-color-bg: hsl(0 0% 98%);
+  --docsfn-color-border: hsl(214 32% 91%);
 }
 ```
+
+For dark mode, either repeat tokens inside `@media (prefers-color-scheme: dark) { :root { ... } }` (to override the default theme’s dark palette) or scope class-based themes under `.dark` / `html.dark` depending on your app.
 
 For dark mode with **`darkMode: "class"`**, scope overrides under `.dark` (or your root dark class) in your app.
 
@@ -88,8 +93,8 @@ Map docsfn tokens in `tailwind.config` (v4 theme or `@theme`) so utilities align
 theme: {
   extend: {
     colors: {
-      primary: "var(--docsfn-primary)",
-      background: "var(--docsfn-background)",
+      primary: "var(--docsfn-color-primary)",
+      background: "var(--docsfn-color-bg)",
     },
     fontFamily: {
       sans: ["var(--docsfn-font-sans)", "system-ui", "sans-serif"],

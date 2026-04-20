@@ -7,6 +7,7 @@ const config: DocsConfig = {
     description: "The documentation toolchain for superfunctions",
     basePath: "/docs",
     canonicalUrl: "https://docsfn.superfunctions.dev",
+    showFooter: false,
     editLink: {
       pattern: "https://github.com/21nCo/super-functions/edit/dev/docsfn/docs/{path}",
     },

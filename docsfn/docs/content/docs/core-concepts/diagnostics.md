@@ -26,7 +26,7 @@ See also: [CLI](./cli), [Security](./security).
 - **`details`** — Machine-readable context (duplicate route ids, blocked HTML categories, etc.).
 - **`suggestion`** — Optional remediation text.
 
-## Error codes (complete list)
+## Error codes (19 codes)
 
 | Code | Typical cause |
 | --- | --- |
@@ -39,9 +39,11 @@ See also: [CLI](./cli), [Security](./security).
 | `DOCS_ROUTE_NOT_FOUND` | Sidebar/pagination/breadcrumb target missing from tree. |
 | `DOCS_VERSION_INVALID` | Version config or slug resolution failed. |
 | `DOCS_COMPAT_UNSUPPORTED` | Fumadocs compat preset hit unsupported syntax. |
+| `DOCS_COMPONENT_UNRESOLVED` | A PascalCase component used in Markdown has no mapping in the `components` prop. |
 | `DOCS_MDX_COMPILE_FAILED` | MDX/compile pipeline error. |
 | `DOCS_HTML_UNSAFE` | Blocked tag or pattern in Markdown (or unsafe HTML path). |
 | `DOCS_SEARCH_BUILD_FAILED` | Search artifact could not be built (size limit, internal error). |
+| `DOCS_SEARCH_SCOPE_INVALID` | A `routeScopeOverrides` pattern matched a route but the resolved scope is not in the configured `search.scopes`. |
 | `DOCS_OPENAPI_PARSE_FAILED` | OpenAPI file invalid or not OpenAPI 3.x. |
 | `DOCS_REMOTE_FETCH_FAILED` | Remote spec/content fetch error. |
 | `DOCS_AUTH_REQUIRED` | Route needs a session. |

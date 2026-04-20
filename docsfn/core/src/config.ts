@@ -66,6 +66,7 @@ const docsConfigSchema = z.object({
       .refine((value) => value === undefined || value.startsWith("/"), "site.basePath must start with '/'"),
     canonicalUrl: z.string().url("site.canonicalUrl must be a valid URL").optional(),
     defaultLocale: z.string().min(1).optional(),
+    showFooter: z.boolean().optional(),
     theme: z.record(z.unknown()).optional(),
     editLink: z.record(z.unknown()).optional(),
     pageActions: z.array(z.record(z.unknown())).optional(),

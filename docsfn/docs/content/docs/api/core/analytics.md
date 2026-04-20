@@ -26,5 +26,28 @@ Fields include **`name`**, ISO **`timestamp`**, **`route`**, optional **`version
 | --- | --- |
 | **`maybeEmitAnalyticsEvent`** | Respects **`respectDnt`** + optional explicit DNT value; calls your **`emit`** callback. |
 | **`createDocsAnalyticsEmitter`** | Factory for a reusable emitter with defaults. |
+| **`isCanonicalDocsAnalyticsEventName(value)`** | Type guard — returns `true` when `value` is one of the canonical event names. |
+| **`sanitizeDocsAnalyticsEvent(event)`** | Redacts sensitive URL query params from event fields. Returns sanitized event or `null` if the event is invalid. |
 
 URL-like fields are sanitized to drop sensitive query keys before emission (see implementation in `analytics.ts`).
+
+## Input types
+
+**`DocsAnalyticsEmitInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `enabled` | `boolean` | Master switch. |
+| `respectDnt` | `boolean` | When `true`, suppresses emit if Do Not Track is active. |
+| `event` | `DocsAnalyticsEvent` | The event payload. |
+| `emit` | `(event: DocsAnalyticsEvent) => void` | Your emit callback. |
+| `doNotTrackValue?` | `string \| null` | Explicit DNT header value override. |
+
+**`CreateDocsAnalyticsEmitterInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `enabled?` | `boolean` | Default `true`. |
+| `respectDnt?` | `boolean` | Default `true`. |
+| `emit` | `(event: DocsAnalyticsEvent) => void` | Your emit callback. |
+| `doNotTrackValue?` | `string \| null` | Explicit DNT header value override. |

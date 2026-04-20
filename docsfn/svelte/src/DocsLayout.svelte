@@ -50,9 +50,11 @@
 </script>
 
 <div class="docsfn-layout">
-  <header class="docsfn-topbar">
-    <slot name="topbar" />
-  </header>
+  {#if $$slots.topbar}
+    <header class="docsfn-topbar">
+      <slot name="topbar" />
+    </header>
+  {/if}
 
   {#if resolvedSidebar}
     <div class="docsfn-mobile-toolbar">
@@ -109,8 +111,15 @@
   }
 
   @media (min-width: 1024px) {
+    /* Remove from layout flow entirely (avoids stray gap above .docsfn-container). */
     .docsfn-mobile-toolbar {
-      display: none;
+      display: none !important;
+      height: 0;
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      overflow: hidden;
     }
   }
 
@@ -145,6 +154,7 @@
       z-index: 40;
       transform: translateX(-100%);
       transition: transform 0.2s ease;
+      /* Drawer: no left gutter bleed; restore outer scroll (viewport may be shallow). */
       overflow-y: auto;
       box-shadow: 4px 0 24px rgb(15 23 42 / 0.12);
     }

@@ -490,7 +490,7 @@ Versioned docs use **`generateVersionedStaticParams`** when `versions.mode` is n
 | Component | Role |
 | --- | --- |
 | **TopBar** | Header nav; props: `items`, `logo`, `searchTrigger`, `versionSelector`, `surface`. |
-| **DocsSidebar** | Tree nav; `sidebar`, `activePath`, optional `defaultCollapsedGroups`. |
+| **DocsSidebar** | Tree nav; `surface`, `sidebar`, `activePath`. Groups expand when `item.expanded === true` or a descendant matches active route. |
 | **SidebarGroup** | Recursive group renderer (use when building a custom sidebar). |
 | **Breadcrumbs** | `surface` or `items`; `separator` slot component. |
 | **Pagination** | `surface` or explicit `prevPage` / `nextPage`. |

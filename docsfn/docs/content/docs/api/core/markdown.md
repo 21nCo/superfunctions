@@ -9,10 +9,21 @@ description: Markdown compilation and CompiledContentBlock types in @docsfn/core
 
 | Function | Output |
 | --- | --- |
+| **`compileMarkdown(input)`** | `CompiledContentArtifact` — base compiler (framework-agnostic). |
 | **`compileSvelteContent(input)`** | `CompiledContentArtifact` with `framework: "svelte"`. |
 | **`compileReactContent(input)`** | `CompiledContentArtifact` with `framework: "react"`. |
 
+`compileSvelteContent` and `compileReactContent` are thin wrappers around **`compileMarkdown`** that set the `framework` field.
+
 **`CompileMarkdownInput`:** `source`, optional `sourcePath`, `framework`, **`compatPreset`**, **`allowRawHtml`**.
+
+## `extractHeadings`
+
+```ts
+extractHeadings(markdown: string): DocHeading[]
+```
+
+Parses raw Markdown and returns an array of **`DocHeading`** objects (`{ depth, text, slug }`) without running the full compile pipeline. Useful for building a table of contents from source text before compilation.
 
 ## `CompiledContentArtifact`
 
@@ -31,10 +42,12 @@ description: Markdown compilation and CompiledContentBlock types in @docsfn/core
 | --- | --- |
 | `heading` | `level`, `text`, `slug`. |
 | `paragraph` | `text`. |
+| `list` | `ordered`, `items[]` (each `{ text }`), `html`. |
 | `code` | `lang?`, `code`. |
 | `mermaid` | `code` (diagram source). |
 | `tabs` | `items`, `tabs[]` with `value` + `content`. |
 | `callout` | `kind`: note \| tip \| warning \| info \| caution; `text`. |
+| `table` | `html` (rendered HTML table). |
 | `component` | `name`, optional `body`, `selfClosing`. |
 
 Fumadocs preset may rewrite `Tabs`/`Tab` imports to docsfn component names before parsing.
