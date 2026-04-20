@@ -23,7 +23,7 @@ class BaseModel(PydanticBaseModel):
         field_name = type(self)._alias_to_field().get(name)
         if field_name is not None:
             return super().__getattribute__(field_name)
-        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
+        return super().__getattr__(name)
 
     def __setattr__(self, name: str, value: Any) -> None:
         field_name = type(self)._alias_to_field().get(name)

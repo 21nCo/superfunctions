@@ -22,9 +22,23 @@ class GeoService:
         if not self.provider_manager.default_provider:
             self.provider_manager.default_provider = canonical_name
 
+    def _resolve_requested_provider(self, provider_name: Optional[str]) -> Optional[str]:
+        if not provider_name:
+            return None
+
+        canonical_name = normalize_geo_provider_id(provider_name)
+        if canonical_name:
+            return canonical_name
+
+        raise BrowseFnError(
+            "UNSUPPORTED_PROVIDER",
+            f"Provider {provider_name} is not supported.",
+            provider=provider_name,
+        )
+
     async def reverse_geocode(self, location: GeoLocation, provider_name: Optional[str] = None) -> ReverseGeocodeResult:
         validate_geo_location(location)
-        requested_provider = normalize_geo_provider_id(provider_name)
+        requested_provider = self._resolve_requested_provider(provider_name)
 
         async def executor(provider: GeoProvider, canonical_name: str) -> ReverseGeocodeResult:
             result = await provider.reverse_geocode(location)
@@ -36,7 +50,7 @@ class GeoService:
     async def geocode(self, address: str, options: Optional[GeocodeOptions] = None) -> List[ReverseGeocodeResult]:
         options = options or GeocodeOptions()
         validate_geocode_options(options)
-        requested_provider = normalize_geo_provider_id(options.provider)
+        requested_provider = self._resolve_requested_provider(options.provider)
 
         async def executor(provider: GeoProvider, canonical_name: str) -> List[ReverseGeocodeResult]:
             results = await provider.geocode(address, options)
@@ -48,7 +62,7 @@ class GeoService:
 
     async def search(self, options: GeoSearchOptions) -> List[GeoPlace]:
         validate_geo_options(options)
-        requested_provider = normalize_geo_provider_id(options.provider)
+        requested_provider = self._resolve_requested_provider(options.provider)
 
         async def executor(provider: GeoProvider, canonical_name: str) -> List[GeoPlace]:
             results = await provider.search(options)
@@ -64,7 +78,7 @@ class GeoService:
         provider_name: Optional[str] = None,
         fields: Optional[List[str]] = None,
     ) -> GeoPlace:
-        requested_provider = normalize_geo_provider_id(provider_name)
+        requested_provider = self._resolve_requested_provider(provider_name)
 
         async def executor(provider: GeoProvider, canonical_name: str) -> GeoPlace:
             result = await provider.get_place_details(place_id, fields)

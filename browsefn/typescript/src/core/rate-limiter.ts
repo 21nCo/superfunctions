@@ -95,30 +95,13 @@ export class RateLimiter {
     }
 
     for (;;) {
-      const status = this.getStatus(provider);
-      const shouldWait =
-        Number.isFinite(status.limit) &&
-        status.remaining <= 0 &&
-        Date.now() < status.resetAt;
-
-      if (!shouldWait) {
+      const status = await this.check(provider);
+      if (status.allowed !== false) {
         return;
       }
 
       const delayMs = Math.max(25, status.retryAfterMs ?? status.resetAt - Date.now());
       await new Promise((resolve) => setTimeout(resolve, delayMs));
-
-      if (Date.now() >= status.resetAt) {
-        this.lastStatus.set(provider, {
-          remaining: config.requests,
-          resetAt: Date.now() + config.window,
-          limit: config.requests,
-          allowed: true,
-          provider,
-          retryAfterMs: config.window,
-        });
-        return;
-      }
     }
   }
 

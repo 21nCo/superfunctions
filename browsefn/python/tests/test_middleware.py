@@ -1,6 +1,7 @@
 """Tests for middleware and BrowseFn instrumentation."""
 
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 import pytest
@@ -9,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from browsefn.core.browse_fn import BrowseFn
 from browsefn.core.errors import BrowseFnError
-from browsefn.core.types import BrowseFnConfig, CacheConfig, RetryConfig
+from browsefn.core.types import BrowseFnConfig, CacheConfig, PageMetadata, PageResult, RetryConfig, WebConfig
 from browsefn.middleware.logging import Logger
 from browsefn.middleware.metrics import MetricsCollector
 from browsefn.middleware.retry import RetryMiddleware
@@ -149,3 +150,32 @@ async def test_browsefn_records_cache_metrics_logs_and_events():
     assert metrics.totalRequests == 2
     assert metrics.cacheHitRate == 50.0
     assert all("SECRET" not in str(log.context) for log in logs)
+
+
+class FakeDefaultWebService:
+    def __init__(self):
+        self.config = WebConfig()
+        self.providers = {"cheerio": object()}
+        self.provider_manager = SimpleNamespace(default_provider="cheerio")
+
+    async def get_page(self, url, options):
+        return PageResult(
+            url=url,
+            content="body",
+            metadata=PageMetadata(url=url, title="Example"),
+            provider="cheerio",
+        )
+
+
+@pytest.mark.asyncio
+async def test_browsefn_web_proxy_uses_resolved_default_provider_for_metrics_and_logs():
+    browsefn = BrowseFn()
+    browsefn._web_proxy._service = FakeDefaultWebService()
+
+    await browsefn.web.get_page("https://example.com")
+
+    metrics = await browsefn.get_metrics({"groupBy": "provider"})
+    logs = browsefn.get_logs()
+
+    assert [provider.name for provider in metrics.byProvider] == ["cheerio"]
+    assert logs[0].context["provider"] == "cheerio"

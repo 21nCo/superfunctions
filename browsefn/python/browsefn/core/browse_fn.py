@@ -51,6 +51,26 @@ class _ServiceProxy:
             self._service = self._factory()
         return self._service
 
+    def _resolve_operation_provider(self, requested_provider: Optional[str], fallback: str) -> str:
+        if requested_provider:
+            return requested_provider
+
+        service = self._get_service()
+        configured_provider = getattr(getattr(service, "config", None), "default_provider", None)
+        if configured_provider:
+            return configured_provider
+
+        provider_manager = getattr(service, "provider_manager", None)
+        managed_default = getattr(provider_manager, "default_provider", None)
+        if managed_default:
+            return managed_default
+
+        providers = getattr(service, "providers", None)
+        if providers:
+            return next(iter(providers))
+
+        return fallback
+
 
 class _WebProxy(_ServiceProxy):
     def __init__(self, owner: "BrowseFn", factory: Callable[[], Any]):
@@ -62,7 +82,7 @@ class _WebProxy(_ServiceProxy):
 
     async def get_page(self, url: str, options: Optional[Any] = None) -> Any:
         options_model = _coerce_model(GetPageOptions, options)
-        provider = options_model.provider or self._get_service().config.default_provider or "web"
+        provider = self._resolve_operation_provider(options_model.provider, "web")
         cache_enabled = self._owner._cache_enabled(options_model.cache)
         return await self._owner._execute_operation(
             operation="web.get_page",
@@ -76,9 +96,10 @@ class _WebProxy(_ServiceProxy):
 
     async def get_multiple_metadata(self, urls: list[str], options: Optional[Any] = None) -> Any:
         options_model = _coerce_model(MetadataOptions, options)
+        provider = self._resolve_operation_provider(None, "web")
         return await self._owner._execute_operation(
             operation="web.get_multiple_metadata",
-            provider="web",
+            provider=provider,
             cache_enabled=False,
             cache_method="POST",
             cache_url="metadata-batch",
@@ -97,7 +118,7 @@ class _ImagesProxy(_ServiceProxy):
 
     async def search(self, query: str, options: Optional[Any] = None) -> Any:
         options_model = _coerce_model(ImageSearchOptions, options or {"query": query})
-        provider = options_model.provider or self._get_service().config.default_provider or "images"
+        provider = self._resolve_operation_provider(options_model.provider, "images")
         return await self._owner._execute_operation(
             operation="images.search",
             provider=provider,
@@ -110,7 +131,7 @@ class _ImagesProxy(_ServiceProxy):
 
     async def download(self, url: str, options: Optional[Any] = None) -> Any:
         options_model = _coerce_model(ImageDownloadOptions, options)
-        provider = self._get_service().config.default_provider or "images"
+        provider = self._resolve_operation_provider(options_model.provider, "images")
         return await self._owner._execute_operation(
             operation="images.download",
             provider=provider,
@@ -132,7 +153,7 @@ class _GeoProxy(_ServiceProxy):
 
     async def reverse_geocode(self, location: Any, provider_name: Optional[str] = None) -> Any:
         location_model = _coerce_model(GeoLocation, location)
-        provider = provider_name or self._get_service().config.default_provider or "geo"
+        provider = self._resolve_operation_provider(provider_name, "geo")
         return await self._owner._execute_operation(
             operation="geo.reverse_geocode",
             provider=provider,
@@ -145,7 +166,7 @@ class _GeoProxy(_ServiceProxy):
 
     async def geocode(self, address: str, options: Optional[Any] = None) -> Any:
         options_model = _coerce_model(GeocodeOptions, options)
-        provider = options_model.provider or self._get_service().config.default_provider or "geo"
+        provider = self._resolve_operation_provider(options_model.provider, "geo")
         return await self._owner._execute_operation(
             operation="geo.geocode",
             provider=provider,
@@ -158,7 +179,7 @@ class _GeoProxy(_ServiceProxy):
 
     async def search(self, options: Any) -> Any:
         options_model = _coerce_model(GeoSearchOptions, options)
-        provider = options_model.provider or self._get_service().config.default_provider or "geo"
+        provider = self._resolve_operation_provider(options_model.provider, "geo")
         return await self._owner._execute_operation(
             operation="geo.search",
             provider=provider,
@@ -175,7 +196,7 @@ class _GeoProxy(_ServiceProxy):
         provider_name: Optional[str] = None,
         fields: Optional[list[str]] = None,
     ) -> Any:
-        provider = provider_name or self._get_service().config.default_provider or "geo"
+        provider = self._resolve_operation_provider(provider_name, "geo")
         return await self._owner._execute_operation(
             operation="geo.get_place_details",
             provider=provider,

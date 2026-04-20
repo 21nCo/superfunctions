@@ -109,3 +109,12 @@ async def test_nominatim_place_details_are_deterministically_unsupported():
 
     with pytest.raises(BrowseFnError, match="Provider nominatim does not support full place-details retrieval."):
         await service.get_place_details("place-123", "nominatim", ["name"])
+
+
+@pytest.mark.asyncio
+async def test_geocode_rejects_explicit_unknown_provider_instead_of_falling_back():
+    service = GeoService()
+    service.register_provider("nominatim", FakeGeoProvider("nominatim"))
+
+    with pytest.raises(BrowseFnError, match="Provider unknown-provider is not supported."):
+        await service.geocode("1 Main St", GeocodeOptions(provider="unknown-provider"))

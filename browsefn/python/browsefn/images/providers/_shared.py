@@ -13,6 +13,7 @@ from browsefn.core.types import (
     ImageResult,
     ImageSearchResult,
 )
+from browsefn.images._download_utils import resolve_download_path
 
 
 def passes_dimension_filters(
@@ -56,14 +57,26 @@ def build_search_result(
 
 async def download_image(url: str, options: ImageDownloadOptions) -> DownloadResult:
     try:
+        path = resolve_download_path(url, options, default_name="image.jpg")
+        if path.exists() and options.overwrite is False:
+            return DownloadResult(
+                success=False,
+                error="Destination file already exists and overwrite is disabled.",
+            )
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
+            path.write_bytes(response.content)
+            content_type = ""
+            if hasattr(response, "headers") and response.headers:
+                content_type = response.headers.get("content-type", "")
+            format_hint = path.suffix.lstrip(".") or content_type.split("/", 1)[-1].split(";", 1)[0] or None
             return DownloadResult(
                 success=True,
-                path=options.filename or "image.jpg",
+                path=str(path),
                 size=len(response.content),
-                format="jpeg",
+                format=format_hint,
             )
     except Exception as error:
         return DownloadResult(success=False, error=str(error))

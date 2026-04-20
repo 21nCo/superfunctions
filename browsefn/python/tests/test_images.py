@@ -8,6 +8,7 @@ import pytest
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import ImageDownloadOptions, ImageResult, ImageSearchOptions, ImageSearchResult, ImageSource
 from browsefn.images.browser import ImageBrowser
+from browsefn.images.providers.unsplash import UnsplashProvider
 
 
 JPEG_BYTES = bytes.fromhex(
@@ -115,6 +116,18 @@ async def test_image_download_rejects_existing_file_when_overwrite_disabled(tmp_
 
 
 @pytest.mark.asyncio
+async def test_image_download_rejects_paths_outside_destination(tmp_path: Path):
+    browser = ImageBrowser()
+    browser.register_provider("unsplash", FakeImageProvider())
+
+    with pytest.raises(BrowseFnError, match="Destination filename must stay within the destination directory."):
+        await browser.download(
+            "https://images.example.com/a.jpg",
+            ImageDownloadOptions(provider="unsplash", destination=str(tmp_path), filename="../escape.jpg"),
+        )
+
+
+@pytest.mark.asyncio
 async def test_image_download_batch_preserves_order_and_reports_progress(tmp_path: Path):
     browser = ImageBrowser()
     browser.register_provider("unsplash", FakeImageProvider())
@@ -136,3 +149,18 @@ async def test_image_download_batch_preserves_order_and_reports_progress(tmp_pat
 
     assert [Path(result.path).name for result in results] == ["a.jpg", "b.jpg"]
     assert progress_calls == [[1, 2], [2, 2]]
+
+
+@pytest.mark.asyncio
+async def test_provider_download_writes_real_file(tmp_path: Path):
+    provider = UnsplashProvider()
+
+    with patch("httpx.AsyncClient", return_value=_mock_httpx_client()):
+        result = await provider.download(
+            "https://images.example.com/a.jpg",
+            ImageDownloadOptions(destination=str(tmp_path), filename="provider.jpg"),
+        )
+
+    assert result.success is True
+    assert Path(result.path).exists()
+    assert Path(result.path).read_bytes() == JPEG_BYTES

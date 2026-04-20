@@ -86,7 +86,7 @@ describe("RateLimiter", () => {
 
     // Should have waited approximately 200ms
     expect(duration).toBeGreaterThanOrEqual(150);
-    expect(await limiter.checkLimit("test")).toBe(true);
+    expect(await limiter.checkLimit("test")).toBe(false);
   });
 
   it("should expose the shared middleware import path", () => {

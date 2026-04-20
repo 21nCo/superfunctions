@@ -13,6 +13,7 @@ from browsefn.core.provider_manager import ProviderManager
 from browsefn.core.provider_registry import normalize_image_provider_id, sort_provider_ids
 from browsefn.core.types import ImageConfig, ImageDownloadOptions, ImageMetadata, ImageProvider, ImageSearchOptions, ImageSearchResult
 from browsefn.core.types import DownloadResult
+from browsefn.images._download_utils import resolve_download_path
 from browsefn.utils.validation import validate_download_options, validate_image_search_options, validate_url
 
 
@@ -86,10 +87,7 @@ class ImageBrowser:
         if provider_name:
             await self.provider_manager.is_available(provider_name)
 
-        destination_root = Path(options.destination or ".")
-        destination_root.mkdir(parents=True, exist_ok=True)
-        filename = options.filename or Path(urlparse(url).path).name or "downloaded-image"
-        path = destination_root / filename
+        path = resolve_download_path(url, options)
 
         if path.exists() and options.overwrite is False:
             raise BrowseFnError(
