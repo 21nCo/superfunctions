@@ -1,5 +1,6 @@
 import { Adapter } from '@superfunctions/db';
 import { v4 as uuidv4 } from 'uuid';
+import { ValidationError } from '../errors';
 import {
   EmailTransaction,
   CreateEmailTransaction,
@@ -19,6 +20,7 @@ import {
 export interface FindEmailParams {
   userId?: string;
   status?: string;
+  providerMessageId?: string;
   limit?: number;
   offset?: number;
 }
@@ -46,13 +48,70 @@ export interface FindSuppressionParams {
 export interface FindEventParams {
   referenceId?: string;
   referenceType?: 'email' | 'push' | 'sms';
+  providerMessageId?: string;
+  provider?: string;
+  userId?: string;
   eventType?: string;
+  startAt?: Date;
+  endAt?: Date;
   limit?: number;
   offset?: number;
 }
 
+const DEFAULT_EVENT_QUERY_LIMIT = 50;
+const MAX_EVENT_QUERY_LIMIT = 200;
+
 export class SendfnDb {
   constructor(private adapter: Adapter) {}
+
+  private normalizeSuppressionEmail(email: string): string {
+    return email.trim().toLowerCase();
+  }
+
+  private resolveEventQueryLimit(limit?: number): number {
+    if (limit === undefined) {
+      return DEFAULT_EVENT_QUERY_LIMIT;
+    }
+
+    if (!Number.isFinite(limit) || limit < 0) {
+      throw new ValidationError('`limit` must be a non-negative number');
+    }
+
+    return Math.min(limit, MAX_EVENT_QUERY_LIMIT);
+  }
+
+  private resolveOffset(offset?: number): number | undefined {
+    if (offset === undefined) {
+      return undefined;
+    }
+
+    if (!Number.isFinite(offset) || offset < 0) {
+      throw new ValidationError('`offset` must be a non-negative number');
+    }
+
+    return offset;
+  }
+
+  private validateEventWindow(startAt?: Date, endAt?: Date): void {
+    if (startAt && endAt && startAt >= endAt) {
+      throw new ValidationError('`startAt` must be earlier than `endAt`');
+    }
+  }
+
+  private async getReferenceRecord(
+    event: Pick<CommunicationEvent, 'referenceId' | 'referenceType'>
+  ): Promise<EmailTransaction | SmsTransaction | PushNotification | null> {
+    switch (event.referenceType) {
+      case 'email':
+        return this.getEmailTransaction(event.referenceId);
+      case 'sms':
+        return this.getSmsTransaction(event.referenceId);
+      case 'push':
+        return this.getPushNotification(event.referenceId);
+      default:
+        return null;
+    }
+  }
 
   // --- Email Transactions ---
 
@@ -90,6 +149,9 @@ export class SendfnDb {
     const where: any[] = [];
     if (params.userId) where.push({ field: 'userId', operator: 'eq', value: params.userId });
     if (params.status) where.push({ field: 'status', operator: 'eq', value: params.status });
+    if (params.providerMessageId) {
+      where.push({ field: 'providerMessageId', operator: 'eq', value: params.providerMessageId });
+    }
 
     return this.adapter.findMany<EmailTransaction>({
       model: 'email_transactions',
@@ -97,6 +159,13 @@ export class SendfnDb {
       limit: params.limit,
       offset: params.offset,
       orderBy: [{ field: 'createdAt', direction: 'desc' }]
+    });
+  }
+
+  async getEmailTransactionByProviderMessageId(providerMessageId: string): Promise<EmailTransaction | null> {
+    return this.adapter.findOne<EmailTransaction>({
+      model: 'email_transactions',
+      where: [{ field: 'providerMessageId', operator: 'eq', value: providerMessageId }]
     });
   }
 
@@ -244,6 +313,25 @@ export class SendfnDb {
     });
   }
 
+  async findDeviceTokens(params: {
+    userId?: string;
+    platform?: Platform;
+    isActive?: boolean;
+    olderThan?: Date;
+  }): Promise<DeviceToken[]> {
+    const where: any[] = [];
+
+    if (params.userId) where.push({ field: 'userId', operator: 'eq', value: params.userId });
+    if (params.platform) where.push({ field: 'platform', operator: 'eq', value: params.platform });
+    if (params.isActive !== undefined) where.push({ field: 'isActive', operator: 'eq', value: params.isActive });
+    if (params.olderThan) where.push({ field: 'lastUsedAt', operator: 'lt', value: params.olderThan });
+
+    return this.adapter.findMany<DeviceToken>({
+      model: 'device_tokens',
+      where
+    });
+  }
+
   async deactivateDeviceToken(token: string): Promise<void> {
     // We need to find it first or update many
     const tokens = await this.adapter.findMany<DeviceToken>({
@@ -270,9 +358,10 @@ export class SendfnDb {
   // --- Suppression List ---
 
   async addToSuppressionList(data: CreateSuppression): Promise<SuppressionList> {
+    const normalizedEmail = this.normalizeSuppressionEmail(data.email);
     const existing = await this.adapter.findOne<SuppressionList>({
         model: 'suppression_list',
-        where: [{ field: 'email', operator: 'eq', value: data.email }]
+        where: [{ field: 'email', operator: 'eq', value: normalizedEmail }]
     });
 
     if (existing) return existing;
@@ -281,6 +370,7 @@ export class SendfnDb {
       model: 'suppression_list',
       data: {
         ...data,
+        email: normalizedEmail,
         id: uuidv4(),
         createdAt: new Date(),
       }
@@ -295,7 +385,7 @@ export class SendfnDb {
   async getSuppressionListEntry(email: string): Promise<SuppressionList | null> {
     return this.adapter.findOne<SuppressionList>({
       model: 'suppression_list',
-      where: [{ field: 'email', operator: 'eq', value: email }]
+      where: [{ field: 'email', operator: 'eq', value: this.normalizeSuppressionEmail(email) }]
     });
   }
 
@@ -317,7 +407,8 @@ export class SendfnDb {
       model: 'suppression_list',
       where,
       limit: params.limit,
-      offset: params.offset
+      offset: params.offset,
+      orderBy: [{ field: 'email', direction: 'asc' }]
     });
   }
 
@@ -346,20 +437,84 @@ export class SendfnDb {
   }
 
   async findEvents(params: FindEventParams): Promise<CommunicationEvent[]> {
+    this.validateEventWindow(params.startAt, params.endAt);
+    const limit = this.resolveEventQueryLimit(params.limit);
+    const offset = this.resolveOffset(params.offset) ?? 0;
+    const requiresReferenceFiltering = Boolean(params.providerMessageId || params.userId);
+
     const where: any[] = [];
     if (params.referenceId) where.push({ field: 'referenceId', operator: 'eq', value: params.referenceId });
     if (params.referenceType) where.push({ field: 'referenceType', operator: 'eq', value: params.referenceType });
     if (params.eventType) where.push({ field: 'eventType', operator: 'eq', value: params.eventType });
+    if (params.provider) where.push({ field: 'provider', operator: 'eq', value: params.provider });
+    if (params.startAt) where.push({ field: 'eventTimestamp', operator: 'gte', value: params.startAt });
+    if (params.endAt) where.push({ field: 'eventTimestamp', operator: 'lt', value: params.endAt });
+    if (params.providerMessageId && params.referenceType === 'push') {
+      return [];
+    }
 
-    return this.adapter.findMany<CommunicationEvent>({
+    const events = await this.adapter.findMany<CommunicationEvent>({
       model: 'communication_events',
       where,
-      limit: params.limit,
-      offset: params.offset
+      limit: requiresReferenceFiltering ? undefined : limit,
+      offset: requiresReferenceFiltering ? undefined : offset,
+      orderBy: [{ field: 'eventTimestamp', direction: 'asc' }]
     });
+
+    if (!requiresReferenceFiltering) {
+      return events;
+    }
+
+    const referenceCache = new Map<string, EmailTransaction | SmsTransaction | PushNotification | null>();
+
+    const resolveReference = async (
+      event: CommunicationEvent
+    ): Promise<EmailTransaction | SmsTransaction | PushNotification | null> => {
+      const cacheKey = `${event.referenceType}:${event.referenceId}`;
+      if (!referenceCache.has(cacheKey)) {
+        referenceCache.set(cacheKey, await this.getReferenceRecord(event));
+      }
+
+      return referenceCache.get(cacheKey) ?? null;
+    };
+
+    const filtered: CommunicationEvent[] = [];
+    for (const event of events) {
+      const reference = await resolveReference(event);
+      if (!reference) {
+        continue;
+      }
+
+      if (params.providerMessageId) {
+        if (!('providerMessageId' in reference) || reference.providerMessageId !== params.providerMessageId) {
+          continue;
+        }
+      }
+
+      if (params.userId) {
+        if (!('userId' in reference) || reference.userId !== params.userId) {
+          continue;
+        }
+      }
+
+      filtered.push(event);
+    }
+
+    return filtered.slice(offset, offset + limit);
   }
 
   async isHealthy(): Promise<boolean> {
     return true;
+  }
+
+  async close(): Promise<void> {
+    const adapter = this.adapter as Adapter & { $disconnect?: () => Promise<void> };
+    if (typeof adapter.close === 'function') {
+      await adapter.close();
+      return;
+    }
+    if (typeof adapter.$disconnect === 'function') {
+      await adapter.$disconnect();
+    }
   }
 }

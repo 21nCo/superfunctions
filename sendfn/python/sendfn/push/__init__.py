@@ -1,8 +1,6 @@
 """Push notification package for sendfn."""
 
-from .apns import ApnsProvider
 from .device_manager import DeviceTokenManager
-from .fcm import FcmProvider
 from .provider import (
     PushProvider,
     PushProviderCapabilities,
@@ -21,3 +19,15 @@ __all__ = [
     "DeviceTokenManager",
     "PushService",
 ]
+
+
+def __getattr__(name: str):
+    if name == "FcmProvider":
+        from .fcm import FcmProvider
+
+        return FcmProvider
+    if name == "ApnsProvider":
+        from .apns import ApnsProvider
+
+        return ApnsProvider
+    raise AttributeError(f"module 'sendfn.push' has no attribute {name!r}")

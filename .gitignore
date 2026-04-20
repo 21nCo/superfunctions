@@ -52,6 +52,11 @@ lerna-debug.log*
 coverage/
 .nyc_output
 test-results/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.venv/
+.venv*/
 
 # Editors
 .vscode/

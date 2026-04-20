@@ -8,6 +8,10 @@ import { PushProviderError } from '../errors';
 import { SendfnDatabaseAdapter } from '../database/adapter';
 import { PushProvider } from './provider';
 import { DeviceTokenManager } from './device-manager';
+import { mapWithConcurrency, resolveConcurrency } from '../utils/concurrency';
+
+const PLATFORM_ORDER: Platform[] = ['android', 'ios', 'web'];
+const DEFAULT_BULK_CONCURRENCY = 5;
 
 export class PushService {
   constructor(
@@ -70,8 +74,15 @@ export class PushService {
     
     // Let's iterate platforms and send.
     
-    const platforms = Array.from(platformTokens.keys());
-    let lastNotification: PushNotification | null = null;
+    const platforms = PLATFORM_ORDER.filter((platform) => (platformTokens.get(platform)?.length ?? 0) > 0);
+    let logicalNotificationId: string | null = null;
+    let aggregateSentCount = 0;
+    let aggregateFailedCount = 0;
+    let logicalMetadata: Record<string, any> = {
+      ...(params.metadata || {}),
+      notificationIds: [] as string[],
+    };
+    let logicalSentAt: Date | null = null;
 
     for (const platform of platforms) {
         const pTokens = platformTokens.get(platform)!;
@@ -97,6 +108,11 @@ export class PushService {
             metadata: params.metadata || {}
         });
 
+        (logicalMetadata.notificationIds as string[]).push(notification.id);
+        if (!logicalNotificationId) {
+          logicalNotificationId = notification.id;
+        }
+
         try {
             const response = await provider.sendPush({
                 deviceTokens: pTokens,
@@ -112,6 +128,10 @@ export class PushService {
                 category: params.category
             });
 
+            if (response.invalidTokens.length > 0) {
+                await this.deviceManager.deactivateTokens(response.invalidTokens);
+            }
+
             // Update record
             await this.adapter.updatePushNotification(notification.id, {
                 status: response.success ? 'sent' : 'failed', // Partial success is sent
@@ -123,11 +143,6 @@ export class PushService {
                     results: response.results 
                 }
             });
-
-            // Handle invalid tokens
-            if (response.invalidTokens.length > 0) {
-                await this.deviceManager.deactivateTokens(response.invalidTokens);
-            }
 
             // Record event
             await this.adapter.recordEvent({
@@ -146,7 +161,11 @@ export class PushService {
                 eventTimestamp: response.timestamp
             });
 
-            lastNotification = await this.adapter.getPushNotification(notification.id);
+            aggregateSentCount += response.successCount;
+            aggregateFailedCount += response.failedCount;
+            if (!logicalSentAt) {
+              logicalSentAt = response.timestamp;
+            }
 
         } catch (error: any) {
              await this.adapter.updatePushNotification(notification.id, {
@@ -171,18 +190,30 @@ export class PushService {
         }
     }
 
-    if (!lastNotification) {
+    if (!logicalNotificationId) {
         throw new PushProviderError("Failed to process push for any platform");
     }
 
-    return lastNotification;
+    const existingLogicalNotification = await this.adapter.getPushNotification(logicalNotificationId);
+    const logicalNotification = await this.adapter.updatePushNotification(logicalNotificationId, {
+      status: aggregateSentCount > 0 ? 'sent' : 'failed',
+      sentCount: aggregateSentCount,
+      failedCount: aggregateFailedCount,
+      sentAt: logicalSentAt,
+      metadata: {
+        ...(existingLogicalNotification?.metadata || {}),
+        ...logicalMetadata,
+      },
+    });
+
+    return logicalNotification;
   }
 
   async sendBulkPush(notifications: SendPushParams[]): Promise<PushNotification[]> {
-      const results: PushNotification[] = [];
-      for (const n of notifications) {
-          results.push(await this.sendPush(n));
-      }
-      return results;
+      return mapWithConcurrency(
+        notifications,
+        resolveConcurrency(this.options.bulkConcurrency, DEFAULT_BULK_CONCURRENCY),
+        async (notification) => this.sendPush(notification)
+      );
   }
 }

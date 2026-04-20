@@ -1,5 +1,5 @@
 {
-  "name": "@sendfn/core",
+  "name": "sendfn",
   "version": "0.0.1",
   "description": "Unified communications platform SDK for email and push notifications",
   "main": "dist/index.js",
@@ -9,7 +9,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "release:verify": "npm run build && npm run lint && npm test -- --run"
   },
   "keywords": [
     "email",
