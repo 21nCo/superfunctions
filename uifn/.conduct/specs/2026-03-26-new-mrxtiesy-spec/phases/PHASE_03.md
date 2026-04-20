@@ -74,4 +74,4 @@ Expected outcome: each route renders, and the virtualized route uses the Svelte 
 
 # Stop Condition
 
-Report the Svelte build result, the confirmed dev port, and whether all four routes render before starting Phase 04.
+Report the Svelte build result, the confirmed dev port, whether all four routes render, and the accessibility smoke results for navigation and key interactive controls before starting Phase 04.

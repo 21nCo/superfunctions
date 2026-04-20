@@ -57,7 +57,7 @@ Expected outcome: exits `0` and prints the canonical JSON envelope with `ok: tru
 2. Run:
 
 ```bash
-rg -n "examples/README.md|react-playground|svelte-playground|vue-playground" uifn/README.md uifn/react/README.md uifn/svelte/README.md uifn/vue/README.md
+rg -n "examples/README.md|react-playground|svelte-playground|vue-playground|experimental" uifn/README.md uifn/react/README.md uifn/svelte/README.md uifn/vue/README.md uifn/examples/README.md
 ```
 
 Expected outcome: each README contains the appropriate example link, and the Vue README still includes experimental wording.

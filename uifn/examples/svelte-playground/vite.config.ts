@@ -1,12 +1,6 @@
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { svelte, vitePreprocess } from "@uifn/vite-plugin-svelte";
 import { defineConfig } from "vite";
-
-const { svelte, vitePreprocess } = await import(
-  pathToFileURL(
-    path.resolve(__dirname, "../../svelte/node_modules/@sveltejs/vite-plugin-svelte/src/index.js"),
-  ).href,
-);
 
 export default defineConfig({
   plugins: [
@@ -17,12 +11,24 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: /^@uifn\/core\/(.*)$/,
+        replacement: `${path.resolve(__dirname, "../../core/src")}/$1`,
+      },
+      {
         find: /^svelte$/,
         replacement: path.resolve(__dirname, "../../../node_modules/svelte/src/index-client.js"),
       },
       {
         find: "@uifn/svelte",
-        replacement: path.resolve(__dirname, "../../svelte/dist/index.mjs"),
+        replacement: path.resolve(__dirname, "../../svelte/src/index.ts"),
+      },
+      {
+        find: "@uifn/examples-shared",
+        replacement: path.resolve(__dirname, "../shared/src/index.ts"),
+      },
+      {
+        find: "@uifn/core",
+        replacement: path.resolve(__dirname, "../../core/src/index.ts"),
       },
     ],
   },

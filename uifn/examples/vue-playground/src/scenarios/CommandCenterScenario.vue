@@ -45,7 +45,9 @@ const filteredCommands = computed(() => {
 });
 
 const currentCommand = computed(
-  () => commandItems.find((item) => item.id === selectedCommand.value) ?? filteredCommands.value[0],
+  () =>
+    filteredCommands.value.find((item) => item.id === selectedCommand.value) ??
+    filteredCommands.value[0],
 );
 </script>
 

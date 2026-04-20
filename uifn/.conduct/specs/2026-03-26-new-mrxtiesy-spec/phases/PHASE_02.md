@@ -1,6 +1,6 @@
 # Phase Goal
 
-Implement the React playground as the first canonical example app.
+Finalize and verify the React playground as the first canonical example app.
 
 # In Scope / Out Of Scope
 
@@ -19,14 +19,14 @@ Out of scope:
 
 # Deliverables
 
-- Create `uifn/examples/react-playground/package.json`
-- Create `uifn/examples/react-playground/tsconfig.json`
-- Create `uifn/examples/react-playground/vite.config.ts`
-- Create `uifn/examples/react-playground/index.html`
-- Create `uifn/examples/react-playground/src/main.tsx`
-- Create `uifn/examples/react-playground/src/App.tsx`
-- Create `uifn/examples/react-playground/src/styles.css`
-- Create any required route/scenario component files under `uifn/examples/react-playground/src/`
+- Finalize `uifn/examples/react-playground/package.json`
+- Finalize `uifn/examples/react-playground/tsconfig.json`
+- Finalize `uifn/examples/react-playground/vite.config.ts`
+- Finalize `uifn/examples/react-playground/index.html`
+- Finalize `uifn/examples/react-playground/src/main.tsx`
+- Finalize `uifn/examples/react-playground/src/App.tsx`
+- Finalize `uifn/examples/react-playground/src/styles.css`
+- Finalize any required route/scenario component files under `uifn/examples/react-playground/src/`
 
 # Requirements Covered
 
@@ -37,7 +37,7 @@ Out of scope:
 
 # Implementation Tasks
 
-1. Create `@uifn/example-react-playground` as a private Vite workspace package using the fixed dev port `6111`.
+1. Finalize `@uifn/example-react-playground` as a private Vite workspace package using the fixed dev port `6111`.
 2. Wire the playground to consume `@uifn/examples-shared`, `@uifn/core`, and `@uifn/react` from local workspaces.
 3. Implement the common shell with adapter badge `React`, canonical scenario navigation, and capability matrix.
 4. Implement route normalization from missing/unknown hashes to `#/settings-console`.

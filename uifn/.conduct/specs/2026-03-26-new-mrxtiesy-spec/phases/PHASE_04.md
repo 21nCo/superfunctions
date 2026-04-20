@@ -1,6 +1,6 @@
 # Phase Goal
 
-Implement the Vue playground with truthful experimental labeling and unsupported-capability handling.
+Finalize and verify the Vue playground with truthful experimental labeling and unsupported-capability handling.
 
 # In Scope / Out Of Scope
 
@@ -19,14 +19,14 @@ Out of scope:
 
 # Deliverables
 
-- Create `uifn/examples/vue-playground/package.json`
-- Create `uifn/examples/vue-playground/tsconfig.json`
-- Create `uifn/examples/vue-playground/vite.config.ts`
-- Create `uifn/examples/vue-playground/index.html`
-- Create `uifn/examples/vue-playground/src/main.ts`
-- Create `uifn/examples/vue-playground/src/App.vue`
-- Create `uifn/examples/vue-playground/src/styles.css`
-- Create any required scenario components under `uifn/examples/vue-playground/src/`
+- Finalize `uifn/examples/vue-playground/package.json`
+- Finalize `uifn/examples/vue-playground/tsconfig.json`
+- Finalize `uifn/examples/vue-playground/vite.config.ts`
+- Finalize `uifn/examples/vue-playground/index.html`
+- Finalize `uifn/examples/vue-playground/src/main.ts`
+- Finalize `uifn/examples/vue-playground/src/App.vue`
+- Finalize `uifn/examples/vue-playground/src/styles.css`
+- Finalize any required scenario components under `uifn/examples/vue-playground/src/`
 
 # Requirements Covered
 
@@ -37,7 +37,7 @@ Out of scope:
 
 # Implementation Tasks
 
-1. Create `@uifn/example-vue-playground` as a private Vite workspace package using the fixed dev port `6113`.
+1. Finalize `@uifn/example-vue-playground` as a private Vite workspace package using the fixed dev port `6113`.
 2. Wire the playground to consume `@uifn/examples-shared`, `@uifn/core`, and `@uifn/vue` from local workspaces.
 3. Implement the common shell with adapter badge `Vue Experimental`, canonical scenario navigation, and capability matrix.
 4. Implement route normalization from missing/unknown hashes to `#/settings-console`.

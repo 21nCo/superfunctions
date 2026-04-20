@@ -30,7 +30,7 @@ Out of scope:
 
 # Implementation Tasks
 
-1. Modify root `package.json` to add `uifn/examples/*` to `workspaces`.
+1. Modify root `package.json` to add `uifn/examples` and `uifn/examples/*` to `workspaces`.
 2. Add root script `verify:uifn-examples` that delegates to `uifn/examples`.
 3. Create `uifn/examples/package.json` as a private workspace named `@uifn/examples`.
 4. Add hub scripts `dev:react`, `dev:svelte`, `dev:vue`, `build`, and `verify`.
@@ -42,7 +42,7 @@ Out of scope:
 1. Run:
 
 ```bash
-node -e "const pkg=require('./package.json'); if(!pkg.workspaces.includes('uifn/examples/*')) throw new Error('missing uifn/examples/* workspace'); if(!pkg.scripts['verify:uifn-examples']) throw new Error('missing verify:uifn-examples');"
+node -e "const pkg=require('./package.json'); if(!pkg.workspaces.includes('uifn/examples')) throw new Error('missing uifn/examples workspace'); if(!pkg.workspaces.includes('uifn/examples/*')) throw new Error('missing uifn/examples/* workspace'); if(!pkg.scripts['verify:uifn-examples']) throw new Error('missing verify:uifn-examples');"
 ```
 
 Expected outcome: exits `0`.
