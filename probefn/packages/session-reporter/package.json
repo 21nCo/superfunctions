@@ -1,0 +1,21 @@
+{
+  "name": "@probefn/session-reporter",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@probefn/analyzers": "workspace:*",
+    "@probefn/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@probefn/core": "workspace:*",
+    "@probefn/storage": "workspace:*"
+  }
+}

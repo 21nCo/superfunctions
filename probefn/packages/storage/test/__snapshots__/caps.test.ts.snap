@@ -1,0 +1,14 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`storage caps > rolls over event sinks when event caps are reached 1`] = `
+{
+  "result": {
+    "eventCount": 1,
+    "relativePath": ".artifacts/runs/run_spam/checkpoints/spam/console-0002.ndjson",
+    "sinkIndex": 2,
+    "warning": "Event cap reached; rollover sink console-0002.ndjson created.",
+  },
+  "rolledOverContents": "{"index":4}
+",
+}
+`;

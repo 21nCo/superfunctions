@@ -1,0 +1,22 @@
+import { defineConfig } from './packages/contracts/src/index.js';
+
+export default defineConfig({
+  schemaVersion: '1.0',
+  projectName: 'local-app',
+  artifactRoot: '.artifacts',
+  baselineRoot: '.artifacts/baselines',
+  defaultBrowser: 'chromium',
+  defaultMode: 'mixed',
+  devServers: {
+    web: {
+      mode: 'spawn',
+      name: 'web',
+      command: 'pnpm vite --port 4173',
+      cwd: '.',
+      url: 'http://127.0.0.1:4173',
+      readyPattern: 'Local:',
+      timeoutMs: 120000,
+      envAllowlist: [],
+    },
+  },
+});

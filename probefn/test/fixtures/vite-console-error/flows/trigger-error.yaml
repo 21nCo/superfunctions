@@ -1,0 +1,13 @@
+version: 1
+steps:
+  - command: page.open
+    url: /
+  - command: page.act
+    action: click
+    query: Submit order
+  - command: checkpoint.create
+    name: after-submit
+    includeTrace: true
+    includeStyles: true
+  - command: report.export
+    format: json

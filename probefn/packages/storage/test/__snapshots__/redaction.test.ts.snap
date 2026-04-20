@@ -1,0 +1,24 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`redactSensitiveData > redacts headers, cookies, bearer tokens, and env-like output 1`] = `
+{
+  "redactedPaths": [
+    "headers.authorization",
+    "cookie",
+    "logLine",
+    "nested.message",
+  ],
+  "redactionCount": 4,
+  "value": {
+    "cookie": "[REDACTED]",
+    "headers": {
+      "authorization": "[REDACTED]",
+      "x-trace-id": "trace_123",
+    },
+    "logLine": "API_KEY=[REDACTED]",
+    "nested": {
+      "message": "Deploy used [REDACTED]",
+    },
+  },
+}
+`;

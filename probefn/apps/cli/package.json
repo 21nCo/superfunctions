@@ -1,0 +1,24 @@
+{
+  "name": "@probefn/cli",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@probefn/contracts": "workspace:*",
+    "@probefn/dev-server": "workspace:*",
+    "@probefn/mcp-server": "workspace:*",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@probefn/core": "workspace:*",
+    "@probefn/storage": "workspace:*",
+    "vitest": "^3.1.4"
+  }
+}
