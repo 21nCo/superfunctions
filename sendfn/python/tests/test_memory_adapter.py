@@ -1,6 +1,7 @@
 """Memory adapter fidelity tests for phase 3."""
 
 from datetime import datetime
+from uuid import UUID
 
 import pytest
 from superfunctions.db import CreateManyParams, CreateParams, FindManyParams, UpdateParams, WhereClause
@@ -100,3 +101,22 @@ async def test_memory_adapter_create_many_rejects_duplicate_ids_without_partial_
 
     assert exc_info.value.code == "SENDFN_UNIQUE_CONSTRAINT"
     assert await adapter.find_many(FindManyParams(model="email_transactions")) == []
+
+
+@pytest.mark.asyncio
+async def test_memory_adapter_create_many_preserves_explicit_id_types() -> None:
+    """Batch inserts should preserve explicit ID objects the same way single inserts do."""
+    adapter = MemoryAdapter()
+    single_id = UUID("00000000-0000-4000-8000-000000000001")
+    batch_id = UUID("00000000-0000-4000-8000-000000000002")
+
+    created = await adapter.create(CreateParams(model="device_tokens", data={"id": single_id}))
+    created_many = await adapter.create_many(
+        CreateManyParams(
+            model="device_tokens",
+            data=[{"id": batch_id}],
+        )
+    )
+
+    assert created["id"] == single_id
+    assert created_many[0]["id"] == batch_id

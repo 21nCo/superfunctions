@@ -29,7 +29,7 @@ npm test --workspace sendfn/typescript -- --run
 Inside the package itself you can also run:
 
 ```bash
-npm run release:verify --workspace sendfn/typescript
+npm run release:verify
 ```
 
 ## Quick Start

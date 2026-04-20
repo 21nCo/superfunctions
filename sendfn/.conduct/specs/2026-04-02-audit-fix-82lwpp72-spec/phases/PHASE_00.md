@@ -53,7 +53,7 @@ Establish a clean-checkout release-gate baseline and align the public package/im
    - Expected outcome: TypeScript typecheck completes successfully.
 4. Run `npm test --workspace sendfn/typescript -- --run`.
    - Expected outcome: import and baseline tests pass.
-5. Run `python3 -m pip install -e ./python-core`.
+5. Run `python3 -m pip install -e ./packages/python-core`.
    - Expected outcome: shared Python core package installs from repo root.
 6. Run `python3 -m pip install -e './sendfn/python[dev]'`.
    - Expected outcome: base Python package installs without optional web extras.

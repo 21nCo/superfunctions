@@ -137,7 +137,7 @@ class MemoryAdapter:
         seen_ids: set[str] = set()
 
         for data in params.data:
-            record_id = str(data.get("id", str(uuid4())))
+            record_id = data.get("id", str(uuid4()))
             if record_id in storage or record_id in seen_ids:
                 raise DatabaseError(
                     f"Duplicate id `{record_id}` for model `{params.model}`",

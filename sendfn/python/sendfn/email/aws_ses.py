@@ -254,7 +254,7 @@ class AwsSesProvider:
         Returns:
             True if retryable, False otherwise
         """
-        error_name = type(error).__name__
+        error_name = self._aws_error_name(error)
         retryable_errors = [
             "Throttling",
             "ThrottlingException",
@@ -264,8 +264,21 @@ class AwsSesProvider:
         ]
         return error_name in retryable_errors
 
+    def _aws_error_name(self, error: Exception) -> str:
+        """Extract the stable AWS error code when boto-style response metadata exists."""
+        response = getattr(error, "response", None)
+        if isinstance(response, dict):
+            error_block = response.get("Error")
+            if isinstance(error_block, dict):
+                code = error_block.get("Code")
+                if isinstance(code, str) and code:
+                    return code
+
+        return type(error).__name__
+
     def _error_code(self, error: Exception) -> str:
         """Map provider exceptions to stable provider-facing codes."""
-        if self._is_retryable_error(error):
+        error_name = self._aws_error_name(error)
+        if error_name in {"Throttling", "ThrottlingException"}:
             return "THROTTLING"
-        return type(error).__name__
+        return error_name

@@ -438,6 +438,9 @@ export class SendfnDb {
 
   async findEvents(params: FindEventParams): Promise<CommunicationEvent[]> {
     this.validateEventWindow(params.startAt, params.endAt);
+    const limit = this.resolveEventQueryLimit(params.limit);
+    const offset = this.resolveOffset(params.offset) ?? 0;
+    const requiresReferenceFiltering = Boolean(params.providerMessageId || params.userId);
 
     const where: any[] = [];
     if (params.referenceId) where.push({ field: 'referenceId', operator: 'eq', value: params.referenceId });
@@ -453,12 +456,12 @@ export class SendfnDb {
     const events = await this.adapter.findMany<CommunicationEvent>({
       model: 'communication_events',
       where,
-      limit: this.resolveEventQueryLimit(params.limit),
-      offset: this.resolveOffset(params.offset),
+      limit: requiresReferenceFiltering ? undefined : limit,
+      offset: requiresReferenceFiltering ? undefined : offset,
       orderBy: [{ field: 'eventTimestamp', direction: 'asc' }]
     });
 
-    if (!params.providerMessageId && !params.userId) {
+    if (!requiresReferenceFiltering) {
       return events;
     }
 
@@ -497,7 +500,7 @@ export class SendfnDb {
       filtered.push(event);
     }
 
-    return filtered;
+    return filtered.slice(offset, offset + limit);
   }
 
   async isHealthy(): Promise<boolean> {

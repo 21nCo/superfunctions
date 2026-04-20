@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from sendfn.database.memory import MemoryAdapter
+from sendfn._concurrency import map_with_concurrency
 from sendfn.errors import SendfnError, ValidationError
 from sendfn.models import RegisterDeviceParams, SendPushParams
 from sendfn.push.apns import ApnsProvider
@@ -108,6 +109,17 @@ def assert_apns_concurrency_cap(observed_max_concurrency: int) -> None:
 
 def get_records(db: MemoryAdapter, model: str) -> list[dict[str, Any]]:
     return list(db._get_or_create_storage(model).values())
+
+
+@pytest.mark.asyncio
+async def test_map_with_concurrency_preserves_none_results_and_order() -> None:
+    results = await map_with_concurrency(
+        ["a", "b", "c"],
+        2,
+        lambda item, _index: asyncio.sleep(0, result=None if item != "b" else "kept"),
+    )
+
+    assert results == [None, "kept", None]
 
 
 @pytest.mark.asyncio
@@ -232,7 +244,9 @@ async def test_push_service_returns_stable_platform_result_and_deactivates_inval
 
 
 @pytest.mark.asyncio
-async def test_device_refresh_preserves_metadata_and_rejects_missing_tokens() -> None:
+async def test_device_refresh_preserves_metadata_and_rejects_missing_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = MemoryAdapter()
     device_manager = DeviceTokenManager(db)
     await device_manager.register_device(
@@ -242,6 +256,14 @@ async def test_device_refresh_preserves_metadata_and_rejects_missing_tokens() ->
             platform="android",
             appVersion="1.0.0",
             deviceInfo={"model": "Pixel"},
+        )
+    )
+    await device_manager.register_device(
+        RegisterDeviceParams(
+            userId="user-456",
+            token="old-token",
+            platform="android",
+            appVersion="2.0.0",
         )
     )
 
@@ -257,6 +279,8 @@ async def test_device_refresh_preserves_metadata_and_rejects_missing_tokens() ->
     assert refreshed.device_info == {"model": "Pixel"}
     active_devices = await device_manager.get_active_devices("user-123", "android")
     assert [device.token for device in active_devices] == ["new-token"]
+    other_user_devices = await device_manager.get_active_devices("user-456", "android")
+    assert [device.token for device in other_user_devices] == ["old-token"]
 
     with pytest.raises(ValidationError) as exc_info:
         await device_manager.refresh_device_token(
@@ -268,6 +292,30 @@ async def test_device_refresh_preserves_metadata_and_rejects_missing_tokens() ->
 
     assert exc_info.value.code == "SENDFN_VALIDATION_ERROR"
     assert str(exc_info.value) == "Old device token was not found for the supplied user and platform"
+
+    await device_manager.register_device(
+        RegisterDeviceParams(
+            userId="user-789",
+            token="failing-old-token",
+            platform="android",
+        )
+    )
+
+    async def fail_register(_params: RegisterDeviceParams):
+        raise SendfnError("refresh failed", code="SENDFN_PUSH_PROVIDER_ERROR", retryable=True)
+
+    monkeypatch.setattr(device_manager, "register_device", fail_register)
+    with pytest.raises(SendfnError) as refresh_error:
+        await device_manager.refresh_device_token(
+            "failing-old-token",
+            "never-created-token",
+            "user-789",
+            "android",
+        )
+
+    assert refresh_error.value.code == "SENDFN_PUSH_PROVIDER_ERROR"
+    still_active = await device_manager.get_active_devices("user-789", "android")
+    assert [device.token for device in still_active] == ["failing-old-token"]
 
 
 @pytest.mark.asyncio

@@ -35,3 +35,23 @@ def test_fastapi_import_requires_extra(
     error = exc_info.value
     assert str(error) == "FastAPI integration requires the `fastapi` extra"
     assert getattr(error, "code", None) == "SENDFN_OPTIONAL_DEPENDENCY_MISSING"
+
+
+def test_bootstrap_only_swallows_missing_superfunctions_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bootstrap should not mask unrelated nested import failures."""
+    _clear_sendfn_modules()
+    module = importlib.import_module("sendfn")
+    nested_error = ModuleNotFoundError("No module named 'nested_dependency'")
+    nested_error.name = "nested_dependency"
+
+    def raise_nested(_name: str):
+        raise nested_error
+
+    monkeypatch.setattr(module, "import_module", raise_nested)
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        module._bootstrap_repo_local_superfunctions()
+
+    assert exc_info.value is nested_error

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Iterable, TypeVar
+from typing import Awaitable, Callable, Iterable, TypeVar, cast
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -37,4 +37,4 @@ async def map_with_concurrency(
         *(run(item, index) for index, item in enumerate(indexed_items))
     )
 
-    return [result for result in results if result is not None]
+    return cast(list[R], results)

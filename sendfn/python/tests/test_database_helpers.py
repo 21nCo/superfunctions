@@ -43,7 +43,46 @@ async def test_provider_message_lookup_and_event_filters() -> None:
             "metadata": {},
         },
     )
+    await create_email_transaction(
+        db,
+        {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "userId": "user-999",
+            "to": "other@example.com",
+            "from": "noreply@example.com",
+            "subject": "Hello",
+            "templateId": None,
+            "templateData": None,
+            "provider": "aws-ses",
+            "providerMessageId": "ses-999",
+            "status": "sent",
+            "sentAt": datetime(2026, 4, 1, 0, 0, 0),
+            "deliveredAt": None,
+            "bouncedAt": None,
+            "complainedAt": None,
+            "metadata": {},
+        },
+    )
 
+    await db.create(
+        CreateParams(
+            model="communication_events",
+            data={
+                "id": "00000000-0000-4000-8000-000000000010",
+                "referenceId": "00000000-0000-4000-8000-000000000002",
+                "referenceType": "email",
+                "eventType": "delivered",
+                "provider": "aws-ses",
+                "providerEventId": "ses-999",
+                "recipientEmail": "other@example.com",
+                "recipientPhone": None,
+                "deviceToken": None,
+                "metadata": {},
+                "eventTimestamp": datetime(2026, 4, 2, 0, 0, 0),
+                "createdAt": datetime(2026, 4, 2, 0, 0, 0),
+            },
+        )
+    )
     await db.create(
         CreateParams(
             model="communication_events",
@@ -90,6 +129,7 @@ async def test_provider_message_lookup_and_event_filters() -> None:
         user_id="user-123",
         start_at=datetime(2026, 4, 1, 0, 0, 0),
         end_at=datetime(2026, 4, 3, 0, 0, 0),
+        limit=1,
     )
 
     assert transaction is not None
@@ -214,3 +254,19 @@ async def test_suppression_normalization_export_and_duplicate_bulk_add() -> None
         "complaint@example.com",
         "user@example.com",
     ]
+
+
+@pytest.mark.asyncio
+async def test_bulk_suppression_add_rejects_malformed_entries_with_validation_error() -> None:
+    """Malformed bulk suppression rows should raise the shared validation error."""
+    manager = SuppressionManager(MemoryAdapter())
+
+    with pytest.raises(ValidationError) as exc_info:
+        await manager.bulk_add_to_suppression_list(
+            [
+                {"email": "user@example.com"},
+            ]
+        )
+
+    assert exc_info.value.code == "SENDFN_VALIDATION_ERROR"
+    assert str(exc_info.value) == "Each bulk suppression entry must include 'email' and 'reason'"

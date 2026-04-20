@@ -181,6 +181,11 @@ async def find_events(db: Adapter, params: dict) -> list[CommunicationEvent]:
     start_at = params.get("start_at")
     end_at = params.get("end_at")
     _validate_event_window(start_at, end_at)
+    limit = _resolve_event_limit(params.get("limit"))
+    offset = _resolve_offset(params.get("offset")) or 0
+    requires_reference_filtering = bool(
+        params.get("provider_message_id") or params.get("user_id")
+    )
 
     where = []
     if params.get("reference_id"):
@@ -202,15 +207,15 @@ async def find_events(db: Adapter, params: dict) -> list[CommunicationEvent]:
         FindManyParams(
             model="communication_events",
             where=where if where else None,
-            limit=_resolve_event_limit(params.get("limit")),
-            offset=_resolve_offset(params.get("offset")),
+            limit=None if requires_reference_filtering else limit,
+            offset=None if requires_reference_filtering else offset,
             order_by=[{"field": "eventTimestamp", "direction": "asc"}],
         )
     )
 
     provider_message_id = params.get("provider_message_id")
     user_id = params.get("user_id")
-    if not provider_message_id and not user_id:
+    if not requires_reference_filtering:
         return [CommunicationEvent.model_validate(r) for r in results]
 
     reference_cache: dict[tuple[str, str], Optional[dict[str, Any]]] = {}
@@ -235,7 +240,8 @@ async def find_events(db: Adapter, params: dict) -> list[CommunicationEvent]:
 
         filtered_results.append(result)
 
-    return [CommunicationEvent.model_validate(r) for r in filtered_results]
+    paginated_results = filtered_results[offset : offset + limit]
+    return [CommunicationEvent.model_validate(r) for r in paginated_results]
 
 
 # --- Suppression List Helpers ---

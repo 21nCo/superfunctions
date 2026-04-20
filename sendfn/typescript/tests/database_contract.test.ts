@@ -43,6 +43,47 @@ describe('Sendfn database contract', () => {
     });
 
     await adapter.create({
+      model: 'email_transactions',
+      data: {
+        id: 'tx-2',
+        userId: 'user-999',
+        to: 'other@example.com',
+        from: 'noreply@example.com',
+        subject: 'Hello',
+        templateId: null,
+        templateData: null,
+        provider: 'aws-ses',
+        providerMessageId: 'ses-999',
+        status: 'sent',
+        sentAt: new Date('2026-04-01T00:00:00Z'),
+        deliveredAt: null,
+        bouncedAt: null,
+        complainedAt: null,
+        metadata: {},
+        createdAt: new Date('2026-04-01T00:00:00Z'),
+        updatedAt: new Date('2026-04-01T00:00:00Z'),
+      },
+    });
+
+    await adapter.create({
+      model: 'communication_events',
+      data: {
+        id: 'evt-0',
+        referenceId: 'tx-2',
+        referenceType: 'email',
+        eventType: 'delivered',
+        provider: 'aws-ses',
+        providerEventId: 'ses-999',
+        recipientEmail: 'other@example.com',
+        recipientPhone: null,
+        deviceToken: null,
+        metadata: {},
+        eventTimestamp: new Date('2026-04-02T00:00:00Z'),
+        createdAt: new Date('2026-04-02T00:00:00Z'),
+      },
+    });
+
+    await adapter.create({
       model: 'communication_events',
       data: {
         id: 'evt-1',
@@ -85,6 +126,7 @@ describe('Sendfn database contract', () => {
       userId: 'user-123',
       startAt: new Date('2026-04-01T00:00:00Z'),
       endAt: new Date('2026-04-03T00:00:00Z'),
+      limit: 1,
     });
 
     expect(transaction?.id).toBe('tx-1');

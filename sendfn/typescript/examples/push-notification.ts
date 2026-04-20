@@ -2,6 +2,13 @@ import type { Adapter } from '@superfunctions/db';
 import { sendfn } from '../src';
 
 const database = {} as Adapter;
+const rawServiceAccountKey = process.env.FCM_SERVICE_ACCOUNT_JSON;
+
+if (!rawServiceAccountKey) {
+  throw new Error('Set FCM_SERVICE_ACCOUNT_JSON to the full Firebase service account JSON before running this example.');
+}
+
+const serviceAccountKey = JSON.parse(rawServiceAccountKey) as object;
 
 export async function main() {
   const client = sendfn({
@@ -9,7 +16,7 @@ export async function main() {
     push: {
       providers: {
         fcm: {
-          serviceAccountKey: process.env.FCM_SERVICE_ACCOUNT_JSON ?? '{}',
+          serviceAccountKey,
         },
       },
     },

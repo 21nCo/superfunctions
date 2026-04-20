@@ -97,6 +97,10 @@ class SuppressionManager:
 
         seen: set[str] = set()
         for entry in entries:
+            if not isinstance(entry, dict) or "email" not in entry or "reason" not in entry:
+                raise ValidationError(
+                    "Each bulk suppression entry must include 'email' and 'reason'"
+                )
             normalized_email = self._normalize_email(entry["email"])
             if normalized_email in seen:
                 raise ValidationError("Duplicate normalized suppression email in bulk add request")

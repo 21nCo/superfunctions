@@ -47,6 +47,8 @@ describe('release gate metadata', () => {
     expect(readme).toContain('npm run build --workspace sendfn/typescript');
     expect(readme).toContain('npm run lint --workspace sendfn/typescript');
     expect(readme).toContain('npm test --workspace sendfn/typescript -- --run');
+    expect(readme).toContain('npm run release:verify');
+    expect(readme).not.toContain('npm run release:verify --workspace sendfn/typescript');
     expect(readme).toContain("import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';");
     expect(readme).toContain("app.post('/webhooks/aws-ses'");
     expect(readme).not.toContain('@sendfn/core');

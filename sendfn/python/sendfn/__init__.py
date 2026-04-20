@@ -44,7 +44,9 @@ def _bootstrap_repo_local_superfunctions() -> None:
     try:
         import_module("superfunctions.db")
         return
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as error:
+        if error.name not in {"superfunctions", "superfunctions.db"}:
+            raise
         repo_python_core = Path(__file__).resolve().parents[3] / "packages" / "python-core"
         if repo_python_core.exists():
             sys.path.insert(0, str(repo_python_core))

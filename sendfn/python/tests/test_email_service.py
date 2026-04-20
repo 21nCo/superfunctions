@@ -5,6 +5,7 @@ from datetime import datetime
 import pytest
 
 from sendfn.database.memory import MemoryAdapter
+from sendfn.email.aws_ses import AwsSesProvider
 from sendfn.email.provider import (
     EmailProviderCapabilities,
     SendEmailResponse,
@@ -13,7 +14,7 @@ from sendfn.email.service import EmailService
 from sendfn.email.templates import TemplateEngine, TemplateRegistry
 from sendfn.errors import EmailProviderError, SuppressionError, TemplateError, ValidationError
 from sendfn.events.tracker import EventTracker
-from sendfn.models import Attachment, EmailConfig, SendEmailParams
+from sendfn.models import Attachment, AwsSesConfig, EmailConfig, SendEmailParams
 from sendfn.suppression.manager import SuppressionManager
 
 
@@ -255,3 +256,27 @@ async def test_retry_exhaustion_uses_stable_code() -> None:
     assert exhausted.value.code == "SENDFN_PROVIDER_RETRY_EXHAUSTED"
     assert str(exhausted.value) == "Email provider retry limit exhausted"
     assert provider.send_calls == 3
+
+
+def test_aws_ses_provider_uses_boto_error_codes_when_present() -> None:
+    """SES provider error mapping should prefer AWS response codes over Python class names."""
+    provider = AwsSesProvider(
+        AwsSesConfig(
+            accessKeyId="key",
+            secretAccessKey="secret",
+            region="us-east-1",
+        )
+    )
+
+    class FakeClientError(Exception):
+        def __init__(self, code: str) -> None:
+            super().__init__(code)
+            self.response = {"Error": {"Code": code}}
+
+    rejected = FakeClientError("MessageRejected")
+    throttled = FakeClientError("ThrottlingException")
+
+    assert provider._error_code(rejected) == "MessageRejected"
+    assert provider._is_retryable_error(rejected) is False
+    assert provider._error_code(throttled) == "THROTTLING"
+    assert provider._is_retryable_error(throttled) is True

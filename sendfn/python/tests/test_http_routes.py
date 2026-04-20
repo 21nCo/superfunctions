@@ -316,3 +316,34 @@ async def test_admin_route_returns_canonical_success_envelope_when_authorized() 
         "requestId": "req_admin_success",
         "version": "v0",
     }
+
+
+@pytest.mark.asyncio
+async def test_admin_route_returns_validation_error_envelope_for_bad_request_body() -> None:
+    client = Sendfn(SendfnConfig(database=MemoryAdapter()))
+    route = find_route(client, "/email")
+
+    request = FakeRequest(
+        method="POST",
+        path="/email",
+        headers={
+            "authorization": "Bearer top-secret",
+            "x-request-id": "req_admin_invalid",
+        },
+        json_body={
+            "userId": "user-1",
+            "subject": "Hello",
+            "html": "<p>Hello</p>",
+        },
+    )
+    response = await route.handler(request, build_context(request))
+
+    assert response.status == 400
+    assert response.body["ok"] is False
+    assert response.body["error"]["code"] == "SENDFN_VALIDATION_ERROR"
+    assert response.body["error"]["message"] == "Request body failed validation"
+    assert response.body["error"]["retryable"] is False
+    assert response.body["meta"] == {
+        "requestId": "req_admin_invalid",
+        "version": "v0",
+    }

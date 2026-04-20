@@ -112,7 +112,7 @@ class DeviceTokenManager:
         platform: Platform,
     ) -> DeviceToken:
         """Replace an old device token with a new active token."""
-        from ..database.helpers import find_device_token
+        from ..database.helpers import find_device_token, update_device_token
 
         existing = await find_device_token(
             self.db,
@@ -125,8 +125,7 @@ class DeviceTokenManager:
                 "Old device token was not found for the supplied user and platform"
             )
 
-        await self.deactivate_tokens([old_token])
-        return await self.register_device(
+        refreshed = await self.register_device(
             RegisterDeviceParams(
                 userId=user_id,
                 token=new_token,
@@ -135,6 +134,13 @@ class DeviceTokenManager:
                 deviceInfo=existing.device_info,
             )
         )
+        if str(refreshed.id) != str(existing.id):
+            await update_device_token(
+                self.db,
+                device_id=str(existing.id),
+                isActive=False,
+            )
+        return refreshed
 
     async def cleanup_inactive_devices(self, older_than: datetime) -> int:
         """Delete inactive device records older than the provided cutoff."""

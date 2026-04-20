@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 from uuid import uuid4
 
+from pydantic import ValidationError as PydanticValidationError
 from superfunctions.http import (
     HttpMethod,
     Request,
@@ -116,6 +117,15 @@ def create_sendfn_routes(
         try:
             data = await operation()
             return _success_response(data, resolved_request_id, success_status)
+        except PydanticValidationError as error:
+            return _error_response(
+                request_id=resolved_request_id,
+                status=400,
+                code="SENDFN_VALIDATION_ERROR",
+                message=validation_message,
+                retryable=False,
+                details={"errors": error.errors()},
+            )
         except SendfnError as error:
             status = (
                 401

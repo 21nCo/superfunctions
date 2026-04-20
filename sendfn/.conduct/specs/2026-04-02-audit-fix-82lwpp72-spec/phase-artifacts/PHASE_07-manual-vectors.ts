@@ -23,15 +23,15 @@ function evaluateDocDriftNegative(input: {
 
 async function main() {
   const typescriptReadme = readFileSync(
-    new URL('../../../../sendfn/typescript/README.md', import.meta.url),
+    new URL('../../../../typescript/README.md', import.meta.url),
     'utf8',
   );
   const pythonReadme = readFileSync(
-    new URL('../../../../sendfn/python/README.md', import.meta.url),
+    new URL('../../../../python/README.md', import.meta.url),
     'utf8',
   );
   const packageJson = JSON.parse(
-    readFileSync(new URL('../../../../sendfn/typescript/package.json', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../../../typescript/package.json', import.meta.url), 'utf8'),
   );
 
   const result = {
