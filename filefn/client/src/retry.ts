@@ -31,11 +31,23 @@ export function isRetryableError(error: unknown): boolean {
       const status = (error as { status: number }).status;
       return status >= 500 || status === 429 || status === 408;
     }
-    if (error.message.includes('network') || error.message.includes('fetch')) {
-      return true;
+    const message = error.message.toLowerCase();
+    return message.includes('network') || message.includes('fetch');
+  }
+
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === 'number') {
+      return status >= 500 || status === 429 || status === 408;
     }
   }
-  return true;
+
+  if (typeof error === 'string') {
+    const message = error.toLowerCase();
+    return message.includes('network') || message.includes('fetch');
+  }
+
+  return false;
 }
 
 export async function withRetry<T>(

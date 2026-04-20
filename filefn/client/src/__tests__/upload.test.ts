@@ -170,6 +170,11 @@ describe('uploadFile', () => {
     const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
     const file = createMockBlob(300);
     const progressEvents: UploadProgress[] = [];
+    let rejectUpload!: (reason?: unknown) => void;
+    const pendingUpload = new Promise((_, reject) => {
+      rejectUpload = reject;
+    });
+    pendingUpload.catch(() => {});
 
     mockFetch
       .mockResolvedValueOnce(createMockResponse({
@@ -182,16 +187,16 @@ describe('uploadFile', () => {
       .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
       .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag1"' }))
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
-      .mockImplementationOnce(() => {
-        return Promise.reject(new DOMException('Aborted', 'AbortError'));
-      });
+      .mockImplementationOnce(() => pendingUpload);
 
     const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_abort' });
     handle.onProgress((progress) => progressEvents.push({ ...progress }));
+    const donePromise = handle.done();
+    const rejectedUpload = expect(donePromise).rejects.toThrow('Aborted');
+    handle.abort();
+    rejectUpload(new DOMException('Aborted', 'AbortError'));
 
-    setTimeout(() => handle.abort(), 10);
-
-    await expect(handle.done()).rejects.toThrow('Aborted');
+    await rejectedUpload;
     expect(progressEvents.length).toBeLessThanOrEqual(1);
   });
 
@@ -220,6 +225,43 @@ describe('uploadFile', () => {
     const initCall = mockFetch.mock.calls[0];
     expect(initCall[1].headers.Authorization).toBe('Bearer token123');
   });
+
+  it('exposes upload session metadata as soon as init succeeds', async () => {
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    const file = createMockBlob(50);
+    let releaseSign!: () => void;
+    const signBlocked = new Promise((resolve) => {
+      releaseSign = () => resolve(undefined);
+    });
+
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse({
+        uploadSessionId: 'session_early',
+        uploadSessionToken: 'upls_early',
+        uploadMode: 'multipart-signed-url',
+        chunkSizeBytes: 5 * 1024 * 1024,
+        totalParts: 1,
+        expiresAt: '2025-01-01T00:00:00Z',
+      }))
+      .mockImplementationOnce(async () => {
+        await signBlocked;
+        return createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' });
+      })
+      .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag"' }))
+      .mockResolvedValueOnce(createMockResponse({ recorded: true }))
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_early', versionId: 'ver_early' }));
+
+    const handle = client.uploadFile({ policy: 'test', file, fileId: 'file_early' });
+    const donePromise = handle.done();
+    await vi.waitFor(() => {
+      expect(handle.uploadSessionId).toBe('session_early');
+      expect(handle.uploadSessionToken).toBe('upls_early');
+      expect(handle.fileId).toBe('file_early');
+    });
+
+    releaseSign();
+    await expect(donePromise).resolves.toEqual({ fileId: 'file_early', versionId: 'ver_early' });
+  });
 });
 
 describe('resumeUpload', () => {
@@ -230,6 +272,7 @@ describe('resumeUpload', () => {
 
     mockFetch
       .mockResolvedValueOnce(createMockResponse({
+        fileId: 'file_resume',
         status: 'in_progress',
         recordedParts: [1, 2],
         totalParts: 3,
@@ -241,12 +284,19 @@ describe('resumeUpload', () => {
       .mockResolvedValueOnce(createMockResponse({ recorded: true }))
       .mockResolvedValueOnce(createMockResponse({ fileId: 'file_resume', versionId: 'ver_resume' }));
 
-    const handle = client.resumeUpload('session_resume', file);
+    const handle = client.resumeUpload('session_resume', file, {
+      uploadSessionToken: 'upls_resume',
+    });
     handle.onProgress((progress) => progressEvents.push({ ...progress }));
+
+    expect(handle.uploadSessionId).toBe('session_resume');
+    expect(handle.uploadSessionToken).toBe('upls_resume');
+    expect(handle.fileId).toBeUndefined();
 
     const result = await handle.done();
 
     expect(result).toEqual({ fileId: 'file_resume', versionId: 'ver_resume' });
+    expect(handle.fileId).toBe('file_resume');
     expect(mockFetch).toHaveBeenCalledTimes(5);
     expect(mockFetch.mock.calls[0][0]).toBe('https://api.test/files/upload/session_resume/status');
     expect(mockFetch.mock.calls[1][0]).toBe('https://api.test/files/upload/session_resume/parts/3/sign');
@@ -263,6 +313,31 @@ describe('resumeUpload', () => {
       partsCompleted: 3,
       totalParts: 3,
     });
+  });
+
+  it('should preserve a caller-supplied fileId while resuming', async () => {
+    const client = createFileFnClient({ baseUrl: 'https://api.test/files' });
+    const file = createMockBlob(100);
+
+    mockFetch
+      .mockResolvedValueOnce(createMockResponse({
+        status: 'in_progress',
+        recordedParts: [],
+        totalParts: 1,
+        chunkSizeBytes: 100,
+        fileSize: 100,
+      }))
+      .mockResolvedValueOnce(createMockResponse({ url: 'https://storage.test/part1', headers: {}, expiresAt: '2025-01-01T00:00:00Z' }))
+      .mockResolvedValueOnce(createMockResponse({}, 200, { ETag: '"etag1"' }))
+      .mockResolvedValueOnce(createMockResponse({ recorded: true }))
+      .mockResolvedValueOnce(createMockResponse({ fileId: 'file_known', versionId: 'ver_known' }));
+
+    const handle = client.resumeUpload('session_known', file, { fileId: 'file_known' });
+    expect(handle.fileId).toBe('file_known');
+
+    const result = await handle.done();
+    expect(result.fileId).toBe('file_known');
+    expect(handle.fileId).toBe('file_known');
   });
 });
 

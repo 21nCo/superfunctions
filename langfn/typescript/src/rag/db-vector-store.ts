@@ -1,91 +1,140 @@
 import { Adapter, WhereClause } from "@superfunctions/db";
-import { Document, Embeddings, VectorStore } from "./base.js";
+import { NonProductionBackendError } from "../core/errors.js";
+import { cosineSimilarity, Document, Embeddings, matchesRetrievalFilter, RetrievalOptions, VectorStore } from "./base.js";
 
 export interface DocumentRecord {
   id: string;
   content: string;
   embedding: number[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   namespace: string;
   createdAt: number;
+  score?: number;
 }
 
+export interface DbVectorStoreOptions {
+  namespace?: string;
+  mode?: "reference" | "production";
+  pageSize?: number;
+  maxScan?: number;
+  indexedSearch?: (payload: {
+    query: string;
+    k: number;
+    filter?: Record<string, unknown>;
+    namespace: string;
+    queryEmbedding: number[];
+  }) => Promise<DocumentRecord[]>;
+}
+
+/**
+ * Reference DB vector store. This fallback is intentionally non-production unless an indexed search callback is supplied.
+ */
 export class DbVectorStore extends VectorStore {
-  private tableName = "langfn_documents";
+  readonly backendType: "reference" | "production";
+  private readonly tableName = "langfn_documents";
+  private readonly namespace: string;
+  private readonly pageSize: number;
+  private readonly maxScan: number;
+  private readonly indexedSearch?: DbVectorStoreOptions["indexedSearch"];
 
   constructor(
     private readonly db: Adapter,
     private readonly embeddings: Embeddings,
-    private readonly namespace: string = "default"
+    options: DbVectorStoreOptions = {}
   ) {
     super();
+    this.namespace = options.namespace ?? "default";
+    this.backendType = options.mode ?? "reference";
+    this.pageSize = Math.max(1, options.pageSize ?? 64);
+    this.maxScan = Math.max(this.pageSize, options.maxScan ?? 512);
+    this.indexedSearch = options.indexedSearch;
   }
 
   async addDocuments(documents: Document[]): Promise<void> {
-    const texts = documents.map(doc => doc.content);
+    const texts = documents.map((document) => document.content);
     const vectors = await this.embeddings.embedDocuments(texts);
-    
-    const records: DocumentRecord[] = documents.map((doc, i) => ({
-      id: Math.random().toString(36).substring(7),
-      content: doc.content,
-      embedding: vectors[i],
-      metadata: doc.metadata,
+    const records: DocumentRecord[] = documents.map((document, index) => ({
+      id: `doc_${index}_${Date.now()}`,
+      content: document.content,
+      embedding: vectors[index]!,
+      metadata: { ...document.metadata },
       namespace: this.namespace,
       createdAt: Date.now()
     }));
-
     await this.db.createMany({
       model: this.tableName,
       data: records
     });
   }
 
-  async search(query: string, options: { k?: number; filter?: Record<string, any> } = {}): Promise<Document[]> {
+  async search(query: string, options: RetrievalOptions = {}): Promise<Document[]> {
     const k = options.k ?? 4;
-    // Note: This implementation assumes the DB adapter doesn't support vector search directly
-    // So it retrieves candidates and reranks in memory. 
-    // In a real scenario, we'd use pgvector or similar if supported by the adapter.
-    
+    const queryEmbedding = await this.embeddings.embedQuery(query);
+    const records = this.indexedSearch
+      ? await this.indexedSearch({
+          query,
+          k,
+          filter: options.filter,
+          namespace: this.namespace,
+          queryEmbedding
+        })
+      : await this.referenceSearch(queryEmbedding, options, k);
+
+    return records
+      .slice(0, k)
+      .map((record) => ({
+        content: record.content,
+        metadata: { ...record.metadata },
+        score: record.score
+      }));
+  }
+
+  private async referenceSearch(
+    queryEmbedding: number[],
+    options: RetrievalOptions,
+    k: number
+  ): Promise<DocumentRecord[]> {
+    if (this.backendType === "production") {
+      throw new NonProductionBackendError("Production retrieval requires adapter-native indexed search or memoryfn", {
+        metadata: { backend: "db-vector-store" }
+      });
+    }
+
     const where: WhereClause[] = [{ field: "namespace", operator: "eq", value: this.namespace }];
-    if (options.filter) {
-      for (const [key, value] of Object.entries(options.filter)) {
-        where.push({ field: key, operator: "eq", value });
+    const scored: DocumentRecord[] = [];
+    let offset = 0;
+
+    while (offset < this.maxScan) {
+      const limit = Math.min(this.pageSize, this.maxScan - offset);
+      const records = await this.db.findMany<DocumentRecord>({
+        model: this.tableName,
+        where,
+        limit,
+        offset
+      });
+      if (!records.length) {
+        break;
+      }
+
+      records.forEach((record, index) => {
+        if (!matchesRetrievalFilter(record.metadata ?? {}, options.filter)) {
+          return;
+        }
+        scored.push({
+          ...record,
+          score: cosineSimilarity(queryEmbedding, record.embedding),
+          createdAt: record.createdAt ?? offset + index
+        });
+      });
+
+      offset += records.length;
+      if (records.length < limit) {
+        break;
       }
     }
 
-    const records = await this.db.findMany<DocumentRecord>({
-      model: this.tableName,
-      where,
-      limit: 100 // Get some candidates
-    });
-
-    if (records.length === 0) return [];
-
-    const queryVector = await this.embeddings.embedQuery(query);
-    
-    const scored = records.map(record => ({
-      doc: { content: record.content, metadata: record.metadata },
-      score: this.cosineSimilarity(queryVector, record.embedding)
-    }));
-
     return scored
-      .sort((a, b) => b.score - a.score)
-      .slice(0, k)
-      .map(item => ({ ...item.doc, score: item.score }));
-  }
-
-  private cosineSimilarity(v1: number[], v2: number[]): number {
-    let dotProduct = 0;
-    let magnitude1 = 0;
-    let magnitude2 = 0;
-    for (let i = 0; i < v1.length; i++) {
-      dotProduct += v1[i] * v2[i];
-      magnitude1 += v1[i] * v1[i];
-      magnitude2 += v2[i] * v2[i];
-    }
-    magnitude1 = Math.sqrt(magnitude1);
-    magnitude2 = Math.sqrt(magnitude2);
-    if (magnitude1 === 0 || magnitude2 === 0) return 0;
-    return dotProduct / (magnitude1 * magnitude2);
+      .sort((left, right) => (right.score ?? 0) - (left.score ?? 0) || left.createdAt - right.createdAt)
+      .slice(0, Math.max(k, 1));
   }
 }

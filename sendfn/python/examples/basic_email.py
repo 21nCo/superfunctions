@@ -1,4 +1,9 @@
-"""Basic email sending example."""
+"""Basic email sending example.
+
+Run after:
+    python -m pip install -e ./packages/python-core
+    python -m pip install -e './sendfn/python[email]'
+"""
 
 import asyncio
 
@@ -24,12 +29,12 @@ async def main():
         ),
     )
 
-    # Create sendfn client
-    sendfn = create_sendfn(config)
+    # Create client
+    client = create_sendfn(config)
 
     # Send an email
     print("Sending email...")
-    transaction = await sendfn.send_email(
+    transaction = await client.send_email(
         SendEmailParams(
             user_id="user-123",
             to="recipient@example.com",
@@ -53,7 +58,7 @@ async def main():
     print(f"Provider Message ID: {transaction.provider_message_id}")
 
     # Get email events
-    events = await sendfn.get_email_events(str(transaction.id))
+    events = await client.get_email_events(str(transaction.id))
     print(f"\nEvents ({len(events)}):")
     for event in events:
         print(f"  - {event.event_type} at {event.event_timestamp}")

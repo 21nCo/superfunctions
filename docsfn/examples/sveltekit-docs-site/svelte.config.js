@@ -12,11 +12,6 @@ const config = {
   preprocess: vitePreprocess(),
   kit: {
     adapter: adapter(),
-    alias: {
-      "@docsfn/core": fromExampleRoot("../../core/src/index.ts"),
-      "@docsfn/provider-fs": fromExampleRoot("../../provider-fs/src/index.ts"),
-      "@docsfn/sveltekit": fromExampleRoot("../../sveltekit/src/index.ts")
-    },
     prerender: {
       handleMissingId: "warn"
     }

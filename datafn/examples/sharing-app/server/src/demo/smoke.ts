@@ -20,10 +20,10 @@ async function run() {
     });
     assert.equal(contextRes.status, 200);
     const contextBody = await contextRes.json();
-    assert.deepEqual(contextBody.result.effectivePrincipals, [
-      "team:design",
-      "user:alice",
-    ]);
+    assert.deepEqual(
+      [...contextBody.result.effectivePrincipals].sort(),
+      ["team:design", "user:alice"].sort(),
+    );
 
     const resetRes = await app.request("/demo/reset", {
       method: "POST",

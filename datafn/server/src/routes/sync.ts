@@ -125,7 +125,7 @@ export function createCloneHandler(
             code: "INTERNAL",
             message: "Internal error",
             details: { path: "$" }
-        });
+        }, 500);
     } finally {
         logRequest({
             timestamp: new Date().toISOString(),
@@ -233,7 +233,7 @@ export function createPullHandler(
             code: "INTERNAL",
             message: "Internal error",
             details: { path: "$" }
-        });
+        }, 500);
     } finally {
         logRequest({
             timestamp: new Date().toISOString(),
@@ -481,7 +481,7 @@ export function createPushHandler(
             code: "INTERNAL",
             message: "Internal error",
             details: { path: "$" }
-        });
+        }, 500);
     } finally {
         logRequest({
             timestamp: new Date().toISOString(),
@@ -588,7 +588,7 @@ export function createReconcileHandler(
             code: "INTERNAL",
             message: "Internal error",
             details: { path: "$" }
-        });
+        }, 500);
     } finally {
         logRequest({
             timestamp: new Date().toISOString(),

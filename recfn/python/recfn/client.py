@@ -116,6 +116,20 @@ class RecFnHttpClient:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             return await client.request(method, url, headers=hdrs)
 
+    async def request_multipart(
+        self,
+        method: str,
+        path: str,
+        *,
+        files: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> httpx.Response:
+        """Make multipart request for file uploads."""
+        url = f"{self.base_url}{path}" if path.startswith("/") else f"{self.base_url}/{path}"
+        hdrs = {**self._headers(), **(headers or {})}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            return await client.request(method, url, headers=hdrs, files=files)
+
     def get_ws_url(self, path: str, token: Optional[str] = None) -> str:
         """Build WebSocket URL with optional token."""
         base = self.base_url.replace("http://", "ws://").replace("https://", "wss://")

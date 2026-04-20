@@ -94,7 +94,46 @@ describe("oauth-http token client", () => {
 
     expect(capturedInit?.headers.authorization).toMatch(/^Basic /);
     const params = new URLSearchParams(capturedInit?.body);
+    expect(params.get("client_id")).toBeNull();
     expect(params.get("client_secret")).toBeNull();
+  });
+
+  it("percent-encodes client_secret_basic credentials and redacts token payloads from error details", async () => {
+    let capturedInit: RequestInitLike | null = null;
+    const fetcher: OAuthFetchLike = async (_url, init) => {
+      capturedInit = init;
+      return createResponse({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          refresh_token: "rt_secret",
+          id_token: "id_secret"
+        })
+      });
+    };
+
+    const client = new DefaultOAuthTokenHttpClient({ fetcher });
+    await expect(
+      client.exchangeToken({
+        provider: {
+          ...googleProvider,
+          tokenAuthMethod: "client_secret_basic"
+        },
+        grantType: "authorization_code",
+        clientId: "client:id",
+        clientSecret: "secret+value",
+        code: "code-basic",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+      details: {
+        parsedBodyKeys: ["refresh_token", "id_token"]
+      }
+    });
+
+    const encodedCredentials = Buffer.from("client%3Aid:secret%2Bvalue").toString("base64");
+    expect(capturedInit?.headers.authorization).toBe(`Basic ${encodedCredentials}`);
   });
 
   it("resolves client secrets at runtime for Apple-compatible providers", async () => {
@@ -154,6 +193,34 @@ describe("oauth-http token client", () => {
       details: {
         providerId: "google",
         operation: "exchange"
+      }
+    });
+  });
+
+  it("does not leak resolver failure messages into structured error details", async () => {
+    const client = new DefaultOAuthTokenHttpClient({
+      fetcher: async () => {
+        throw new Error("should not call fetch");
+      }
+    });
+
+    await expect(
+      client.exchangeToken({
+        provider: googleProvider,
+        grantType: "authorization_code",
+        clientId: "client-id",
+        clientSecretResolver: async () => {
+          throw new Error("kms://secret?token=top-secret");
+        },
+        code: "code-secret-error",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_SECRET_RESOLUTION_FAILED",
+      details: {
+        providerId: "google",
+        operation: "exchange",
+        hasResolver: true
       }
     });
   });
@@ -236,6 +303,141 @@ describe("oauth-http token client", () => {
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(7000);
     expect(response.accessToken).toBe("at_after_retry");
+  });
+
+  it("honors server-provided Retry-After delays even when they exceed the local backoff ceiling", async () => {
+    const sleep = vi.fn(async () => undefined);
+    let calls = 0;
+    const fetcher: OAuthFetchLike = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return createResponse({
+          status: 429,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "rate_limited" }),
+          headers: { "retry-after": "120" }
+        });
+      }
+
+      return createResponse({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ access_token: "at_after_retry", token_type: "bearer" })
+      });
+    };
+
+    const client = new DefaultOAuthTokenHttpClient({
+      fetcher,
+      sleep,
+      retryPolicy: {
+        maxAttempts: 3,
+        baseDelayMs: 250,
+        maxDelayMs: 5_000,
+        jitterRatio: 0,
+        random: () => 0
+      }
+    });
+
+    await client.exchangeToken({
+      provider: googleProvider,
+      grantType: "authorization_code",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      code: "code-retry",
+      redirectUri: "https://app/callback"
+    });
+
+    expect(sleep).toHaveBeenCalledWith(120_000);
+  });
+
+  it("retries transient fetch exceptions during token exchange", async () => {
+    const sleep = vi.fn(async () => undefined);
+    let calls = 0;
+    const fetcher: OAuthFetchLike = async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("socket hang up");
+      }
+
+      return createResponse({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ access_token: "at_after_retry", token_type: "bearer" })
+      });
+    };
+
+    const client = new DefaultOAuthTokenHttpClient({ fetcher, sleep });
+    const response = await client.exchangeToken({
+      provider: googleProvider,
+      grantType: "authorization_code",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      code: "code-retry",
+      redirectUri: "https://app/callback"
+    });
+
+    expect(calls).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(response.accessToken).toBe("at_after_retry");
+  });
+
+  it("wraps exhausted fetch exceptions in OAuthHttpError after retry attempts are spent", async () => {
+    const sleep = vi.fn(async () => undefined);
+    const client = new DefaultOAuthTokenHttpClient({
+      fetcher: async () => {
+        throw new Error("socket hang up");
+      },
+      sleep,
+      retryPolicy: {
+        maxAttempts: 1,
+        baseDelayMs: 10,
+        maxDelayMs: 10,
+        jitterRatio: 0,
+        random: () => 0,
+      },
+    });
+
+    await expect(
+      client.exchangeToken({
+        provider: googleProvider,
+        grantType: "authorization_code",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        code: "code-fail",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+      details: {
+        transportFailure: true
+      }
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("fails deterministically when a JSON token body is malformed", async () => {
+    const client = new DefaultOAuthTokenHttpClient({
+      fetcher: async () =>
+        createResponse({
+          status: 200,
+          contentType: "application/json",
+          body: "{not-json"
+        })
+    });
+
+    await expect(
+      client.exchangeToken({
+        provider: googleProvider,
+        grantType: "authorization_code",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        code: "code-malformed",
+        redirectUri: "https://app/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+      message: "OAuth token response body must be a JSON object"
+    });
   });
 
   it("maps refresh endpoint failures to OAUTH_TOKEN_REFRESH_FAILED", async () => {

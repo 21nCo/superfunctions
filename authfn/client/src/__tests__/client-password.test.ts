@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
-import { authFnPasswordPlugin, createAuthFn, type AuthFnConfig } from '../../../core/src/index.js';
+import { authFnPasswordPlugin, createAuthFn, type AuthFnConfig } from '@authfn/core';
 import { createAuthFnClient } from '../index.js';
 
 function createConfig(): AuthFnConfig {
@@ -137,6 +137,62 @@ describe('@authfn/client password flows', () => {
     expect(observedCsrfHeader).toMatch(/^csrf_/);
   });
 
+  it('uses an explicit cookie prefix when the session cookie is httpOnly and hidden from the accessor', async () => {
+    const auth = createAuthFn({
+      ...createConfig(),
+      cookie: {
+        prefix: 'demo-auth'
+      }
+    });
+    const cookieJar = createCookieJar();
+    let observedCsrfHeader: string | null = null;
+
+    const client = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      cookieAccessor: () =>
+        cookieJar
+          .header()
+          .split('; ')
+          .filter((part) => !part.startsWith('demo-auth.session=') && !part.startsWith('__Secure-demo-auth.session='))
+          .join('; '),
+      cookiePrefix: 'demo-auth',
+      fetch: async (input, init) => {
+        const headers = new Headers(init?.headers);
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/sign-out')) {
+          observedCsrfHeader = headers.get('x-authfn-csrf');
+        }
+
+        const cookieHeader = cookieJar.header();
+        if (cookieHeader) {
+          headers.set('cookie', cookieHeader);
+        }
+
+        const response = await auth.router.handle(
+          new Request(url, {
+            method: init?.method,
+            headers,
+            body: init?.body
+          })
+        );
+        cookieJar.applySetCookies(response.headers.getSetCookie());
+        return response;
+      }
+    });
+
+    const signUp = await client.signUpWithPassword({
+      email: 'ada@example.com',
+      password: 'Sup3rSecurePassphrase!'
+    });
+    if (!signUp.ok) {
+      throw new Error('sign-up should have succeeded');
+    }
+
+    const signOut = await client.signOut();
+    expect(observedCsrfHeader).toMatch(/^csrf_/);
+    expect(signOut.ok).toBe(true);
+  });
+
   it('returns canonical auth errors for wrong passwords', async () => {
     const auth = createAuthFn(createConfig());
     const cookieJar = createCookieJar();
@@ -179,5 +235,27 @@ describe('@authfn/client password flows', () => {
     }
     expect(response.error.code).toBe('AUTHFN_INVALID_CREDENTIALS');
     expect(response.error.message).toBe('Invalid email or password');
+  });
+
+  it('maps non-json backend failures into a canonical authfn error envelope', async () => {
+    const client = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response('upstream exploded', {
+          status: 502,
+          headers: {
+            'content-type': 'text/plain',
+            'x-request-id': 'req_non_json'
+          }
+        })
+    });
+
+    const response = await client.getSession();
+    expect(response.ok).toBe(false);
+    if (response.ok) {
+      throw new Error('non-json failure should produce an authfn error envelope');
+    }
+    expect(response.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(response.requestId).toBe('req_non_json');
   });
 });

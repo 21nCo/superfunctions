@@ -11,12 +11,14 @@ import type {
 } from "@searchfn/adapter-contracts";
 import { SearchAdapterError, SEARCH_ADAPTER_DISPOSED } from "@searchfn/adapter-contracts";
 import { MeiliClient, type MeiliRetryPolicy, type AdapterLogger } from "./meili-client";
+import { createHash } from "node:crypto";
 
 export interface MeilisearchAdapterOptions {
   host: string;
   apiKey?: string;
   indexPrefix?: string;
   requestTimeoutMs?: number;
+  taskTimeoutMs?: number;
   retry?: MeiliRetryPolicy;
   logger?: AdapterLogger;
   /** Construct-time defaults applied when query params are omitted. */
@@ -32,12 +34,20 @@ interface MeiliSearchResponse {
 }
 
 function sanitizeResourceName(resource: string): string {
-  return resource.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+  const base = resource.replace(/[^a-z0-9_]/gi, "_").toLowerCase() || "resource";
+  const hash = createHash("sha1").update(resource).digest("hex").slice(0, 8);
+  return `${base}_${hash}`;
 }
 
 function coerceId(value: unknown): string | number {
   const asString = String(value);
-  return /^\d+$/.test(asString) ? Number(asString) : asString;
+  if (/^(0|[1-9]\d*)$/.test(asString)) {
+    const asNumber = Number(asString);
+    if (Number.isSafeInteger(asNumber) && String(asNumber) === asString) {
+      return asNumber;
+    }
+  }
+  return asString;
 }
 
 export class MeilisearchAdapter implements SearchAdapter {
@@ -47,7 +57,7 @@ export class MeilisearchAdapter implements SearchAdapter {
     searchAll: true,
     fuzzy: true,
     fieldBoosts: false,
-    prefix: true,
+    prefix: false,
   };
 
   private readonly client: MeiliClient;
@@ -61,6 +71,7 @@ export class MeilisearchAdapter implements SearchAdapter {
       host: options.host,
       apiKey: options.apiKey,
       requestTimeoutMs: options.requestTimeoutMs,
+      taskTimeoutMs: options.taskTimeoutMs,
       retry: options.retry,
       logger: options.logger,
     });
@@ -85,6 +96,7 @@ export class MeilisearchAdapter implements SearchAdapter {
     if (this.disposed) {
       this.disposed = false;
     }
+    this.resources.clear();
 
     for (const resource of params.resources) {
       const indexName = this.indexName(resource.name);
@@ -116,7 +128,7 @@ export class MeilisearchAdapter implements SearchAdapter {
     if (documents.length === 0) return;
 
     const indexName = this.indexName(resource);
-    const payload = documents.map((doc) => ({ id: String(doc.id), ...doc.fields }));
+    const payload = documents.map((doc) => ({ ...doc.fields, id: String(doc.id) }));
     const add = await this.client.request<MeiliTaskResult>({
       method: "POST",
       path: `/indexes/${indexName}/documents`,
@@ -130,6 +142,9 @@ export class MeilisearchAdapter implements SearchAdapter {
 
   async search(params: SearchParams): Promise<Array<string | number>> {
     this.assertNotDisposed();
+    if (params.fields !== undefined && params.fields.length === 0) {
+      return [];
+    }
 
     const effectiveFuzzy = params.fuzzy ?? this.defaults.fuzzy;
     const indexName = this.indexName(params.resource);
@@ -139,7 +154,7 @@ export class MeilisearchAdapter implements SearchAdapter {
       body: {
         q: params.query,
         limit: Math.max(1, params.limit ?? 10),
-        attributesToSearchOn: params.fields?.length ? params.fields : undefined,
+        attributesToSearchOn: params.fields !== undefined ? params.fields : undefined,
         typoTolerance: effectiveFuzzy ? undefined : "min",
       },
       signal: params.signal,
@@ -148,18 +163,20 @@ export class MeilisearchAdapter implements SearchAdapter {
 
     if (response.status === 404) return [];
 
-    const ids = (response.body?.hits ?? [])
-      .map((hit) => coerceId(hit.id))
-      .sort((a, b) => String(a).localeCompare(String(b)));
-
-    return ids;
+    return (response.body?.hits ?? []).map((hit) => coerceId(hit.id));
   }
 
   async searchAll(params: SearchAllParams): Promise<SearchAllResult[]> {
     this.assertNotDisposed();
+    if (params.fields !== undefined && params.fields.length === 0) {
+      return [];
+    }
 
     const effectiveFuzzy = params.fuzzy ?? this.defaults.fuzzy;
-    const resources = params.resources?.length ? params.resources : Array.from(this.resources.keys());
+    const resources = params.resources ?? Array.from(this.resources.keys());
+    if (resources.length === 0) {
+      return [];
+    }
     const limit = Math.max(1, params.limit ?? 10);
     const limitPerResource = Math.max(1, params.limitPerResource ?? limit);
     const merged: SearchAllResult[] = [];
@@ -172,7 +189,7 @@ export class MeilisearchAdapter implements SearchAdapter {
         body: {
           q: params.query,
           limit: limitPerResource,
-          attributesToSearchOn: params.fields?.length ? params.fields : undefined,
+          attributesToSearchOn: params.fields !== undefined ? params.fields : undefined,
           typoTolerance: effectiveFuzzy ? undefined : "min",
         },
         signal: params.signal,
@@ -185,7 +202,7 @@ export class MeilisearchAdapter implements SearchAdapter {
         merged.push({
           resource,
           id: coerceId(hits[i].id),
-          score: hits.length - i,
+          score: hits.length > 1 ? (hits.length - i) / hits.length : 1,
         });
       }
     }

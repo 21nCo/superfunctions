@@ -1,4 +1,8 @@
-import type { Adapter } from '../types/config.js';
+import type { Adapter as DbAdapter } from '@superfunctions/db';
+import {
+  ensurePlugFnDatabaseAdapter,
+  type PlugFnDatabaseStorageAdapter,
+} from './adapters/database.js';
 
 export interface WebhookRecord {
   id: string;
@@ -28,7 +32,11 @@ export interface WebhookStorage {
  * Webhook storage implementation using adapter
  */
 export class AdapterWebhookStorage implements WebhookStorage {
-  constructor(private adapter: Adapter) {}
+  private readonly adapter: PlugFnDatabaseStorageAdapter;
+
+  constructor(adapter: DbAdapter | PlugFnDatabaseStorageAdapter) {
+    this.adapter = ensurePlugFnDatabaseAdapter(adapter);
+  }
 
   async create(webhook: Omit<WebhookRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<WebhookRecord> {
     const id = this.generateId();
@@ -41,8 +49,7 @@ export class AdapterWebhookStorage implements WebhookStorage {
       updatedAt: now,
     };
     
-    await this.adapter.createWebhook(fullWebhook);
-    return fullWebhook;
+    return this.adapter.createWebhook(fullWebhook);
   }
 
   async get(id: string): Promise<WebhookRecord | null> {
@@ -75,4 +82,3 @@ export class AdapterWebhookStorage implements WebhookStorage {
     return `hook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
-

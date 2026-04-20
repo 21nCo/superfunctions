@@ -64,7 +64,7 @@ describe("fuzzyExpand", () => {
     const vocabulary = new Set(["anthropic", "anthropology", "antenna"]);
     const results = fuzzyExpand("anthopric", 2, vocabulary);
     
-    expect(results).toContain("anthropic"); // 2 edits (swap + missing h)
+    expect(results).toContain("anthropic");
   });
 
   it("filters by length difference optimization", () => {
@@ -89,5 +89,18 @@ describe("fuzzyExpand", () => {
     const vocabulary = new Set(["hello"]);
     const results = fuzzyExpand("HELLO", 0, vocabulary);
     expect(results).toContain("hello");
+  });
+
+  it("keeps exact-only matching when max distance is zero", () => {
+    const vocabulary = new Set(["hello", "hullo"]);
+    const results = fuzzyExpand("hello", 0, vocabulary);
+    expect(results).toEqual(["hello"]);
+  });
+
+  it("caps positive infinity to the maximum supported fuzzy distance", () => {
+    const vocabulary = new Set(["hello", "hullo", "completely"]);
+    const results = fuzzyExpand("hello", Number.POSITIVE_INFINITY, vocabulary);
+    expect(results).toContain("hullo");
+    expect(results).not.toContain("completely");
   });
 });

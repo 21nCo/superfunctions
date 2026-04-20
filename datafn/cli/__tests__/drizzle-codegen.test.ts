@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateDrizzleSchema, camelToSnake } from "../src/drizzle-codegen.js";
-import { validateSchema } from "@datafn/core";
+import { defineSchema, validateSchema } from "@datafn/core";
 
 describe("Drizzle Schema Codegen", () => {
   describe("TV-DRZ-PG-001: Generate Drizzle Schema - Postgres Full Types", () => {
@@ -599,8 +599,13 @@ describe("Drizzle Schema Codegen", () => {
             version: 1,
             fields: [
               { name: "id", type: "string", required: true },
-              { name: "value", type: "object", required: false },
+              { name: "value", type: "json", required: false },
             ],
+            indices: ["id"],
+            permissions: {
+              read: { fields: ["id", "value"] },
+              write: { fields: ["id", "value"] },
+            },
           },
         ],
         relations: [],
@@ -962,7 +967,6 @@ describe("Drizzle Schema Codegen", () => {
 
   describe("TV-SCH-001: namespaced schema flag accepted", () => {
     it("defineSchema accepts namespaced: true", () => {
-      const { defineSchema } = require("@datafn/core");
       const schema = defineSchema({
         namespaced: true,
         resources: [

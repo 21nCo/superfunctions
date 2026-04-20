@@ -1,4 +1,9 @@
-"""Suppression list management example."""
+"""Suppression list management example.
+
+Run after:
+    python -m pip install -e ./packages/python-core
+    python -m pip install -e './sendfn/python[email]'
+"""
 
 import asyncio
 
@@ -24,12 +29,12 @@ async def main():
         ),
     )
 
-    # Create sendfn client
-    sendfn = create_sendfn(config)
+    # Create client
+    client = create_sendfn(config)
 
     # Add an email to suppression list
     print("Adding email to suppression list...")
-    await sendfn.add_to_suppression_list(
+    await client.add_to_suppression_list(
         email="bounced@example.com",
         reason="bounce",
         source="aws-ses",
@@ -38,7 +43,7 @@ async def main():
     )
 
     # Check if email is suppressed
-    result = await sendfn.check_suppression_list("bounced@example.com")
+    result = await client.check_suppression_list("bounced@example.com")
     print(f"\nIs bounced@example.com suppressed? {result['suppressed']}")
     if result["entry"]:
         print(f"Reason: {result['entry'].reason}")
@@ -47,7 +52,7 @@ async def main():
     # Try to send to suppressed email (will fail)
     print("\nAttempting to send to suppressed email...")
     try:
-        await sendfn.send_email(
+        await client.send_email(
             SendEmailParams(
                 user_id="user-123",
                 to="bounced@example.com",
@@ -60,7 +65,7 @@ async def main():
 
     # Send to non-suppressed email (will succeed)
     print("\nSending to non-suppressed email...")
-    transaction = await sendfn.send_email(
+    transaction = await client.send_email(
         SendEmailParams(
             user_id="user-123",
             to="valid@example.com",
@@ -72,10 +77,10 @@ async def main():
 
     # Remove from suppression list
     print("\nRemoving email from suppression list...")
-    await sendfn.remove_from_suppression_list("bounced@example.com")
+    await client.remove_from_suppression_list("bounced@example.com")
 
     # Verify removal
-    result = await sendfn.check_suppression_list("bounced@example.com")
+    result = await client.check_suppression_list("bounced@example.com")
     print(f"Is bounced@example.com still suppressed? {result['suppressed']}")
 
 

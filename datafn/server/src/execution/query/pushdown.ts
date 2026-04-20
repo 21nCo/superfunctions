@@ -11,6 +11,7 @@
 
 import type { DatafnSchema } from "../../core-types.js";
 import { resolveCapabilities, getCapabilityFields } from "@datafn/core";
+import type { CapabilityEntry, ShareableCapability } from "@datafn/core";
 import type { Adapter, WhereClause } from "@superfunctions/db";
 import type { DFQLQuery, QueryResult } from "./dfql.js";
 import { convertDfqlFilters, convertDfqlSort } from "./planner.js";
@@ -24,6 +25,7 @@ export interface QueryMetadata {
   includeTrashed?: boolean;
   includeArchived?: boolean;
   shareableAccessIds?: string[];
+  hasShareableScopeAccess?: boolean;
   accessMode?: "namespace" | "sharedWithMe";
   namespaceFilter?: string[];
   /**
@@ -51,6 +53,10 @@ export interface AclIndexCoverageResult {
   usesIndex: boolean;
   requiredIndexes: string[];
   missingIndexes: string[];
+}
+
+function isShareableCapability(entry: CapabilityEntry): entry is ShareableCapability {
+  return typeof entry === "object" && entry !== null && "shareable" in entry;
 }
 
 function normalizeIndexNames(indexes: readonly string[]): string[] {
@@ -151,23 +157,22 @@ export function injectCapabilityAutoFilters(
     autoFilters.push({ isArchived: { $ne: true } });
   }
 
-  const shareableCapability = resolvedCapabilities.find(
-    (capability: unknown): capability is { shareable: { levels: string[]; default: "private" | "shared" } } =>
-      typeof capability === "object" &&
-      capability !== null &&
-      "shareable" in (capability as Record<string, unknown>),
-  );
+  const shareableCapability = resolvedCapabilities.find(isShareableCapability);
   if (
     shareableCapability?.shareable.default === "private" &&
     metadata.accessMode !== "sharedWithMe"
   ) {
+    if (metadata.hasShareableScopeAccess === true) {
+      // Scope grants already authorize the full namespace resource set.
+    } else {
     const accessIds = Array.isArray(metadata.shareableAccessIds)
       ? metadata.shareableAccessIds
       : [];
-    if (accessIds.length === 0) {
-      autoFilters.push({ id: { $in: ["__datafn_no_access__"] } });
-    } else {
-      autoFilters.push({ id: { $in: accessIds } });
+      if (accessIds.length === 0) {
+        autoFilters.push({ id: { $in: ["__datafn_no_access__"] } });
+      } else {
+        autoFilters.push({ id: { $in: accessIds } });
+      }
     }
   }
 
@@ -454,24 +459,24 @@ function projectFieldsPushdown(
   }
   for (const f of resourceSchema.fields) baseFields.add(f.name);
 
+  const assignBaseFields = (target: Record<string, unknown>) => {
+    for (const field of baseFields) {
+      if (record[field] !== undefined) {
+        target[field] = record[field];
+      }
+    }
+  };
+
   let result: Record<string, unknown>;
 
   if (!select || select.length === 0) {
     // No select: return id + all schema-defined fields present in record
-    result = { id: record.id };
-    for (const f of resourceSchema.fields) {
-      if (record[f.name] !== undefined) {
-        result[f.name] = record[f.name];
-      }
-    }
+    result = {};
+    assignBaseFields(result);
   } else if (select.includes("*")) {
     // Bare wildcard: all base fields + any additional explicit tokens
-    result = { id: record.id };
-    for (const f of resourceSchema.fields) {
-      if (record[f.name] !== undefined) {
-        result[f.name] = record[f.name];
-      }
-    }
+    result = {};
+    assignBaseFields(result);
     for (const token of select) {
       if (token !== "*" && baseFields.has(token) && !(token in result)) {
         result[token] = record[token];

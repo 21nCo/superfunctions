@@ -128,7 +128,7 @@ editLink: {
 | **Type** | `Array<Record<string, unknown>>` |
 | **Required** | no |
 | **Default** | `undefined` |
-| **Description** | Declarative actions (e.g. “View source”) surfaced by UI packages. |
+| **Description** | Declarative actions surfaced by UI packages. Each entry is passed through to the page surface as-is. Adapters expose them via `surface.pageActions` and components like `DocsContent` render them in the `pageActionsSlot` region. Common use: edit links, “View source” buttons, or feedback widgets. |
 
 ---
 
@@ -344,6 +344,27 @@ sidebars: {
 | **Required** | no |
 | **Default** | internal default in `@docsfn/core` |
 | **Description** | Hard cap for serialized search JSON size. |
+
+### `search.routeScopeOverrides`
+
+| | |
+| --- | --- |
+| **Type** | `DocsSearchRouteScopeOverride[]` — each entry `{ pattern: string; scope: string }` |
+| **Required** | no |
+| **Default** | `undefined` |
+| **Description** | Override the search scope for routes matching a glob pattern. Useful when some pages belong to a different logical scope than their collection. For example, an API reference page under the `docs` collection can be forced into the `api` scope. Resolved by **`resolveSearchScopeForRoute`** at index-build time. |
+
+**Example**
+
+```typescript
+search: {
+  enabled: true,
+  scopes: ["docs", "api"],
+  routeScopeOverrides: [
+    { pattern: "docs/api/**", scope: "api" },
+  ],
+},
+```
 
 ---
 

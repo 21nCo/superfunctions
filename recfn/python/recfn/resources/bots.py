@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from ..client import RecFnHttpClient
-from ..types import Bot, BotConfig, _parse_bot
+from ..types import AggregateBotDetail, Bot, BotConfig, _parse_aggregate_bot_detail, _parse_bot
 
 
 def create_bots_resource(client: RecFnHttpClient) -> object:
@@ -35,7 +35,7 @@ def create_bots_resource(client: RecFnHttpClient) -> object:
         async def get(self, bot_id: str) -> dict[str, Any]:
             res = await client.request("GET", f"/api/v1/bots/{bot_id}")
             if res.get("ok") and res.get("data"):
-                res["data"] = _parse_bot(res["data"])
+                res["data"] = _parse_aggregate_bot_detail(res["data"])
             return res
 
         async def list(

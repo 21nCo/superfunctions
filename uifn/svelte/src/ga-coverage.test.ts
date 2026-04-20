@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { K } from '@uifn/core/aria/keys';
 import Badge from './Badge.svelte';
@@ -8,6 +8,7 @@ import CollapsibleTest from './testing/CollapsibleTest.svelte';
 import HoverCardTest from './testing/HoverCardTest.svelte';
 import LabelTest from './testing/LabelTest.svelte';
 import MenuBarTest from './testing/MenuBarTest.svelte';
+import ToastQueueTest from './testing/ToastQueueTest.svelte';
 import ToggleGroupTest from './testing/ToggleGroupTest.svelte';
 import VirtualizedListTest from './testing/VirtualizedListTest.svelte';
 
@@ -55,21 +56,25 @@ describe('Missing GA family and helper coverage (Svelte)', () => {
   });
 
   it('menu-bar opens and closes content from trigger interactions', async () => {
-    render(MenuBarTest, { value: 'file' });
+    render(MenuBarTest, { defaultValue: '' });
 
-    const trigger = screen.getByRole('menuitem', { name: 'File' });
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
-    expect(screen.getByText('New File')).toBeInTheDocument();
-    await fireEvent.keyDown(trigger, { key: K.ARROW_DOWN });
-    expect(screen.getByText('New File')).toBeInTheDocument();
+    const fileTrigger = screen.getByRole('menuitem', { name: 'File' });
+    const editTrigger = screen.getByRole('menuitem', { name: 'Edit' });
+    expect(fileTrigger).toHaveAttribute('aria-haspopup', 'menu');
+    fileTrigger.focus();
+    await fireEvent.keyDown(fileTrigger, { key: K.ARROW_RIGHT });
+    expect(editTrigger).toHaveFocus();
   });
 
-  it('avatar fallback renders when image source is missing', () => {
-    render(AvatarTest, { src: undefined });
+  it('avatar fallback respects deterministic delay timing', async () => {
+    vi.useFakeTimers();
+    render(AvatarTest, { src: undefined, delayMs: 50 });
 
+    expect(screen.queryByText('Fallback')).not.toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(50);
     expect(screen.getByText('Fallback')).toBeVisible();
     expect(screen.queryByRole('img', { name: 'Profile image' })).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it('badge emits deterministic role and variant metadata', () => {
@@ -110,16 +115,23 @@ describe('Missing GA family and helper coverage (Svelte)', () => {
     expect(separator).toHaveAttribute('data-orientation', 'vertical');
   });
 
-  it('virtualized list renders only a bounded window of rows', async () => {
+  it('virtualized list keeps rendering bounded at 10k rows', async () => {
     render(VirtualizedListTest, {
-      itemCount: 200,
+      itemCount: 10_000,
       itemHeight: 20,
       height: 60,
-      overscan: 3,
     });
 
     expect(screen.getByText('Row 0')).toBeInTheDocument();
-    expect(screen.queryByText('Row 150')).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('virt-row').length).toBeLessThan(200);
+    expect(screen.queryByText('Row 9999')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('virt-row').length).toBeLessThan(20);
+  });
+
+  it('preserves 25 queued toast items without dropping state', () => {
+    render(ToastQueueTest);
+
+    expect(screen.getAllByText(/^Toast \d+$/)).toHaveLength(25);
+    expect(screen.getByText('Toast 1')).toBeVisible();
+    expect(screen.getByText('Toast 25')).toBeVisible();
   });
 });

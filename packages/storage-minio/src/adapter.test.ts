@@ -141,6 +141,19 @@ describe('@superfunctions/storage-minio', () => {
       expect(adapter.name).toBe('minio');
     });
 
+    it('applies explicit port even when endpoint already includes a protocol', () => {
+      const customAdapter = createMinIOStorageAdapter({
+        endpoint: 'http://localhost',
+        bucket: 'test',
+        accessKeyId: 'key',
+        secretAccessKey: 'secret',
+        port: 9000,
+        useSSL: false,
+      });
+
+      expect(customAdapter.name).toBe('minio');
+    });
+
     it('should support both SSL and non-SSL endpoints', () => {
       const sslAdapter = createMinIOStorageAdapter({
         endpoint: 'minio.example.com',

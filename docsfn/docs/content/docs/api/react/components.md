@@ -62,9 +62,8 @@ Renders **`docsfn-layout`**: optional top bar, sidebar column (**`DocsSidebar`**
 | **`surface`** | `DocsPageSurface?` | Supplies `sidebar` and `route` when props below omitted |
 | **`sidebar`** | `Sidebar?` | From manifest; required unless on `surface` |
 | **`activePath`** | `string?` | Highlights current item |
-| **`defaultCollapsedGroups`** | `string[]?` | Group ids start collapsed |
 
-Uses **`@uifn/react`** **`Collapsible`** + **`ScrollArea`** for nested sidebar items.
+Uses **`@uifn/react`** **`Collapsible`** + **`ScrollArea`** for nested sidebar items. Groups expand when `item.expanded === true` or when a descendant link matches `activePath`.
 
 ## `Breadcrumbs`
 
@@ -94,6 +93,7 @@ Renders compiled markdown blocks (headings, paragraphs, code, mermaid placeholde
 | **`allowUnsafeHtml`** | `boolean?` | Default **`false`** |
 | **`unsafeHtmlAllowlist`** | `string[]?` | Tag allowlist when unsafe HTML enabled |
 | **`components`** | `Record<string, ComponentType<{children?}>>?` | Custom MDX-style components by name |
+| **`renderMermaid`** | `(block: MermaidBlock) => ReactNode?` | Custom render function for Mermaid diagram blocks |
 | **`pageActionsSlot`** | `ReactNode?` | Injected near the article actions region |
 
 Trust path: when using **`compiled`**, core’s **`assertCompiledContentTrusted`** applies.

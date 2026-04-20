@@ -1,6 +1,15 @@
 import type { SearchAdapter } from "@searchfn/adapter-contracts";
 import { parseJsonBody, mapAdapterErrorToResponse, okResponse } from "../http/errors.js";
-import { validateResource, validateQuery, validateLimit } from "../http/validation.js";
+import {
+  validateFieldBoosts,
+  validateFields,
+  validateFuzzy,
+  validateLimit,
+  validateObjectBody,
+  validatePrefix,
+  validateQuery,
+  validateResource,
+} from "../http/validation.js";
 import type { ServerLimits } from "../http/validation.js";
 import type { ServerContext } from "../server.js";
 
@@ -9,7 +18,8 @@ export function searchHandler(adapter: SearchAdapter, limits: ServerLimits) {
     const parsed = await parseJsonBody(req, limits.maxPayloadBytes);
     if (!parsed.ok) return parsed.response;
 
-    const body = parsed.data as Record<string, unknown>;
+    const { value: body, error: bodyErr } = validateObjectBody(parsed.data);
+    if (bodyErr) return bodyErr;
 
     const resourceErr = validateResource(body.resource);
     if (resourceErr) return resourceErr;
@@ -22,6 +32,18 @@ export function searchHandler(adapter: SearchAdapter, limits: ServerLimits) {
       limits.maxLimit,
     );
     if (limitErr) return limitErr;
+
+    const fieldsErr = validateFields(body.fields);
+    if (fieldsErr) return fieldsErr;
+
+    const fuzzyErr = validateFuzzy(body.fuzzy);
+    if (fuzzyErr) return fuzzyErr;
+
+    const prefixErr = validatePrefix(body.prefix);
+    if (prefixErr) return prefixErr;
+
+    const fieldBoostsErr = validateFieldBoosts(body.fieldBoosts);
+    if (fieldBoostsErr) return fieldBoostsErr;
 
     try {
       const ids = await adapter.search({

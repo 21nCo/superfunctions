@@ -1,4 +1,6 @@
 timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-20T09:35:26Z,unknown,Codex Desktop,audit,audit,,.conduct/audits/2026-03-20-er70p4kq-full-audit.md
 2026-03-20T10:57:27Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-20-audit-fix-dhrtycgi-spec
+2026-03-25T06:08:18Z,unknown,Codex Desktop,audit,audit,,.conduct/audits/2026-03-25-ptnwmntx-full-audit.md
+2026-03-25T06:20:11Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec
 2026-03-26T05:48:27Z,unknown,Codex Desktop,spec,spec,,.conduct/specs/2026-03-26-new-mrxtiesy-spec

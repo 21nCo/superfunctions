@@ -13,7 +13,7 @@
 - Spec id: `dhrtycgi`
 - Input paths read:
   - `/Users/serro/Documents/dev/n/superfunctions/AGENTS.md`
-  - `/Users/serro/Documents/dev/n/superfunctions/uifn/SPEC.md`
+  - `uifn/.conduct/SPEC.md`
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/core/README.md`
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/react/README.md`
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/vue/README.md`
@@ -26,7 +26,7 @@
   - `/Users/serro/Documents/dev/n/superfunctions/uifn/.conduct/audits/2026-03-20-er70p4kq-full-audit.md`
 - Audit reference:
   - Audit path: `/Users/serro/Documents/dev/n/superfunctions/uifn/.conduct/audits/2026-03-20-er70p4kq-full-audit.md`
-  - Audited spec bundle reference: `N/A`; the audit was performed against legacy `uifn/SPEC.md` plus package docs, not an existing `uifn/.conduct/specs/*` bundle
+  - Audited spec bundle reference: `N/A`; the audit was performed against legacy `uifn/.conduct/SPEC.md` plus package docs, not an existing `uifn/.conduct/specs/*` bundle
 
 # Overview
 
@@ -395,7 +395,7 @@ interface UIFnReleaseManifest {
 
 ## Documentation and support matrix semantics
 
-- `uifn/SPEC.md`, package READMEs, and package manifests MUST agree on supported adapters, licenses, install commands, exported component families, and GA/experimental labels.
+- `uifn/.conduct/SPEC.md`, package READMEs, and package manifests MUST agree on supported adapters, licenses, install commands, exported component families, and GA/experimental labels.
 - Public packages MUST have a changelog or equivalent release-notes surface.
 - `@uifn/files` MUST either be documented as part of the `uifn` surface or removed from the `uifn` scope.
 

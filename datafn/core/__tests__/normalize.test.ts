@@ -72,6 +72,20 @@ describe("normalizeDfql", () => {
     expect(normalizeDfql(true)).toBe(true);
     expect(normalizeDfql(null)).toBe(null);
   });
+
+  it("serializes Date objects without collapsing them to empty objects", () => {
+    expect(normalizeDfql(new Date("2024-01-01T00:00:00.000Z"))).toBe(
+      "2024-01-01T00:00:00.000Z",
+    );
+  });
+
+  it("drops unsafe object keys while normalizing", () => {
+    const poisoned = Object.create(null) as Record<string, unknown>;
+    poisoned.safe = 1;
+    poisoned.__proto__ = { polluted: true };
+
+    expect(normalizeDfql(poisoned)).toEqual({ safe: 1 });
+  });
 });
 
 describe("dfqlKey", () => {
@@ -133,5 +147,9 @@ describe("dfqlKey", () => {
     expect(key1).toBe(
       '{"filters":{"isArchived":false},"resource":"task","select":["id","label"],"version":1}'
     );
+  });
+
+  it("returns a string for undefined input", () => {
+    expect(dfqlKey(undefined)).toBe("undefined");
   });
 });

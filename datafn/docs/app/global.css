@@ -3,4 +3,4 @@
 @import "fumadocs-ui/css/preset.css";
 
 /* Shared theme package source: @superfunctions/docs-theme/tokens.css */
-@import "../../../packages/docs-theme/src/tokens.css";
+@import "@superfunctions/docs-theme/tokens.css";

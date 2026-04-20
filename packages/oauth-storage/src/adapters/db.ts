@@ -60,9 +60,9 @@ type StateRow = {
   provider_id: string;
   subject_kind: string;
   subject_key: string;
-  subject_payload: string;
+  subject_payload: unknown;
   redirect_uri: string;
-  requested_scopes: string;
+  requested_scopes: unknown;
   code_verifier?: string | null;
   nonce?: string | null;
   created_at: string;
@@ -88,11 +88,11 @@ type ConsentRow = {
   provider_id: string;
   subject_kind: string;
   subject_key: string;
-  subject_payload: string;
-  scope_set: string;
+  subject_payload: unknown;
+  scope_set: unknown;
   granted_at: string;
   updated_at: string;
-  metadata?: string | null;
+  metadata?: unknown;
 };
 
 type RevocationFailureRow = {
@@ -100,14 +100,14 @@ type RevocationFailureRow = {
   provider_id: string;
   subject_kind: string;
   subject_key: string;
-  subject_payload: string;
+  subject_payload: unknown;
   token_id?: string | null;
   token_type_hint?: string | null;
   error_code: string;
   error_message: string;
   retryable: boolean;
   occurred_at: string;
-  metadata?: string | null;
+  metadata?: unknown;
 };
 
 export class DbAdapterOAuthStateStore implements OAuthStateStore {
@@ -154,8 +154,11 @@ export class DbAdapterOAuthStateStore implements OAuthStateStore {
       });
 
       return mapStateRowToRecord(updated);
-    } catch {
-      return null;
+    } catch (error) {
+      if (isAdapterNotFoundError(error)) {
+        return null;
+      }
+      throw error;
     }
   }
 
@@ -165,6 +168,15 @@ export class DbAdapterOAuthStateStore implements OAuthStateStore {
       where: [{ field: "expires_at", operator: "lt", value: before }]
     });
   }
+}
+
+function isAdapterNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const raw = error as { code?: unknown; name?: unknown };
+  return raw.code === "ADAPTER_NOT_FOUND" || raw.name === "NotFoundError";
 }
 
 export class DbAdapterTokenVault implements TokenVault {
@@ -205,18 +217,15 @@ export class DbAdapterTokenVault implements TokenVault {
   }
 
   async rotateKey(tokenId: string, newKeyRef: string): Promise<void> {
-    try {
-      await this.adapter.update({
-        model: this.model,
-        where: [{ field: "token_id", operator: "eq", value: tokenId }],
-        data: {
-          key_ref: newKeyRef,
-          updated_at: new Date().toISOString()
-        }
-      });
-    } catch {
+    const existing = await this.get(tokenId);
+    if (!existing || existing.keyRef === newKeyRef) {
       return;
     }
+
+    throw new OAuthDbAdapterError(
+      "INTERNAL_ERROR",
+      "Token key rotation requires re-encryption; use EncryptedTokenVault.rotateKey"
+    );
   }
 
   async deleteByConnection(connectionId: string): Promise<void> {
@@ -399,7 +408,7 @@ function mapStateRowToRecord(row: StateRow): OAuthStateRecord {
     providerId: row.provider_id,
     subject,
     redirectUri: row.redirect_uri,
-    requestedScopes: JSON.parse(row.requested_scopes) as string[],
+    requestedScopes: parseStringArrayValue(row.requested_scopes, "requested_scopes"),
     codeVerifier: row.code_verifier ?? undefined,
     nonce: row.nonce ?? undefined,
     createdAt: row.created_at,
@@ -457,10 +466,10 @@ function mapConsentRowToRecord(row: ConsentRow): OAuthConsentRecord {
     consentId: row.consent_id,
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
-    scopes: JSON.parse(row.scope_set) as string[],
+    scopes: parseStringArrayValue(row.scope_set, "scope_set"),
     grantedAt: row.granted_at,
     updatedAt: row.updated_at,
-    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+    metadata: row.metadata ? parseRecordValue(row.metadata, "metadata") : undefined
   };
 }
 
@@ -487,17 +496,61 @@ function mapRevocationFailureRowToRecord(row: RevocationFailureRow): OAuthRevoca
     providerId: row.provider_id,
     subject: parseSubject(row.subject_payload),
     tokenId: row.token_id ?? undefined,
-    tokenTypeHint: row.token_type_hint as "access_token" | "refresh_token" | undefined,
+    tokenTypeHint: parseTokenTypeHint(row.token_type_hint),
     errorCode: row.error_code,
     errorMessage: row.error_message,
     retryable: row.retryable,
     occurredAt: row.occurred_at,
-    metadata: row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined
+    metadata: row.metadata ? parseRecordValue(row.metadata, "metadata") : undefined
   };
 }
 
-function parseSubject(raw: string): OAuthStoredSubject {
-  const subject = JSON.parse(raw) as OAuthStoredSubject;
+function parseSubject(raw: unknown): OAuthStoredSubject {
+  const subject = parseJsonValue<OAuthStoredSubject>(raw);
   validateOAuthStoredSubject(subject);
   return cloneOAuthStoredSubject(subject);
+}
+
+function parseJsonValue<T>(raw: unknown): T {
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      throw new OAuthDbAdapterError("INTERNAL_ERROR", "persisted JSON value must be valid JSON");
+    }
+  }
+
+  return raw as T;
+}
+
+function parseStringArrayValue(raw: unknown, fieldName: string): string[] {
+  const value = parseJsonValue<unknown>(raw);
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new OAuthDbAdapterError("INTERNAL_ERROR", `${fieldName} must be an array of strings`);
+  }
+
+  return [...value];
+}
+
+function parseRecordValue(raw: unknown, fieldName: string): Record<string, unknown> {
+  const value = parseJsonValue<unknown>(raw);
+  if (!isPlainRecord(value)) {
+    throw new OAuthDbAdapterError("INTERNAL_ERROR", `${fieldName} must be an object`);
+  }
+
+  return { ...value };
+}
+
+function parseTokenTypeHint(value: string | null | undefined): "access_token" | "refresh_token" | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (value === "access_token" || value === "refresh_token") {
+    return value;
+  }
+  throw new OAuthDbAdapterError("INTERNAL_ERROR", "token_type_hint must be access_token or refresh_token");
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

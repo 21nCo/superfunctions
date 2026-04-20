@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { Adapter, TableSchema } from '@superfunctions/db';
 import type { Route } from '@superfunctions/http';
 import {
@@ -168,7 +169,7 @@ function createSocialRoutes(
         const result = await flowService.start({
           providerId,
           redirectUri: callbackUri,
-          scopes: authorizeScopes(providerSettings, requestId),
+          scopes: await authorizeScopes(providerSettings, requestId),
           subject: {
             kind: 'browser-auth',
             intentId: createIdentifier('intent'),
@@ -646,17 +647,17 @@ function resolveProviderSettings(
   };
 }
 
-function authorizeScopes(
+async function authorizeScopes(
   settings: ResolvedProviderSettings,
   requestId: string
-): string[] {
+): Promise<string[]> {
   const registry = createDefaultProviderPolicyRegistry(() => new Date().toISOString());
   registry.assertOperationAllowed({
     providerId: settings.providerId,
     operation: 'auth.signin',
     featureMode: 'metadata-only'
   });
-  registry.validateScopes({
+  await registry.validateScopes({
     providerId: settings.providerId,
     feature: 'auth.social.profile',
     requestedScopes: settings.scopes,
@@ -810,6 +811,7 @@ function createOAuthSharedSchemas(): TableSchema[] {
         {
           type: mapOAuthFieldType(field.type),
           required: !field.nullable,
+          unique: field.primaryKey || field.unique,
           fieldName: field.name
         }
       ])
@@ -906,11 +908,13 @@ function appendSessionHandoffToReturnTarget(
   issued: Awaited<ReturnType<typeof issueSession>>
 ): string {
   const url = new URL(returnTo);
-  url.searchParams.set('token', issued.sessionToken);
-  url.searchParams.set('sessionId', issued.session.id);
+  const fragment = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash);
+  fragment.set('token', issued.sessionToken);
+  fragment.set('sessionId', issued.session.id);
   if (issued.session.expiresAt) {
-    url.searchParams.set('expiresAt', issued.session.expiresAt.toISOString());
+    fragment.set('expiresAt', issued.session.expiresAt.toISOString());
   }
+  url.hash = fragment.toString();
   return url.toString();
 }
 
@@ -992,8 +996,7 @@ function createConnectionId(providerId: AuthFnSocialProviderId, userId: string):
 }
 
 function createIdentifier(prefix: string): string {
-  const random = Math.random().toString(36).slice(2, 12);
-  return `${prefix}_${random}`;
+  return `${prefix}_${randomBytes(8).toString('hex')}`;
 }
 
 function buildHookContext(

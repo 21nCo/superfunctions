@@ -32,6 +32,13 @@
   "publishConfig": {
     "access": "public"
   },
+  "superfunctions": {
+    "initFunction": "createAuthFn",
+    "schemaVersion": 1,
+    "libraryNames": [
+      "authfn"
+    ]
+  },
   "dependencies": {
     "@superfunctions/auth": "*",
     "@superfunctions/db": "*",

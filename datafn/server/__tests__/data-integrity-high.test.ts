@@ -202,6 +202,32 @@ describe("DI-003: ChainedSequenceStore prevents duplicate sequences on Redis→D
 
     expect(ensureMinSeqSpy).not.toHaveBeenCalled();
   });
+
+  it("TV-DI-003d: ensureMinSeq uses a CAS filter after create loses a race", async () => {
+    const internal = makeInternalApi({
+      findOne: vi
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ next_server_seq: 5 }),
+      create: vi.fn(async () => {
+        throw new Error("duplicate");
+      }),
+      update: vi.fn(async () => 0),
+    });
+    const db = { internal } as any;
+    const store = new DatabaseSequenceStore(db);
+
+    await store.ensureMinSeq("default", 10);
+
+    expect(internal.update).toHaveBeenCalledWith(
+      "__datafn_meta",
+      [
+        { field: "namespace", op: "eq", value: "default" },
+        { field: "next_server_seq", op: "eq", value: 5 },
+      ],
+      { next_server_seq: 11 },
+    );
+  });
 });
 
 // ─── REL-008: Redis rate limiter uses Lua eval for atomic TTL ─────────────

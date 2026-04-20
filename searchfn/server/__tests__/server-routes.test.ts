@@ -194,6 +194,19 @@ describe("@searchfn/server routes", () => {
       expect(body.result.ids).toBeDefined();
       expect(Array.isArray(body.result.ids)).toBe(true);
     });
+
+    it("rejects invalid optional search parameters", async () => {
+      const server = await createSearchFnServer({ adapter });
+      const { status, body } = await req(server.router, "POST", "/searchfn/search", {
+        resource: "tasks",
+        query: "hello",
+        fields: [""],
+      });
+
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_INVALID");
+    });
   });
 
   // ── POST /search-all ──
@@ -255,6 +268,24 @@ describe("@searchfn/server routes", () => {
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
       expect(body.result.cleared).toBe("tasks");
+    });
+
+    it("rejects non-object request bodies", async () => {
+      const server = await createSearchFnServer({ adapter });
+      const { status, body } = await req(server.router, "POST", "/searchfn/clear", ["tasks"]);
+
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_INVALID");
+    });
+
+    it("rejects missing resource on clear", async () => {
+      const server = await createSearchFnServer({ adapter });
+      const { status, body } = await req(server.router, "POST", "/searchfn/clear", {});
+
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe("DFQL_INVALID");
     });
   });
 

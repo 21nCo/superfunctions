@@ -1,12 +1,14 @@
 """Tests for RecFn WebSocket transcript stream."""
 
 import json
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
 
 import pytest
 
 from recfn.client import RecFnHttpClient
-from recfn.ws import transcript_stream
+from recfn.ws import STATUS_REQUIRED_KEYS, transcript_stream
 
 
 @pytest.mark.asyncio
@@ -85,3 +87,55 @@ async def test_get_ws_url() -> None:
     assert "api.example.com" in url
     assert "/ws/transcripts/bot-1" in url
     assert "token=sk-test" in url
+
+
+@pytest.mark.asyncio
+async def test_transcript_stream_uses_canonical_status_frames() -> None:
+    client = RecFnHttpClient(base_url="https://api.example.com", api_key="sk-test")
+
+    messages = [
+        json.dumps({"type": "status", "data": {"status": "recording"}}),
+        json.dumps({"type": "status", "data": {"botStatus": "recording"}}),
+    ]
+
+    mock_ws = MagicMock()
+    mock_ws.__aiter__.return_value = iter(messages)
+    mock_ws.send = AsyncMock()
+
+    mock_connect = MagicMock()
+    mock_connect.return_value.__aenter__ = AsyncMock(return_value=mock_ws)
+    mock_connect.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("recfn.ws.websockets.connect", mock_connect):
+        events = []
+        async for event_type, data in transcript_stream(client, "bot-123"):
+            events.append((event_type, data))
+            if len(events) >= 1:
+                break
+
+        assert events == [("status", {"bot_status": "recording"})]
+
+
+def test_ws_schema_matches_shared_core_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            (
+                "import { TRANSCRIPT_STREAM_FRAME_SCHEMA } from 'recfn'; "
+                "console.log(JSON.stringify(TRANSCRIPT_STREAM_FRAME_SCHEMA));"
+            ),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    schema = json.loads(result.stdout)
+    assert schema["status"]["requiredKeys"] == ["botStatus"]
+    assert schema["participant_left"]["requiredKeys"] == ["participantId"]
+    assert schema["error"]["requiredKeys"] == ["code", "message"]
+    assert list(STATUS_REQUIRED_KEYS) == ["botStatus"]

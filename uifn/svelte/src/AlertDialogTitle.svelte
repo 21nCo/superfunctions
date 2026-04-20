@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -7,7 +7,11 @@
   }
 
   let { children, ...rest }: Props = $props();
-  const ctx = getContext<any>('alert-dialog');
+  const ctx = getRequiredContext<any>(
+    'alert-dialog',
+    'AlertDialogTitle',
+    'AlertDialog components must be used within AlertDialog'
+  );
 </script>
 
 <h2 id={`${ctx.baseId}-title`} {...rest}>

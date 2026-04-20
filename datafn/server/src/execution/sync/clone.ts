@@ -237,7 +237,7 @@ export async function executeClone(
         try {
           if (remaining <= 0) {
             data[tableName] = [];
-            next[tableName] = tableCounts[tableName] > 0 ? null : null;
+            next[tableName] = tableCounts[tableName] > 0 ? "" : null;
           } else {
             const records = await db.findMany({
               model: tableName,
@@ -264,6 +264,7 @@ export async function executeClone(
           logger?.warn("Clone: auto-paginate fetch failed", { error: String(error), resource: tableName, operation: "clone-paginate" });
           data[tableName] = [];
           cursors[tableName] = "0";
+          next[tableName] = null;
         }
       }
     } else {

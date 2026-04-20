@@ -5,7 +5,7 @@ The `sendfn` SDK is a unified communications platform that provides email, SMS, 
 ## Features
 
 - **Unified API**: Send emails, SMS, and push notifications through a single interface.
-- **Adapter-Based Providers**: Inject your preferred providers (e.g., AWS SES for email, Console/Twilio for SMS).
+- **Adapter-Based Providers**: Inject your preferred providers (for example AWS SES for email and the shipped console SMS adapter for development).
 - **Built-in API Router**: Optional REST API endpoints for remote management.
 - **Template Engine**: Lightweight engine with default templates (Welcome, Password Reset, etc.).
 - **Suppression Management**: Built-in handling for email bounces and complaints.
@@ -17,16 +17,32 @@ The `sendfn` SDK is a unified communications platform that provides email, SMS, 
 npm install sendfn @superfunctions/db @superfunctions/http
 ```
 
+## Verify From Repo Root
+
+```bash
+npm install
+npm run build --workspace sendfn/typescript
+npm run lint --workspace sendfn/typescript
+npm test --workspace sendfn/typescript -- --run
+```
+
+Inside the package itself you can also run:
+
+```bash
+npm run release:verify
+```
+
 ## Quick Start
 
 ### 1. Initialize the Client
 
 ```typescript
 import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';
-import { drizzleAdapter } from '@superfunctions/db/adapters';
+import type { Adapter } from '@superfunctions/db';
 
-// 1. Setup your shared database adapter
-const database = drizzleAdapter({ db, dialect: 'postgres' });
+// 1. Setup your shared database adapter.
+// Replace this placeholder with drizzle/prisma/kysely/etc from @superfunctions/db.
+const database = {} as Adapter;
 
 // 2. Initialize sendfn with desired providers
 const client = sendfn({
@@ -63,6 +79,7 @@ app.listen(3000);
 // POST /sms   - Send an SMS
 // POST /push  - Send a push notification
 // GET  /events - Query communication events
+// POST /webhooks/aws-ses - Process verified SES lifecycle events
 ```
 
 ## Configuration
@@ -128,16 +145,25 @@ await client.push({
 
 ### AWS SES Webhooks
 
-To handle bounces and complaints automatically, mount the webhook handler:
+To handle bounces and complaints automatically, mount the webhook handler. Preserve the raw SNS envelope JSON exactly as AWS sends it; production deployments must keep the full SNS signature fields intact so the webhook handler can perform signature verification before any delivery, bounce, or complaint event mutates state.
 
 ```typescript
-app.post('/webhooks/ses', async (req, res) => {
+app.post('/webhooks/aws-ses', async (req, res) => {
   const handler = client.getWebhookHandlers().awsSes;
   // req.body should be the SNS notification JSON
   await handler.handleSnsNotification(req.body);
   res.sendStatus(200);
 });
 ```
+
+Do not proxy, partially parse, or reshape the SNS payload before passing it to `handleSnsNotification`.
+
+## Examples
+
+- `examples/basic-email.ts`
+- `examples/custom-templates.ts`
+- `examples/push-notification.ts`
+- `examples/event-handling.ts`
 
 ## Database Schema
 

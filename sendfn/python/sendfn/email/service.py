@@ -7,12 +7,15 @@ from typing import Optional
 from superfunctions.db import Adapter
 
 from ..database import helpers as db_helpers
-from ..errors import EmailProviderError, SuppressionError, TemplateError
+from ..errors import EmailProviderError, SuppressionError, TemplateError, ValidationError
 from ..events.tracker import EventTracker
-from ..models import EmailConfig, EmailTransaction, SendEmailParams
+from ..models import Attachment, EmailConfig, EmailTransaction, SendEmailParams
 from ..suppression.manager import SuppressionManager
-from .provider import EmailProvider, SendEmailRequest
+from .provider import EmailProvider, SendEmailRequest, SendEmailResponse
 from .templates import TemplateEngine, TemplateRegistry
+
+DEFAULT_MAX_RECIPIENTS = 50
+DEFAULT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 
 class EmailService:
@@ -30,19 +33,6 @@ class EmailService:
         retry_attempts: int = 3,
         retry_delay: int = 1000,
     ) -> None:
-        """Initialize the email service.
-
-        Args:
-            provider: Email provider
-            db: Database adapter
-            template_engine: Template engine
-            template_registry: Template registry
-            suppression_manager: Suppression manager
-            event_tracker: Event tracker
-            config: Email configuration
-            retry_attempts: Number of retry attempts
-            retry_delay: Delay between retries in milliseconds
-        """
         self.provider = provider
         self.db = db
         self.template_engine = template_engine
@@ -54,28 +44,148 @@ class EmailService:
         self.retry_delay = retry_delay
 
     async def send_email(self, params: SendEmailParams) -> EmailTransaction:
-        """Send an email.
+        """Send an email."""
+        recipients = self._normalize_recipients(params)
+        await self._assert_recipients_not_suppressed(recipients["to"])
 
-        Args:
-            params: Email send parameters
+        rendered = self._resolve_content(params)
+        self._assert_resolved_content(rendered["subject"], rendered["html"])
+        self._assert_provider_limits(recipients, params.attachments)
 
-        Returns:
-            Email transaction
+        transaction = await db_helpers.create_email_transaction(
+            self.db,
+            {
+                "userId": params.user_id,
+                "to": recipients["to"][0],
+                "from": self.config.from_email,
+                "subject": rendered["subject"],
+                "templateId": params.template_id,
+                "templateData": params.template_data,
+                "provider": self.provider.name,
+                "providerMessageId": None,
+                "status": "pending",
+                "sentAt": None,
+                "deliveredAt": None,
+                "bouncedAt": None,
+                "complainedAt": None,
+                "metadata": params.metadata or {},
+            },
+        )
 
-        Raises:
-            SuppressionError: If recipient is suppressed
-            TemplateError: If template rendering fails
-            EmailProviderError: If email sending fails
-        """
-        # Normalize recipients
-        to_list = [params.to] if isinstance(params.to, str) else params.to
-        
-        # Check suppression list
-        if self.suppression_manager.enabled:
-            for email in to_list:
-                await self.suppression_manager.check_and_raise(email)
+        from_email = self.config.from_email
+        if self.config.from_name:
+            from_email = f"{self.config.from_name} <{self.config.from_email}>"
 
-        # Render template if templateId is provided
+        request = SendEmailRequest(
+            from_email=from_email,
+            to=recipients["to"],
+            subject=rendered["subject"],
+            html=rendered["html"],
+            text=rendered["text"],
+            cc=recipients["cc"] or None,
+            bcc=recipients["bcc"] or None,
+            attachments=params.attachments,
+            reply_to=self.config.reply_to,
+            tags={"userId": params.user_id} if params.tags is None else {**params.tags, "userId": params.user_id},
+            metadata=params.metadata,
+        )
+
+        try:
+            response = await self._send_with_retry(request)
+
+            transaction = await db_helpers.update_email_transaction(
+                self.db,
+                str(transaction.id),
+                {
+                    "status": "sent",
+                    "providerMessageId": response.provider_message_id,
+                    "sentAt": response.timestamp,
+                },
+            )
+
+            await self.event_tracker.record_event(
+                reference_id=str(transaction.id),
+                reference_type="email",
+                event_type="sent",
+                provider=self.provider.name,
+                provider_event_id=response.provider_message_id,
+                recipient_email=recipients["to"][0],
+            )
+
+            return transaction
+        except Exception as error:
+            send_error = (
+                error
+                if isinstance(error, EmailProviderError)
+                else EmailProviderError(
+                    str(error) or "Email sending failed",
+                    code="SENDFN_INTERNAL_ERROR",
+                    retryable=False,
+                    details={"provider": self.provider.name},
+                )
+            )
+
+            await db_helpers.update_email_transaction(
+                self.db,
+                str(transaction.id),
+                {
+                    "status": "failed",
+                    "metadata": {
+                        **transaction.metadata,
+                        "error": send_error.args[0],
+                        "errorCode": send_error.code,
+                    },
+                },
+            )
+
+            await self.event_tracker.record_event(
+                reference_id=str(transaction.id),
+                reference_type="email",
+                event_type="failed",
+                provider=self.provider.name,
+                recipient_email=recipients["to"][0],
+                metadata={
+                    "code": send_error.code,
+                    "message": send_error.args[0],
+                },
+            )
+
+            raise send_error
+
+    async def send_bulk_email(
+        self, recipients: list[SendEmailParams]
+    ) -> list[EmailTransaction]:
+        """Send bulk emails."""
+        results: list[EmailTransaction] = []
+        for params in recipients:
+            results.append(await self.send_email(params))
+        return results
+
+    async def get_email_status(self, transaction_id: str) -> Optional[EmailTransaction]:
+        """Get email transaction status."""
+        return await db_helpers.get_email_transaction(self.db, transaction_id)
+
+    def _normalize_recipients(self, params: SendEmailParams) -> dict[str, list[str]]:
+        return {
+          "to": list(params.to),
+          "cc": list(params.cc) if params.cc else [],
+          "bcc": list(params.bcc) if params.bcc else [],
+        }
+
+    async def _assert_recipients_not_suppressed(self, recipients: list[str]) -> None:
+        if not self.suppression_manager.enabled:
+            return
+
+        for email in recipients:
+            if await self.suppression_manager.is_suppressed(email):
+                raise SuppressionError(
+                    "Recipient is suppressed",
+                    code="SENDFN_SUPPRESSED",
+                    retryable=False,
+                    details={"recipient": email},
+                )
+
+    def _resolve_content(self, params: SendEmailParams) -> dict[str, Optional[str]]:
         subject = params.subject
         html = params.html
         text = params.text
@@ -83,187 +193,111 @@ class EmailService:
         if params.template_id:
             template = self.template_registry.get(params.template_id)
             if not template:
-                raise TemplateError(f"Template not found: {params.template_id}")
+                raise TemplateError(
+                    f"Template `{params.template_id}` was not found",
+                    code="SENDFN_TEMPLATE_NOT_FOUND",
+                    retryable=False,
+                )
 
             template_data = params.template_data or {}
-            
-            # Validate template data
             validation = self.template_engine.validate(template, template_data)
             if not validation["valid"]:
-                raise TemplateError(f"Template validation failed: {validation['errors']}")
+                raise TemplateError(
+                    "Template rendering failed validation",
+                    code="SENDFN_TEMPLATE_RENDER_ERROR",
+                    retryable=False,
+                    details={"errors": validation["errors"]},
+                )
 
-            # Render template
             subject = self.template_engine.render(template.subject, template_data)
             html = self.template_engine.render(template.html, template_data)
             if template.text:
                 text = self.template_engine.render(template.text, template_data)
 
-        # Validate we have subject and html
-        if not subject or not html:
-            raise EmailProviderError("Email must have subject and html content")
-
-        # Create email transaction (status: pending)
-        transaction_data = {
-            "userId": params.user_id,
-            "to": to_list[0],  # Store first recipient
-            "from": self.config.from_email,
-            "subject": subject,
-            "templateId": params.template_id,
-            "templateData": params.template_data,
-            "provider": self.provider.name,
-            "providerMessageId": None,
-            "status": "pending",
-            "sentAt": None,
-            "deliveredAt": None,
-            "bouncedAt": None,
-            "complainedAt": None,
-            "metadata": params.metadata or {},
+        return {
+            "subject": subject.strip() if subject else "",
+            "html": html.strip() if html else "",
+            "text": text,
         }
-        transaction = await db_helpers.create_email_transaction(self.db, transaction_data)
 
-        # Build email request
-        from_email = self.config.from_email
-        if self.config.from_name:
-            from_email = f"{self.config.from_name} <{self.config.from_email}>"
+    def _assert_resolved_content(self, subject: str, html_body: str) -> None:
+        if not subject or not html_body:
+            raise ValidationError(
+                "Email must include a subject and HTML body",
+                code="SENDFN_VALIDATION_ERROR",
+                retryable=False,
+            )
 
-        request = SendEmailRequest(
-            from_email=from_email,
-            to=to_list,
-            subject=subject,
-            html=html,
-            text=text,
-            cc=params.cc if isinstance(params.cc, list) else ([params.cc] if params.cc else None),
-            bcc=params.bcc if isinstance(params.bcc, list) else ([params.bcc] if params.bcc else None),
-            attachments=params.attachments,
-            reply_to=self.config.reply_to,
-            tags={"userId": params.user_id} if params.tags is None else {**params.tags, "userId": params.user_id},
-            metadata=params.metadata,
+    def _assert_provider_limits(
+        self,
+        recipients: dict[str, list[str]],
+        attachments: Optional[list[Attachment]],
+    ) -> None:
+        recipient_count = len(recipients["to"]) + len(recipients["cc"]) + len(recipients["bcc"])
+        max_recipients = getattr(
+            self.provider.capabilities, "max_recipients_per_email", DEFAULT_MAX_RECIPIENTS
         )
+        max_attachment_bytes = getattr(
+            self.provider.capabilities, "max_attachment_size", DEFAULT_MAX_ATTACHMENT_BYTES
+        )
+        attachment_bytes = self._attachment_bytes(attachments)
 
-        # Send email with retry logic
-        response = await self._send_with_retry(request)
-
-        # Update transaction based on response
-        if response.success:
-            transaction = await db_helpers.update_email_transaction(
-                self.db,
-                str(transaction.id),
-                {
-                    "status": "sent",
-                    "providerMessageId": response.provider_message_id,
-                    "sentAt": datetime.utcnow(),
+        if recipient_count > max_recipients or attachment_bytes > max_attachment_bytes:
+            raise EmailProviderError(
+                "Email request exceeds provider limits",
+                code="SENDFN_PROVIDER_LIMIT",
+                retryable=False,
+                details={
+                    "recipientCount": recipient_count,
+                    "attachmentBytes": attachment_bytes,
+                    "maxRecipients": max_recipients,
+                    "maxAttachmentBytes": max_attachment_bytes,
                 },
             )
 
-            # Record sent event
-            await self.event_tracker.record_event(
-                reference_id=str(transaction.id),
-                reference_type="email",
-                event_type="sent",
-                provider=self.provider.name,
-                provider_event_id=response.provider_message_id,
-                recipient_email=to_list[0],
-            )
-        else:
-            transaction = await db_helpers.update_email_transaction(
-                self.db,
-                str(transaction.id),
-                {
-                    "status": "failed",
-                    "metadata": {
-                        **transaction.metadata,
-                        "error": response.error,
-                    },
-                },
-            )
+    def _attachment_bytes(self, attachments: Optional[list[Attachment]]) -> int:
+        if not attachments:
+            return 0
 
-            # Record failed event
-            await self.event_tracker.record_event(
-                reference_id=str(transaction.id),
-                reference_type="email",
-                event_type="failed",
-                provider=self.provider.name,
-                recipient_email=to_list[0],
-                metadata=response.error,
-            )
+        total = 0
+        for attachment in attachments:
+            if isinstance(attachment.content, bytes):
+                total += len(attachment.content)
+            else:
+                total += len(attachment.content.encode("utf-8"))
+        return total
 
-            raise EmailProviderError(f"Email sending failed: {response.error}")
+    async def _send_with_retry(self, request: SendEmailRequest) -> SendEmailResponse:
+        max_attempts = max(1, self.retry_attempts)
+        retry_delay = max(0, self.retry_delay) / 1000
+        last_error: Optional[dict[str, object]] = None
 
-        return transaction
+        for attempt in range(1, max_attempts + 1):
+            response = await self.provider.send_email(request)
 
-    async def send_bulk_email(
-        self, recipients: list[SendEmailParams]
-    ) -> list[EmailTransaction]:
-        """Send bulk emails.
+            if response.success:
+                return response
 
-        Args:
-            recipients: List of email send parameters
+            if not response.error or not response.error.get("retryable", False):
+                raise EmailProviderError(
+                    response.error["message"] if response.error else "Email sending failed",
+                    code=str(response.error.get("code", "SENDFN_INTERNAL_ERROR")) if response.error else "SENDFN_INTERNAL_ERROR",
+                    retryable=False,
+                    details={"attempts": attempt, "provider": self.provider.name},
+                )
 
-        Returns:
-            List of email transactions
-        """
-        # Send emails concurrently
-        tasks = [self.send_email(params) for params in recipients]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+            last_error = response.error
 
-        # Convert exceptions to failed transactions
-        transactions = []
-        for result in results:
-            if isinstance(result, EmailTransaction):
-                transactions.append(result)
-            elif isinstance(result, Exception):
-                # Log error but continue
-                print(f"Bulk email error: {result}")
+            if attempt < max_attempts:
+                await asyncio.sleep(retry_delay)
 
-        return transactions
-
-    async def get_email_status(self, transaction_id: str) -> Optional[EmailTransaction]:
-        """Get email transaction status.
-
-        Args:
-            transaction_id: Transaction ID
-
-        Returns:
-            Email transaction or None
-        """
-        return await db_helpers.get_email_transaction(self.db, transaction_id)
-
-    async def _send_with_retry(self, request: SendEmailRequest):
-        """Send email with retry logic.
-
-        Args:
-            request: Email send request
-
-        Returns:
-            Email send response
-        """
-        last_error = None
-        
-        for attempt in range(self.retry_attempts):
-            try:
-                response = await self.provider.send_email(request)
-                
-                if response.success:
-                    return response
-                
-                # Check if error is retryable
-                if response.error and not response.error.get("retryable", False):
-                    return response
-                
-                last_error = response.error
-                
-            except Exception as e:
-                last_error = {"code": type(e).__name__, "message": str(e), "retryable": True}
-            
-            # Wait before retry (exponential backoff)
-            if attempt < self.retry_attempts - 1:
-                delay = (self.retry_delay / 1000) * (2 ** attempt)
-                await asyncio.sleep(delay)
-        
-        # All retries failed
-        from .provider import SendEmailResponse
-        return SendEmailResponse(
-            success=False,
-            timestamp=datetime.utcnow(),
-            error=last_error or {"code": "UnknownError", "message": "All retries failed", "retryable": False},
+        raise EmailProviderError(
+            "Email provider retry limit exhausted",
+            code="SENDFN_PROVIDER_RETRY_EXHAUSTED",
+            retryable=False,
+            details={
+                "attempts": max_attempts,
+                "provider": self.provider.name,
+                "providerCode": last_error.get("code") if last_error else None,
+            },
         )

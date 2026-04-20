@@ -88,6 +88,6 @@ The `dist` exclude pattern is anchored to the root (`/dist`) for workspace bundl
 Workspace support requires no additional configuration. It activates automatically when:
 
 1. A parent `package.json` has a `workspaces` field
-2. Your service has dependencies using `workspace:*` or `*` version specifiers
+2. Your service has dependencies using `workspace:` version specifiers (for example `workspace:*` or `workspace:^1.0.0`) or `*`
 
 For monorepo-specific deployment configuration (multiple services), see [Monorepo Deployment](/docs/documentation/deployment/monorepo).

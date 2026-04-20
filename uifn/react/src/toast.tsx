@@ -3,6 +3,7 @@ import { useControllableState } from './hooks/use-controllable-state';
 import { useComposedRefs } from './hooks/use-composed-refs';
 import { Portal } from './portal';
 import { Presence } from './presence';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * ToastProvider
@@ -32,17 +33,17 @@ export const ToastProvider: React.FC<ToastProviderProps> = (props) => {
  * ToastViewport
  * -----------------------------------------------------------------------------------------------*/
 
-export interface ToastViewportProps extends React.HTMLAttributes<HTMLOListElement> {
+export interface ToastViewportProps extends React.HTMLAttributes<HTMLDivElement> {
     // Positioning handled by CSS usually
 }
 
-export const ToastViewport = React.forwardRef<HTMLOListElement, ToastViewportProps>(
+export const ToastViewport = React.forwardRef<HTMLDivElement, ToastViewportProps>(
   (props, ref) => {
     return (
       <Portal>
-        <ol
+        <div
           ref={ref}
-          role="region" // or status/log depending on aria-live
+          role="region"
           aria-label="Notifications (Alt+T)"
           style={{
               position: 'fixed',
@@ -55,7 +56,6 @@ export const ToastViewport = React.forwardRef<HTMLOListElement, ToastViewportPro
               width: '390px',
               maxWidth: '100vw',
               margin: 0,
-              listStyle: 'none',
               zIndex: 2147483647,
               outline: 'none',
               ...props.style
@@ -80,7 +80,7 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
 
-export interface ToastProps extends React.LiHTMLAttributes<HTMLLIElement> {
+export interface ToastProps extends React.HTMLAttributes<HTMLDivElement> {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -89,7 +89,7 @@ export interface ToastProps extends React.LiHTMLAttributes<HTMLLIElement> {
   forceMount?: boolean;
 }
 
-export const Toast = React.forwardRef<HTMLLIElement, ToastProps>(
+export const Toast = React.forwardRef<HTMLDivElement, ToastProps>(
   (props, ref) => {
     const {
         open: openProp,
@@ -117,7 +117,7 @@ export const Toast = React.forwardRef<HTMLLIElement, ToastProps>(
     const [offset, setOffset] = useState({ x: 0, y: 0 });
     const [isSwiping, setIsSwiping] = useState(false);
     const startPosRef = useRef({ x: 0, y: 0 });
-    const listRef = useRef<HTMLLIElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
     const composedRef = useComposedRefs(ref, listRef);
 
     const startTimer = React.useCallback(() => {
@@ -135,7 +135,7 @@ export const Toast = React.forwardRef<HTMLLIElement, ToastProps>(
         return () => clearTimeout(timerRef.current);
     }, [open, startTimer]);
 
-    const handlePointerDown = (e: React.PointerEvent<HTMLLIElement>) => {
+    const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
         onPointerDown?.(e);
         if (e.button !== 0) return;
         setIsSwiping(true);
@@ -143,7 +143,7 @@ export const Toast = React.forwardRef<HTMLLIElement, ToastProps>(
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
     };
 
-    const handlePointerMove = (e: React.PointerEvent<HTMLLIElement>) => {
+    const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
         onPointerMove?.(e);
         if (!isSwiping) return;
         
@@ -156,7 +156,7 @@ export const Toast = React.forwardRef<HTMLLIElement, ToastProps>(
         }
     };
 
-    const handlePointerUp = (e: React.PointerEvent<HTMLLIElement>) => {
+    const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
         onPointerUp?.(e);
         if (!isSwiping) return;
         setIsSwiping(false);
@@ -173,7 +173,7 @@ export const Toast = React.forwardRef<HTMLLIElement, ToastProps>(
     return (
       <Presence present={open || !!forceMount}>
       <ToastContext.Provider value={{ open: !!open, onOpenChange: setOpen }}>
-      <li
+      <div
         ref={composedRef}
         role="status"
         aria-live="polite"
@@ -212,7 +212,7 @@ export const Toast = React.forwardRef<HTMLLIElement, ToastProps>(
         {...domProps}
       >
         {props.children}
-      </li>
+      </div>
       </ToastContext.Provider>
       </Presence>
     );
@@ -294,11 +294,11 @@ export interface ToastCloseProps extends React.ButtonHTMLAttributes<HTMLButtonEl
 export const ToastClose = React.forwardRef<HTMLButtonElement, ToastCloseProps>(
   (props, ref) => {
     const { onClick, ...domProps } = props;
-    const context = useContext(ToastContext);
-    
-    // We don't throw if context is missing to allow standalone usage if desired, but functionality depends on it.
-    // Actually, Radix throws if used outside. Let's throw.
-    if (!context) throw new Error('ToastClose must be used within Toast');
+    const context = assertReactContext(
+      useContext(ToastContext),
+      'ToastClose',
+      'ToastClose must be used within Toast'
+    );
 
     return (
       <button

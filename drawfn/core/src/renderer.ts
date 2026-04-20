@@ -8,9 +8,21 @@ import type {
   ArrowElement,
   NodeElement,
   Point,
+  DrawfnError,
 } from "./types";
 import { getStroke } from "perfect-freehand";
-import { getViewportBounds, boundsIntersect, getElementBounds } from "./utils";
+import {
+  getViewportBounds,
+  boundsIntersect,
+  getElementBounds,
+  createDrawfnError,
+} from "./utils";
+import {
+  getMidpoint,
+  getOBBBounds,
+  getOBBCorners,
+  getSelectionHandlePoints,
+} from "./geometry";
 
 export type RenderOptions = {
   selectedIds?: Set<string>;
@@ -22,17 +34,29 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
   private imageCache: Map<string, HTMLImageElement | ImageBitmap> = new Map();
+  private pendingImageLoads: Map<
+    string,
+    Promise<HTMLImageElement | ImageBitmap>
+  > = new Map();
   private getImageBitmap?: (src: string) => Promise<ImageBitmap>;
+  private onImageLoaded?: (src: string) => void;
+  private onImageError?: (error: DrawfnError, src: string) => void;
 
   constructor(
     canvas: HTMLCanvasElement,
-    getImageBitmap?: (src: string) => Promise<ImageBitmap>
+    getImageBitmap?: (src: string) => Promise<ImageBitmap>,
+    opts?: {
+      onImageLoaded?: (src: string) => void;
+      onImageError?: (error: DrawfnError, src: string) => void;
+    }
   ) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Failed to get 2D context");
     this.ctx = ctx;
     this.getImageBitmap = getImageBitmap;
+    this.onImageLoaded = opts?.onImageLoaded;
+    this.onImageError = opts?.onImageError;
   }
 
   render(scene: Scene, options: RenderOptions = {}): void {
@@ -55,9 +79,8 @@ export class Renderer {
     const viewport = getViewportBounds(camera, this.canvas);
 
     for (const element of elements) {
-      if (element.locked && !selectedIds.has(element.id)) continue;
-
-      const bounds = getElementBounds(element);
+      const bounds =
+        element.rotation !== 0 ? getOBBBounds(element) : getElementBounds(element);
       if (!boundsIntersect(viewport, bounds)) continue;
 
       this.renderElement(element);
@@ -272,7 +295,9 @@ export class Renderer {
     if (cached) {
       this.ctx.drawImage(cached, element.x, element.y, element.w, element.h);
     } else {
-      this.loadImage(element.src);
+      void this.loadImage(element.src).catch(() => {
+        // Image-load failures are surfaced through onImageError; avoid unhandled rejections.
+      });
       this.ctx.fillStyle = "#f3f4f6";
       this.ctx.fillRect(element.x, element.y, element.w, element.h);
     }
@@ -303,85 +328,71 @@ export class Renderer {
   }
 
   private renderSelectionBox(element: Element, camera: Camera): void {
-    // Normalize sizes by zoom for consistent appearance
     const strokeWidth = 2 / camera.zoom;
     const dashPattern = 4 / camera.zoom;
     const handleSize = 6 / camera.zoom;
-    const padding = 2 / camera.zoom;
     const rotateHandleDistance = 20 / camera.zoom;
     const rotateHandleRadius = 4 / camera.zoom;
+    const corners = getOBBCorners(element);
+    const handles = getSelectionHandlePoints(element, camera.zoom);
 
     this.ctx.strokeStyle = "#3b82f6";
     this.ctx.lineWidth = strokeWidth;
     this.ctx.setLineDash([dashPattern, dashPattern]);
-    this.ctx.strokeRect(
-      element.x - padding,
-      element.y - padding,
-      element.w + padding * 2,
-      element.h + padding * 2
-    );
+    this.ctx.beginPath();
+    this.ctx.moveTo(corners[0].x, corners[0].y);
+    for (let i = 1; i < corners.length; i += 1) {
+      this.ctx.lineTo(corners[i].x, corners[i].y);
+    }
+    this.ctx.closePath();
+    this.ctx.stroke();
     this.ctx.setLineDash([]);
 
     this.ctx.fillStyle = "#ffffff";
     this.ctx.strokeStyle = "#3b82f6";
     this.ctx.lineWidth = 1 / camera.zoom;
 
-    const { x, y, w, h } = element;
-
-    const handles = [
-      { x: x, y: y },
-      { x: x + w, y: y },
-      { x: x, y: y + h },
-      { x: x + w, y: y + h },
-      { x: x + w / 2, y: y },
-      { x: x + w / 2, y: y + h },
-      { x: x + w, y: y + h / 2 },
-      { x: x, y: y + h / 2 },
-    ];
-
     for (const handle of handles) {
+      if (handle.type === "rotate") continue;
       this.ctx.fillRect(
-        handle.x - handleSize / 2,
-        handle.y - handleSize / 2,
+        handle.point.x - handleSize / 2,
+        handle.point.y - handleSize / 2,
         handleSize,
         handleSize
       );
       this.ctx.strokeRect(
-        handle.x - handleSize / 2,
-        handle.y - handleSize / 2,
+        handle.point.x - handleSize / 2,
+        handle.point.y - handleSize / 2,
         handleSize,
         handleSize
       );
     }
 
-    // Rotation handle
+    const rotateHandle = handles.find((handle) => handle.type === "rotate");
+    const topMidpoint = getMidpoint(corners[0], corners[1]);
+
     this.ctx.beginPath();
-    this.ctx.arc(
-      x + w / 2,
-      y - rotateHandleDistance,
-      rotateHandleRadius,
-      0,
-      Math.PI * 2
-    );
+    this.ctx.arc(rotateHandle!.point.x, rotateHandle!.point.y, rotateHandleRadius, 0, Math.PI * 2);
     this.ctx.fill();
     this.ctx.stroke();
 
-    // Rotation handle connector line
     this.ctx.beginPath();
-    this.ctx.moveTo(x + w / 2, y);
-    this.ctx.lineTo(x + w / 2, y - rotateHandleDistance + rotateHandleRadius);
+    this.ctx.moveTo(topMidpoint.x, topMidpoint.y);
+    this.ctx.lineTo(rotateHandle!.point.x, rotateHandle!.point.y);
     this.ctx.stroke();
   }
 
   private renderHoverHighlight(element: Element): void {
     this.ctx.strokeStyle = "#93c5fd";
     this.ctx.lineWidth = 1;
-    this.ctx.strokeRect(
-      element.x - 1,
-      element.y - 1,
-      element.w + 2,
-      element.h + 2
-    );
+    const corners = getOBBCorners(element);
+    this.ctx.beginPath();
+    this.ctx.moveTo(corners[0].x, corners[0].y);
+    for (let i = 1; i < corners.length; i += 1) {
+      this.ctx.lineTo(corners[i].x, corners[i].y);
+    }
+    this.ctx.closePath();
+    this.ctx.stroke();
   }
 
   private renderMarquee(
@@ -413,25 +424,71 @@ export class Renderer {
     this.ctx.restore();
   }
 
-  private async loadImage(src: string): Promise<void> {
-    if (this.imageCache.has(src)) return;
+  async preloadImages(elements: Element[]): Promise<void> {
+    const sources = Array.from(
+      new Set(
+        elements
+          .filter((element): element is ImageElement => element.type === "image")
+          .map((element) => element.src)
+      )
+    );
 
-    try {
-      if (this.getImageBitmap) {
-        const bitmap = await this.getImageBitmap(src);
-        this.imageCache.set(src, bitmap);
-      } else {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-          img.src = src;
-        });
-        this.imageCache.set(src, img);
-      }
-    } catch (error) {
-      console.error("Failed to load image:", src, error);
+    await Promise.all(sources.map((src) => this.loadImage(src)));
+  }
+
+  private toImageLoadError(src: string, cause: unknown): DrawfnError {
+    if (
+      typeof cause === "object" &&
+      cause !== null &&
+      "code" in cause &&
+      "message" in cause &&
+      "recoverable" in cause
+    ) {
+      return cause as DrawfnError;
     }
+
+    return createDrawfnError("EXPORT_IMAGE_LOAD_FAILED", `Failed to load image: ${src}.`, {
+      src,
+      cause: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+
+  private async loadImage(src: string): Promise<HTMLImageElement | ImageBitmap> {
+    const cached = this.imageCache.get(src);
+    if (cached) return cached;
+
+    const pending = this.pendingImageLoads.get(src);
+    if (pending) return pending;
+
+    const request = (async () => {
+      try {
+        let asset: HTMLImageElement | ImageBitmap;
+        if (this.getImageBitmap) {
+          asset = await this.getImageBitmap(src);
+        } else {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+            img.src = src;
+          });
+          asset = img;
+        }
+
+        this.imageCache.set(src, asset);
+        this.onImageLoaded?.(src);
+        return asset;
+      } catch (error) {
+        const drawfnError = this.toImageLoadError(src, error);
+        this.onImageError?.(drawfnError, src);
+        throw drawfnError;
+      } finally {
+        this.pendingImageLoads.delete(src);
+      }
+    })();
+
+    this.pendingImageLoads.set(src, request);
+    return request;
   }
 }

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Sequence
 
 from ..client import LangFn
-from ..core.errors import ToolExecutionError
-from ..core.types import Message
-from ..tools.base import Tool
+from ..core.errors import AgentMaxIterationsError, ToolExecutionError
+from ..tools.base import Tool, ToolContext
+from ..tools.policy import ToolPolicy
 
 
 @dataclass
@@ -17,14 +17,6 @@ class ReActResult:
 
 
 class ReActAgent:
-    """
-    Implements a ReAct (Reasoning + Acting) agent loop.
-    Iteratively:
-    1. Thinks about what to do
-    2. Decides to call a tool or answer
-    3. Observes tool output
-    4. Repeats until final answer or max iterations
-    """
     def __init__(
         self,
         *,
@@ -36,65 +28,48 @@ class ReActAgent:
         self._model = model
         self._tools = list(tools)
         self._max_iterations = max_iterations
-        self._tool_map = {t.name: t for t in self._tools}
+        self._tool_map = {tool.name: tool for tool in self._tools}
         self._system_prompt = system_prompt
 
     async def run(self, prompt: str) -> ReActResult:
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": prompt},
         ]
+        raw_policy = self._model._security if hasattr(self._model, "_security") else None
+        policy = raw_policy if isinstance(raw_policy, ToolPolicy) else ToolPolicy(**(raw_policy or {}))
 
         for _ in range(self._max_iterations):
-            # Call model with tools
-            resp = await self._model.chat(
-                messages,
-                tools=self._tools,
-                tool_choice="auto"
-            )
-            
-            assistant_msg = resp.message.model_dump()
-            
-            # If there are tool calls, we need to convert them to dict properly for history
-            if resp.tool_calls:
-                assistant_msg["tool_calls"] = [
+            response = await self._model.chat(messages, tools=self._tools, tool_choice="auto")
+            assistant_message = response.message.model_dump()
+            if response.tool_calls:
+                assistant_message["tool_calls"] = [
                     {
-                        "id": c.id,
+                        "id": call.id,
                         "type": "function",
-                        "function": {"name": c.name, "arguments": json.dumps(c.arguments)},
+                        "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
                     }
-                    for c in resp.tool_calls
+                    for call in response.tool_calls
                 ]
-            
-            messages.append(assistant_msg)
+            messages.append(assistant_message)
 
-            # If no tool calls, we are done
-            if not resp.tool_calls:
-                return ReActResult(messages=messages, output=resp.message.content)
+            if not response.tool_calls:
+                return ReActResult(messages=messages, output=response.message.content)
 
-            # Execute tools
-            for call in resp.tool_calls:
+            for call in response.tool_calls:
                 tool = self._tool_map.get(call.name)
-                result_content: str
                 if tool is None:
-                    result_content = json.dumps({"error": f"Tool {call.name} not found"})
-                else:
-                    try:
-                        # Execute tool
-                        raw_result = await tool.run(call.arguments)
-                        # Ensure result is stringified for chat history
-                        result_content = json.dumps(raw_result) if not isinstance(raw_result, str) else raw_result
-                    except Exception as e:
-                        result_content = json.dumps({"error": str(e)})
+                    raise ToolExecutionError(f"Unknown tool: {call.name}", metadata={"tool": call.name})
+                result = await tool.run(
+                    call.arguments,
+                    context=ToolContext(metadata={"tool_call_id": call.id}, policy=policy),
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": result if isinstance(result, str) else json.dumps(result),
+                    }
+                )
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": result_content
-                })
-
-        # If max iterations reached without final answer
-        return ReActResult(
-            messages=messages, 
-            output="I could not complete the task within the maximum number of steps."
-        )
+        raise AgentMaxIterationsError("Agent exceeded max iterations", metadata={"max_iterations": self._max_iterations})

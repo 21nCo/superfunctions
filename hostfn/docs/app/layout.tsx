@@ -4,11 +4,15 @@ import { RootProvider } from "fumadocs-ui/provider";
 import { DocsRootLayout } from "@superfunctions/docs-theme";
 import type { Metadata } from "next";
 
-const siteUrl =
+const rawSiteUrl =
   process.env.NEXT_PUBLIC_SITE_URL ??
   (process.env.VERCEL_PROJECT_PRODUCTION_URL
     ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
     : "http://localhost:6003");
+
+const siteUrl = rawSiteUrl.match(/^https?:\/\//i)
+  ? rawSiteUrl
+  : `https://${rawSiteUrl}`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

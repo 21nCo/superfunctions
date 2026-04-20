@@ -3,6 +3,7 @@ import { DefaultHttpTransport } from "../src/transport/http.js";
 
 describe("DefaultHttpTransport", () => {
   const baseUrl = "https://api.example.com";
+  const originalFetch = global.fetch;
   let transport: DefaultHttpTransport;
 
   beforeEach(() => {
@@ -12,6 +13,11 @@ describe("DefaultHttpTransport", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (originalFetch === undefined) {
+      delete (globalThis as { fetch?: typeof global.fetch }).fetch;
+    } else {
+      global.fetch = originalFetch;
+    }
   });
 
   it("constructs with base URL", () => {

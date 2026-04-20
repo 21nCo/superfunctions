@@ -82,7 +82,6 @@ def route(id):
 Write framework-agnostic handlers that work across:
 - Flask
 - FastAPI (with `superfunctions-fastapi`)
-- Django (with `superfunctions-django`)
 
 ## Example with authfn
 

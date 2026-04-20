@@ -14,6 +14,7 @@ export function VirtualizedList<T>(props: VirtualizedListProps<T>) {
     itemHeight,
     renderItem,
     height,
+    // Public helper contract: default overscan remains 3.
     overscan = 3,
     style,
     onScroll,

@@ -37,7 +37,7 @@ HostFn expects the SSH private key to be **base64-encoded** in the `HOSTFN_SSH_K
 To encode your SSH key:
 
 ```bash
-cat ~/.ssh/id_rsa | base64
+base64 < ~/.ssh/id_rsa | tr -d '\n'
 ```
 
 Copy the output and store it as a secret in your CI platform (e.g., GitHub Actions secret named `SSH_PRIVATE_KEY`).
@@ -107,7 +107,7 @@ Add the following secrets in your repository settings (Settings > Secrets and va
 
 | Secret Name | Value |
 |---|---|
-| `SSH_PRIVATE_KEY` | Base64-encoded SSH private key (`cat ~/.ssh/id_rsa \| base64`) |
+| `SSH_PRIVATE_KEY` | Base64-encoded SSH private key (`base64 < ~/.ssh/id_rsa \| tr -d '\n'`) |
 
 If your key has a passphrase, also add:
 
@@ -195,7 +195,7 @@ jobs:
 
 ### Deploy on Changed Paths
 
-To deploy services only when their code changes, use path filters:
+To deploy services only when their code changes, use workflow path filters or a changed-files action instead of checking `github.event.head_commit.modified` directly:
 
 ```yaml title=".github/workflows/deploy-on-change.yml"
 name: Deploy Changed Services
@@ -205,9 +205,26 @@ on:
     branches: [main]
 
 jobs:
-  deploy-account:
+  changes:
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'services/account/')
+    outputs:
+      account: ${{ steps.filter.outputs.account }}
+      auth: ${{ steps.filter.outputs.auth }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            account:
+              - 'services/account/**'
+            auth:
+              - 'services/auth/**'
+
+  deploy-account:
+    needs: changes
+    runs-on: ubuntu-latest
+    if: needs.changes.outputs.account == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -221,8 +238,9 @@ jobs:
         run: hostfn deploy production --ci --service account
 
   deploy-auth:
+    needs: changes
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'services/auth/')
+    if: needs.changes.outputs.auth == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

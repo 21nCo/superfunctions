@@ -265,7 +265,7 @@ describe("navigation", () => {
       sidebars,
       route: "/docs/operations/setup",
     });
-    expect(sidebarId).toBe("default");
+    expect(sidebarId).toBe("operations");
 
     const breadcrumbs = resolveBreadcrumbsFromSidebar({
       sidebar: sidebars.default,

@@ -68,9 +68,9 @@ SSL is only set up when **both** `domain` and `sslEmail` are present. If either 
 | `domain` present, no `sslEmail` | Nginx HTTP only |
 | No `domain` | Nginx with catch-all `server_name _`, HTTP only |
 
-## Service-Specific Domains (Monorepo)
+## Monorepo Routing
 
-In a monorepo configuration, each service can have its own domain. This is useful when different services need to be accessible at different hostnames:
+In a monorepo configuration, `hostfn expose` applies environment-level domains to a single Nginx `server_name` set, then routes traffic to services by path:
 
 ```json title="hostfn.config.json"
 {
@@ -87,23 +87,22 @@ In a monorepo configuration, each service can have its own domain. This is usefu
     "api": {
       "port": 3001,
       "path": "services/api",
-      "domain": "api.example.com"
+      "exposePath": "/api"
     },
     "web": {
       "port": 3002,
-      "path": "services/web",
-      "domain": ["example.com", "www.example.com"]
+      "path": "services/web"
     },
     "docs": {
       "port": 3003,
       "path": "services/docs",
-      "domain": "docs.example.com"
+      "exposePath": "/docs"
     }
   }
 }
 ```
 
-Service-level domains also support the array format for multiple domains per service.
+Services without an `exposePath` become the default `/` route. All routed services share the environment's configured domain set.
 
 ## Different Domains per Environment
 
@@ -160,7 +159,7 @@ Log in to your DNS provider and create an **A record** pointing your domain to t
 |---|---|---|---|
 | A | `api.example.com` | `203.0.113.10` | 300 |
 
-For bare domains (e.g., `example.com`), some providers require an **ALIAS** or **ANAME** record instead of a regular A record. Check your DNS provider's documentation.
+For bare domains (e.g., `example.com`) pointing directly to a server IP, use an **A** record. ALIAS or ANAME records are only relevant when your DNS provider asks you to point the apex at another hostname instead of an IP.
 
 ### Step 3: Create Records for All Domains
 

@@ -37,11 +37,11 @@ Configure health checks in your `hostfn.config.json`:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `path` | `string` | `"/health"` | HTTP path to check on the application |
-| `timeout` | `number` | `60` | Overall timeout in seconds |
+| `timeout` | `number` | `60` | Per-attempt curl timeout in seconds |
 | `retries` | `number` | `10` | Number of health check attempts before giving up |
 | `interval` | `number` | `3` | Seconds to wait between retry attempts |
 
-With the default settings, HostFn will attempt the health check up to 10 times, waiting 3 seconds between each attempt, for a maximum of 30 seconds of polling.
+With the default settings, HostFn will attempt the health check up to 10 times, waiting 3 seconds between each attempt, with each curl request capped at 60 seconds.
 
 ## Implementing a Health Endpoint
 
@@ -74,7 +74,7 @@ app.get('/health', async (req, res) => {
   } catch (error) {
     res.status(503).json({
       status: 'error',
-      message: error.message,
+      message: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });

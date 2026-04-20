@@ -1,4 +1,5 @@
-import type { Route, RouteContext } from "@superfunctions/http";
+import { BadRequestError } from "@superfunctions/http";
+import type { AuthRouteMeta, HttpRouteMeta, OpenApiRouteMeta, Route, RouteContext } from "@superfunctions/http";
 import type {
   OAuthFlowCallbackInput,
   OAuthFlowCallbackResult,
@@ -6,6 +7,12 @@ import type {
   OAuthFlowService,
   OAuthFlowStartInput
 } from "@superfunctions/oauth-flow";
+
+export type OAuthConnectionRouteMetaOverrides = {
+  start?: HttpRouteMeta;
+  callback?: HttpRouteMeta;
+  disconnect?: HttpRouteMeta;
+};
 
 export interface OAuthConnectionRouteConfig {
   basePath: string;
@@ -24,6 +31,7 @@ export interface OAuthConnectionRouteConfig {
     request: Request,
     context: RouteContext
   ) => Promise<unknown> | unknown;
+  routeMeta?: OAuthConnectionRouteMetaOverrides;
   requestIdHeader?: string;
 }
 
@@ -34,13 +42,13 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
     {
       method: "POST",
       path: joinPath(config.basePath, "start"),
-      meta: { auth: { mode: "none" } },
+      meta: resolveRouteMeta({ auth: { mode: "hybrid" } }, config.routeMeta?.start),
       handler: async (request, context) => {
         const requestId = request.headers.get(requestIdHeader) ?? undefined;
         const input = await config.resolveStartInput(request, context);
         const result = await config.flowService.start({
           ...input,
-          requestId
+          requestId: requestId ?? input.requestId
         });
         return Response.json(result);
       }
@@ -48,7 +56,7 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
     {
       method: "GET",
       path: joinPath(config.basePath, "callback/:provider"),
-      meta: { auth: { mode: "none" } },
+      meta: resolveRouteMeta({ auth: { mode: "none" } }, config.routeMeta?.callback),
       handler: async (request, context) => {
         const requestId = request.headers.get(requestIdHeader) ?? undefined;
         const resolvedInput = (await config.resolveCallbackInput?.(request, context)) ?? {};
@@ -57,7 +65,12 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
           providerId: context.params.provider,
           code: asRequiredString(resolvedInput.code ?? url.searchParams.get("code"), "code"),
           state: asRequiredString(resolvedInput.state ?? url.searchParams.get("state"), "state"),
-          redirectUri: asRequiredString(resolvedInput.redirectUri ?? url.searchParams.get("redirectUri"), "redirectUri"),
+          redirectUri: asRequiredString(
+            resolvedInput.redirectUri ??
+              url.searchParams.get("redirectUri") ??
+              inferCallbackRedirectUri(url),
+            "redirectUri"
+          ),
           requestId
         });
 
@@ -70,7 +83,7 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
     {
       method: "POST",
       path: joinPath(config.basePath, "disconnect/:provider"),
-      meta: { auth: { mode: "none" } },
+      meta: resolveRouteMeta({ auth: { mode: "hybrid" } }, config.routeMeta?.disconnect),
       handler: async (request, context) => {
         const requestId = request.headers.get(requestIdHeader) ?? undefined;
         const input =
@@ -88,14 +101,63 @@ export function createOAuthConnectionRoutes(config: OAuthConnectionRouteConfig):
   ];
 }
 
+function resolveRouteMeta(defaultMeta: HttpRouteMeta, overrideMeta: HttpRouteMeta | undefined): HttpRouteMeta {
+  if (!overrideMeta) {
+    return defaultMeta;
+  }
+
+  return {
+    ...defaultMeta,
+    ...overrideMeta,
+    auth: mergeAuthMeta(defaultMeta.auth, overrideMeta.auth),
+    openapi: mergeOpenApiMeta(defaultMeta.openapi, overrideMeta.openapi)
+  };
+}
+
+function mergeAuthMeta(
+  defaultMeta: AuthRouteMeta | undefined,
+  overrideMeta: AuthRouteMeta | undefined
+): AuthRouteMeta | undefined {
+  if (!defaultMeta) {
+    return overrideMeta ? { ...overrideMeta } : undefined;
+  }
+
+  if (!overrideMeta) {
+    return { ...defaultMeta };
+  }
+
+  return {
+    ...defaultMeta,
+    ...overrideMeta
+  };
+}
+
+function mergeOpenApiMeta(
+  defaultMeta: OpenApiRouteMeta | undefined,
+  overrideMeta: OpenApiRouteMeta | undefined
+): OpenApiRouteMeta | undefined {
+  if (!defaultMeta) {
+    return overrideMeta ? { ...overrideMeta } : undefined;
+  }
+
+  if (!overrideMeta) {
+    return { ...defaultMeta };
+  }
+
+  return {
+    ...defaultMeta,
+    ...overrideMeta
+  };
+}
+
 function joinPath(basePath: string, suffix: string): string {
   const normalizedBase = basePath.startsWith("/") ? basePath : `/${basePath}`;
   return `${normalizedBase.replace(/\/$/, "")}/${suffix.replace(/^\//, "")}`;
 }
 
-function asRequiredString(value: string | null | undefined, field: string): string {
-  if (!value || value.length === 0) {
-    throw new Error(`${field} is required`);
+function asRequiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new BadRequestError(`${field} is required`, "OAUTH_ROUTE_INVALID_INPUT");
   }
   return value;
 }
@@ -103,15 +165,58 @@ function asRequiredString(value: string | null | undefined, field: string): stri
 async function parseDisconnectBody(
   request: Request
 ): Promise<Omit<OAuthFlowDisconnectInput, "providerId" | "requestId">> {
-  const body = (await request.json()) as {
+  const body = asJsonObject(await parseJsonBody(request), "disconnect body") as {
     connectionId?: string;
-    revokeRemote?: boolean;
-    tokenTypeHint?: "access_token" | "refresh_token";
+    revokeRemote?: unknown;
+    tokenTypeHint?: unknown;
   };
 
   return {
     connectionId: asRequiredString(body.connectionId, "connectionId"),
-    revokeRemote: body.revokeRemote,
-    tokenTypeHint: body.tokenTypeHint
+    revokeRemote: asOptionalBoolean(body.revokeRemote, "revokeRemote"),
+    tokenTypeHint: asTokenTypeHint(body.tokenTypeHint)
   };
+}
+
+async function parseJsonBody(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new BadRequestError("disconnect body must be valid JSON", "OAUTH_ROUTE_INVALID_INPUT");
+  }
+}
+
+function inferCallbackRedirectUri(url: URL): string {
+  const redirectUrl = new URL(url.toString());
+  for (const transientParam of ["code", "state", "redirectUri", "error", "error_description", "error_uri"]) {
+    redirectUrl.searchParams.delete(transientParam);
+  }
+  return redirectUrl.toString();
+}
+
+function asJsonObject(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BadRequestError(`${field} must be a JSON object`, "OAUTH_ROUTE_INVALID_INPUT");
+  }
+  return value as Record<string, unknown>;
+}
+
+function asOptionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new BadRequestError(`${field} must be a boolean`, "OAUTH_ROUTE_INVALID_INPUT");
+  }
+  return value;
+}
+
+function asTokenTypeHint(value: unknown): "access_token" | "refresh_token" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "access_token" || value === "refresh_token") {
+    return value;
+  }
+  throw new BadRequestError("tokenTypeHint must be access_token or refresh_token", "OAUTH_ROUTE_INVALID_INPUT");
 }

@@ -38,14 +38,20 @@ const PATH_TRAVERSAL_ERROR = {
 };
 
 // Use Record<string, any> or generic for execute callbacks
-type MutationExecutor = (m: unknown) => Promise<unknown>;
-type QueryExecutor = (q: unknown) => Promise<unknown>;
 type RestRouteContext<TContext> = TContext & { parsedBody?: unknown };
+type MutationExecutor<TContext> = (
+  m: unknown,
+  ctx?: RestRouteContext<TContext>,
+) => Promise<unknown>;
+type QueryExecutor<TContext> = (
+  q: unknown,
+  ctx?: RestRouteContext<TContext>,
+) => Promise<unknown>;
 
 export function createRestRoutes<TContext>(
   schema: DatafnSchema,
-  executeMutation: MutationExecutor,
-  executeQuery: QueryExecutor,
+  executeMutation: MutationExecutor<TContext>,
+  executeQuery: QueryExecutor<TContext>,
   logger?: DatafnLogger,
 ): Route<TContext>[] {
   const resources = new Set(
@@ -73,7 +79,7 @@ export function createRestRoutes<TContext>(
     {
       method: "GET",
       path: "/datafn/resources/:resource",
-      handler: async (req) => {
+      handler: async (req, ctx: RestRouteContext<TContext>) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
         const rawResource = pathParts[3] ?? "";
@@ -112,12 +118,12 @@ export function createRestRoutes<TContext>(
 
           // REST-001: Inject version from schema
           const dfql = {
+            ...queryBody,
             resource,
             version: getResourceVersion(resource),
-            ...queryBody,
           };
 
-          const result = await executeQuery(dfql);
+          const result = await executeQuery(dfql, ctx);
           return jsonResponse({ ok: true, result });
         } catch (err: any) {
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {
@@ -192,7 +198,7 @@ export function createRestRoutes<TContext>(
             record: body.record,
           };
 
-          const result = await executeMutation(mutation);
+          const result = await executeMutation(mutation, ctx);
           return jsonResponse({ ok: true, result });
         } catch (err: any) {
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {
@@ -267,7 +273,7 @@ export function createRestRoutes<TContext>(
             record: body.record,
           };
 
-          const result = await executeMutation(mutation);
+          const result = await executeMutation(mutation, ctx);
           return jsonResponse({ ok: true, result });
         } catch (err: any) {
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {
@@ -283,7 +289,7 @@ export function createRestRoutes<TContext>(
     {
       method: "DELETE",
       path: "/datafn/resources/:resource/:id",
-      handler: async (req) => {
+      handler: async (req, ctx: RestRouteContext<TContext>) => {
         const url = new URL(req.url);
         const pathParts = url.pathname.split("/");
         const rawResource = pathParts[3] ?? "";
@@ -335,7 +341,7 @@ export function createRestRoutes<TContext>(
             id: id,
           };
 
-          const result = await executeMutation(mutation);
+          const result = await executeMutation(mutation, ctx);
           return jsonResponse({ ok: true, result });
         } catch (err: any) {
           if (err.code === "DFQL_UNKNOWN_RESOURCE") {

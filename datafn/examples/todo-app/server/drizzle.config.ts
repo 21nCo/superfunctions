@@ -15,7 +15,7 @@ export default defineConfig({
   dbCredentials: {
     url: dbUrl,
     ssl: dbUrl.includes("ondigitalocean.com")
-      ? { rejectUnauthorized: false }
+      ? { rejectUnauthorized: true }
       : false,
   },
 });

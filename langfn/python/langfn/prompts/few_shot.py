@@ -1,36 +1,30 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Optional, Sequence
+
+from .template import PromptTemplate, _normalize_values
 
 
+@dataclass(frozen=True)
 class FewShotPrompt:
-    def __init__(
-        self,
-        *,
-        prefix: str,
-        examples: List[Dict[str, str]],
-        suffix: str,
-        input_variables: List[str],
-        example_separator: str = "\n\n",
-    ):
-        self._prefix = prefix
-        self._examples = examples
-        self._suffix = suffix
-        self._input_variables = input_variables
-        self._example_separator = example_separator
+    prefix: str
+    examples: Sequence[Mapping[str, str]]
+    suffix: str
+    input_variables: Optional[Sequence[str]] = None
+    example_separator: str = "\n\n"
+    example_prompt: PromptTemplate = field(
+        default_factory=lambda: PromptTemplate("Input: {input}\nOutput: {output}")
+    )
 
-    def format(self, **kwargs: Any) -> str:
-        example_strs = []
-        for example in self._examples:
-            # Simple format for examples
-            ex_str = f"Input: {example.get('input', '')}\nOutput: {example.get('output', '')}"
-            example_strs.append(ex_str)
-            
-        examples_formatted = self._example_separator.join(example_strs)
-        
-        res = f"{self._prefix}{self._example_separator}{examples_formatted}{self._example_separator}{self._suffix}"
-        
-        for k, v in kwargs.items():
-            res = res.replace(f"{{{k}}}", str(v))
-            
-        return res
+    def format(self, values: Mapping[str, Any] | None = None, **kwargs: Any) -> str:
+        payload = _normalize_values(values, **kwargs)
+        suffix_prompt = PromptTemplate(self.suffix, variables=self.input_variables)
+        prefix_prompt = PromptTemplate(self.prefix)
+
+        sections = [prefix_prompt.format(payload)]
+        example_blocks = [self.example_prompt.format(example) for example in self.examples]
+        if example_blocks:
+            sections.append(self.example_separator.join(example_blocks))
+        sections.append(suffix_prompt.format(payload))
+        return self.example_separator.join(sections)

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createCheckbox } from './checkbox';
 
 describe('checkbox primitive', () => {
@@ -24,5 +24,23 @@ describe('checkbox primitive', () => {
     checkbox.actions.handleKeyDown(' ');
     expect(checkbox.state.checked).toBe(false);
     expect(checkbox.state.lastError?.code).toBe('UIFN_ERR_DISABLED_INTERACTION');
+  });
+
+  it('keeps controlled checked state stable until syncChecked is applied', () => {
+    const onCheckedChange = vi.fn();
+    const checkbox = createCheckbox({
+      checked: false,
+      name: 'terms',
+      onCheckedChange,
+    });
+
+    checkbox.actions.toggle();
+    expect(onCheckedChange).toHaveBeenCalledWith(true);
+    expect(checkbox.state.checked).toBe(false);
+    expect(checkbox.actions.getFormValue()).toEqual({});
+
+    checkbox.actions.syncChecked(true);
+    expect(checkbox.state.checked).toBe(true);
+    expect(checkbox.actions.getFormValue()).toEqual({ terms: 'on' });
   });
 });

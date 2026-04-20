@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-03-25T11:38:00.000Z",
+  "status": "blocked",
+  "methodology": "blocked-no-human-verifier",
+  "artifactPath": "uifn/.conduct/specs/2026-03-25-audit-fix-zl6gfhpb-spec/release-evidence/PHASE_09-manual-accessibility.md",
+  "blocker": "Real browser and assistive-technology verification requires a human verifier. No truthful VoiceOver or NVDA run was performed in this shell-only environment.",
+  "environment": {
+    "os": "macOS 26.3.1",
+    "availableBrowsers": [
+      "Google Chrome 146.0.7680.155",
+      "Safari 26.3.1"
+    ],
+    "availableAssistiveTech": [
+      "VoiceOver Utility 10"
+    ],
+    "missingAssistiveTech": [
+      "NVDA"
+    ]
+  },
+  "environments": [],
+  "families": []
+}

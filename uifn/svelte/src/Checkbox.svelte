@@ -26,13 +26,18 @@
     class: className,
     ...rest
   }: Props = $props();
+  const initialChecked = (() => checkedProp)();
+  const initialDefaultChecked = (() => defaultChecked)();
+  const initialDisabled = (() => disabled)();
+  const initialRequired = (() => required)();
+  const notifyCheckedChange = (checked: boolean | 'indeterminate') => onCheckedChange?.(checked);
 
   const machine = createCheckbox({
-    checked: checkedProp,
-    defaultChecked,
-    disabled,
-    required,
-    onCheckedChange
+    checked: initialChecked,
+    defaultChecked: initialDefaultChecked,
+    disabled: initialDisabled,
+    required: initialRequired,
+    onCheckedChange: notifyCheckedChange
   });
 
   let state = $state(machine.state);
@@ -41,6 +46,12 @@
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    if (checkedProp !== undefined && checkedProp !== state.checked) {
+      machine.actions.syncChecked(checkedProp);
+    }
   });
 
   function handleClick(e: MouseEvent) {

@@ -29,7 +29,7 @@ HostFn is configured via a `hostfn.config.json` file in your project root. This 
   "build": {
     "command": "npm run build",
     "directory": "dist",
-    "nodeModules": "production"
+    "nodeModules": "all"
   },
   "start": {
     "command": "npm start",
@@ -48,7 +48,8 @@ HostFn is configured via a `hostfn.config.json` file in your project root. This 
   "sync": {
     "exclude": [
       "node_modules", ".git", ".github",
-      "dist", "build", ".env", ".env.*", "*.log"
+      "dist", "build", ".env", ".env.*", "*.log",
+      ".turbo", ".wrangler"
     ]
   },
   "backup": {
@@ -118,7 +119,7 @@ The `environments` object maps environment names (e.g., `"production"`, `"stagin
 | `server` | `string` | Yes | -- | SSH connection string. Format: `user@host` or `user@host:port`. |
 | `port` | `number` | Yes | -- | Port the application listens on. Must be a positive integer. |
 | `instances` | `number \| "max"` | No | `1` | Number of PM2 cluster instances. Set to `"max"` to use all available CPU cores. |
-| `domain` | `string \| string[]` | No | -- | Domain name(s) for Nginx reverse proxy and SSL certificates. Can be a single string or an array of strings. |
+| `domain` | `string \| string[]` | No | -- | Domain name(s) for Nginx reverse proxy and SSL certificates. It can be a single string or an array of strings. |
 | `sslEmail` | `string` | No | -- | Email address for Let's Encrypt certificate registration. Required if using SSL. |
 
 ## Build
@@ -129,7 +130,7 @@ Controls how the application is built on the remote server. This entire section 
 "build": {
   "command": "npm run build",
   "directory": "dist",
-  "nodeModules": "production"
+  "nodeModules": "all"
 }
 ```
 
@@ -137,9 +138,9 @@ Controls how the application is built on the remote server. This entire section 
 |---|---|---|---|---|
 | `command` | `string` | Yes | -- | Build command to run on the server (e.g., `"npm run build"`, `"npx tsc"`). |
 | `directory` | `string` | No | `"dist"` | Build output directory. |
-| `nodeModules` | `"all" \| "production" \| "none"` | No | `"production"` | Which dependencies to install. `"all"` includes devDependencies. |
+| `nodeModules` | `"all" \| "production" \| "none"` | No | `"all"` when `build.command` is set, otherwise `"production"` | Which dependencies to install. `"all"` includes devDependencies. |
 
-When a `build.command` is present, HostFn automatically installs all dependencies (including devDependencies) so the build can succeed, regardless of the `nodeModules` setting.
+When `build.nodeModules` is omitted, HostFn defaults to installing all dependencies when `build.command` is present. Set `build.nodeModules` to `"production"` or `"none"` to override that behavior.
 
 ## Start
 
@@ -173,11 +174,11 @@ Controls post-deployment health check behavior. If omitted, defaults are used.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `path` | `string` | No | `"/health"` | HTTP path to check on the application (e.g., `"/health"`, `"/api/status"`). |
-| `timeout` | `number` | No | `60` | Overall timeout in seconds. |
+| `timeout` | `number` | No | `60` | Per-attempt curl timeout in seconds. |
 | `retries` | `number` | No | `10` | Number of health check attempts before declaring failure. |
 | `interval` | `number` | No | `3` | Seconds to wait between health check attempts. |
 
-HostFn checks `http://localhost:{port}{path}` on the remote server using `curl -sf`. A `2xx` response is considered healthy.
+HostFn checks `http://localhost:{port}{path}` on the remote server using `curl -sf`. A successful curl exit code is considered healthy, which normally means a non-4xx/non-5xx response. Because HostFn does not pass `-L`, 3xx responses can count as healthy without curl following the redirect.
 
 ## Env
 
@@ -192,7 +193,7 @@ Declares which environment variables the application expects. Used by `hostfn en
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `required` | `string[]` | No | `[]` | Environment variables that must be set. Deployment warnings if missing. |
+| `required` | `string[]` | No | `[]` | Environment variables that must be set. `hostfn env validate` exits with an error if any are missing. |
 | `optional` | `string[]` | No | `[]` | Environment variables that may be set. Informational only. |
 
 ## Sync
@@ -263,7 +264,7 @@ For monorepo deployments, the `services` object defines individual services with
 |---|---|---|---|---|
 | `port` | `number` | Yes | -- | Port this service listens on. Must be a positive integer. |
 | `path` | `string` | Yes | -- | Path to the service within the monorepo (relative to project root). |
-| `domain` | `string \| string[]` | No | -- | Domain name(s) for this service. Can be a single string or array. |
+| `domain` | `string \| string[]` | No | -- | Domain name(s) for this service. It can be a single string or an array. |
 | `exposePath` | `string` | No | -- | Nginx path prefix for this service (e.g., `"/api"`, `"/docs"`). |
 | `server` | `string` | No | Environment server | Override server for this service. Defaults to the environment's `server` field. |
 | `instances` | `number \| "max"` | No | -- | PM2 cluster instances for this service. |

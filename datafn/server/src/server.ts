@@ -635,6 +635,7 @@ export async function createDatafnServer<TContext = any>(
   let inFlightCount = 0;
   let shuttingDown = false;
   let shutdownResolve: (() => void) | null = null;
+  let shutdownTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Authorization wrapper
   // AUTH-001: Parse JSON BEFORE authorization. Invalid JSON returns DFQL_INVALID, not FORBIDDEN.
@@ -732,6 +733,10 @@ export async function createDatafnServer<TContext = any>(
         if (shuttingDown && inFlightCount === 0 && shutdownResolve) {
           const resolve = shutdownResolve;
           shutdownResolve = null;
+          if (shutdownTimer) {
+            clearTimeout(shutdownTimer);
+            shutdownTimer = null;
+          }
           resolve();
         }
       }
@@ -796,14 +801,26 @@ export async function createDatafnServer<TContext = any>(
   if (config.rest) {
     // FIX-SRV-001: Direct internal execution helpers — no synthetic Request construction.
     // Handlers use ctx.parsedBody exclusively; the Request parameter is never read in this path.
-    const internalMutate = async (m: unknown): Promise<unknown> => {
-      const res = await mutationHandler(undefined as any, { parsedBody: m });
+    const internalMutate = async (
+      m: unknown,
+      ctx?: TContext & { parsedBody?: unknown },
+    ): Promise<unknown> => {
+      const res = await mutationHandler(undefined as any, {
+        ...(ctx ?? {} as TContext),
+        parsedBody: m,
+      });
       const env = await res.json() as { ok: boolean; error?: unknown; result?: unknown };
       if (!env.ok) throw env.error;
       return env.result;
     };
-    const internalQuery = async (q: unknown): Promise<unknown> => {
-      const res = await queryHandler(undefined as any, { parsedBody: q });
+    const internalQuery = async (
+      q: unknown,
+      ctx?: TContext & { parsedBody?: unknown },
+    ): Promise<unknown> => {
+      const res = await queryHandler(undefined as any, {
+        ...(ctx ?? {} as TContext),
+        parsedBody: q,
+      });
       const env = await res.json() as { ok: boolean; error?: unknown; result?: unknown };
       if (!env.ok) throw env.error;
       return env.result;
@@ -823,7 +840,9 @@ export async function createDatafnServer<TContext = any>(
     for (const route of restRoutes) {
       const action: DatafnAction = route.method === "GET" ? "query" : "mutation";
       routes.push({
-        ...route,
+        method: route.method,
+        path: route.path,
+        meta: route.meta,
         handler: withAuth(action, route.handler as any),
       });
     }
@@ -840,6 +859,8 @@ export async function createDatafnServer<TContext = any>(
     // Idempotent guard — safe to call from both direct close() and signal handlers
     if (shuttingDown) return;
     shuttingDown = true;
+    process.off("SIGTERM", sigHandler);
+    process.off("SIGINT", sigHandler);
 
     // Send WS close 1001 (Going Away) to all connected clients
     wsManager.close();
@@ -849,13 +870,15 @@ export async function createDatafnServer<TContext = any>(
       const timeoutMs = config.shutdownTimeoutMs ?? 10_000;
       await new Promise<void>((resolve) => {
         shutdownResolve = resolve;
-        setTimeout(() => {
+        shutdownTimer = setTimeout(() => {
           // Timeout reached — force-resolve even if requests are still in-flight
           if (shutdownResolve === resolve) {
             shutdownResolve = null;
+            shutdownTimer = null;
             resolve();
           }
         }, timeoutMs);
+        shutdownTimer.unref?.();
       });
     }
 
@@ -882,8 +905,8 @@ export async function createDatafnServer<TContext = any>(
   // REL-009: Register signal handlers for automatic graceful shutdown
   // process.once ensures each fires at most once; shuttingDown guard prevents double-execution
   const sigHandler = () => serverClose().catch((e) => logger.error("Graceful shutdown error", { error: String(e), operation: "shutdown" }));
-  process.once("SIGTERM", sigHandler);
-  process.once("SIGINT", sigHandler);
+  process.on("SIGTERM", sigHandler);
+  process.on("SIGINT", sigHandler);
 
   const serverSearch = async (
     params: import("./execution/search/cross-resource.js").CrossResourceSearchParams & {

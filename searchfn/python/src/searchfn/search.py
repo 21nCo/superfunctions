@@ -1,14 +1,17 @@
-import re
-from typing import Any, Dict, List, Optional
 from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
-DEFAULT_PREFIX = "_searchfn_"
+from .utils import DEFAULT_PREFIX, tokenize
 
-def tokenize(text: str) -> List[str]:
-    if not text:
-        return []
-    clean = re.sub(r'[^\w\s]', '', str(text).lower())
-    return [t for t in clean.split() if len(t) > 2]
+
+def _normalize_limit(limit: int) -> int:
+    if isinstance(limit, bool):
+        raise ValueError("limit must be a positive integer")
+    normalized = int(limit)
+    if normalized <= 0:
+        raise ValueError("limit must be a positive integer")
+    return normalized
+
 
 async def search_index(
     schema: Any,
@@ -16,36 +19,44 @@ async def search_index(
     query: str,
     model: Optional[str] = None,
     limit: int = 20,
-    table_prefix: str = DEFAULT_PREFIX
+    table_prefix: str = DEFAULT_PREFIX,
 ) -> List[Dict[str, Any]]:
+    del schema
     index_table = f"{table_prefix}index"
     tokens = tokenize(query)
-    
+    normalized_limit = _normalize_limit(limit)
+
     if not tokens:
         return []
-        
-    matches = []
-    for token in tokens:
-        where_clause = {"term": token}
+
+    matches: List[Dict[str, Any]] = []
+    for token in dict.fromkeys(tokens):
+        where_clause = [{"field": "term", "operator": "eq", "value": token}]
         if model:
-            where_clause["model"] = model
-            
+            where_clause.append({"field": "model", "operator": "eq", "value": model})
+
         token_matches = await db.find_many(index_table, where_clause)
         matches.extend(token_matches)
-        
-    # Aggregate and score
-    scores = defaultdict(lambda: {"score": 0, "matches": []})
-    
+
+    scores: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"score": 0, "matches": set()})
     for match in matches:
         key = f"{match['model']}:{match['recordId']}"
         entry = scores[key]
         if entry["score"] == 0:
             entry["id"] = match["recordId"]
             entry["model"] = match["model"]
-            
+
         entry["score"] += 1
-        entry["matches"].append(match["term"])
-        
-    # Sort
-    results = sorted(scores.values(), key=lambda x: x["score"], reverse=True)
-    return results[:limit]
+        entry["matches"].add(match["term"])
+
+    results = [
+        {
+            "id": entry["id"],
+            "model": entry["model"],
+            "score": entry["score"],
+            "matches": sorted(entry["matches"]),
+        }
+        for entry in scores.values()
+    ]
+    results.sort(key=lambda item: (-item["score"], str(item["model"]), str(item["id"])))
+    return results[:normalized_limit]

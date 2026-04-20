@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
 
   interface Props {
     value: string;
@@ -8,12 +8,17 @@
   }
 
   let { value, children, class: className, ...rest }: Props = $props();
+  const getValue = () => value;
 
-  const context = getContext<any>('tabs');
+  const context = getRequiredContext<any>(
+    'tabs',
+    'TabsContent',
+    'Tabs components must be used within Tabs'
+  );
 
-  let isSelected = $derived(context.value === value);
-  let triggerId = `${context.baseId}-trigger-${value}`;
-  let contentId = `${context.baseId}-content-${value}`;
+  let isSelected = $derived(context.value === getValue());
+  let triggerId = $derived(`${context.baseId}-trigger-${getValue()}`);
+  let contentId = $derived(`${context.baseId}-content-${getValue()}`);
 </script>
 
 {#if isSelected}

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { createSearchFnClient } from '../src/integrations/searchfn.js';
-import { indexTranscript } from '../src/search/indexer.js';
+import {
+  createTranscriptSearchDocuments,
+  indexTranscript,
+} from '../src/search/indexer.js';
 
 describe('search indexer', () => {
   it('indexes transcript segments (TV-SRCH-001)', async () => {
@@ -43,5 +46,33 @@ describe('search indexer', () => {
 
     const results2 = await searchClient.search('second');
     expect(results2.length).toBe(1);
+  });
+
+  it('uses deterministic transcript ordering for same-start-time segments', () => {
+    const documents = createTranscriptSearchDocuments({
+      recordingId: 'rec_order',
+      botId: 'bot_order',
+      segments: [
+        { speakerId: 'speaker_b', startTime: 1000, endTime: 1500, text: 'second', confidence: 0.9 },
+        { speakerId: 'speaker_a', startTime: 1000, endTime: 1400, text: 'first', confidence: 0.9 },
+        { speakerId: 'speaker_a', startTime: 500, endTime: 900, text: 'zero', confidence: 0.9 },
+      ],
+    });
+
+    expect(documents.map((document) => document.segmentId)).toEqual([
+      'rec_order::seg::0',
+      'rec_order::seg::1',
+      'rec_order::seg::2',
+    ]);
+    expect(documents.map((document) => document.participantId)).toEqual([
+      'speaker_a',
+      'speaker_a',
+      'speaker_b',
+    ]);
+    expect(documents.map((document) => document.text)).toEqual([
+      'zero',
+      'first',
+      'second',
+    ]);
   });
 });

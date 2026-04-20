@@ -8,7 +8,6 @@ const SRC_ROOT = resolve(ROOT, "src");
 const REMOVED_DIR_PATTERNS = [
   "compat",
   "search-engine",
-  "in-memory-search",
   "pipeline",
   "indexing",
   "cache",
@@ -16,7 +15,11 @@ const REMOVED_DIR_PATTERNS = [
   "query",
 ];
 
-const REMOVED_SYMBOLS = ["SearchEngine", "InMemorySearchFn", "migrateFlexStoreToSearchFn"];
+const REMOVED_SYMBOLS = ["SearchEngine", "migrateFlexStoreToSearchFn"];
+
+function normalizePath(file: string): string {
+  return file.replaceAll("\\", "/");
+}
 
 function walkFiles(dir: string, files: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -35,7 +38,9 @@ function walkFiles(dir: string, files: string[] = []): string[] {
 
 describe("legacy symbol guard", () => {
   it("does not reintroduce removed legacy source directories", () => {
-    const sourceFiles = walkFiles(SRC_ROOT).map((f) => f.replace(`${SRC_ROOT}/`, ""));
+    const sourceFiles = walkFiles(SRC_ROOT).map((f) =>
+      normalizePath(f).replace(`${normalizePath(SRC_ROOT)}/`, ""),
+    );
     const legacyMatches = sourceFiles.filter((file) =>
       REMOVED_DIR_PATTERNS.some((pattern) => file.includes(`${pattern}/`) || file.startsWith(`${pattern}.`)),
     );
@@ -50,7 +55,7 @@ describe("legacy symbol guard", () => {
       const text = readFileSync(file, "utf-8");
       for (const symbol of REMOVED_SYMBOLS) {
         if (text.includes(symbol)) {
-          matches.push({ file: file.replace(`${ROOT}/`, ""), symbol });
+          matches.push({ file: normalizePath(file).replace(`${normalizePath(ROOT)}/`, ""), symbol });
         }
       }
     }

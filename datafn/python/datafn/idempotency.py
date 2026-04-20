@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional, TypedDict
 from .db import Adapter
+from .envelope import CONFLICT, classify_error
+from .logger import DatafnLogger
 
 class MutationResult(TypedDict):
     ok: bool
@@ -8,7 +10,13 @@ class MutationResult(TypedDict):
     deduped: bool
     errors: list[Dict[str, Any]]
 
-async def check_idempotency(db: Adapter, namespace: str, client_id: str, mutation_id: str) -> Optional[MutationResult]:
+async def check_idempotency(
+    db: Adapter,
+    namespace: str,
+    client_id: str,
+    mutation_id: str,
+    logger: Optional[DatafnLogger] = None,
+) -> Optional[MutationResult]:
     # Table: __datafn_idempotency
     try:
         record = await db.find_one(
@@ -20,16 +28,22 @@ async def check_idempotency(db: Adapter, namespace: str, client_id: str, mutatio
             namespace=namespace
         )
         if record:
-            result = record.get("result")
-            if result:
+            stored = record.get("result")
+            if isinstance(stored, dict):
+                result = dict(stored)
                 result["deduped"] = True
                 return result
-    except Exception:
-        # If DB error, treat as cache miss (safer than blocking, but arguably less safe for idempotency)
-        # Consistent with "best effort" if DB is flaky, but if DB is down, everything is down.
-        # Letting error propagate might be better? 
-        # For now, swallow to match "cache miss" behavior unless critical.
-        pass
+    except Exception as exc:
+        if logger:
+            logger.warn(
+                "Idempotency lookup failed",
+                {
+                    "namespace": namespace,
+                    "clientId": client_id,
+                    "mutationId": mutation_id,
+                    "error": str(exc),
+                },
+            )
     return None
 
 async def store_idempotency(db: Adapter, namespace: str, client_id: str, mutation_id: str, result: MutationResult) -> None:
@@ -47,6 +61,7 @@ async def store_idempotency(db: Adapter, namespace: str, client_id: str, mutatio
             },
             namespace=namespace
         )
-    except Exception:
+    except Exception as exc:
         # Ignore duplicate key errors if race condition
-        pass
+        if classify_error(exc) != CONFLICT:
+            raise

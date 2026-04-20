@@ -4,9 +4,9 @@ Experimental Vue adapter exports for `uifn` primitives.
 
 ## Status
 
-Experimental
+Experimental. This package is public but not part of the GA release bar.
 
-This package is public but not GA. API and behavior may change in minor releases while the adapter is hardened.
+The canonical package matrix and compatibility matrix live in the root `uifn/README.md`.
 
 ## Installation
 
@@ -14,20 +14,27 @@ This package is public but not GA. API and behavior may change in minor releases
 npm install @uifn/core @uifn/vue
 ```
 
-## API Shape
+## Usage
 
-`@uifn/vue` currently exports component modules (for example `Checkbox`, `Dialog`, `Popover`, `Select`) from `src/index.ts`.
+```ts
+import { Checkbox, Dialog } from "@uifn/vue";
+```
 
-Current exported families include Accordion, AlertDialog, Avatar, Badge, Checkbox, Collapsible, Combobox, ContextMenu, Dialog, DropdownMenu, HoverCard, Label, MenuBar, Popover, Progress, RadioGroup, ScrollArea, Select, Separator, Slider, Switch, Tabs, Toast, Toggle, ToggleGroup, Toolbar, and Tooltip.
+## Current Public Surface
 
-`VirtualizedList` is not currently exported by the Vue adapter.
+`@uifn/vue` currently exports the component-family modules rooted at `uifn/vue/src/index.ts`, including Accordion, AlertDialog, Avatar, Badge, Checkbox, Collapsible, Combobox, ContextMenu, Dialog, DropdownMenu, HoverCard, Label, MenuBar, Popover, Progress, RadioGroup, ScrollArea, Select, Separator, Slider, Switch, Tabs, Toast, Toggle, ToggleGroup, Toolbar, and Tooltip.
 
-It does **not** currently ship a stable composable-first surface such as `useCheckbox` / `useDialog`.
+The public Vue contract for this release train is the package root export only. This Experimental package does not document stable subpaths or GA-complete part-by-part parity with the React or Svelte adapters.
 
-## Compatibility
+The Experimental Vue package does not currently claim:
 
-- Vue: `3.5+`
-- Node.js: `18.x`, `20.x`, `22.x`
+- GA parity with the React or Svelte adapters,
+- `VirtualizedList`, `Portal`, `Presence`, or `Slot`, or
+- composable-first helpers such as `useCheckbox` or `useDialog`.
+
+## Release Policy
+
+See the root `uifn/README.md` for the compatibility matrix and the `verify:uifn-release` contract. This package remains in the release gate for manifest, export-map, and pack-hygiene checks even while Experimental.
 
 ## Example Playground
 

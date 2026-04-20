@@ -3,6 +3,7 @@ import type { OAuthTokenEndpointRequest, OAuthTokenHttpClient } from '@superfunc
 import { ConnectionManager, createConnectionManagerOAuthDependencies } from '../src/core/connection-manager.js';
 import { AdapterConnectionStorage } from '../src/storage/connection-storage.js';
 import { MemoryAdapter } from '../src/storage/adapters/memory.js';
+import { DEFAULT_PLUGFN_STORAGE_MODELS } from '../src/storage/adapters/database.js';
 import { NoopLogger } from '../src/utils/logger.js';
 import type { Provider } from '../src/types/provider.js';
 import { AuthType } from '../src/types/provider.js';
@@ -133,7 +134,7 @@ describe('ConnectionManager OAuth shared integration', () => {
     });
 
     const afterRefresh = await readTokenRecord(adapter, connection.id);
-    expect(afterRefresh?.encryptedPayload).toBe(beforeRefresh?.encryptedPayload);
+    expect(afterRefresh?.encrypted_payload).toBe(beforeRefresh?.encrypted_payload);
 
     const credentials = await env.manager.getCredentials(connection.id);
     expect(credentials.type).toBe('oauth2');
@@ -165,13 +166,13 @@ describe('ConnectionManager OAuth shared integration', () => {
     });
 
     const tokenBefore = await readTokenRecord(adapter, connection.id);
-    expect(tokenBefore?.keyRef).toBe('plugfn-key-v1');
+    expect(tokenBefore?.key_ref).toBe('plugfn-key-v1');
 
-    await env.oauthDependencies.encryptedTokenVault.rotateKey(tokenBefore!.tokenId, 'plugfn-key-v2');
+    await env.oauthDependencies.encryptedTokenVault.rotateKey(tokenBefore!.token_id, 'plugfn-key-v2');
 
     const tokenAfter = await readTokenRecord(adapter, connection.id);
-    expect(tokenAfter?.keyRef).toBe('plugfn-key-v2');
-    expect(tokenAfter?.encryptedPayload).not.toBe(tokenBefore?.encryptedPayload);
+    expect(tokenAfter?.key_ref).toBe('plugfn-key-v2');
+    expect(tokenAfter?.encrypted_payload).not.toBe(tokenBefore?.encrypted_payload);
 
     const credentials = await env.manager.getCredentials(connection.id);
     expect(credentials.type).toBe('oauth2');
@@ -204,12 +205,11 @@ describe('ConnectionManager OAuth shared integration', () => {
 
     const tokenEntry = await readTokenEntryByConnection(adapter, connection.id);
     expect(tokenEntry?.record).toBeTruthy();
-    await adapter.updateConnection(tokenEntry!.id, {
-      metadata: {
-        oauthTokenRecord: {
-          ...tokenEntry!.record,
-          keyRef: '',
-        },
+    await adapter.update({
+      model: DEFAULT_PLUGFN_STORAGE_MODELS.oauthTokens,
+      where: [{ field: 'token_id', operator: 'eq', value: tokenEntry!.id }],
+      data: {
+        key_ref: '',
       },
     });
 
@@ -308,7 +308,7 @@ function createManagerEnvironment(adapter: MemoryAdapter, tokenClient: OAuthToke
   ]);
 
   const oauthDependencies = createConnectionManagerOAuthDependencies({
-    adapter,
+    database: adapter,
     providers,
     integrationConfigs,
     baseUrl: BASE_URL,
@@ -394,16 +394,16 @@ async function readTokenEntryByConnection(
   adapter: MemoryAdapter,
   connectionId: string
 ): Promise<{ id: string; record: any } | null> {
-  const entries = await adapter.listConnections('__oauth_token_system__', '__oauth_token_system__');
-  for (const entry of entries) {
-    const record = entry?.metadata?.oauthTokenRecord;
-    if (record?.connectionId === connectionId) {
-      return {
-        id: entry.id,
-        record,
-      };
-    }
+  const record = await adapter.findOne<any>({
+    model: DEFAULT_PLUGFN_STORAGE_MODELS.oauthTokens,
+    where: [{ field: 'connection_id', operator: 'eq', value: connectionId }],
+  });
+  if (!record) {
+    return null;
   }
 
-  return null;
+  return {
+    id: record.token_id,
+    record,
+  };
 }

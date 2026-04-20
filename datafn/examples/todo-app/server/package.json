@@ -22,6 +22,7 @@
     "@searchfn/datafn-provider": "*",
     "@superfunctions/db": "*",
     "@superfunctions/http-hono": "*",
+    "dotenv": "^16.6.1",
     "drizzle-orm": "^0.35.0",
     "hono": "^4.6.16",
     "pg": "^8.11.3"
@@ -29,7 +30,6 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
-    "dotenv": "^16.6.1",
     "drizzle-kit": "^0.31.8",
     "tsx": "^4.7.1",
     "typescript": "^5.6.0"

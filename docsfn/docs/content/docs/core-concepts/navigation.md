@@ -42,7 +42,7 @@ Breadcrumbs are derived from the **active sidebar** and the **current route**:
 
 1. **`flattenSidebarLinks`** collects ordered links (depth-first through groups).
 2. A **root** crumb uses `homeLabel` / `homeHref` options (often the site title and `/docs`).
-3. **`findTrail`** locates the path from the sidebar tree to the active link.
+3. **`resolveBreadcrumbsFromSidebar`** walks the sidebar tree to locate the trail to the active link.
 4. **Groups** on the trail add a crumb pointing at the **first link inside that group** (so group labels are navigable).
 
 In SvelteKit, call **`resolveDocsPageSurface`** with `homeHref` and `homeLabel` aligned to your app’s docs landing route. The returned **`breadcrumbs`** array is ready for a `Breadcrumbs` component.

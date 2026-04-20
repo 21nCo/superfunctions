@@ -1,53 +1,68 @@
 ---
 title: oauth-flow-architecture
-description: Composition of oauth-core/http/storage/providers/testing/flow and legacy migration path.
+description: Composition of oauth-core, oauth-http, oauth-storage, oauth-providers, oauth-router, oauth-testing, and oauth-flow.
 ---
+
+## Layering
+
+The shared OAuth stack is intentionally split so apps can reuse the same lifecycle pieces without duplicating provider logic, storage rules, or route glue:
+
+- `@superfunctions/oauth-core`: provider descriptors, PKCE, redirect validation, callback invariants
+- `@superfunctions/oauth-http`: token exchange, refresh, revoke transport
+- `@superfunctions/oauth-storage`: state stores, token vaults, encryption helpers
+- `@superfunctions/oauth-providers`: curated descriptors and provider-policy registry
+- `@superfunctions/oauth-flow`: start/callback/refresh/disconnect orchestration
+- `@superfunctions/oauth-router`: reusable route factories on top of `oauth-flow`
+- `@superfunctions/oauth-testing`: deterministic fixtures for tests
 
 ## Workflow
 
 ```mermaid
 sequenceDiagram
   participant App
+  participant Router as oauth-router
   participant Flow as oauth-flow
   participant Core as oauth-core
   participant HTTP as oauth-http
   participant Store as oauth-storage
-  App->>Flow: start(provider, user)
-  Flow->>Core: create auth request + state
-  Core->>Store: persist state/token metadata
-  App->>Flow: callback(code, state)
-  Flow->>HTTP: exchange code for token
-  HTTP-->>Flow: token response
-  Flow->>Store: upsert token set
-  Flow-->>App: connected result
+  participant Policy as oauth-providers
+
+  App->>Router: request start/callback/disconnect
+  Router->>Flow: normalized flow input
+  Flow->>Policy: provider descriptor / policy lookup
+  Flow->>Core: create auth request or validate callback state
+  Core->>Store: persist or consume redirect state
+  Flow->>HTTP: exchange, refresh, or revoke token
+  Flow->>Store: persist encrypted token set / delete local token
+  Flow-->>Router: lifecycle result
+  Router-->>App: JSON or redirect response
 ```
 
-## Legacy Migration
+## Production Guidance
 
-Legacy path: `plugfn/auth/oauth-flow` and function-local orchestrations.
+- Prefer `EncryptedTokenVault` so ciphertext, not plaintext token JSON, becomes the durable record format.
+- `oauth-flow` fails closed by default when you use `EncryptedTokenVault`; legacy plain `TokenVault` setups remain writable for backward compatibility, and `plaintext-unsafe` should stay limited to tests and tightly controlled migration windows.
+- `createDefaultProviderPolicyRegistry()` is an in-memory convenience path. Durable consent or audit retention requires explicit stores.
+- `oauth-router` is the route-inventory layer. Framework adapters still belong in `@superfunctions/http-*` packages or the consuming app.
 
-Current path: `@superfunctions/oauth-flow` + `@superfunctions/oauth-http` + `@superfunctions/oauth-storage`.
+## Verification
 
-## External Consumer Example
+Use the shared repo-root gate when you need a reproducible release check for the audited OAuth family:
 
-```ts
-import { createOAuthFlowService } from "@superfunctions/oauth-flow";
+```bash
+npm run gate:packages-oauth-shared
 ```
 
-## Superfunction Consumer Example
+That gate builds the dependency closure for the shared OAuth packages, runs each package-local test command from `repo root`, and fails if the shared OAuth README/docs inventory is incomplete.
 
-```ts
-import { createOAuthFlowService } from "@superfunctions/oauth-flow";
-// used by authfn and plugfn wrappers internally
-```
+## Migration Direction
 
-## Security Caveats
+Legacy function-local OAuth implementations should converge on the shared stack:
 
-- Require strict state verification and PKCE for public clients.
-- Never emit tokens in logs or metrics events.
-- Reject dynamic redirect URIs outside allowlist.
+- move protocol invariants into `@superfunctions/oauth-core`
+- move token transport into `@superfunctions/oauth-http`
+- move persistence into `@superfunctions/oauth-storage`
+- expose HTTP endpoints through `@superfunctions/oauth-router`
+- keep app-specific identity and product behavior in `oauth-flow` hooks or the consuming app
 
-## Operational Caveats
-
-- Ensure deterministic provider/runtime config loading across environments.
-- Emit request IDs and provider IDs for start/callback/refresh/disconnect events.
+This is the path intended for packages such as `plugfn` and for downstream apps that want one reusable OAuth substrate across integrations.

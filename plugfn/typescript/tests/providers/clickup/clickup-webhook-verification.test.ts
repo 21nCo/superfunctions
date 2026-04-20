@@ -5,8 +5,10 @@ import { clickupProvider } from '../../../src/providers/clickup/index.js';
 import { NoopLogger } from '../../../src/utils/logger.js';
 import { WebhookHandler } from '../../../src/webhooks/webhook-handler.js';
 
-function sign(payload: unknown, secret: string): string {
-  const digest = createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');
+const encoder = new TextEncoder();
+
+function sign(rawBody: string, secret: string): string {
+  const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
   return `sha256=${digest}`;
 }
 
@@ -25,19 +27,28 @@ describe('clickup webhook verification', () => {
       task_id: 'task_1',
     };
     const secret = 'clickup-secret';
+    const rawBody = JSON.stringify(payload);
 
     const accepted = await handler.handleWebhook(
       'clickup',
       'task.updated',
-      payload,
-      { 'x-signature': sign(payload, secret) },
-      secret
+      undefined,
+      { 'x-signature': sign(rawBody, secret) },
+      secret,
+      { rawBody: encoder.encode(rawBody) }
     );
     expect(accepted.verified).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
 
     await expect(
-      handler.handleWebhook('clickup', 'task.updated', payload, { 'x-signature': 'sha256=bad' }, secret)
+      handler.handleWebhook(
+        'clickup',
+        'task.updated',
+        undefined,
+        { 'x-signature': 'sha256=bad' },
+        secret,
+        { rawBody: encoder.encode(rawBody) }
+      )
     ).rejects.toMatchObject({
       code: 'WEBHOOK_SIGNATURE_INVALID',
     });
@@ -59,13 +70,15 @@ describe('clickup webhook verification', () => {
       status: 'done',
     };
     const secret = 'clickup-secret';
+    const rawBody = JSON.stringify(payload);
 
     const accepted = await handler.handleWebhook(
       'clickup',
       'task.statusChanged',
-      payload,
-      { 'x-signature': sign(payload, secret) },
-      secret
+      undefined,
+      { 'x-signature': sign(rawBody, secret) },
+      secret,
+      { rawBody: encoder.encode(rawBody) }
     );
     expect(accepted.verified).toBe(true);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -74,9 +87,10 @@ describe('clickup webhook verification', () => {
       handler.handleWebhook(
         'clickup',
         'task.statusChanged',
-        payload,
+        undefined,
         { 'x-signature': 'sha256=invalid' },
-        secret
+        secret,
+        { rawBody: encoder.encode(rawBody) }
       )
     ).rejects.toMatchObject({
       code: 'WEBHOOK_SIGNATURE_INVALID',

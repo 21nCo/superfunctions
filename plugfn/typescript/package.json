@@ -1,7 +1,7 @@
 {
   "name": "plugfn",
   "version": "0.0.1",
-  "description": "Self-hosted integration platform for developers - Connect your apps to the world",
+  "description": "Shared self-hosted integration runtime for Superfunctions apps",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

@@ -22,5 +22,9 @@ export abstract class BaseTool {
 
   handlePointerUp(e: PointerEvent, context: ToolContext): void {}
 
+  handlePointerCancel(e: PointerEvent, context: ToolContext): void {
+    this.handlePointerUp(e, context);
+  }
+
   handleKeyDown(e: KeyboardEvent, context: ToolContext): void {}
 }

@@ -3,12 +3,16 @@
  * Tests TV-HKS-001, TV-HKS-002 from TEST_VECTORS.md
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { runBeforeHook, runAfterHook } from "../src/hooks.js";
 import type { DatafnPlugin, DatafnHookContext } from "../src/types.js";
 
 const ctx: DatafnHookContext = { env: "server", schema: {} as any };
 const clientCtx: DatafnHookContext = { env: "client", schema: {} as any };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("runBeforeHook (TV-HKS-001)", () => {
   it("returns ok with final payload when all hooks succeed", async () => {
@@ -86,7 +90,7 @@ describe("runBeforeHook (TV-HKS-001)", () => {
 describe("runAfterHook (TV-HKS-002)", () => {
   it("calls all plugins even if one throws (fail-open)", async () => {
     const callOrder: string[] = [];
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const plugins: DatafnPlugin[] = [
       { name: "p1", runsOn: ["client"], afterQuery: async () => { callOrder.push("p1"); } },
       { name: "p2", runsOn: ["client"], afterQuery: async () => { callOrder.push("p2"); throw new Error("fail"); } },
@@ -94,7 +98,6 @@ describe("runAfterHook (TV-HKS-002)", () => {
     ];
     await runAfterHook(plugins, "client", "afterQuery", clientCtx, {}, {});
     expect(callOrder).toEqual(["p1", "p2", "p3"]);
-    consoleSpy.mockRestore();
   });
 
   it("error is logged on console.error (fail-open)", async () => {
@@ -104,7 +107,6 @@ describe("runAfterHook (TV-HKS-002)", () => {
     ];
     await runAfterHook(plugins, "server", "afterQuery", ctx, {}, {});
     expect(consoleSpy).toHaveBeenCalled();
-    consoleSpy.mockRestore();
   });
 
   it("env filtering works for after hooks", async () => {
@@ -121,6 +123,25 @@ describe("runAfterHook (TV-HKS-002)", () => {
     const plugins: DatafnPlugin[] = [
       { name: "noHook", runsOn: ["server"] },
     ];
-    await expect(runAfterHook(plugins, "server", "afterQuery", ctx, {}, {})).resolves.toBeUndefined();
+    await expect(runAfterHook(plugins, "server", "afterQuery", ctx, {}, {})).resolves.toEqual({});
+  });
+
+  it("threads transformed results through after hooks", async () => {
+    const plugins: DatafnPlugin[] = [
+      {
+        name: "p1",
+        runsOn: ["server"],
+        afterQuery: async (_ctx, _payload, result: any) => ({ ...result, step: 1 }),
+      },
+      {
+        name: "p2",
+        runsOn: ["server"],
+        afterQuery: async (_ctx, _payload, result: any) => ({ ...result, step: result.step + 1 }),
+      },
+    ];
+
+    await expect(
+      runAfterHook(plugins, "server", "afterQuery", ctx, {}, { ok: true }),
+    ).resolves.toEqual({ ok: true, step: 2 });
   });
 });

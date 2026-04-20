@@ -2,6 +2,7 @@ import React, { createContext, useContext, useRef } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
 import { useId } from './hooks/use-id';
 import { useRovingFocus } from './hooks/use-roving-focus';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Tabs Root
@@ -80,8 +81,11 @@ export interface TabsListProps extends React.HTMLAttributes<HTMLDivElement> {
 export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
   (props, ref) => {
     const { loop = true, ...domProps } = props;
-    const context = useContext(TabsContext);
-    if (!context) throw new Error('TabsList must be used within Tabs');
+    const context = assertReactContext(
+      useContext(TabsContext),
+      'TabsList',
+      'TabsList must be used within Tabs'
+    );
 
     const refInternal = useRef<HTMLDivElement | null>(null);
     const composedRef = (node: HTMLDivElement) => {
@@ -90,7 +94,7 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
       else if (ref) (ref as any).current = node;
     };
 
-    const { handleKeyDown } = useRovingFocus({
+    const { handleKeyDown, currentInfo } = useRovingFocus({
       getItems: () => {
         if (!refInternal.current) return [];
         return Array.from(refInternal.current.querySelectorAll('[role="tab"]:not([disabled])'));
@@ -98,6 +102,15 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
       orientation: context.orientation,
       loop,
     });
+
+    React.useEffect(() => {
+      if (!currentInfo.id || !refInternal.current) {
+        return;
+      }
+
+      const nextItem = refInternal.current.querySelector<HTMLElement>(`#${currentInfo.id}`);
+      nextItem?.focus();
+    }, [currentInfo.id]);
 
     return (
       <div
@@ -124,8 +137,11 @@ export interface TabsTriggerProps extends React.ButtonHTMLAttributes<HTMLButtonE
 export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>(
   (props, ref) => {
     const { value, disabled, onClick, onFocus, ...domProps } = props;
-    const context = useContext(TabsContext);
-    if (!context) throw new Error('TabsTrigger must be used within Tabs');
+    const context = assertReactContext(
+      useContext(TabsContext),
+      'TabsTrigger',
+      'TabsTrigger must be used within Tabs'
+    );
 
     const isSelected = context.value === value;
     const triggerId = `${context.baseId}-trigger-${value}`;
@@ -178,8 +194,11 @@ export interface TabsContentProps extends React.HTMLAttributes<HTMLDivElement> {
 export const TabsContent = React.forwardRef<HTMLDivElement, TabsContentProps>(
   (props, ref) => {
     const { value, ...domProps } = props;
-    const context = useContext(TabsContext);
-    if (!context) throw new Error('TabsContent must be used within Tabs');
+    const context = assertReactContext(
+      useContext(TabsContext),
+      'TabsContent',
+      'TabsContent must be used within Tabs'
+    );
 
     const isSelected = context.value === value;
     const triggerId = `${context.baseId}-trigger-${value}`;

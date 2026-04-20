@@ -51,7 +51,7 @@ A minimal single-service configuration looks like this:
   "build": {
     "command": "npm run build",
     "directory": "dist",
-    "nodeModules": "production"
+    "nodeModules": "all"
   },
   "start": {
     "command": "npm start",
@@ -78,7 +78,7 @@ app.listen(port, () => {
 });
 ```
 
-HostFn writes the port into the PM2 ecosystem config, so your app always receives the correct value regardless of what is in your `.env` file.
+HostFn writes the port into the PM2 ecosystem config, but values read from the server's `.env` file are merged afterward. If your remote `.env` also defines `PORT`, it can override the configured port.
 
 <Callout type="warn">
 Make sure no other service on the server is using the same port. Each application and environment should have a unique port number.
@@ -147,7 +147,7 @@ Key properties:
 |---|---|---|
 | `name` | `{name}-{env}` | Unique PM2 process identifier |
 | `script` | `dist/index.js` | Entry point (from `start.entry` config) |
-| `instances` | `"max"` or a number | Number of cluster workers (from environment `instances`) |
+| `instances` | `"max"` | Current generated value for single-service PM2 config |
 | `exec_mode` | `"cluster"` | Enables Node.js cluster mode for multi-core usage |
 | `env` | `{ ... }` | Merged environment variables from the `.env` file on the server |
 | `max_memory_restart` | `"1G"` | Restart the process if it exceeds 1 GB of memory |

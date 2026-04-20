@@ -2,6 +2,7 @@
   import "../app.css";
   import DocsSiteSearch from "$lib/components/DocsSiteSearch.svelte";
   import TopBar from "@site/topbar";
+  import { page } from "$app/stores";
   import type { Snippet } from "svelte";
   import { onMount } from "svelte";
   import type { LayoutData } from "./$types";
@@ -20,31 +21,48 @@
   });
 </script>
 
-<div class="docsfn-site-root">
-  <TopBar
+<div
+  class="docsfn-site-root"
+  class:docsfn-docs-chrome={$page.url.pathname.startsWith("/docs")}
+>
+  <!-- <TopBar
     items={data.source.config.navigation?.topNav}
     searchTrigger={clientSearchReady ? DocsSiteSearch : undefined}
-  />
+  /> -->
   <div class="docsfn-site-main">
     {@render children()}
   </div>
-  <footer class="docsfn-site-footer">
-    <p>Built at <a href="https://21n.co" rel="noreferrer noopener">21n.co</a></p>
-  </footer>
+  {#if data.source.config.site.showFooter !== false}
+    <footer class="docsfn-site-footer">
+      <p>Built at <a href="https://21n.co" rel="noreferrer noopener">21n.co</a></p>
+    </footer>
+  {/if}
 </div>
 
 <style>
   .docsfn-site-root {
     min-height: 100vh;
+    width: 100%;
+    max-width: none;
     display: flex;
     flex-direction: column;
   }
 
   .docsfn-site-main {
     flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .docsfn-site-footer {
+    flex-shrink: 0;
+    align-self: stretch;
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+    position: relative;
+    z-index: 2;
     border-top: 1px solid var(--docsfn-color-border);
     padding: 1rem 1.5rem;
     text-align: center;

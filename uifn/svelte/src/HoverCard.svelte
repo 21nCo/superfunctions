@@ -19,10 +19,12 @@
     closeDelay = 300,
     children 
   }: Props = $props();
+  const initialDefaultOpen = (() => defaultOpen)();
+  const notifyOpenChange = (open: boolean) => onOpenChange?.(open);
 
   const machine = createHoverCard({
-    defaultOpen,
-    onOpenChange
+    defaultOpen: initialDefaultOpen,
+    onOpenChange: notifyOpenChange
   });
 
   let state = $state(machine.state);

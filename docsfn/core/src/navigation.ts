@@ -454,9 +454,15 @@ export function resolveSidebarForRoute(input: {
   sidebars: Record<string, Sidebar>;
   route: string;
 }): string | null {
-  const sidebarIds = Object.keys(input.sidebars).sort((left, right) =>
-    left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
-  );
+  const sidebarIds = Object.keys(input.sidebars).sort((left, right) => {
+    if (left === "default" && right !== "default") {
+      return 1;
+    }
+    if (right === "default" && left !== "default") {
+      return -1;
+    }
+    return left.localeCompare(right, "en", { sensitivity: "variant", numeric: true });
+  });
 
   for (const sidebarId of sidebarIds) {
     const links = flattenSidebarLinks(input.sidebars[sidebarId]);

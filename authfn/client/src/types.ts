@@ -1,4 +1,5 @@
 export type AuthFnActorType = 'user' | 'api-key';
+export type AuthFnSocialProviderId = 'google' | 'apple' | 'github';
 export type AuthFnAuthMethod =
   | 'password'
   | 'email-otp'
@@ -61,6 +62,56 @@ export interface AuthFnOtpEnvelope extends AuthFnSuccessEnvelope<{
   sent: boolean;
 }> {}
 
+export interface AuthFnVerifyOtpEnvelope extends AuthFnSuccessEnvelope<{
+  verified: true;
+}> {}
+
+export interface AuthFnApiKeyRecord {
+  id: string;
+  userId?: string | null;
+  name?: string | null;
+  scopes?: string[] | null;
+  metadata?: Record<string, unknown> | null;
+  expiresAt?: Date | string | null;
+  revokedAt?: Date | string | null;
+  lastUsedAt?: Date | string | null;
+  createdAt?: Date | string;
+  updatedAt?: Date | string;
+}
+
+export interface AuthFnRegionLookupResult {
+  identifier: string;
+  userId?: string;
+  regionId: string;
+  authority: string;
+  domain?: string;
+  continueLocally: boolean;
+  redirectTo?: string;
+}
+
+export interface AuthFnRuntimeResolution {
+  issuer: string;
+  baseUrl: string;
+  regionId: string | null;
+  cookie: {
+    prefix: string;
+    domain: string | null;
+    secure: boolean;
+    sameSite: 'strict' | 'lax' | 'none';
+    path: string;
+    sessionCookieName: string;
+    csrfCookieName: string;
+  };
+  oauth: Record<string, {
+    clientId: string | null;
+    hasClientSecret: boolean;
+    hasClientSecretResolver: boolean;
+    allowlistedRedirectUris: string[];
+    allowlistedReturnTo: string[];
+    scopes: string[];
+  }>;
+}
+
 export interface AuthFnClient {
   getSession(): Promise<AuthFnSessionEnvelope | AuthFnErrorEnvelope>;
   signUpWithPassword(input: {
@@ -86,21 +137,46 @@ export interface AuthFnClient {
     purpose: 'verify-email' | 'sign-in' | 'reset-password';
     email: string;
     code: string;
-  }): Promise<AuthFnSessionEnvelope | AuthFnSuccessEnvelope | AuthFnErrorEnvelope>;
+  }): Promise<AuthFnSessionEnvelope | AuthFnVerifyOtpEnvelope | AuthFnErrorEnvelope>;
   completePasswordReset(input: {
     email: string;
     code: string;
     newPassword: string;
   }): Promise<AuthFnSuccessEnvelope<{ passwordUpdated: true; }> | AuthFnErrorEnvelope>;
   startSocialSignIn(input: {
-    provider: 'google' | 'apple' | 'github';
+    provider: AuthFnSocialProviderId;
     returnTo?: string;
-    callbackMode?: 'redirect' | 'json';
+    callbackMode?: 'json';
   }): Promise<AuthFnSuccessEnvelope<{
-    provider: 'google' | 'apple' | 'github';
+    provider: AuthFnSocialProviderId;
     redirectTo: string;
     stateId: string;
     expiresAt: string;
+  }> | AuthFnErrorEnvelope>;
+  disconnectSocialAccount(input: {
+    provider: AuthFnSocialProviderId;
+  }): Promise<AuthFnSuccessEnvelope<{
+    disconnected: boolean;
+    provider: AuthFnSocialProviderId;
+  }> | AuthFnErrorEnvelope>;
+  createApiKey(input: {
+    name?: string;
+    scopes?: string[];
+    metadata?: Record<string, unknown>;
+    expiresAt?: string;
+  }): Promise<AuthFnSuccessEnvelope<{
+    keyId: string;
+    secret: string;
+    secretReturnedOnce: true;
+  }> | AuthFnErrorEnvelope>;
+  listApiKeys(): Promise<AuthFnSuccessEnvelope<{
+    keys: AuthFnApiKeyRecord[];
+  }> | AuthFnErrorEnvelope>;
+  revokeApiKey(input: {
+    keyId: string;
+  }): Promise<AuthFnSuccessEnvelope<{
+    revoked: boolean;
+    keyId: string;
   }> | AuthFnErrorEnvelope>;
   enableTwoFactor(): Promise<AuthFnSuccessEnvelope<{
     enrollmentId: string;
@@ -109,11 +185,28 @@ export interface AuthFnClient {
     recoveryCodes: string[];
   }> | AuthFnErrorEnvelope>;
   confirmTwoFactor(input: { code: string }): Promise<AuthFnSuccessEnvelope | AuthFnErrorEnvelope>;
+  completeTwoFactorChallenge(input: {
+    challengeId: string;
+    code: string;
+  }): Promise<AuthFnSuccessEnvelope<{
+    twoFactorSatisfied: true;
+    session: AuthFnSession;
+  }> | AuthFnErrorEnvelope>;
+  disableTwoFactor(input: {
+    code: string;
+  }): Promise<AuthFnSuccessEnvelope<{
+    disabled: true;
+  }> | AuthFnErrorEnvelope>;
+  lookupRegion(input: {
+    identifier: string;
+  }): Promise<AuthFnSuccessEnvelope<AuthFnRegionLookupResult> | AuthFnErrorEnvelope>;
+  getRuntime(): Promise<AuthFnSuccessEnvelope<AuthFnRuntimeResolution> | AuthFnErrorEnvelope>;
 }
 
 export interface AuthFnClientOptions {
   baseUrl?: string;
   fetch?: typeof fetch;
   cookieAccessor?: () => string | undefined;
+  cookiePrefix?: string;
   credentials?: RequestCredentials;
 }

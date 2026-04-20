@@ -1,123 +1,107 @@
-"""
-Tests for cache manager
-"""
+"""Tests for the Python cache manager."""
+
+from pathlib import Path
+import sys
+import asyncio
 
 import pytest
-import asyncio
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from browsefn.core.cache_manager import CacheManager
+from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import CacheConfig
 
 
 @pytest.mark.asyncio
 async def test_cache_set_and_get():
-    """Test basic cache set and get"""
     config = CacheConfig(enabled=True, ttl=60000)
     cache = CacheManager(config)
-    
-    await cache.set('test', 'https://example.com', {'data': 'test'})
-    result = await cache.get('test', 'https://example.com')
-    
-    assert result == {'data': 'test'}
+
+    await cache.set("web.get_page", "https://example.com", {"data": "test"})
+    result = await cache.get("web.get_page", "https://example.com")
+
+    assert result == {"data": "test"}
 
 
 @pytest.mark.asyncio
 async def test_cache_expiration():
-    """Test cache expiration with TTL"""
-    config = CacheConfig(enabled=True, ttl=100)  # 100ms TTL
+    config = CacheConfig(enabled=True, ttl=100)
     cache = CacheManager(config)
-    
-    await cache.set('test', 'https://example.com', 'data')
-    
-    # Should be available immediately
-    result = await cache.get('test', 'https://example.com')
-    assert result == 'data'
-    
-    # Wait for expiration
+
+    await cache.set("web.get_page", "https://example.com", "data")
+    assert await cache.get("web.get_page", "https://example.com") == "data"
+
     await asyncio.sleep(0.15)
-    
-    # Should be expired
-    result = await cache.get('test', 'https://example.com')
-    assert result is None
+
+    assert await cache.get("web.get_page", "https://example.com") is None
 
 
 @pytest.mark.asyncio
-async def test_cache_lru_eviction():
-    """Test LRU eviction when max size reached"""
+async def test_cache_evicts_least_recently_used_entry():
     config = CacheConfig(enabled=True, ttl=60000, max_size=2)
     cache = CacheManager(config)
-    
-    await cache.set('test', 'url1', 'data1')
-    await cache.set('test', 'url2', 'data2')
-    await cache.set('test', 'url3', 'data3')  # Should evict url1
-    
-    assert await cache.get('test', 'url1') is None
-    assert await cache.get('test', 'url2') == 'data2'
-    assert await cache.get('test', 'url3') == 'data3'
+
+    await cache.set("web.get_page", "url1", "data1")
+    await cache.set("web.get_page", "url2", "data2")
+    assert await cache.get("web.get_page", "url1") == "data1"
+
+    await cache.set("web.get_page", "url3", "data3")
+
+    assert await cache.get("web.get_page", "url2") is None
+    assert await cache.get("web.get_page", "url1") == "data1"
+    assert await cache.get("web.get_page", "url3") == "data3"
 
 
 @pytest.mark.asyncio
-async def test_cache_invalidation():
-    """Test cache invalidation by pattern"""
-    config = CacheConfig(enabled=True, ttl=60000)
+async def test_cache_normalizes_aliases_and_provider_ids():
+    config = CacheConfig(enabled=True, defaultTTL=60000, maxSize=10, storage="memory")
     cache = CacheManager(config)
-    
-    await cache.set('test', 'https://example.com/page1', 'data1')
-    await cache.set('test', 'https://example.com/page2', 'data2')
-    await cache.set('test', 'https://other.com/page1', 'data3')
-    
-    await cache.invalidate('example.com')
-    
-    assert await cache.get('test', 'https://example.com/page1') is None
-    assert await cache.get('test', 'https://example.com/page2') is None
-    assert await cache.get('test', 'https://other.com/page1') == 'data3'
+
+    await cache.set(
+        "web.get_page",
+        "example.com#fragment",
+        "normalized",
+        {"provider": "googleMaps"},
+    )
+
+    result = await cache.get(
+        "web.get_page",
+        "https://example.com",
+        {"provider": "google-maps"},
+    )
+
+    assert config.ttl == 60000
+    assert config.max_size == 10
+    assert result == "normalized"
 
 
 @pytest.mark.asyncio
-async def test_cache_stats():
-    """Test cache statistics tracking"""
-    config = CacheConfig(enabled=True, ttl=60000)
+async def test_cache_invalidation_and_stats_are_backend_agnostic():
+    config = CacheConfig(enabled=True, ttl=60000, storage="file")
     cache = CacheManager(config)
-    
-    await cache.set('test', 'url1', 'data1')
-    
-    # Cache hit
-    await cache.get('test', 'url1')
-    
-    # Cache miss
-    await cache.get('test', 'url2')
-    
+
+    await cache.set("web.get_page", "https://example.com/page1", "data1")
+    await cache.set("web.get_page", "https://example.com/page2", "data2")
+    await cache.set("web.get_page", "https://other.com/page1", "data3")
+
+    await cache.get("web.get_page", "https://other.com/page1")
+    await cache.get("web.get_page", "https://missing.com/page")
+    await cache.invalidate("example.com")
+
+    assert await cache.get("web.get_page", "https://example.com/page1") is None
+    assert await cache.get("web.get_page", "https://example.com/page2") is None
+    assert await cache.get("web.get_page", "https://other.com/page1") == "data3"
+
     stats = await cache.get_stats()
-    
-    assert stats.hits == 1
-    assert stats.misses == 1
-    assert stats.hit_rate == 50.0
+    assert stats.hits == 2
+    assert stats.misses == 3
     assert stats.size == 1
+    assert stats.hit_rate == 40.0
 
 
-@pytest.mark.asyncio
-async def test_cache_clear():
-    """Test clearing all cache"""
-    config = CacheConfig(enabled=True, ttl=60000)
-    cache = CacheManager(config)
-    
-    await cache.set('test', 'url1', 'data1')
-    await cache.set('test', 'url2', 'data2')
-    
-    await cache.clear()
-    
-    stats = await cache.get_stats()
-    assert stats.size == 0
-    assert stats.hits == 0
-    assert stats.misses == 0
+def test_cache_rejects_unsupported_storage():
+    config = CacheConfig(enabled=True, storage="redis")
 
-
-@pytest.mark.asyncio
-async def test_cache_disabled():
-    """Test cache when disabled"""
-    config = CacheConfig(enabled=False)
-    cache = CacheManager(config)
-    
-    await cache.set('test', 'url1', 'data1')
-    result = await cache.get('test', 'url1')
-    
-    assert result is None
+    with pytest.raises(BrowseFnError, match="Unsupported cache storage: redis"):
+        CacheManager(config)

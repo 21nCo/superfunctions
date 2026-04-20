@@ -63,3 +63,15 @@ def test_filefn_config_exposes_auth_rate_limit_and_dedup_surfaces() -> None:
     assert config.rate_limit.limits.download.max_requests == 10
     assert config.dedup is not None
     assert config.dedup.enabled is True
+
+
+def test_policy_registry_define_accepts_policy_dicts() -> None:
+    from filefn.server.policies import create_policy_registry
+
+    registry = create_policy_registry()
+    registry.define("avatars", {"storageTarget": "durable", "visibility": "private"})
+
+    policy = registry.get("avatars")
+    assert policy is not None
+    assert policy.storageTarget == "durable"
+    assert policy.visibility == "private"

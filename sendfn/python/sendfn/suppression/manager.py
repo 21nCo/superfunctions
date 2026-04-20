@@ -6,7 +6,7 @@ from typing import Optional
 from superfunctions.db import Adapter
 
 from ..database import helpers as db_helpers
-from ..errors import SuppressionError
+from ..errors import SuppressionError, ValidationError
 from ..models import SuppressionList, SuppressionReason
 
 
@@ -23,6 +23,9 @@ class SuppressionManager:
         self.db = db
         self.enabled = enabled
 
+    def _normalize_email(self, email: str) -> str:
+        return db_helpers.normalize_suppression_email(email)
+
     async def is_suppressed(self, email: str) -> bool:
         """Check if an email is suppressed.
 
@@ -35,7 +38,7 @@ class SuppressionManager:
         if not self.enabled:
             return False
 
-        return await db_helpers.is_email_suppressed(self.db, email)
+        return await db_helpers.is_email_suppressed(self.db, self._normalize_email(email))
 
     async def get_suppression_entry(self, email: str) -> Optional[SuppressionList]:
         """Get suppression list entry for an email.
@@ -46,7 +49,7 @@ class SuppressionManager:
         Returns:
             Suppression list entry or None
         """
-        return await db_helpers.get_suppression_list_entry(self.db, email)
+        return await db_helpers.get_suppression_list_entry(self.db, self._normalize_email(email))
 
     async def add_to_suppression_list(
         self,
@@ -69,7 +72,7 @@ class SuppressionManager:
             Suppression list entry
         """
         suppression_data = {
-            "email": email,
+            "email": self._normalize_email(email),
             "reason": reason,
             "source": source,
             "bounceType": bounce_type,
@@ -85,7 +88,39 @@ class SuppressionManager:
         Args:
             email: Email address to remove
         """
-        await db_helpers.remove_from_suppression_list(self.db, email)
+        await db_helpers.remove_from_suppression_list(self.db, self._normalize_email(email))
+
+    async def bulk_add_to_suppression_list(self, entries: list[dict]) -> None:
+        """Add multiple entries to the suppression list."""
+        if len(entries) > 1000:
+            raise ValidationError("Bulk suppression add accepts at most 1000 entries")
+
+        seen: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or "email" not in entry or "reason" not in entry:
+                raise ValidationError(
+                    "Each bulk suppression entry must include 'email' and 'reason'"
+                )
+            normalized_email = self._normalize_email(entry["email"])
+            if normalized_email in seen:
+                raise ValidationError("Duplicate normalized suppression email in bulk add request")
+
+            seen.add(normalized_email)
+            await self.add_to_suppression_list(
+                email=normalized_email,
+                reason=entry["reason"],
+                source=entry.get("source", "manual"),
+                bounce_type=entry.get("bounceType"),
+                metadata=entry.get("metadata"),
+            )
+
+    async def export_suppression_list(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[SuppressionList]:
+        """Export suppression list entries using the public query surface."""
+        return await self.query_suppression_list(limit=limit, offset=offset)
 
     async def check_and_raise(self, email: str) -> None:
         """Check if email is suppressed and raise error if it is.

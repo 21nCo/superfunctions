@@ -8,6 +8,7 @@
 import type {
   Adapter,
   RowLevelNamespaceConfig,
+  TransactionAdapter,
   WhereClause,
 } from './types.js';
 
@@ -34,8 +35,13 @@ interface ResolvedConfig {
 }
 
 function resolveConfig(config: RowLevelNamespaceConfig): ResolvedConfig {
+  const columnName = config.columnName?.trim() ?? '__ns';
+  if (!columnName) {
+    throw new Error('row-level namespace columnName cannot be blank');
+  }
+
   return {
-    columnName: config.columnName ?? '__ns',
+    columnName,
     mandatory: config.mandatory ?? true,
   };
 }
@@ -53,15 +59,77 @@ function assertNamespace(
   }
 }
 
+function resolveNamespace(
+  ns: string | undefined | null,
+  mandatory: boolean,
+): string | undefined {
+  assertNamespace(ns, mandatory);
+  return ns ?? undefined;
+}
+
 function namespaceWhereClause(col: string, ns: string): WhereClause {
   return { field: col, operator: 'eq', value: ns };
 }
 
-function prependWhere(
+function appendWhere(
   existing: WhereClause[] | undefined,
   clause: WhereClause,
 ): WhereClause[] {
-  return [clause, ...(existing ?? [])];
+  return [...(existing ?? []), clause];
+}
+
+function withNamespaceWhere(
+  where: WhereClause[] | undefined,
+  col: string,
+  namespace: string | undefined,
+): WhereClause[] | undefined {
+  if (!namespace) {
+    return where;
+  }
+  return appendWhere(where, namespaceWhereClause(col, namespace));
+}
+
+function buildScopedWhere(
+  where: WhereClause[] | undefined,
+  col: string,
+  namespace: string | undefined,
+): WhereClause[] {
+  return withNamespaceWhere(removeNamespaceWhere(where, col), col, namespace) ?? [];
+}
+
+function removeNamespaceWhere(
+  where: WhereClause[] | undefined,
+  col: string,
+): WhereClause[] | undefined {
+  return where?.filter((clause) => clause.field !== col);
+}
+
+function sanitizeConflictTarget(
+  conflictTarget: string | string[] | undefined,
+  col: string,
+  namespace: string | undefined,
+): string | string[] | undefined {
+  if (!conflictTarget) {
+    return undefined;
+  }
+
+  const visibleTargets = (
+    Array.isArray(conflictTarget) ? conflictTarget : [conflictTarget]
+  ).filter((field) => field !== col);
+
+  if (visibleTargets.length === 0) {
+    return undefined;
+  }
+
+  const deduped = Array.from(
+    new Set(namespace ? [...visibleTargets, col] : visibleTargets),
+  );
+
+  if (!Array.isArray(conflictTarget) && !namespace && deduped.length === 1) {
+    return deduped[0];
+  }
+
+  return deduped;
 }
 
 function stripColumn<T>(record: T, col: string): T {
@@ -78,8 +146,11 @@ function stripColumnFromArray<T>(records: T[], col: string): T[] {
 function stampData(
   data: Record<string, any>,
   col: string,
-  ns: string,
+  ns: string | undefined,
 ): Record<string, any> {
+  if (!ns) {
+    return data;
+  }
   return { ...data, [col]: ns };
 }
 
@@ -91,6 +162,152 @@ function removeColumnFromData(
   const copy = { ...data };
   delete copy[col];
   return copy;
+}
+
+type NamespaceWrappedSource = Omit<Adapter, 'transaction' | 'close'>;
+
+function createNamespaceWrappedBase(
+  adapter: NamespaceWrappedSource,
+  config: RowLevelNamespaceConfig,
+): NamespaceWrappedSource {
+  const { columnName: col, mandatory } = resolveConfig(config);
+
+  return {
+    // --- Pass-through metadata ---
+    id: adapter.id,
+    name: adapter.name,
+    version: adapter.version,
+    capabilities: adapter.capabilities,
+
+    // --- Pass-through internal (NOT wrapped) ---
+    internal: adapter.internal,
+
+    // --- CRUD ---
+    async create(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const data = stampData(removeColumnFromData(params.data, col), col, namespace);
+      const result = await adapter.create({ ...params, data });
+      return stripColumn(result, col);
+    },
+
+    async createMany(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const data = params.data.map((d) =>
+        stampData(removeColumnFromData(d, col), col, namespace),
+      );
+      const results = await adapter.createMany({ ...params, data });
+      return stripColumnFromArray(results, col);
+    },
+
+    async findOne(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const result = await adapter.findOne({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
+      return result ? stripColumn(result, col) : null;
+    },
+
+    async findMany(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const results = await adapter.findMany({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
+      return stripColumnFromArray(results, col);
+    },
+
+    async update(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const data = removeColumnFromData(params.data, col);
+      const result = await adapter.update({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+        data,
+      });
+      return stripColumn(result, col);
+    },
+
+    async updateMany(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const data = removeColumnFromData(params.data, col);
+      return adapter.updateMany({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+        data,
+      });
+    },
+
+    async delete(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      return adapter.delete({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
+    },
+
+    async deleteMany(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      return adapter.deleteMany({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
+    },
+
+    async upsert(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      const create = stampData(removeColumnFromData(params.create, col), col, namespace);
+      const update = removeColumnFromData(params.update, col);
+      const conflictTarget = sanitizeConflictTarget(
+        params.conflictTarget,
+        col,
+        namespace,
+      );
+      const result = await adapter.upsert({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+        create,
+        update,
+        conflictTarget,
+      });
+      return stripColumn(result, col);
+    },
+
+    async count(params) {
+      const namespace = resolveNamespace(params.namespace, mandatory);
+      return adapter.count({
+        ...params,
+        where: buildScopedWhere(params.where, col, namespace),
+      });
+    },
+
+    // --- Lifecycle pass-through ---
+    initialize: () => adapter.initialize(),
+    isHealthy: () => adapter.isHealthy(),
+
+    // --- Schema management pass-through ---
+    getSchemaVersion: (ns) => adapter.getSchemaVersion(ns),
+    setSchemaVersion: (ns, v) => adapter.setSchemaVersion(ns, v),
+    validateSchema: (s) => adapter.validateSchema(s),
+
+    // Optional schema creation
+    createSchema: adapter.createSchema
+      ? (params) => adapter.createSchema!(params)
+      : undefined,
+  };
+}
+
+function wrapTransactionAdapter(
+  trx: TransactionAdapter,
+  config: RowLevelNamespaceConfig,
+): TransactionAdapter {
+  const wrapped = createNamespaceWrappedBase(trx, config);
+
+  return {
+    ...wrapped,
+    commit: () => trx.commit(),
+    rollback: () => trx.rollback(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -113,153 +330,19 @@ export function wrapWithRowLevelNamespace(
 ): Adapter {
   if (!config.enabled) return adapter;
 
-  const { columnName: col, mandatory } = resolveConfig(config);
+  const wrappedBase = createNamespaceWrappedBase(adapter, config);
 
   const wrapped: Adapter = {
-    // --- Pass-through metadata ---
-    id: adapter.id,
-    name: adapter.name,
-    version: adapter.version,
-    capabilities: adapter.capabilities,
-
-    // --- Pass-through internal (NOT wrapped) ---
-    internal: adapter.internal,
-
-    // --- CRUD ---
-
-    async create(params) {
-      assertNamespace(params.namespace, mandatory);
-      const data = stampData(params.data, col, params.namespace!);
-      const result = await adapter.create({ ...params, data });
-      return stripColumn(result, col);
-    },
-
-    async createMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const data = params.data.map((d) => stampData(d, col, params.namespace!));
-      const results = await adapter.createMany({ ...params, data });
-      return stripColumnFromArray(results, col);
-    },
-
-    async findOne(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const result = await adapter.findOne({ ...params, where });
-      return result ? stripColumn(result, col) : null;
-    },
-
-    async findMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const results = await adapter.findMany({ ...params, where });
-      return stripColumnFromArray(results, col);
-    },
-
-    async update(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const data = removeColumnFromData(params.data, col);
-      const result = await adapter.update({ ...params, where, data });
-      return stripColumn(result, col);
-    },
-
-    async updateMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const data = removeColumnFromData(params.data, col);
-      return adapter.updateMany({ ...params, where, data });
-    },
-
-    async delete(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      return adapter.delete({ ...params, where });
-    },
-
-    async deleteMany(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      return adapter.deleteMany({ ...params, where });
-    },
-
-    async upsert(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      const create = stampData(params.create, col, params.namespace!);
-      const update = removeColumnFromData(params.update, col);
-      // Augment conflict target to include namespace column for composite PK
-      let conflictTarget = params.conflictTarget;
-      if (conflictTarget) {
-        conflictTarget = Array.isArray(conflictTarget)
-          ? [col, ...conflictTarget]
-          : [col, conflictTarget];
-      }
-      const result = await adapter.upsert({
-        ...params,
-        where,
-        create,
-        update,
-        conflictTarget,
-      });
-      return stripColumn(result, col);
-    },
-
-    async count(params) {
-      assertNamespace(params.namespace, mandatory);
-      const where = prependWhere(
-        params.where,
-        namespaceWhereClause(col, params.namespace!),
-      );
-      return adapter.count({ ...params, where });
-    },
+    ...wrappedBase,
 
     // --- Transaction: wrap child adapter ---
     async transaction(callback) {
       return adapter.transaction(async (trx) => {
-        // Wrap the transaction adapter with the same namespace filtering
-        const wrappedTrx = wrapWithRowLevelNamespace(
-          trx as unknown as Adapter,
-          config,
-        ) as unknown as typeof trx;
-        return callback(wrappedTrx);
+        return callback(wrapTransactionAdapter(trx, config));
       });
     },
 
-    // --- Lifecycle pass-through ---
-    initialize: () => adapter.initialize(),
-    isHealthy: () => adapter.isHealthy(),
     close: () => adapter.close(),
-
-    // --- Schema management pass-through ---
-    getSchemaVersion: (ns) => adapter.getSchemaVersion(ns),
-    setSchemaVersion: (ns, v) => adapter.setSchemaVersion(ns, v),
-    validateSchema: (s) => adapter.validateSchema(s),
-
-    // Optional schema creation
-    createSchema: adapter.createSchema
-      ? (params) => adapter.createSchema!(params)
-      : undefined,
   };
 
   return wrapped;

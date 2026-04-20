@@ -93,10 +93,14 @@ export interface RenderDescriptor {
 export interface UploadHandle {
   uploadSessionId: string;
   uploadSessionToken?: string;
-  fileId: string;
+  fileId?: string;
   onProgress(callback: (progress: UploadProgress) => void): void;
   abort(): void;
   done(): Promise<UploadResult>;
+}
+
+export interface UploadHandleWithFileId extends UploadHandle {
+  fileId: string;
 }
 
 export interface PendingLocalDescriptor {
@@ -119,6 +123,7 @@ export interface InitUploadResponse {
 
 export interface UploadStatusResponse {
   uploadSessionId?: string;
+  fileId?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'aborted';
   recordedParts: number[];
   uploadedParts?: number[];

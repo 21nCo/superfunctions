@@ -49,6 +49,7 @@ function createConfig(overrides: Partial<AuthFnConfig> = {}): AuthFnConfig {
             clientSecret: 'google-client-secret',
             allowlistedReturnTo: [
               'https://app.example.com/post-auth',
+              'https://app.example.com/post-auth#tab=settings',
               'https://app.example.com/alternate-post-auth'
             ]
           }
@@ -159,6 +160,39 @@ describe('@authfn/core google social oauth', () => {
     );
     expect(callback.status).toBe(303);
     expect(callback.headers.get('location')).toBe('https://app.example.com/alternate-post-auth');
+  });
+
+  it('preserves existing fragment params when appending session handoff details', async () => {
+    const auth = createAuthFn(createConfig());
+
+    const start = await auth.router.handle(
+      new Request('https://account.example.com/auth/social/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'google',
+          returnTo: 'https://app.example.com/post-auth#tab=settings',
+          handoffMode: 'session-token'
+        })
+      })
+    );
+    const startBody = await start.json();
+
+    const callback = await auth.router.handle(
+      new Request(
+        `https://account.example.com/auth/social/callback/google?code=abc123&state=${encodeURIComponent(startBody.data.stateId)}`,
+        { method: 'GET' }
+      )
+    );
+
+    expect(callback.status).toBe(303);
+    const location = callback.headers.get('location');
+    expect(location).toBeTruthy();
+    const redirectTarget = new URL(location!);
+    const fragment = new URLSearchParams(redirectTarget.hash.slice(1));
+    expect(fragment.get('tab')).toBe('settings');
+    expect(fragment.get('token')).toBeTruthy();
+    expect(fragment.get('sessionId')).toBeTruthy();
   });
 });
 

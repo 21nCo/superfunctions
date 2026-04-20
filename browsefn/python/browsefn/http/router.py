@@ -1,179 +1,241 @@
-"""BrowseFn HTTP Router."""
+"""BrowseFn HTTP router using the shared Python HTTP abstractions."""
 
-from typing import List, Any
-from superfunctions.http import Route, HttpMethod, Response, Request
+from __future__ import annotations
+
+import base64
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
+
+from superfunctions.http import HttpMethod, Request, Response, Route, RouteContext
+
+from browsefn.core.errors import BrowseFnError, create_error_envelope, create_success_envelope
+from browsefn.core.types import GeocodeOptions, GeoLocation, GeoSearchOptions, GetPageOptions, ImageDownloadOptions, ImageSearchOptions, MetadataOptions
+
+
+def _request_id(request: Request) -> str:
+    return request.headers.get("x-request-id", f"req-{uuid4().hex[:12]}")
+
+
+def _error_status(error: BrowseFnError) -> int:
+    if error.code in {"INVALID_ARGUMENT", "INVALID_URL", "UNSUPPORTED_PROVIDER", "UNSUPPORTED_PROVIDER_CAPABILITY"}:
+        return 400
+    if error.code == "UPSTREAM_NOT_FOUND":
+        return 404
+    if error.code == "DOWNLOAD_EXISTS":
+        return 409
+    if error.code == "SECURITY_POLICY_BLOCKED":
+        return 403
+    if error.code == "RATE_LIMITED":
+        return 429
+    if error.code == "UPSTREAM_TIMEOUT":
+        return 504
+    if error.code == "PROVIDER_UNAVAILABLE":
+        return 503
+    if error.code in {"PROVIDER_ERROR", "CACHE_ERROR"}:
+        return 502
+    return 500
+
+
+def _serialize_data(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        data = value.model_dump()
+    elif isinstance(value, list):
+        return [_serialize_data(item) for item in value]
+    elif isinstance(value, dict):
+        return {key: _serialize_data(item) for key, item in value.items()}
+    else:
+        return value
+
+    if isinstance(data, dict) and isinstance(data.get("screenshot"), (bytes, bytearray)):
+        data["screenshot"] = base64.b64encode(data["screenshot"]).decode("ascii")
+    return {key: _serialize_data(item) for key, item in data.items()}
+
+
+def _query_value(context: RouteContext, key: str) -> Optional[Any]:
+    return context.query.get(key)
+
+
+def _int_query(context: RouteContext, key: str) -> Optional[int]:
+    value = _query_value(context, key)
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise BrowseFnError("INVALID_ARGUMENT", f"{key} must be an integer.") from exc
+
+
+def _float_query(context: RouteContext, key: str, *, message: str) -> Optional[float]:
+    value = _query_value(context, key)
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise BrowseFnError("INVALID_ARGUMENT", message) from exc
+
+
+def _response_from_error(error: Exception, request_id: str) -> Response:
+    browse_error = error if isinstance(error, BrowseFnError) else BrowseFnError("INTERNAL_ERROR", str(error))
+    return Response(status=_error_status(browse_error), body=create_error_envelope(browse_error, request_id))
+
 
 def create_browsefn_router(browse_fn: Any) -> List[Route]:
-    """Create a list of generic routes for BrowseFn.
-    
-    Args:
-        browse_fn: BrowseFn instance
-        
-    Returns:
-        List of Route objects
-    """
-    
-    async def get_page(request: Request, context: Any) -> Response:
+    async def get_page(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
             body = await request.json()
-            url = body.get("url")
-            options = body.get("options", {})
+            if "url" not in body:
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: url")
+            options = GetPageOptions(**body.get("options", {}))
+            page = await browse_fn.web.get_page(body["url"], options)
+            meta = {
+                "requestId": request_id,
+                "provider": page.provider,
+            }
+            if page.cached is not None:
+                meta["cached"] = page.cached
+            if page.duration is not None:
+                meta["durationMs"] = page.duration
+            return Response(status=200, body=create_success_envelope(_serialize_data(page), meta))
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-            if not url:
-                return Response(status=400, body={"error": "Missing url"})
-
-            page = await browse_fn.web.get_page(url, options)
-            
-            # Handle screenshot bytes - similar logic to TS/previous implementation
-            if hasattr(page, "screenshot") and isinstance(page.screenshot, bytes):
-                # Basic handling/conversion could go here
-                pass
-
-            return Response(status=200, body={"success": True, "page": page})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
-
-    async def get_multiple_metadata(request: Request, context: Any) -> Response:
+    async def get_multiple_metadata(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
             body = await request.json()
             urls = body.get("urls")
-            options = body.get("options", {})
-
-            if not urls or not isinstance(urls, list):
-                return Response(status=400, body={"error": "Missing or invalid urls array"})
-
+            if not isinstance(urls, list):
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: urls")
+            options = MetadataOptions(**body.get("options", {}))
             results = await browse_fn.web.get_multiple_metadata(urls, options)
-            return Response(status=200, body={"success": True, "results": results})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
+            return Response(
+                status=200,
+                body=create_success_envelope({"results": _serialize_data(results)}, {"requestId": request_id}),
+            )
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-    async def search_images(request: Request, context: Any) -> Response:
+    async def search_images(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
-            q = context.query.get("q")
-            if not q:
-                return Response(status=400, body={"error": "Missing q (query) parameter"})
+            query = _query_value(context, "q")
+            if not query:
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: q")
+            options = ImageSearchOptions(
+                provider=_query_value(context, "provider"),
+                page=_int_query(context, "page"),
+                perPage=_int_query(context, "perPage"),
+                orientation=_query_value(context, "orientation"),
+                color=_query_value(context, "color"),
+                orderBy=_query_value(context, "orderBy"),
+            )
+            result = await browse_fn.images.search(query, options)
+            return Response(
+                status=200,
+                body=create_success_envelope(_serialize_data(result), {"requestId": request_id, "provider": result.provider}),
+            )
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-            # context.query is dict-like
-            options = {
-                "provider": context.query.get("provider"),
-                "page": int(context.query.get("page")) if context.query.get("page") else None,
-                "perPage": int(context.query.get("perPage")) if context.query.get("perPage") else None,
-                "orientation": context.query.get("orientation"),
-                "color": context.query.get("color"),
-                "orderBy": context.query.get("orderBy"),
-            }
-            # Filter None
-            options = {k: v for k, v in options.items() if v is not None}
-
-            result = await browse_fn.images.search(q, options)
-            return Response(status=200, body={"success": True, "result": result})
-        except Exception as e:
-             return Response(status=500, body={"error": str(e)})
-
-    async def download_image(request: Request, context: Any) -> Response:
+    async def download_image(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
             body = await request.json()
-            url = body.get("url")
-            options = body.get("options", {})
+            if "url" not in body:
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: url")
+            options = ImageDownloadOptions(**body.get("options", {}))
+            result = await browse_fn.images.download(body["url"], options)
+            return Response(status=200, body=create_success_envelope(_serialize_data(result), {"requestId": request_id}))
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-            if not url:
-                return Response(status=400, body={"error": "Missing url"})
-
-            result = await browse_fn.images.download(url, options)
-            return Response(status=200, body={"success": True, "result": result})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
-
-    async def reverse_geocode(request: Request, context: Any) -> Response:
+    async def reverse_geocode(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
-            lat_str = context.query.get("lat")
-            lng_str = context.query.get("lng")
-            provider = context.query.get("provider")
-
-            if not lat_str or not lng_str:
-                 return Response(status=400, body={"error": "Invalid lat/lng parameters"})
-
-            lat = float(lat_str)
-            lng = float(lng_str)
-
-            result = await browse_fn.geo.reverse_geocode(
-                {"lat": lat, "lng": lng}, provider
+            lat = _float_query(context, "lat", message="lat must be a number.")
+            lng = _float_query(context, "lng", message="lng must be a number.")
+            if lat is None or lng is None:
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required fields: lat and lng")
+            location = GeoLocation(lat=lat, lng=lng)
+            result = await browse_fn.geo.reverse_geocode(location, _query_value(context, "provider"))
+            return Response(
+                status=200,
+                body=create_success_envelope(_serialize_data(result), {"requestId": request_id, "provider": result.provider}),
             )
-            return Response(status=200, body={"success": True, "result": result})
-        except ValueError:
-             return Response(status=400, body={"error": "Invalid lat/lng parameters"})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-    async def geocode(request: Request, context: Any) -> Response:
+    async def geocode(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
-            address = context.query.get("address")
+            address = _query_value(context, "address")
             if not address:
-                return Response(status=400, body={"error": "Missing address parameter"})
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: address")
+            options = GeocodeOptions(provider=_query_value(context, "provider"), limit=_int_query(context, "limit"))
+            results = await browse_fn.geo.geocode(address, options)
+            provider = results[0].provider if results else options.provider
+            return Response(
+                status=200,
+                body=create_success_envelope({"results": _serialize_data(results)}, {"requestId": request_id, "provider": provider}),
+            )
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-            provider = context.query.get("provider")
-            limit = int(context.query.get("limit")) if context.query.get("limit") else None
-
-            results = await browse_fn.geo.geocode(address, {"provider": provider, "limit": limit})
-            return Response(status=200, body={"success": True, "results": results})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
-
-    async def geo_search(request: Request, context: Any) -> Response:
+    async def geo_search(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
-            q = context.query.get("q")
-            if not q:
-               return Response(status=400, body={"error": "Missing q (query) parameter"})
-
-            lat_str = context.query.get("lat")
-            lng_str = context.query.get("lng")
-            radius = float(context.query.get("radius")) if context.query.get("radius") else None
-            provider = context.query.get("provider")
-            limit = int(context.query.get("limit")) if context.query.get("limit") else None
-
-            options = {
-                "query": q,
-                "provider": provider,
-                "radius": radius,
-                "limit": limit,
-            }
-            
-            if lat_str and lng_str:
-                options["center"] = {"lat": float(lat_str), "lng": float(lng_str)}
-
+            query = _query_value(context, "q")
+            if not query:
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: q")
+            lat = _float_query(context, "lat", message="lat must be a number.")
+            lng = _float_query(context, "lng", message="lng must be a number.")
+            center = GeoLocation(lat=lat, lng=lng) if lat is not None and lng is not None else None
+            options = GeoSearchOptions(
+                query=query,
+                provider=_query_value(context, "provider"),
+                center=center,
+                radius=_float_query(context, "radius", message="radius must be a number."),
+                limit=_int_query(context, "limit"),
+            )
             results = await browse_fn.geo.search(options)
-            return Response(status=200, body={"success": True, "results": results})
-        except ValueError: # float conversion error
-             return Response(status=400, body={"error": "Invalid numerical parameters"})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
+            provider = results[0].provider if results else options.provider
+            return Response(
+                status=200,
+                body=create_success_envelope({"results": _serialize_data(results)}, {"requestId": request_id, "provider": provider}),
+            )
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-    async def get_place_details(request: Request, context: Any) -> Response:
+    async def get_place_details(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
-            place_id = context.params.get("place_id") # extracted from path /geo/places/:place_id
-            provider = context.query.get("provider")
-            fields_str = context.query.get("fields")
-            fields_list = fields_str.split(",") if fields_str else None
-
+            place_id = context.params.get("place_id")
+            if not place_id:
+                raise BrowseFnError("INVALID_ARGUMENT", "Missing required field: place_id")
+            fields = _query_value(context, "fields")
             result = await browse_fn.geo.get_place_details(
-                place_id, {"provider": provider, "fields": fields_list}
+                place_id,
+                _query_value(context, "provider"),
+                fields.split(",") if isinstance(fields, str) and fields else None,
             )
-            return Response(status=200, body={"success": True, "result": result})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
+            return Response(
+                status=200,
+                body=create_success_envelope(_serialize_data(result), {"requestId": request_id, "provider": result.provider}),
+            )
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
-    async def get_metrics(request: Request, context: Any) -> Response:
+    async def get_metrics(request: Request, context: RouteContext) -> Response:
+        request_id = _request_id(request)
         try:
-            time_range = context.query.get("timeRange")
-            group_by = context.query.get("groupBy")
-
             metrics = await browse_fn.get_metrics(
-                {"timeRange": time_range, "groupBy": group_by}
+                {"timeRange": _query_value(context, "timeRange"), "groupBy": _query_value(context, "groupBy")}
             )
-            return Response(status=200, body={"success": True, "metrics": metrics})
-        except Exception as e:
-            return Response(status=500, body={"error": str(e)})
-
+            return Response(status=200, body=create_success_envelope(_serialize_data(metrics), {"requestId": request_id}))
+        except Exception as error:
+            return _response_from_error(error, request_id)
 
     return [
         Route(method=HttpMethod.POST, path="/web/page", handler=get_page),

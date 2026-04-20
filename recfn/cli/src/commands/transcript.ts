@@ -3,6 +3,61 @@ import type { RecFn } from 'recfn-client';
 import type { OutputFormat } from '../output.js';
 import { formatJson, formatTranscriptSearch } from '../output.js';
 
+export const DEFAULT_TRANSCRIPT_REDACTION_MESSAGE =
+  'Transcript content is redacted unless an explicit include-pii flag is present.';
+
+type TranscriptGetOptions = {
+  format?: string;
+  output?: string;
+  includePii?: boolean;
+};
+
+export async function runTranscriptGetCommand(
+  recfn: RecFn,
+  cliFormat: OutputFormat,
+  recordingId: string,
+  opts: TranscriptGetOptions,
+): Promise<{ content?: string; wroteToFile?: boolean }> {
+  const exportFormat = (opts.format ?? 'json') as 'json' | 'srt' | 'vtt' | 'text';
+  const includePii = opts.includePii === true;
+  const result = await recfn.transcripts.get(recordingId, {
+    format: exportFormat,
+    redact: !includePii,
+  });
+
+  if (!result.ok) {
+    console.error(`Error: ${result.error.message}`);
+    process.exit(1);
+  }
+
+  const transcriptContent =
+    typeof result.data === 'string' ? result.data : formatJson(result.data);
+
+  if (opts.output) {
+    const fs = await import('node:fs');
+    fs.writeFileSync(opts.output, transcriptContent);
+    if (cliFormat !== 'json') {
+      console.log(`Written to ${opts.output}`);
+    }
+    return { wroteToFile: true };
+  }
+
+  if (!includePii) {
+    const safeContent =
+      cliFormat === 'json'
+        ? formatJson({
+            redacted: true,
+            message: DEFAULT_TRANSCRIPT_REDACTION_MESSAGE,
+          })
+        : DEFAULT_TRANSCRIPT_REDACTION_MESSAGE;
+    console.log(safeContent);
+    return { content: safeContent };
+  }
+
+  console.log(transcriptContent);
+  return { content: transcriptContent };
+}
+
 export function registerTranscriptCommands(recfn: RecFn, format: () => OutputFormat) {
   const transcript = program.command('transcript').description('Transcript retrieval');
 
@@ -11,28 +66,9 @@ export function registerTranscriptCommands(recfn: RecFn, format: () => OutputFor
     .description('Get transcript')
     .option('-f, --format <format>', 'Format: json, srt, vtt, text', 'json')
     .option('-o, --output <path>', 'Output file path (default: stdout)')
-    .option('--redact', 'Redact PII')
-    .action(async (recordingId: string, opts: { format?: string; output?: string; redact?: boolean }) => {
-      const result = await recfn.transcripts.get(recordingId, {
-        format: (opts.format ?? 'json') as 'json' | 'srt' | 'vtt' | 'text',
-        redact: opts.redact,
-      });
-      if (!result.ok) {
-        console.error(`Error: ${result.error.message}`);
-        process.exit(1);
-      }
-      const content = typeof result.data === 'string'
-        ? result.data
-        : formatJson(result.data);
-      if (opts.output) {
-        const fs = await import('node:fs');
-        fs.writeFileSync(opts.output, content);
-        if (format() !== 'json') {
-          console.log(`Written to ${opts.output}`);
-        }
-      } else {
-        console.log(content);
-      }
+    .option('--include-pii', 'Include raw transcript content and participant-identifying data')
+    .action(async (recordingId: string, opts: TranscriptGetOptions) => {
+      await runTranscriptGetCommand(recfn, format(), recordingId, opts);
     });
 
   transcript

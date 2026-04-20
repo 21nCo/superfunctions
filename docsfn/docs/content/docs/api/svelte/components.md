@@ -20,7 +20,19 @@ Renders **`DocsSidebar`** when a sidebar resolves, and **`DocsToc`** when headin
 
 ## DocsContent
 
-**Props:** `compiled?`, `content` (raw Markdown), `sourcePath?`, **`compatPreset`** (default `none`), **`allowUnsafeHtml`**, **`unsafeHtmlAllowlist`**, **`components`** map (PascalCase tag → Svelte component).
+**Props:**
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| **`compiled`** | `CompiledContentArtifact?` | Pre-compiled blocks from core |
+| **`blocks`** | `CompiledContentBlock[]?` | Pass blocks directly, bypassing artifact |
+| **`content`** | `string` | Raw Markdown source (default `""`) |
+| **`sourcePath`** | `string?` | Passed to compiler for diagnostics |
+| **`compatPreset`** | `DocsCompatPreset` | Default **`"none"`** |
+| **`allowUnsafeHtml`** | `boolean` | Default **`false`** |
+| **`unsafeHtmlAllowlist`** | `string[]` | Tag allowlist when unsafe HTML enabled |
+| **`components`** | `Record<string, ComponentType \| undefined>` | Custom PascalCase tag → Svelte component |
+| **`renderMermaid`** | `ComponentType<{ block: CompiledMermaidBlock }>?` | Custom Mermaid diagram renderer component |
 
 **Slots:** **`page-actions`** — rendered after blocks inside **`data-docsfn-page-actions`**.
 
@@ -28,11 +40,13 @@ Trust: when `compiled` is passed, runs **`assertCompiledContentTrusted`** agains
 
 ## DocsSidebar
 
-**Props:** `surface?`, `sidebar?`, `activePath?`, **`defaultCollapsedGroups`** (group labels to start collapsed).
+**Props:** `surface?`, `sidebar?`, `activePath?`.
+
+Groups expand when `item.expanded === true` or when a descendant link matches `activePath`.
 
 ## SidebarGroup
 
-**Props:** **`item`** (`SidebarItem`), **`activePath?`**, **`defaultCollapsed`**, **`depth`** (internal recursion).
+**Props:** **`item`** (`SidebarItem`), **`activePath?`**, **`depth`** (internal recursion).
 
 Renders collapsible groups, separators (`hr`), and active link states (`aria-current`).
 

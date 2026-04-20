@@ -17,7 +17,12 @@ export interface SuperfunctionsPackageMetadata {
 }
 
 export interface PackageRegistry {
-  [initFunction: string]: string; // initFunction -> packageName
+  [initFunction: string]:
+    | string
+    | {
+        packageName: string;
+        libraryName: string;
+      };
 }
 
 /**
@@ -27,9 +32,9 @@ export function discoverSuperfunctionsPackages(
   cwd: string = process.cwd()
 ): SuperfunctionsPackageMetadata[] {
   const discovered: SuperfunctionsPackageMetadata[] = [];
-  const nodeModulesPath = path.join(cwd, "node_modules");
+  const nodeModulesPath = findNearestNodeModulesPath(cwd);
 
-  if (!fs.existsSync(nodeModulesPath)) {
+  if (!nodeModulesPath || !fs.existsSync(nodeModulesPath)) {
     return discovered;
   }
 
@@ -37,6 +42,24 @@ export function discoverSuperfunctionsPackages(
   scanDirectory(nodeModulesPath, discovered);
 
   return discovered;
+}
+
+export function findNearestNodeModulesPath(startDir: string): string | null {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const nodeModulesPath = path.join(currentDir, "node_modules");
+    if (fs.existsSync(nodeModulesPath)) {
+      return nodeModulesPath;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+
+    currentDir = parentDir;
+  }
 }
 
 /**
@@ -48,7 +71,10 @@ export function buildRegistry(
   const registry: PackageRegistry = {};
 
   for (const pkg of packages) {
-    registry[pkg.initFunction] = pkg.packageName;
+    registry[pkg.initFunction] = {
+      packageName: pkg.packageName,
+      libraryName: pkg.libraryNames[0] ?? deriveLibraryNames(pkg.packageName)[0] ?? pkg.packageName
+    };
   }
 
   return registry;

@@ -1,7 +1,9 @@
 import type { StorageAdapter } from '../integrations/filefn.js';
+import { createDownloadUrl } from '../integrations/filefn.js';
 
 export interface SignedUrlOptions {
   expiresIn?: number;
+  proxyUrl?: string;
 }
 
 export async function generateSignedUrl(
@@ -9,6 +11,8 @@ export async function generateSignedUrl(
   storage: StorageAdapter,
   options?: SignedUrlOptions,
 ): Promise<string> {
-  const expiresIn = options?.expiresIn ?? 3600;
-  return storage.signedUrl(storageRef, expiresIn);
+  return createDownloadUrl(storage, storageRef, {
+    expiresIn: options?.expiresIn,
+    proxyUrl: options?.proxyUrl,
+  });
 }

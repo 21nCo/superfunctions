@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { Pool } from "pg";
 import { PostgresAdapter } from "../src/index";
 import { SEARCH_ADAPTER_DISPOSED } from "@searchfn/adapter-contracts";
+import { redactSensitive as redactPostgresSensitive } from "../src/internal/redaction";
 
 const PG_URL =
   process.env.SEARCHFN_PG_URL ?? "postgres://searchfn:searchfn_test@localhost:5433/searchfn_test";
@@ -213,6 +214,35 @@ describe("PostgresAdapter integration", () => {
     expect(notesResults).toContain("n1");
   });
 
+  it("removes stale rows when a document is reindexed with zero searchable fields", async () => {
+    if (!available) return;
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: { title: "vanishing document" } }],
+    });
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: "1", fields: {} }],
+    });
+
+    const results = await adapter.search({ resource: "tasks", query: "vanishing", limit: 10 });
+    expect(results).toEqual([]);
+  });
+
+  it("round-trips canonical numeric ids as numbers", async () => {
+    if (!available) return;
+
+    await adapter.index({
+      resource: "tasks",
+      documents: [{ id: 123, fields: { title: "numeric id" } }],
+    });
+
+    const results = await adapter.search({ resource: "tasks", query: "numeric", limit: 10 });
+    expect(results).toEqual([123]);
+  });
+
   // ── Lifecycle ──────────────────────────────────────────────────
 
   it("blocks operations after dispose", async () => {
@@ -338,6 +368,32 @@ describe("PostgresAdapter integration", () => {
       const msg = (err as Error).message;
       expect(msg).not.toContain("invalid-host:9999");
     }
+  });
+});
+
+describe("PostgresAdapter redaction", () => {
+  it("redacts plain connection keys without over-redacting connectionTimeout", () => {
+    expect(
+      redactPostgresSensitive({
+        connection: "postgres://user:pass@example.test/db",
+        connectionTimeout: 5000,
+      }),
+    ).toEqual({
+      connection: "[REDACTED]",
+      connectionTimeout: 5000,
+    });
+  });
+
+  it("redacts Error instances before returning them", () => {
+    const error = Object.assign(new Error("password=secret"), {
+      connection: "postgres://user:pass@example.test/db",
+    });
+
+    expect(redactPostgresSensitive(error)).toMatchObject({
+      name: "Error",
+      message: "password=[REDACTED]",
+      connection: "[REDACTED]",
+    });
   });
 });
 

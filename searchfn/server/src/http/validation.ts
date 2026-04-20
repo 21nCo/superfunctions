@@ -22,6 +22,27 @@ export const DEFAULT_LIMITS: ServerLimits = {
   maxIndexBatch: 10_000,
 };
 
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function validateObjectBody(
+  body: unknown,
+): { value: Record<string, unknown>; error: Response | null } {
+  if (!isPlainObject(body)) {
+    return {
+      value: {},
+      error: errorResponse("DFQL_INVALID", "request body must be a JSON object", {
+        path: "$",
+      }),
+    };
+  }
+  return {
+    value: body,
+    error: null,
+  };
+}
+
 export function validateResource(
   resource: unknown,
 ): Response | null {
@@ -160,4 +181,74 @@ export function validateResourcesArray(
     }
   }
   return null;
+}
+
+export function validateFields(
+  fields: unknown,
+): Response | null {
+  if (fields === undefined || fields === null) {
+    return null;
+  }
+  if (!Array.isArray(fields)) {
+    return errorResponse("DFQL_INVALID", "fields must be an array", {
+      path: "fields",
+    });
+  }
+  for (let i = 0; i < fields.length; i++) {
+    if (typeof fields[i] !== "string" || fields[i].trim() === "") {
+      return errorResponse("DFQL_INVALID", "each field must be a non-empty string", {
+        path: `fields[${i}]`,
+      });
+    }
+  }
+  return null;
+}
+
+export function validateFieldBoosts(
+  fieldBoosts: unknown,
+): Response | null {
+  if (fieldBoosts === undefined || fieldBoosts === null) {
+    return null;
+  }
+  if (!isPlainObject(fieldBoosts)) {
+    return errorResponse("DFQL_INVALID", "fieldBoosts must be an object", {
+      path: "fieldBoosts",
+    });
+  }
+  for (const [field, boost] of Object.entries(fieldBoosts)) {
+    if (typeof boost !== "number" || !Number.isFinite(boost) || boost <= 0) {
+      return errorResponse("DFQL_INVALID", "fieldBoosts values must be positive numbers", {
+        path: `fieldBoosts.${field}`,
+      });
+    }
+  }
+  return null;
+}
+
+export function validateFuzzy(
+  fuzzy: unknown,
+): Response | null {
+  if (fuzzy === undefined || fuzzy === null) {
+    return null;
+  }
+  if (typeof fuzzy === "boolean") {
+    return null;
+  }
+  if (typeof fuzzy === "number" && Number.isFinite(fuzzy) && fuzzy >= 0) {
+    return null;
+  }
+  return errorResponse("DFQL_INVALID", "fuzzy must be a boolean or non-negative number", {
+    path: "fuzzy",
+  });
+}
+
+export function validatePrefix(
+  prefix: unknown,
+): Response | null {
+  if (prefix === undefined || prefix === null || typeof prefix === "boolean") {
+    return null;
+  }
+  return errorResponse("DFQL_INVALID", "prefix must be a boolean", {
+    path: "prefix",
+  });
 }

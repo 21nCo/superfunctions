@@ -1017,6 +1017,10 @@ async function executePullCanonical(
       continue;
     }
 
+    if (!isDataResourceKey(resource)) {
+      continue;
+    }
+
     const isPrivate = isPrivateShareableResource(schema, resource);
     if (isPrivate && !actorId) {
       continue;

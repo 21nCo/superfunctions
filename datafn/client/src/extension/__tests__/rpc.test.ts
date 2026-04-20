@@ -34,13 +34,14 @@ describe("Extension RPC", () => {
 
   it("TV-DETERM-RPC-ID-001: RPC IDs are deterministic", async () => {
     // We can't await result because we don't reply. Just check sent message.
-    const p1 = adapter.query({});
+    void adapter.query({});
     const req1 = bus.sent[0] as any;
-    expect(req1.id).toBe("req-1");
+    expect(req1.id).toMatch(/^req-[\w-]+-1$/);
 
-    const p2 = adapter.query({});
+    void adapter.query({});
     const req2 = bus.sent[1] as any;
-    expect(req2.id).toBe("req-2");
+    expect(req2.id).toMatch(/^req-[\w-]+-2$/);
+    expect(req1.id).not.toBe(req2.id);
   });
 
   it("TV-EXT-SUB-ID-001: Event delivery includes subscriptionId", () => {

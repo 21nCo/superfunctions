@@ -298,6 +298,7 @@ describe("TST-005b: Concurrent push from two clients — serverSeq ordering", ()
       expect(Number.isInteger(cursor)).toBe(true);
       expect(cursor).toBeGreaterThan(0);
     }
+    expect(new Set(cursors).size).toBe(cursors.length);
 
     // All 10 notes must be persisted (no lost writes)
     const queryRes = await server.router.handle(queryReq("note"));

@@ -1,0 +1,26 @@
+- Phase goal: Add the SearchFn-backed native backend and direct Apple runtime search APIs.
+- In scope:
+  - `DatafnSearchFnBackend`
+  - `DatafnAppleRuntimeConfiguration.search`
+  - direct runtime `search` and `searchAll`
+- Out of scope:
+  - rebuild metadata
+  - sync/CloudKit update propagation
+- Deliverables:
+  - `datafn/swift/Sources/DatafnSearchFnBackend/*`
+  - updates to `datafn/swift/Sources/DatafnAppleRuntime/*`
+  - `datafn/swift/Tests/DatafnSearchFnBackendTests/*`
+- Requirements covered:
+  - `DARCH-001`
+  - `DRT-001`
+- Implementation tasks:
+  - Add the companion SearchFn package dependency to `datafn/swift/Package.swift`.
+  - Implement `DatafnSearchFnBackendFactory`.
+  - Extend `DatafnAppleRuntimeConfiguration` with optional search config.
+  - Expose direct runtime `search` and `searchAll`.
+  - Add tests proving direct runtime calls use the same backend instance shape as bridge calls.
+- Verification steps:
+  - Run `swift test --package-path datafn/swift --filter DatafnSearchFnBackendTests`
+  - Expected outcome: SearchFn backend integration tests pass.
+- Stop condition:
+  - Report the new runtime APIs and test results before beginning Phase 03.

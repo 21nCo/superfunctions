@@ -115,7 +115,7 @@ On the server with push-down queries, count is executed via a separate `db.count
 
 ## Combining Pagination Modes
 
-Limit/offset and cursor pagination are mutually exclusive in practice. If both `offset` and `cursor` are provided, the cursor takes precedence and `offset` is ignored.
+Limit/offset and cursor pagination are best treated as separate modes. If both `offset` and `cursor` are provided, the cursor window is applied first and any `offset` is still applied afterward, which can skip additional items unexpectedly.
 
 ## Sort Requirement for Cursors
 

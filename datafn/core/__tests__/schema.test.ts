@@ -115,8 +115,8 @@ describe("validateSchema", () => {
           name: "task",
           version: 1,
           fields: [
-            { name: "id", type: "string" },
-            { name: "label", type: "string" },
+            { name: "id", type: "string", required: true },
+            { name: "label", type: "string", required: true },
           ],
           indices: { base: ["id"], search: ["label"], vector: [] },
         },
@@ -216,8 +216,83 @@ describe("validateSchema — relation from/to resource validation (CLI-004)", ()
     const result = validateSchema(input);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      // Error message should mention at least one of the valid resource names
-      expect(result.error.message).toMatch(/task|comment/);
+      expect(result.error.message).toContain('Available: task, comment');
+    }
+  });
+
+  it("normalizes legacy field shorthands and still rejects invalid types", () => {
+    const missingRequired = validateSchema({
+      resources: [{ name: "task", version: 1, fields: [{ name: "title", type: "string" }] }],
+    });
+    expect(missingRequired.ok).toBe(true);
+    if (missingRequired.ok) {
+      expect(missingRequired.result.resources[0]?.fields).toEqual([
+        { name: "title", type: "string", required: false },
+      ]);
+    }
+
+    const legacyIdAlias = validateSchema({
+      resources: [{ name: "task", version: 1, fields: [{ name: "id", type: "id" }] }],
+    });
+    expect(legacyIdAlias.ok).toBe(true);
+    if (legacyIdAlias.ok) {
+      expect(legacyIdAlias.result.resources[0]?.fields).toEqual([
+        { name: "id", type: "string", required: true },
+      ]);
+    }
+
+    const invalidType = validateSchema({
+      resources: [{ name: "task", version: 1, fields: [{ name: "title", type: "wat", required: true }] }],
+    });
+    expect(invalidType.ok).toBe(false);
+  });
+
+  it("rejects invalid relation endpoint shapes", () => {
+    const result = validateSchema({
+      resources: [{ name: "task", version: 1, fields: [] }],
+      relations: [{ from: 123, to: "task", type: "one-many" }],
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("returns normalized relation capabilities", () => {
+    const result = validateSchema({
+      resources: [
+        { name: "task", version: 1, fields: [] },
+        { name: "tag", version: 1, fields: [] },
+      ],
+      relations: [
+        {
+          from: "task",
+          to: "tag",
+          type: "many-many",
+          relation: "tags",
+          capabilities: ["audit", "timestamps", "audit"],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.relations?.[0]?.capabilities).toEqual(["timestamps", "audit"]);
+    }
+  });
+
+  it("rejects non-array index buckets without throwing", () => {
+    const result = validateSchema({
+      resources: [
+        {
+          name: "task",
+          version: 1,
+          fields: [{ name: "id", type: "string", required: true }],
+          indices: { base: "id" },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("SCHEMA_INVALID");
     }
   });
 });

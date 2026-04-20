@@ -2,36 +2,83 @@ import { describe, it, expect, vi } from 'vitest';
 import { createPlugFnRouter } from '../src/router/http-router.js';
 
 describe('HTTP router auth boundaries', () => {
-  it('uses session identity and ignores spoofed query identity', async () => {
+  it('exposes the canonical route inventory', () => {
+    const plug = createMockPlugFn();
+    const router = createPlugFnRouter(plug);
+
+    const canonicalRoutes = router
+      .getRoutes()
+      .filter((route) => !route.path.startsWith('/v2/'))
+      .map((route) => `${route.method} ${route.path}`);
+
+    expect(canonicalRoutes).toEqual([
+      'GET /callback',
+      'POST /webhooks/:provider/:event',
+      'GET /providers',
+      'GET /connections',
+      'POST /connections/auth',
+      'POST /connections/disconnect',
+      'GET /workflows',
+      'GET /metrics',
+    ]);
+  });
+
+  it('defaults to plugFn.config.auth.authenticate and rejects mismatched query identity', async () => {
     const listConnections = vi.fn(async () => []);
-    const plug = createMockPlugFn({ listConnections });
+    const authenticate = vi.fn(async () => ({ userId: 'u1', tenantId: 'tenant_1' }));
+    const plug = createMockPlugFn({ listConnections, authenticate });
     const router = createPlugFnRouter(plug);
 
     const response = await router.handle(
       new Request('http://localhost/v2/connections?userId=spoofed&provider=gmail', {
         method: 'GET',
-        headers: {
-          authorization: 'Bearer valid-session-for-user-u1',
-        },
+      })
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe('TENANT_ACCESS_DENIED');
+    expect(authenticate).toHaveBeenCalledTimes(1);
+    expect(listConnections).not.toHaveBeenCalled();
+  });
+
+  it('prefers an explicit auth override when supplied', async () => {
+    const listConnections = vi.fn(async () => []);
+    const configuredAuthenticate = vi.fn(async () => ({ userId: 'config-user' }));
+    const overrideAuthenticate = vi.fn(async () => ({ userId: 'override-user' }));
+    const plug = createMockPlugFn({
+      listConnections,
+      authenticate: configuredAuthenticate,
+    });
+    const router = createPlugFnRouter(plug, {
+      authenticate: overrideAuthenticate,
+    });
+
+    const response = await router.handle(
+      new Request('http://localhost/v2/connections?provider=gmail', {
+        method: 'GET',
       })
     );
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.ok).toBe(true);
-    expect(body.data.userId).toBe('u1');
-    expect(body.meta.requestId).toMatch(/^req_[a-f0-9]+$/);
-    expect(new Date(body.meta.timestamp).toString()).not.toBe('Invalid Date');
-    expect(listConnections).toHaveBeenCalledTimes(1);
+    expect(body.data.userId).toBe('override-user');
+    expect(configuredAuthenticate).not.toHaveBeenCalled();
+    expect(overrideAuthenticate).toHaveBeenCalledTimes(1);
     expect(listConnections).toHaveBeenCalledWith({
-      userId: 'u1',
+      userId: 'override-user',
       provider: 'gmail',
     });
   });
 
-  it('rejects unauthenticated access with TENANT_ACCESS_DENIED', async () => {
+  it('rejects unauthenticated access with PLUGFN_AUTH_REQUIRED', async () => {
     const listConnections = vi.fn(async () => []);
-    const plug = createMockPlugFn({ listConnections });
+    const plug = createMockPlugFn({
+      listConnections,
+      authenticate: vi.fn(async () => null),
+    });
     const router = createPlugFnRouter(plug);
 
     const response = await router.handle(
@@ -43,7 +90,7 @@ describe('HTTP router auth boundaries', () => {
     expect(response.status).toBe(401);
     const body = await response.json();
     expect(body.ok).toBe(false);
-    expect(body.error.code).toBe('TENANT_ACCESS_DENIED');
+    expect(body.error.code).toBe('PLUGFN_AUTH_REQUIRED');
     expect(body.error.status).toBe(401);
     expect(body.error.retryable).toBe(false);
     expect(body.error.details).toEqual({});
@@ -53,18 +100,21 @@ describe('HTTP router auth boundaries', () => {
 
   it('rejects identity spoofing in body payloads', async () => {
     const disconnect = vi.fn(async () => {});
-    const plug = createMockPlugFn({ disconnect });
+    const plug = createMockPlugFn({
+      disconnect,
+      authenticate: vi.fn(async () => ({ userId: 'u1', tenantId: 'tenant-1' })),
+    });
     const router = createPlugFnRouter(plug);
 
     const response = await router.handle(
       new Request('http://localhost/v2/connections/disconnect', {
         method: 'POST',
         headers: {
-          authorization: 'Bearer valid-session-for-user-u1',
           'content-type': 'application/json',
         },
         body: JSON.stringify({
           userId: 'spoofed-user',
+          tenantId: 'tenant-2',
           provider: 'gmail',
         }),
       })
@@ -109,12 +159,21 @@ function createMockPlugFn(overrides: {
   listConnections?: ReturnType<typeof vi.fn>;
   disconnect?: ReturnType<typeof vi.fn>;
   handleWebhook?: ReturnType<typeof vi.fn>;
+  authenticate?: ReturnType<typeof vi.fn>;
 } = {}) {
   const listConnections = overrides.listConnections ?? vi.fn(async () => []);
   const disconnect = overrides.disconnect ?? vi.fn(async () => {});
   const handleWebhook = overrides.handleWebhook ?? vi.fn(async () => ({}));
+  const authenticate = overrides.authenticate ?? vi.fn(async () => ({ userId: 'u1' }));
 
   return {
+    config: {
+      auth: {
+        authenticate,
+      },
+      baseUrl: 'https://app.example.com',
+      integrations: {},
+    },
     connections: {
       getAuthUrl: vi.fn(async () => 'https://example.com/auth'),
       handleCallback: vi.fn(async () => ({ id: 'conn_1', provider: 'gmail', status: 'active' })),

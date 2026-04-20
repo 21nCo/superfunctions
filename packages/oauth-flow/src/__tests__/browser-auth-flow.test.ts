@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OAuthProviderDescriptor } from "@superfunctions/oauth-core";
-import { MemoryOAuthStateStore, MemoryTokenVault } from "@superfunctions/oauth-storage";
+import { AesGcmTokenCipher, EncryptedTokenVault, MemoryOAuthStateStore, MemoryTokenVault } from "@superfunctions/oauth-storage";
 import { createOAuthFlowService, type OAuthFlowEvent } from "../index.js";
 
 const provider: OAuthProviderDescriptor = {
@@ -15,10 +15,25 @@ const provider: OAuthProviderDescriptor = {
   tokenAuthMethod: "client_secret_post"
 };
 
-function createHarness() {
+function createHarness(options?: {
+  useEncryptedVault?: boolean;
+  tokenStorageMode?: "encrypted-required" | "plaintext-unsafe";
+}) {
   const events: OAuthFlowEvent[] = [];
   const stateStore = new MemoryOAuthStateStore();
-  const tokenVault = new MemoryTokenVault();
+  const backingStore = new MemoryTokenVault();
+  const tokenVault = options?.useEncryptedVault
+    ? new EncryptedTokenVault(
+        backingStore,
+        new AesGcmTokenCipher((keyRef) => {
+          if (keyRef !== "oauth-default") {
+            throw new Error(`unexpected keyRef: ${keyRef}`);
+          }
+          return Buffer.from("55".repeat(32), "hex");
+        }),
+        () => "2026-01-01T00:00:00.000Z"
+      )
+    : backingStore;
   const tokenHttpClient = {
     exchangeToken: vi.fn(async (input) => {
       if (input.grantType === "refresh_token") {
@@ -53,12 +68,13 @@ function createHarness() {
     },
     stateStore,
     tokenVault,
+    tokenStorageMode: options?.tokenStorageMode ?? "plaintext-unsafe",
     tokenHttpClient,
     emitEvent: (event) => events.push(event),
     now: () => new Date("2026-01-01T00:00:00.000Z")
   });
 
-  return { service, stateStore, tokenVault, tokenHttpClient, events };
+  return { service, stateStore, tokenVault, backingStore, tokenHttpClient, events };
 }
 
 describe("oauth-flow browser-auth lifecycle", () => {
@@ -98,7 +114,10 @@ describe("oauth-flow browser-auth lifecycle", () => {
   });
 
   it("persists tokens after browser-auth identity resolution hooks run", async () => {
-    const { stateStore, tokenVault, tokenHttpClient, events } = createHarness();
+    const { stateStore, tokenVault, backingStore, tokenHttpClient, events } = createHarness({
+      useEncryptedVault: true,
+      tokenStorageMode: "encrypted-required"
+    });
     const service = createOAuthFlowService({
       providers: { google: provider },
       providerRuntimeConfig: {
@@ -110,6 +129,7 @@ describe("oauth-flow browser-auth lifecycle", () => {
       },
       stateStore,
       tokenVault,
+      tokenStorageMode: "encrypted-required",
       tokenHttpClient,
       emitEvent: (event) => events.push(event),
       now: () => new Date("2026-01-01T00:00:00.000Z"),
@@ -147,9 +167,11 @@ describe("oauth-flow browser-auth lifecycle", () => {
     expect(callback.connectionId).toBe("conn_intent_02");
     expect(callback.tokenRecordId).toMatch(/^tok_/);
 
-    const stored = await tokenVault.getByConnection("conn_intent_02");
+    const stored = await backingStore.getByConnection("conn_intent_02");
     expect(stored?.providerId).toBe("google");
-    expect(stored?.encryptedPayload).toContain("access-browser");
+    expect(stored?.encryptedPayload).toBeDefined();
+    expect(stored?.encryptedPayload).not.toContain("access-browser");
+    expect(stored?.encryptedPayload).not.toContain("refresh-browser");
   });
 
   it("wraps browser-auth identity hook failures with OAUTH_HOOK_FAILED and emits redaction-safe events", async () => {

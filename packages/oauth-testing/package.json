@@ -16,8 +16,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
-    "test:watch": "vitest --watch",
+    "test": "vitest --config ./vitest.config.ts --run",
+    "test:watch": "vitest --config ./vitest.config.ts --watch",
     "lint": "echo 'lint not configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@superfunctions/oauth-core": "*",
+    "@superfunctions/oauth-flow": "*",
     "@superfunctions/oauth-storage": "*"
   },
   "devDependencies": {

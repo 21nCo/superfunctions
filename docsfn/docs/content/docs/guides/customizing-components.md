@@ -47,8 +47,8 @@ Unknown component names render as a fallback **`data-docsfn-component`** contain
 
 ## Sidebar: reuse or replace
 
-1. **Tweak `DocsSidebar`** — pass **`defaultCollapsedGroups`** (string names) to start groups collapsed.
-2. **Reuse `SidebarGroup`** — import **`SidebarGroup`** from **`@docsfn/svelte`** (or the React equivalent path) and walk your own `Sidebar` model if you need different HTML or icons per depth.
+1. **Tweak `DocsSidebar`** — set **`expanded: true`** on specific `SidebarItem` groups in your sidebar model to control which groups start open.
+2. **Reuse `SidebarGroup`** — import **`SidebarGroup`** from **`@docsfn/svelte`** and walk your own `Sidebar` model if you need different HTML or icons per depth.
 3. **Fork layout** — copy the small loop from **`DocsSidebar.svelte`** into your project only when you need radically different markup; keep **`resolveDocsPageSurface`** so breadcrumbs and pagination stay aligned.
 
 ---
@@ -117,3 +117,9 @@ Common patterns:
 - **DocsPageShell** — wraps **`Breadcrumbs`**, **`DocsContent`**, **`Pagination`**, and **`DocsToc`** with your grid and sticky behavior.
 
 Keep **`resolveDocsPageSurface`** (SvelteKit / Next) as the single source of truth for **`route`**, **`breadcrumbs`**, and **`pagination`** so you do not drift from core routing.
+
+For React, keep component imports on the package root:
+
+```tsx
+import { DocsContent, TopBar } from "@docsfn/react";
+```

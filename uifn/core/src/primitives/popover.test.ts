@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { UIFnError } from '../errors';
+import { resetIdCounters } from '../utils/id';
 import { createPopover } from './popover';
 
 describe('popover primitive', () => {
+  beforeEach(() => {
+    resetIdCounters();
+  });
+
   it('derives collision-aware position from shared utility', () => {
     const popover = createPopover({
       defaultOpen: true,
@@ -31,6 +37,7 @@ describe('popover primitive', () => {
 
     expect(position.side).toBe('top');
     expect(popover.state.position?.side).toBe('top');
+    expect(popover.state.ids.contentId).toBe('uifn-popover-1-content');
   });
 
   it('cleans up listeners and timers when dismissed', () => {
@@ -48,5 +55,25 @@ describe('popover primitive', () => {
     expect(popover.state.cleanup.timers).toBe(0);
     expect(popover.state.cleanup.listeners).toBe(0);
     expect(popover.state.cleanup.complete).toBe(true);
+  });
+
+  it('keeps controlled open state stable until syncOpen is applied', () => {
+    const onOpenChange = vi.fn();
+    const popover = createPopover({
+      open: false,
+      onOpenChange,
+    });
+
+    popover.actions.setOpen(true, 'open-trigger');
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(popover.state.open).toBe(false);
+
+    popover.actions.syncOpen(true);
+    expect(popover.state.open).toBe(true);
+  });
+
+  it('rejects duplicate fixed popover id bases', () => {
+    createPopover({ idBase: 'shared-popover' });
+    expect(() => createPopover({ idBase: 'shared-popover' })).toThrowError(UIFnError);
   });
 });

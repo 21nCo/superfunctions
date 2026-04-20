@@ -49,7 +49,7 @@ hostfn expose production --host ubuntu@different-server.com
 
 ## Prerequisites
 
-Before running `hostfn expose`, your server needs Nginx and Certbot installed. Both are installed automatically by [`hostfn server setup`](/docs/documentation/server-management/setup). The command checks for their presence and shows a clear error if either is missing:
+Before running `hostfn expose`, your server needs Nginx installed. Certbot is only required when SSL setup is enabled (domain + `sslEmail`, without `--skip-ssl`). Both can be installed automatically by [`hostfn server setup`](/docs/documentation/server-management/setup). The command checks for the required tools and shows a clear error if one is missing:
 
 ```
 Error: Nginx is not installed on the server.

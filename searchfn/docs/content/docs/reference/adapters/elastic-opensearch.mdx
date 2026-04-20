@@ -3,7 +3,7 @@ title: Elasticsearch / OpenSearch Adapter
 description: Elastic-compatible adapter for Elasticsearch and OpenSearch clusters.
 ---
 
-A single adapter implementation that supports both Elasticsearch and OpenSearch. Select your engine at construction time.
+SearchFn ships two installable packages, `@searchfn/adapter-elasticsearch` and `@searchfn/adapter-opensearch`, that share the same Elastic-compatible implementation. Pick the package that matches your cluster, or use the Elasticsearch package directly and select the engine at construction time.
 
 ## When to Use
 
@@ -14,8 +14,10 @@ A single adapter implementation that supports both Elasticsearch and OpenSearch.
 ## Installation
 
 ```bash
-npm install @searchfn/adapter-elasticsearch @searchfn/adapter-opensearch
+npm install @searchfn/adapter-elasticsearch
 ```
+
+Install `@searchfn/adapter-opensearch` instead when you want the dedicated OpenSearch convenience wrapper.
 
 ## Usage
 

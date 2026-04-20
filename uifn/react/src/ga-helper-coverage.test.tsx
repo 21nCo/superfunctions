@@ -1,23 +1,59 @@
-import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Avatar, AvatarFallback, AvatarImage } from './avatar';
 import { Badge } from './badge';
 import { Label } from './label';
 import { Separator } from './separator';
 import { VirtualizedList } from './virtualized-list';
 
-describe('GA adapter helpers (React)', () => {
-  it('renders Avatar fallback deterministically when no image source is available', () => {
-    render(
-      <Avatar>
-        <AvatarImage alt="Profile image" />
-        <AvatarFallback>Fallback</AvatarFallback>
-      </Avatar>
-    );
+afterEach(() => {
+  vi.useRealTimers();
+});
 
-    expect(screen.getByText('Fallback')).toBeVisible();
-    expect(screen.queryByRole('img', { name: 'Profile image' })).not.toBeInTheDocument();
+describe('GA adapter helpers (React)', () => {
+  it('delays AvatarFallback rendering deterministically while the image is still loading', () => {
+    vi.useFakeTimers();
+
+    const OriginalImage = window.Image;
+    class PendingImage {
+      onload: null | (() => void) = null;
+      onerror: null | (() => void) = null;
+      src = '';
+    }
+
+    Object.defineProperty(window, 'Image', {
+      configurable: true,
+      writable: true,
+      value: PendingImage,
+    });
+
+    try {
+      render(
+        <Avatar>
+          <AvatarImage src="/avatar.png" alt="Profile image" />
+          <AvatarFallback delayMs={50}>Fallback</AvatarFallback>
+        </Avatar>
+      );
+
+      expect(screen.queryByText('Fallback')).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(49);
+      });
+      expect(screen.queryByText('Fallback')).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(screen.getByText('Fallback')).toBeVisible();
+    } finally {
+      Object.defineProperty(window, 'Image', {
+        configurable: true,
+        writable: true,
+        value: OriginalImage,
+      });
+    }
   });
 
   it('throws when AvatarImage is rendered outside Avatar context', () => {
@@ -72,27 +108,30 @@ describe('GA adapter helpers (React)', () => {
     expect(separator).toHaveAttribute('data-orientation', 'vertical');
   });
 
-  it('virtualizes large collections with deterministic overscan behavior', () => {
-    const items = Array.from({ length: 200 }, (_, i) => `Row ${i}`);
+  it('virtualizes large collections with the default overscan of 3', () => {
+    const items = Array.from({ length: 10_000 }, (_, index) => `Row ${index}`);
 
     render(
       <VirtualizedList
         data-testid="virtualized-root"
         items={items}
         itemHeight={20}
-        height={60}
+        height={100}
         renderItem={(item) => <div data-testid="virt-row">{item}</div>}
       />
     );
 
     expect(screen.getByText('Row 0')).toBeInTheDocument();
-    expect(screen.queryByText('Row 150')).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('virt-row').length).toBeLessThan(items.length);
+    expect(screen.queryByText('Row 5000')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('virt-row').length).toBeLessThan(20);
+    expect(screen.getAllByTestId('virt-row').length).toBeGreaterThan(0);
 
     fireEvent.scroll(screen.getByTestId('virtualized-root'), {
-      target: { scrollTop: 240 },
+      target: { scrollTop: 1000 },
     });
 
-    expect(screen.getByText('Row 12')).toBeInTheDocument();
+    expect(screen.getByText('Row 50')).toBeInTheDocument();
+    expect(screen.queryByText('Row 0')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId('virt-row').length).toBeLessThan(20);
   });
 });

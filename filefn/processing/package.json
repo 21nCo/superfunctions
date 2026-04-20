@@ -11,25 +11,37 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "keywords": ["file", "processing", "pipeline", "filefn"],
+  "keywords": [
+    "file",
+    "processing",
+    "pipeline",
+    "filefn"
+  ],
   "author": "21n",
   "license": "MIT",
-  "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/21nCo/super-functions.git",
     "directory": "filefn/processing"
   },
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

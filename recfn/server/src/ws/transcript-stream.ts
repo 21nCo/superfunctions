@@ -1,10 +1,20 @@
 import { WebSocket } from 'ws';
-import { createFrame, createErrorFrame } from './frames.js';
+import { loadLimitsConfig } from '../config.js';
+import {
+  createFrame,
+  createErrorFrame,
+  type WebSocketFrameType,
+} from './frames.js';
 
 export const MAX_CONNECTIONS_PER_BOT = 50;
 
 export class TranscriptStreamManager {
   private connections: Map<string, Set<WebSocket>> = new Map();
+  private readonly maxConnectionsPerBot: number;
+
+  constructor(maxConnectionsPerBot: number = loadLimitsConfig().maxWebSocketConnectionsPerBot) {
+    this.maxConnectionsPerBot = maxConnectionsPerBot;
+  }
 
   addConnection(botId: string, ws: WebSocket) {
     let botConnections = this.connections.get(botId);
@@ -13,7 +23,7 @@ export class TranscriptStreamManager {
       this.connections.set(botId, botConnections);
     }
 
-    if (botConnections.size >= MAX_CONNECTIONS_PER_BOT) {
+    if (botConnections.size >= this.maxConnectionsPerBot) {
       ws.send(createErrorFrame('WS_LIMIT_EXCEEDED', 'Maximum concurrent connections reached.'));
       ws.close(1008, 'Limit Exceeded');
       return false;
@@ -42,11 +52,11 @@ export class TranscriptStreamManager {
     return true;
   }
 
-  broadcast(botId: string, type: string, data?: any) {
+  broadcast(botId: string, type: WebSocketFrameType, data?: unknown) {
     const botConnections = this.connections.get(botId);
     if (!botConnections) return;
 
-    const frame = createFrame(type as any, data);
+    const frame = data === undefined ? createFrame(type) : createFrame(type, data);
     for (const ws of botConnections) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(frame);

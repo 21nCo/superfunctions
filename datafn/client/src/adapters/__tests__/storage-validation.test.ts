@@ -65,6 +65,11 @@ function runAdapterTests(
       expect(await adapter.getCursor("tasks")).toBeNull();
     });
 
+    it("allows the internal actor feed cursor key", async () => {
+      await expect(adapter.setCursor("__datafn_actor_feed__", "42")).resolves.toBeUndefined();
+      await expect(adapter.getCursor("__datafn_actor_feed__")).resolves.toBe("42");
+    });
+
     it("TV-STORAGE-INVALID-MUTATION-001: Mutation missing clientId throws", async () => {
       await expect(
         adapter.changelogAppend({

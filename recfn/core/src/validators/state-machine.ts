@@ -6,7 +6,8 @@ const VALID_TRANSITIONS: Record<BotStatus, BotStatus[]> = {
   joining: ['joined', 'error'],
   joined: ['recording', 'error'],
   recording: ['leaving', 'error'],
-  leaving: ['left', 'error'],
+  leaving: ['finalizing', 'left', 'error'],
+  finalizing: ['done', 'error'],
   left: ['done', 'error'],
   done: [],
   error: [],
@@ -42,6 +43,7 @@ export const BOT_STATUS_ORDER: readonly BotStatus[] = [
   'joined',
   'recording',
   'leaving',
+  'finalizing',
   'left',
   'done',
 ];

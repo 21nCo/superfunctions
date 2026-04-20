@@ -1,5 +1,12 @@
 from typing import Any, Dict, List, Optional
 
+def _normalize_runs_on(plugin: Any) -> List[str]:
+    runs_on = getattr(plugin, "runs_on", [])
+    if isinstance(runs_on, list):
+        return runs_on
+    if isinstance(runs_on, tuple):
+        return list(runs_on)
+    return []
 
 async def run_before_hook(
     plugins: List[Any],
@@ -11,7 +18,7 @@ async def run_before_hook(
 ) -> Dict[str, Any]:
     current = payload
     for plugin in plugins:
-        runs_on = getattr(plugin, "runs_on", [])
+        runs_on = _normalize_runs_on(plugin)
         if env not in runs_on:
             continue
 
@@ -24,12 +31,18 @@ async def run_before_hook(
             if result is not None:
                 current = result
         except Exception as e:
+            plugin_name = getattr(plugin, "name", "unknown")
+            if logger:
+                logger.error(
+                    f"Plugin '{plugin_name}' {hook_name} failed",
+                    {"plugin": plugin_name, "hook": hook_name, "error": str(e)},
+                )
             return {
                 "ok": False,
                 "error": {
                     "code": "PLUGIN_ERROR",
-                    "message": f"Plugin '{getattr(plugin, 'name', 'unknown')}' {hook_name} failed: {e}",
-                    "details": {"plugin": getattr(plugin, "name", "unknown"), "hook": hook_name},
+                    "message": f"Plugin '{plugin_name}' {hook_name} failed",
+                    "details": {"plugin": plugin_name, "hook": hook_name},
                 },
             }
 
@@ -47,7 +60,7 @@ async def run_after_hook(
 ) -> Any:
     current_result = result
     for plugin in plugins:
-        runs_on = getattr(plugin, "runs_on", [])
+        runs_on = _normalize_runs_on(plugin)
         if env not in runs_on:
             continue
 

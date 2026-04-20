@@ -1,4 +1,5 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
 import { getNextRovingFocusIndex } from '../utils/roving-focus';
 import {
   computePosition,
@@ -21,6 +22,7 @@ export interface DropdownMenuProps {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
+  maxSubmenuDepth?: number;
   items?: MenuItem[];
   side?: Side;
   align?: Align;
@@ -32,10 +34,12 @@ export interface DropdownMenuProps {
 
 export interface DropdownMenuState {
   open: boolean;
+  controlled: boolean;
   items: MenuItem[];
   highlightedItem: string | null;
   submenuPath: string[];
   lastSelectedItem: string | null;
+  maxSubmenuDepth: number;
   side: Side;
   align: Align;
   sideOffset: number;
@@ -114,15 +118,22 @@ function createNavigationError(details: Record<string, unknown>): UIFnError {
 }
 
 export function createDropdownMenu(props: DropdownMenuProps): DropdownMenuMachine {
-  const open = props.open ?? props.defaultOpen ?? false;
+  const openController = createControllableStateController<boolean>({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
+  const open = openController.getValue();
   const items = normalizeItems(props.items);
   const initialRootIds = getEnabledItemIds(getItemsForParent(items));
   const store = createStore<DropdownMenuState, boolean>({
     open,
+    controlled: openController.isControlled(),
     items,
     highlightedItem: open ? initialRootIds[0] ?? null : null,
     submenuPath: [],
     lastSelectedItem: null,
+    maxSubmenuDepth: props.maxSubmenuDepth ?? 3,
     side: props.side ?? 'bottom',
     align: props.align ?? 'center',
     sideOffset: props.sideOffset ?? 5,
@@ -141,6 +152,7 @@ export function createDropdownMenu(props: DropdownMenuProps): DropdownMenuMachin
       }
 
       const rootIds = getEnabledItemIds(getItemsForParent(state.items));
+      const result = openController.requestValue(nextOpen);
       const meta: ChangeMeta<boolean> = {
         source: 'programmatic',
         reason: 'set-open',
@@ -150,15 +162,14 @@ export function createDropdownMenu(props: DropdownMenuProps): DropdownMenuMachin
 
       store.patchState(
         {
-          open: nextOpen,
-          highlightedItem: nextOpen ? rootIds[0] ?? null : null,
-          submenuPath: nextOpen ? [] : state.submenuPath,
+          open: result.value,
+          highlightedItem: nextOpen ? rootIds[0] ?? null : state.highlightedItem,
+          submenuPath: [],
           lastChangeMeta: meta,
           lastError: null,
         },
         meta
       );
-      props.onOpenChange?.(nextOpen);
     },
     registerItem(item) {
       const state = store.getState();
@@ -254,15 +265,16 @@ export function createDropdownMenu(props: DropdownMenuProps): DropdownMenuMachin
           nextValue: false,
           inputModality: 'keyboard',
         };
+        const result = openController.requestValue(false);
         store.patchState(
           {
-            open: false,
+            open: result.value,
+            submenuPath: [],
             lastChangeMeta: meta,
             lastError: null,
           },
           meta
         );
-        props.onOpenChange?.(false);
         return state.highlightedItem;
       }
 
@@ -329,9 +341,10 @@ export function createDropdownMenu(props: DropdownMenuProps): DropdownMenuMachin
         nextValue: false,
         inputModality: 'keyboard',
       };
+      const result = openController.requestValue(false);
       store.patchState(
         {
-          open: false,
+          open: result.value,
           highlightedItem: itemId,
           lastSelectedItem: itemId,
           submenuPath: [],
@@ -340,7 +353,6 @@ export function createDropdownMenu(props: DropdownMenuProps): DropdownMenuMachin
         },
         meta
       );
-      props.onOpenChange?.(false);
       return true;
     },
     openSubmenu(triggerId) {
@@ -356,6 +368,17 @@ export function createDropdownMenu(props: DropdownMenuProps): DropdownMenuMachin
       }
 
       const nextPath = [...state.submenuPath, triggerId];
+      if (nextPath.length > state.maxSubmenuDepth) {
+        store.patchState({
+          lastError: createNavigationError({
+            type: 'submenu-depth-exceeded',
+            triggerId,
+            maxSubmenuDepth: state.maxSubmenuDepth,
+          }),
+        });
+        return state.highlightedItem;
+      }
+
       const submenuIds = getActiveItemIds(state.items, nextPath);
       const nextHighlighted = submenuIds[0] ?? triggerId;
 

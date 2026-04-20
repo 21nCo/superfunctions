@@ -97,56 +97,92 @@ def _evaluate_operator(value: Any, op: str, operand: Any) -> bool:
         return False
 
     if op == "$gt":
-        return value > operand
+        try:
+            return value > operand
+        except TypeError:
+            return False
     if op == "$gte":
-        return value >= operand
+        try:
+            return value >= operand
+        except TypeError:
+            return False
     if op == "$lt":
-        return value < operand
+        try:
+            return value < operand
+        except TypeError:
+            return False
     if op == "$lte":
-        return value <= operand
+        try:
+            return value <= operand
+        except TypeError:
+            return False
     if op == "$in":
+        if not isinstance(operand, (list, tuple, set)):
+            return False
         return value in operand
     if op == "$nin":
+        if not isinstance(operand, (list, tuple, set)):
+            return False
         return value not in operand
     if op == "$like":
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not isinstance(operand, str):
             return False
         return bool(_like_to_regex(operand).match(value))
     if op == "$ilike":
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not isinstance(operand, str):
             return False
         return bool(_like_to_regex(operand, re.IGNORECASE).match(value))
     if op == "$not_like":
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not isinstance(operand, str):
             return False
         return not bool(_like_to_regex(operand).match(value))
     if op == "$not_ilike":
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not isinstance(operand, str):
             return False
         return not bool(_like_to_regex(operand, re.IGNORECASE).match(value))
     if op == "$contains":
-        if not isinstance(value, str):
-            return False
-        return operand in value
+        if isinstance(value, str) and isinstance(operand, str):
+            return operand in value
+        if isinstance(value, list):
+            return operand in value
+        return False
     if op == "$startsWith":
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not isinstance(operand, str):
             return False
         return value.startswith(operand)
     if op == "$endsWith":
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not isinstance(operand, str):
             return False
         return value.endswith(operand)
     if op == "$before":
-        return value < operand
+        try:
+            return value < operand
+        except TypeError:
+            return False
     if op == "$after":
-        return value > operand
+        try:
+            return value > operand
+        except TypeError:
+            return False
     if op == "$between":
-        return operand[0] <= value <= operand[1]
+        if not isinstance(operand, (list, tuple)) or len(operand) != 2:
+            return False
+        lower, upper = operand
+        try:
+            return lower <= value <= upper
+        except TypeError:
+            return False
     if op == "$not_between":
-        return not (operand[0] <= value <= operand[1])
+        if not isinstance(operand, (list, tuple)) or len(operand) != 2:
+            return False
+        lower, upper = operand
+        try:
+            return not (lower <= value <= upper)
+        except TypeError:
+            return False
 
-    # Unknown operator - pass through
-    return True
+    # Unknown operator - reject instead of silently matching everything
+    return False
 
 
 def evaluate_filter(
@@ -168,6 +204,8 @@ def evaluate_filter(
                 return False
             if len(value) == 0:
                 continue  # Empty $and is true
+            if not all(isinstance(f, dict) for f in value):
+                return False
             if not all(
                 evaluate_filter(record, f, max_depth, _current_depth + 1)
                 for f in value
@@ -179,6 +217,8 @@ def evaluate_filter(
                 return False
             if len(value) == 0:
                 return False  # Empty $or is false
+            if not all(isinstance(f, dict) for f in value):
+                return False
             if not any(
                 evaluate_filter(record, f, max_depth, _current_depth + 1)
                 for f in value

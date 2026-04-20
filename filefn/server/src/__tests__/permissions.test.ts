@@ -281,6 +281,45 @@ describe('@filefn/server permissions', () => {
     });
   });
 
+  describe('TV-PERM-GRANT-NEG-002: Malformed grant expiry is ignored', () => {
+    it('should deny access when expiresAt is invalid', async () => {
+      const file = createMockFile({ fileId: 'file_invalid_expiry', ownerId: 'owner_user' });
+
+      await db.create({
+        model: 'files',
+        data: file,
+        namespace: 'filefn',
+      });
+
+      const invalidGrant: FilePermissionRecord = {
+        permissionId: 'perm_invalid_expiry',
+        fileId: 'file_invalid_expiry',
+        userId: 'grantee_user',
+        role: null,
+        tenantId: null,
+        canRead: true,
+        canWrite: true,
+        canDelete: false,
+        canShare: false,
+        expiresAt: 'not-a-timestamp',
+        createdAt: new Date().toISOString(),
+      };
+
+      await db.create({
+        model: 'filePermissions',
+        data: invalidGrant,
+        namespace: 'filefn',
+      });
+
+      const authorizer = createDefaultAuthorizer({ db, namespace: 'filefn' });
+      const ctx = { principalId: 'grantee_user' };
+
+      expect(await authorizer.canRead(file, ctx)).toBe(false);
+      expect(await authorizer.canWrite(file, ctx)).toBe(false);
+      expect(await authorizer.canDelete(file, ctx)).toBe(false);
+    });
+  });
+
   describe('TV-VISIBILITY-001: Public file is readable without grants', () => {
     it('should allow read access to public files', async () => {
       const file = createMockFile({

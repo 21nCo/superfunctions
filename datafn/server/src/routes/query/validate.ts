@@ -60,7 +60,7 @@ export function validateQuery(
     return {
       ok: false,
       code: "DFQL_INVALID",
-      message: "Invalid DFQL: expected object or array",
+      message: "Invalid DFQL: expected object",
       path: "$",
     };
   }
@@ -248,7 +248,17 @@ export function validateQuery(
   if (q.cursor && typeof q.cursor === "object") {
     const cursor = q.cursor as Record<string, unknown>;
     // Before or After
-    if (cursor.before) {
+    if (cursor.after !== undefined) {
+      if (typeof cursor.after !== "object" || cursor.after === null) {
+        return {
+          ok: false,
+          code: "DFQL_INVALID",
+          message: "Invalid DFQL: cursor.after must be object",
+          path: "cursor.after",
+        };
+      }
+    }
+    if (cursor.before !== undefined) {
       if (typeof cursor.before !== "object" || cursor.before === null) {
         return {
           ok: false,
@@ -328,7 +338,10 @@ export function validateQuery(
     // Reject relation expansions in select if groupBy is present
     if (q.select && Array.isArray(q.select)) {
       for (let i = 0; i < q.select.length; i++) {
-        const token = q.select[i] as string;
+        const token = q.select[i];
+        if (typeof token !== "string") {
+          continue;
+        }
         if (
           token.includes(".*") ||
           token.includes(".**") ||

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getRequiredContext } from './internal/context';
   
   interface Props {
     children?: import('svelte').Snippet;
@@ -8,7 +8,11 @@
 
   let { children, ...rest }: Props = $props();
 
-  const ctx = getContext<any>('alert-dialog');
+  const ctx = getRequiredContext<any>(
+    'alert-dialog',
+    'AlertDialogTrigger',
+    'AlertDialog components must be used within AlertDialog'
+  );
 
   function handleClick(e: MouseEvent) {
     if (rest.onclick) rest.onclick(e);

@@ -6,8 +6,9 @@ import {
   createAuthFn,
   type AuthFnConfig,
   type AuthFnDeliveryRequest
-} from '../../../core/src/index.js';
+} from '@authfn/core';
 import { createAuthFnClient } from '../index.js';
+import { createAuthFnHttpClient } from '../http-client.js';
 
 function createCookieJar() {
   const values = new Map<string, string>();
@@ -35,6 +36,149 @@ function createCookieJar() {
 }
 
 describe('@authfn/client otp flows', () => {
+  it('treats empty error responses as failures', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response(null, {
+          status: 500,
+          headers: {
+            'x-request-id': 'req_empty'
+          }
+        })
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('empty 500 response should be treated as an error');
+    }
+    expect(result.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(result.error.details?.status).toBe(500);
+  });
+
+  it('normalizes rejected fetch calls into an error envelope', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () => {
+        throw new Error('socket closed');
+      }
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('rejected fetch should return an error envelope');
+    }
+    expect(result.error.code).toBe('AUTHFN_NETWORK_ERROR');
+    expect(result.error.message).toBe('socket closed');
+    expect(result.error.details?.name).toBe('Error');
+  });
+
+  it('treats invalid json payloads as envelope failures', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response(JSON.stringify({ redirectTo: 'https://app.example.com/post-auth' }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'x-request-id': 'req_invalid'
+          }
+        })
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('invalid JSON payload should be rejected');
+    }
+    expect(result.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(result.requestId).toBe('req_invalid');
+  });
+
+  it('rejects malformed error envelopes that omit required fields', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response(JSON.stringify({
+          ok: false,
+          error: {
+            code: 'AUTHFN_INVALID_CREDENTIALS'
+          },
+          requestId: 'req_malformed'
+        }), {
+          status: 401,
+          headers: {
+            'content-type': 'application/json',
+            'x-request-id': 'req_malformed'
+          }
+        })
+    });
+
+    const result = await client.requestJson({
+      method: 'GET',
+      path: '/session'
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('malformed error envelopes should be rejected');
+    }
+    expect(result.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(result.requestId).toBe('req_malformed');
+  });
+
+  it('does not throw when csrf cookie encoding is malformed', async () => {
+    const client = createAuthFnHttpClient({
+      baseUrl: 'https://account.example.com/auth',
+      cookieAccessor: () => 'authfn.session=session-token; authfn.csrf=bad%zzvalue',
+      fetch: async (_input, init) => {
+        return new Response(JSON.stringify({
+          ok: true,
+          data: {
+            receivedCsrf: new Headers(init?.headers).get('x-authfn-csrf')
+          },
+          requestId: 'req_cookie'
+        }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json'
+          }
+        });
+      }
+    });
+
+    const result = await client.requestJson<{
+      ok: true;
+      data: { receivedCsrf: string | null };
+      requestId: string;
+    }>({
+      method: 'POST',
+      path: '/sign-out',
+      body: {},
+      csrf: true
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error('malformed cookie values should not break requestJson');
+    }
+    expect(result.data.receivedCsrf).toBe('bad%zzvalue');
+  });
+
   it('supports verify-email, otp sign-in, and reset-password completion', async () => {
     const codes = new Map<string, string>();
     const provider = {

@@ -67,7 +67,7 @@
 
 Reference snapshot: `typescript/tests/baseline/current-failures.snapshot.md`
 
-- Command: `cd /Users/serro/Documents/dev/n/superfunctions/plugfn/typescript && npm test -- --run || true`
+- Command: `npm exec --workspace plugfn -- vitest --run || true`
 - Result: 1 test file run, 6 tests total, 3 failed, 3 passed.
 - Recurring failure signature:
   - `Invalid encrypted data format`

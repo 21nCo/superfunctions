@@ -29,6 +29,8 @@ from superfunctions.db import (
     WhereClause,
 )
 
+from ..errors import DatabaseError
+
 
 class MemoryAdapter:
     """In-memory database adapter for testing sendfn operations.
@@ -60,6 +62,13 @@ class MemoryAdapter:
         """Create a single record."""
         storage = self._get_or_create_storage(params.model)
         record_id = params.data.get("id", str(uuid4()))
+        if record_id in storage:
+            raise DatabaseError(
+                f"Duplicate id `{record_id}` for model `{params.model}`",
+                code="SENDFN_UNIQUE_CONSTRAINT",
+                retryable=False,
+                details={"model": params.model, "id": record_id},
+            )
         record = {**params.data, "id": record_id}
         storage[record_id] = record
         return record
@@ -92,9 +101,9 @@ class MemoryAdapter:
                 results.sort(key=lambda x: x.get(field, ""), reverse=reverse)
         
         # Apply pagination
-        if params.offset:
+        if params.offset is not None:
             results = results[params.offset:]
-        if params.limit:
+        if params.limit is not None:
             results = results[:params.limit]
         
         return results
@@ -123,10 +132,25 @@ class MemoryAdapter:
 
     async def create_many(self, params: CreateManyParams) -> List[Dict[str, Any]]:
         """Create multiple records."""
-        results = []
+        storage = self._get_or_create_storage(params.model)
+        results: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
         for data in params.data:
-            result = await self.create(CreateParams(model=params.model, data=data))
-            results.append(result)
+            record_id = data.get("id", str(uuid4()))
+            if record_id in storage or record_id in seen_ids:
+                raise DatabaseError(
+                    f"Duplicate id `{record_id}` for model `{params.model}`",
+                    code="SENDFN_UNIQUE_CONSTRAINT",
+                    retryable=False,
+                    details={"model": params.model, "id": record_id},
+                )
+            seen_ids.add(record_id)
+            results.append({**data, "id": record_id})
+
+        for record in results:
+            storage[record["id"]] = record
+
         return results
 
     async def update_many(self, params: UpdateManyParams) -> int:
@@ -245,22 +269,22 @@ class MemoryAdapter:
                 if record_value == value:
                     return False
             elif operator == Operator.GT or operator == "gt":
-                if not (record_value and record_value > value):
+                if record_value is None or record_value <= value:
                     return False
             elif operator == Operator.GTE or operator == "gte":
-                if not (record_value and record_value >= value):
+                if record_value is None or record_value < value:
                     return False
             elif operator == Operator.LT or operator == "lt":
-                if not (record_value and record_value < value):
+                if record_value is None or record_value >= value:
                     return False
             elif operator == Operator.LTE or operator == "lte":
-                if not (record_value and record_value <= value):
+                if record_value is None or record_value > value:
                     return False
             elif operator == Operator.IN or operator == "in":
                 if record_value not in value:
                     return False
             elif operator == Operator.CONTAINS or operator == "contains":
-                if not (record_value and value in record_value):
+                if record_value is None or value not in record_value:
                     return False
         
         return True

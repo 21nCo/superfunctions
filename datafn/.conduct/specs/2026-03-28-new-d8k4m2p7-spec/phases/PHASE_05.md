@@ -1,0 +1,29 @@
+- Phase goal: Update docs, examples, and regression coverage for browser vs native-backed search behavior.
+- In scope:
+  - todo example dual-mode search wiring
+  - Apple host example search backend wiring
+  - docs/reference/setup updates
+  - regression tests
+- Out of scope:
+  - new product features beyond documented scope
+- Deliverables:
+  - `datafn/examples/todo-app/client/src/lib/datafn.ts`
+  - `datafn/examples/apple-webview-host/*`
+  - `datafn/client/README.md`
+  - `datafn/docs/content/docs/documentation/client/setup.mdx`
+  - other relevant search docs and tests
+- Requirements covered:
+  - `DJS-001`
+  - `DDOC-001`
+- Implementation tasks:
+  - Update the todo example so browser-owned mode uses JS SearchFn + IndexedDB and native-backed mode uses `createNativeBackedSearchProvider`.
+  - Update the Apple host example to configure the native SearchFn backend factory.
+  - Document that CloudKit does not sync index files.
+  - Add regression tests and example verification steps from repo root.
+- Verification steps:
+  - Run `npm --prefix datafn/client test`
+  - Run `npm --prefix datafn/swift-bridge test`
+  - Run `swift test --package-path datafn/swift`
+  - Expected outcome: all suites pass and docs/examples match the implemented topology.
+- Stop condition:
+  - Report final example/doc files and verification output before closing the spec.

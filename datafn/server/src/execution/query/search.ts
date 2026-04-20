@@ -107,6 +107,12 @@ export async function executeSearchQuery(
     const chunkQuery: DFQLQuery = {
       ...query,
       filters: mergedFilters,
+      select: ["id"],
+      omit: undefined,
+      groupBy: undefined,
+      aggregations: undefined,
+      having: undefined,
+      count: undefined,
       limit: undefined,
       offset: undefined,
       sort: undefined,

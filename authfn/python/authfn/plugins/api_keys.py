@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ..types import (
@@ -19,7 +19,7 @@ from ..types import (
 
 
 def _default_now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def _create_id(prefix: str) -> str:
@@ -28,6 +28,14 @@ def _create_id(prefix: str) -> str:
 
 def _hash_secret(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _read_authorization_secret(request: Any) -> Optional[str]:
@@ -80,6 +88,7 @@ class ApiKeyService:
 
         secret = f"{self.plugin_config.secret_prefix}_{secrets.token_urlsafe(24)}"
         now = self.plugin_config.now()
+        normalized_expires_at = _as_utc(expires_at)
         record = {
             "id": _create_id("key"),
             "userId": user_id,
@@ -87,7 +96,7 @@ class ApiKeyService:
             "secretHash": _hash_secret(secret),
             "scopes": list(scopes or []),
             "metadata": stored_metadata,
-            "expiresAt": expires_at,
+            "expiresAt": normalized_expires_at,
             "revokedAt": None,
             "lastUsedAt": None,
             "createdAt": now,
@@ -140,8 +149,12 @@ class ApiKeyService:
             return None
         if row.get("revokedAt") is not None:
             raise ApiKeyRevokedError("API key has been revoked")
-        expires_at = row.get("expiresAt")
+        expires_at = _as_utc(row.get("expiresAt"))
         now = self.plugin_config.now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        else:
+            now = now.astimezone(timezone.utc)
         if expires_at is not None and expires_at <= now:
             raise ExpiredCredentialsError("API key has expired")
         await self.config.database.update(
@@ -222,7 +235,7 @@ def authfn_api_key_plugin(config: Optional[ApiKeyPluginConfig] = None) -> AuthFn
             {"method": "DELETE", "path": "/api-keys/:keyId"},
         ],
     )
-    setattr(plugin, "_authfn_config", resolved)
+    plugin._authfn_config = resolved
     return plugin
 
 

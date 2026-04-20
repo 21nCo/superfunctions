@@ -13,9 +13,11 @@
  */
 
 import type { Adapter } from "@superfunctions/db";
+import type { InternalWhereClause } from "@superfunctions/db/types";
 import type { SequenceStore } from "./sequence-store.js";
 import { ensureInternalTable } from "../internal-tables.js";
 import type { DatafnLogger } from "../../logger.js";
+import { withAdapterNamespaceLock } from "./namespace-lock.js";
 
 /** REL-010: Sleep helper for CAS backoff */
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -156,75 +158,81 @@ export class ChangeTrackingService {
   }
 
   private async getNextServerSeqBatchFromDb(count: number): Promise<number[]> {
-    if (!this.metaEnsured) {
-      await ensureInternalTable(this.db, "__datafn_meta");
-      this.metaEnsured = true;
-    }
-
-    const MAX_RETRIES = 10;
-
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      // REL-010: Exponential backoff between CAS retries (skip delay on first attempt)
-      if (attempt > 0) {
-        await sleep(10 * Math.pow(2, attempt - 1));
+    return await withAdapterNamespaceLock(this.db, this.namespace, async () => {
+      if (!this.metaEnsured) {
+        await ensureInternalTable(this.db, "__datafn_meta");
+        this.metaEnsured = true;
       }
-      try {
-        const meta = await this.db.internal.findOne("__datafn_meta", [
-          { field: "namespace", op: "eq", value: this.namespace },
-        ]);
 
-        if (!meta) {
-          try {
-            await this.db.internal.create("__datafn_meta", {
-              id: `meta:${this.namespace}`,
-              namespace: this.namespace,
-              next_server_seq: 1 + count,
-            });
-            return Array.from({ length: count }, (_, i) => 1 + i);
-          } catch (createError) {
-            continue;
-          }
-        } else {
-          const currentSeq = (meta.next_server_seq as number) || 1;
+      const MAX_RETRIES = 10;
 
-          try {
-            const affected = await this.db.internal.update(
-              "__datafn_meta",
-              [
-                { field: "namespace", op: "eq", value: this.namespace },
-                { field: "next_server_seq", op: "eq", value: currentSeq },
-              ],
-              { next_server_seq: currentSeq + count },
-            );
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        // REL-010: Exponential backoff between CAS retries (skip delay on first attempt)
+        if (attempt > 0) {
+          await sleep(10 * Math.pow(2, attempt - 1));
+        }
+        try {
+          const meta = await this.db.internal.findOne("__datafn_meta", [
+            { field: "namespace", op: "eq", value: this.namespace },
+          ]);
 
-            if (affected === 0) {
-              // REL-010: CAS failed due to contention — backoff applied on next iteration
+          if (!meta) {
+            try {
+              await this.db.internal.create("__datafn_meta", {
+                id: `meta:${this.namespace}`,
+                namespace: this.namespace,
+                next_server_seq: 1 + count,
+              });
+              return Array.from({ length: count }, (_, i) => 1 + i);
+            } catch (createError) {
               continue;
             }
+          } else {
+            const currentSeq = (meta.next_server_seq as number) || 1;
 
-            return Array.from({ length: count }, (_, i) => currentSeq + i);
-          } catch (updateError) {
-            continue;
+            try {
+              const affected = await this.db.internal.update(
+                "__datafn_meta",
+                [
+                  { field: "namespace", op: "eq", value: this.namespace },
+                  { field: "next_server_seq", op: "eq", value: currentSeq },
+                ],
+                { next_server_seq: currentSeq + count },
+              );
+
+              if (affected === 0) {
+                // REL-010: CAS failed due to contention — backoff applied on next iteration
+                continue;
+              }
+
+              return Array.from({ length: count }, (_, i) => currentSeq + i);
+            } catch (updateError) {
+              continue;
+            }
           }
-        }
-      } catch (error) {
-        if (attempt === MAX_RETRIES - 1) {
-          this.logger?.error("Failed to get next serverSeq after max retries", {
+        } catch (error) {
+          if (attempt === MAX_RETRIES - 1) {
+            this.logger?.error("Failed to get next serverSeq after max retries", {
+              error: String(error),
+              operation: "getNextServerSeqBatchFromDb",
+              resource: "__datafn_meta",
+            });
+            throw new Error(
+              "INTERNAL: Failed to allocate serverSeq after maximum retries",
+            );
+          }
+          this.logger?.warn("Sequence batch CAS retry", {
+            attempt,
             error: String(error),
-            operation: "getNextServerSeqBatchFromDb",
-            resource: "__datafn_meta",
+            operation: "seq-batch-cas",
           });
-          throw new Error(
-            "INTERNAL: Failed to allocate serverSeq after maximum retries",
-          );
         }
-        this.logger?.warn("Sequence batch CAS retry", { attempt, error: String(error), operation: "seq-batch-cas" });
       }
-    }
 
-    throw new Error(
-      "INTERNAL: Failed to allocate serverSeq after maximum retries",
-    );
+      throw new Error(
+        "INTERNAL: Failed to allocate serverSeq after maximum retries",
+      );
+    });
   }
 
   /**
@@ -445,13 +453,16 @@ export class ChangeTrackingService {
         [
           { field: "namespace", op: "eq", value: this.namespace },
           { field: "server_seq", op: "gt", value: params.sinceSeq },
+          { field: "resource", op: "in" as any, value: params.resources },
         ],
-        { orderBy: "server_seq" },
+        {
+          orderBy: "server_seq",
+          ...(typeof params.limit === "number" && params.limit > 0
+            ? { limit: params.limit }
+            : {}),
+        },
       );
-      const resourceSet = new Set(params.resources);
-      const filtered = rows
-        .filter((row) => resourceSet.has(String(row.resource ?? "")))
-        .map((change) => ({
+      return rows.map((change) => ({
           namespace: this.namespace,
           serverSeq: change.server_seq as number,
           resource: change.resource as string,
@@ -459,10 +470,6 @@ export class ChangeTrackingService {
           op: change.op as "insert" | "merge" | "replace" | "upsert" | "delete",
           record: change.record ? JSON.parse(change.record as string) : null,
         }));
-      if (typeof params.limit === "number" && params.limit > 0) {
-        return filtered.slice(0, params.limit);
-      }
-      return filtered;
     } catch (error) {
       this.logger?.error("Failed to get resource-filtered changes", {
         error: String(error),
@@ -486,7 +493,7 @@ export class ChangeTrackingService {
       this.changesEnsured = true;
     }
     try {
-      const where: Array<{ field: string; op: string; value: unknown }> = [
+      const where: InternalWhereClause[] = [
         { field: "namespace", op: "eq", value: this.namespace },
         { field: "resource", op: "eq", value: params.resource },
         { field: "record_id", op: "eq", value: params.id },

@@ -118,6 +118,9 @@ class Provider(BaseModel):
     auth_type: AuthType
     icon_url: Optional[str] = None
     rate_limit: Optional[Dict[str, int]] = None
+    auth_config: Optional[Dict[str, Any]] = None
+    actions: Dict[str, Any] = Field(default_factory=dict)
+    triggers: Dict[str, Any] = Field(default_factory=dict)
 
 
 # Workflow Models
@@ -186,4 +189,3 @@ class AuthProvider(Protocol):
 T = TypeVar("T")
 P = TypeVar("P")
 R = TypeVar("R")
-

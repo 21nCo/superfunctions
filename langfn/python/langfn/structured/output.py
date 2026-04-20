@@ -20,15 +20,26 @@ class StructuredOutput(Generic[TModel]):
     def parse(self, text: str) -> TModel:
         candidate = extract_first_json_object(text)
         if candidate is None:
-            raise SchemaValidationError("No JSON object found in model output", metadata={"text": text})
+            raise SchemaValidationError(
+                "No JSON object found in model output",
+                metadata={"text": text, "errors": [{"message": "No JSON object found"}]},
+            )
 
         try:
             data = json.loads(candidate)
         except json.JSONDecodeError as exc:
-            raise SchemaValidationError("Invalid JSON in model output", metadata={"text": candidate}) from exc
+            raise SchemaValidationError(
+                "Invalid JSON in model output",
+                metadata={
+                    "text": candidate,
+                    "errors": [{"message": exc.msg, "line": exc.lineno, "column": exc.colno}],
+                },
+            ) from exc
 
         try:
             return self.schema.model_validate(data)
         except ValidationError as exc:
-            raise SchemaValidationError("Output does not match schema", metadata={"errors": exc.errors()}) from exc
-
+            raise SchemaValidationError(
+                "Output does not match schema",
+                metadata={"errors": exc.errors(), "text": candidate},
+            ) from exc

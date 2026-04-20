@@ -4,6 +4,24 @@
 
 // Main exports
 export { BrowseFn, browseFn } from "./core/browse-fn.js";
+export {
+  BrowseFnError,
+  type BrowseFnErrorCode,
+  type BrowseFnErrorEnvelope,
+  type BrowseFnSuccessEnvelope,
+  createErrorEnvelope,
+  createSuccessEnvelope,
+  isBrowseFnError,
+} from "./core/errors.js";
+export {
+  GEO_PROVIDER_IDS,
+  IMAGE_PROVIDER_IDS,
+  WEB_PROVIDER_IDS,
+  normalizeGeoProviderId,
+  normalizeImageProviderId,
+  normalizeWebProviderId,
+  sortProviderIds,
+} from "./core/provider-registry.js";
 
 // Core types
 export type {
@@ -18,6 +36,9 @@ export type {
   CacheConfig,
   RetryConfig,
   ProviderConfig,
+  CanonicalGeoProviderId,
+  CanonicalImageProviderId,
+  CanonicalWebProviderId,
 } from "./core/types.js";
 
 // Web scraping types
@@ -58,6 +79,8 @@ export type {
 
 // Web providers
 export { CheerioProvider } from "./web/providers/cheerio.js";
+export { FirecrawlProvider } from "./web/providers/firecrawl.js";
+export { JinaProvider } from "./web/providers/jina.js";
 export { PuppeteerProvider } from "./web/providers/puppeteer.js";
 export { PlaywrightProvider } from "./web/providers/playwright.js";
 

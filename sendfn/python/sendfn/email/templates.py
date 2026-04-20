@@ -8,67 +8,40 @@ from ..errors import TemplateError
 from ..models import EmailTemplate
 
 
+TemplateNode = dict[str, Any]
+
+
 class TemplateEngine:
     """Lightweight template engine for email templates."""
 
     def render(self, template: str, data: dict[str, Any]) -> str:
-        """Render a template with data.
-
-        Args:
-            template: Template string with {{variable}} placeholders
-            data: Data dictionary for variable substitution
-
-        Returns:
-            Rendered template string
-
-        Raises:
-            TemplateError: If template rendering fails
-        """
+        """Render a template with data."""
         try:
-            result = template
-
-            # Replace variables {{variable}}
-            def replace_variable(match: re.Match) -> str:
-                var_name = match.group(1).strip()
-                value = data.get(var_name, "")
-                # HTML escape by default
-                return html.escape(str(value)) if value is not None else ""
-
-            result = re.sub(r"\{\{([^}]+)\}\}", replace_variable, result)
-
-            # Handle simple conditionals {{#if variable}}...{{/if}}
-            result = self._process_conditionals(result, data)
-
-            # Handle simple loops {{#each items}}...{{/each}}
-            result = self._process_loops(result, data)
-
-            return result
-        except Exception as e:
-            raise TemplateError(f"Template rendering failed: {e}")
+            nodes = self._parse(template)
+            return self._render_nodes(nodes, [data])
+        except TemplateError:
+            raise
+        except Exception as exc:
+            raise TemplateError(
+                "Malformed template block syntax",
+                code="SENDFN_TEMPLATE_RENDER_ERROR",
+                details={"cause": str(exc)},
+            ) from exc
 
     def validate(self, template: EmailTemplate, data: dict[str, Any]) -> dict[str, Any]:
-        """Validate template data.
-
-        Args:
-            template: Email template
-            data: Data to validate
-
-        Returns:
-            Validation result with 'valid' and 'errors' keys
-        """
+        """Validate template data."""
         errors = []
-        
-        # Check all required variables are present
+        optional_variables = set((template.metadata or {}).get("optionalVariables", []))
+
         for var in template.variables:
-            if var not in data:
+            if var not in data and var not in optional_variables:
                 errors.append(f"Missing required variable: {var}")
-        
-        # Warn about unused variables
+
         warnings = []
         for key in data.keys():
-            if key not in template.variables:
+            if key not in template.variables and key not in optional_variables:
                 warnings.append(f"Unused variable: {key}")
-        
+
         return {
             "valid": len(errors) == 0,
             "errors": errors,
@@ -76,71 +49,106 @@ class TemplateEngine:
         }
 
     def extract_variables(self, template: str) -> list[str]:
-        """Extract variable names from a template.
-
-        Args:
-            template: Template string
-
-        Returns:
-            List of variable names
-        """
-        variables = set()
-        
-        # Find all {{variable}} patterns
-        for match in re.finditer(r"\{\{([^}#/]+)\}\}", template):
-            var_name = match.group(1).strip()
-            variables.add(var_name)
-        
+        """Extract variable names from a template."""
+        nodes = self._parse(template)
+        variables: set[str] = set()
+        self._collect_variables(nodes, variables)
         return sorted(list(variables))
 
-    def _process_conditionals(self, template: str, data: dict[str, Any]) -> str:
-        """Process {{#if variable}}...{{/if}} conditionals."""
-        def replace_conditional(match: re.Match) -> str:
-            var_name = match.group(1).strip()
-            content = match.group(2)
-            
-            # Check if variable is truthy
-            if data.get(var_name):
-                return content
-            return ""
-        
-        # Match {{#if var}}content{{/if}}
-        pattern = r"\{\{#if\s+([^}]+)\}\}(.*?)\{\{/if\}\}"
-        return re.sub(pattern, replace_conditional, template, flags=re.DOTALL)
+    def _collect_variables(self, nodes: list[TemplateNode], variables: set[str]) -> None:
+        for node in nodes:
+            node_type = node["type"]
+            if node_type == "variable":
+                variables.add(node["name"])
+            elif node_type in {"if", "each"}:
+                variables.add(node["name"])
+                self._collect_variables(node["children"], variables)
 
-    def _process_loops(self, template: str, data: dict[str, Any]) -> str:
-        """Process {{#each items}}...{{/each}} loops."""
-        def replace_loop(match: re.Match) -> str:
-            var_name = match.group(1).strip()
-            content = match.group(2)
-            
-            items = data.get(var_name, [])
-            if not isinstance(items, list):
-                return ""
-            
-            result = []
-            for item in items:
-                # Simple variable replacement within loop
-                item_content = content
-                if isinstance(item, dict):
-                    for key, value in item.items():
-                        item_content = item_content.replace(
-                            f"{{{{{key}}}}}",
-                            html.escape(str(value)) if value is not None else ""
-                        )
+    def _parse(self, template: str) -> list[TemplateNode]:
+        tag_pattern = re.compile(r"\{\{([^}]+)\}\}")
+        frames: list[TemplateNode] = [{"type": "root", "children": []}]
+        cursor = 0
+
+        for match in tag_pattern.finditer(template):
+            if match.start() > cursor:
+                frames[-1]["children"].append(
+                    {"type": "text", "value": template[cursor : match.start()]}
+                )
+
+            tag = match.group(1).strip()
+            if tag.startswith("#"):
+                parsed = re.fullmatch(r"#(if|each)\s+([a-zA-Z0-9_.]+)", tag)
+                if not parsed:
+                    raise ValueError(f"Unsupported block tag: {tag}")
+
+                node = {
+                    "type": parsed.group(1),
+                    "name": parsed.group(2),
+                    "children": [],
+                }
+                frames[-1]["children"].append(node)
+                frames.append(node)
+            elif tag.startswith("/"):
+                parsed = re.fullmatch(r"/(if|each)", tag)
+                if not parsed or len(frames) == 1:
+                    raise ValueError(f"Unexpected closing tag: {tag}")
+
+                closed = frames.pop()
+                if closed["type"] != parsed.group(1):
+                    raise ValueError(f"Mismatched closing tag: {tag}")
+            else:
+                if not re.fullmatch(r"[a-zA-Z0-9_.]+", tag):
+                    raise ValueError(f"Unsupported variable tag: {tag}")
+                frames[-1]["children"].append({"type": "variable", "name": tag})
+
+            cursor = match.end()
+
+        if cursor < len(template):
+            frames[-1]["children"].append({"type": "text", "value": template[cursor:]})
+
+        if len(frames) != 1:
+            raise ValueError("Unclosed template block")
+
+        return frames[0]["children"]
+
+    def _render_nodes(self, nodes: list[TemplateNode], scopes: list[dict[str, Any]]) -> str:
+        result: list[str] = []
+        for node in nodes:
+            node_type = node["type"]
+            if node_type == "text":
+                result.append(node["value"])
+            elif node_type == "variable":
+                value = self._resolve_value(node["name"], scopes)
+                result.append("" if value is None else html.escape(str(value)))
+            elif node_type == "if":
+                if self._resolve_value(node["name"], scopes):
+                    result.append(self._render_nodes(node["children"], scopes))
+            elif node_type == "each":
+                value = self._resolve_value(node["name"], scopes)
+                if isinstance(value, list):
+                    for item in value:
+                        scope = {"this": item}
+                        if isinstance(item, dict):
+                            scope.update(item)
+                        result.append(self._render_nodes(node["children"], [scope, *scopes]))
+        return "".join(result)
+
+    def _resolve_value(self, path: str, scopes: list[dict[str, Any]]) -> Any:
+        parts = path.split(".")
+
+        for scope in scopes:
+            value: Any = scope
+            matched = True
+            for part in parts:
+                if isinstance(value, dict) and part in value:
+                    value = value[part]
                 else:
-                    # If item is not a dict, use it as the value
-                    item_content = item_content.replace(
-                        "{{this}}",
-                        html.escape(str(item)) if item is not None else ""
-                    )
-                result.append(item_content)
-            
-            return "".join(result)
-        
-        # Match {{#each items}}content{{/each}}
-        pattern = r"\{\{#each\s+([^}]+)\}\}(.*?)\{\{/each\}\}"
-        return re.sub(pattern, replace_loop, template, flags=re.DOTALL)
+                    matched = False
+                    break
+            if matched:
+                return value
+
+        return None
 
 
 class TemplateRegistry:
@@ -152,35 +160,19 @@ class TemplateRegistry:
         self._load_default_templates()
 
     def register(self, template: EmailTemplate) -> None:
-        """Register a template.
-
-        Args:
-            template: Email template to register
-        """
+        """Register a template."""
         self._templates[template.id] = template
 
     def get(self, template_id: str) -> Optional[EmailTemplate]:
-        """Get a template by ID.
-
-        Args:
-            template_id: Template ID
-
-        Returns:
-            Email template or None if not found
-        """
+        """Get a template by ID."""
         return self._templates.get(template_id)
 
     def list(self) -> list[EmailTemplate]:
-        """List all registered templates.
-
-        Returns:
-            List of all email templates
-        """
+        """List all registered templates."""
         return list(self._templates.values())
 
     def _load_default_templates(self) -> None:
         """Load default built-in templates."""
-        # Welcome email template
         welcome_template = EmailTemplate(
             id="welcome-email",
             name="Welcome Email",
@@ -202,15 +194,18 @@ class TemplateRegistry:
             Welcome, {{userName}}!
             
             Thank you for joining {{appName}}. We're excited to have you on board.
+            {{#if verificationUrl}}
+            Verify your email: {{verificationUrl}}
+            {{/if}}
             
             Best regards,
             The {{appName}} Team
             """,
-            variables=["userName", "appName", "verificationUrl"],
+            variables=["userName", "appName"],
+            metadata={"optionalVariables": ["verificationUrl"]},
         )
         self.register(welcome_template)
 
-        # Password reset template
         password_reset_template = EmailTemplate(
             id="password-reset",
             name="Password Reset",
@@ -249,7 +244,6 @@ class TemplateRegistry:
         )
         self.register(password_reset_template)
 
-        # Generic notification template
         notification_template = EmailTemplate(
             id="notification",
             name="Notification",
@@ -271,9 +265,12 @@ class TemplateRegistry:
             
             {{message}}
             
+            {{#if actionUrl}}{{actionText}}: {{actionUrl}}{{/if}}
+            
             Best regards,
             {{appName}}
             """,
-            variables=["subject", "title", "message", "appName", "actionUrl", "actionText"],
+            variables=["subject", "title", "message", "appName"],
+            metadata={"optionalVariables": ["actionUrl", "actionText"]},
         )
         self.register(notification_template)

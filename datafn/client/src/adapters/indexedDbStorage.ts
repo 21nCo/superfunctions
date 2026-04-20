@@ -26,6 +26,10 @@ function validateMutation(mutation: any): void {
   if (!mutation.mutationId) throw new Error("Missing mutationId in mutation");
 }
 
+function isInternalCursorKey(resource: string): boolean {
+  return resource === "__global_cursor__" || resource === "__datafn_actor_feed__";
+}
+
 /**
  * Deep merge helper
  * - Top-level scalar fields: overwrite
@@ -596,7 +600,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
 
   async getCursor(resource: string): Promise<string | null> {
     // Skip validation for internal cursor keys (SYNC-CURSOR-001)
-    if (resource !== "__global_cursor__") {
+    if (!isInternalCursorKey(resource)) {
       this.validateTableName(resource);
     }
     const store = await this.getStore("meta", "readonly");
@@ -609,7 +613,7 @@ export class IndexedDbStorageAdapter implements DatafnStorageAdapter {
 
   async setCursor(resource: string, cursor: string | null): Promise<void> {
     // Skip validation for internal cursor keys (SYNC-CURSOR-001)
-    if (resource !== "__global_cursor__") {
+    if (!isInternalCursorKey(resource)) {
       this.validateTableName(resource);
     }
     validateCursor(cursor);

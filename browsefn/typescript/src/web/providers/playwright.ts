@@ -1,25 +1,27 @@
 /**
- * Playwright provider for cross-browser scraping
+ * Playwright provider for cross-browser scraping.
  */
 
-import type { WebProvider, GetPageOptions, PageResult, ProviderCapabilities } from '../../core/types.js';
-import { extractMetadata, applySelectors, htmlToText, htmlToMarkdown } from '../../utils/html-utils.js';
+import type {
+  GetPageOptions,
+  ProviderCapabilities,
+  WebProvider,
+} from '../../core/types.js';
 import { sanitizeUrl } from '../../utils/validation.js';
+import {
+  BROWSER_PROVIDER_CAPABILITIES,
+  buildBrowserPageResult,
+  isProviderModuleAvailable,
+} from './browser-provider-utils.js';
+
+type PlaywrightModule = typeof import('playwright');
 
 export class PlaywrightProvider implements WebProvider {
   name = 'playwright';
-  
-  capabilities: ProviderCapabilities = {
-    formats: ['html', 'markdown', 'text', 'json'],
-    javascript: true,
-    screenshots: true,
-    cookies: true,
-    headers: true,
-    selectors: true,
-    proxy: true
-  };
 
-  private playwright: any;
+  capabilities: ProviderCapabilities = BROWSER_PROVIDER_CAPABILITIES;
+
+  private playwright?: PlaywrightModule;
 
   constructor(
     private config: {
@@ -29,125 +31,95 @@ export class PlaywrightProvider implements WebProvider {
     } = {}
   ) {}
 
-  async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
-    // Lazy load playwright
-    if (!this.playwright) {
-      try {
-        this.playwright = await import('playwright');
-      } catch (error) {
-        throw new Error('Playwright is not installed. Install with: npm install playwright');
-      }
-    }
+  async getPage(url: string, options: GetPageOptions = {}) {
+    return this.withPage(url, options, (page, sanitizedUrl, startedAt) =>
+      buildBrowserPageResult({
+        page,
+        options,
+        sanitizedUrl,
+        provider: this.name,
+        startedAt,
+      })
+    );
+  }
 
-    const startTime = Date.now();
+  async scrape<T>(
+    url: string,
+    options: GetPageOptions & { script: (page: unknown) => Promise<T> | T }
+  ): Promise<T> {
+    return this.withPage(url, options, async (page) => options.script(page));
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return isProviderModuleAvailable(() => this.loadPlaywright());
+  }
+
+  private async withPage<T>(
+    url: string,
+    options: GetPageOptions,
+    callback: (
+      page: Awaited<
+        ReturnType<
+          Awaited<
+            ReturnType<Awaited<ReturnType<PlaywrightModule['chromium']['launch']>>['newContext']>
+          >['newPage']
+        >
+      >,
+      sanitizedUrl: string,
+      startedAt: number
+    ) => Promise<T>
+  ): Promise<T> {
+    const playwright = await this.loadPlaywright();
+    const startedAt = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
-    
+
     const browserType = this.config.browser || 'chromium';
-    const browser = await this.playwright[browserType].launch({
-      headless: this.config.headless ?? true
+    const browser = await playwright[browserType].launch({
+      headless: this.config.headless ?? true,
     });
 
-    let screenshot: Buffer | undefined;
-    
     try {
       const context = await browser.newContext({
         extraHTTPHeaders: options.headers,
-        userAgent: options.mobile ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)' : undefined,
-        viewport: options.mobile ? { width: 375, height: 667 } : undefined
+        userAgent: options.mobile
+          ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)'
+          : undefined,
+        viewport: options.mobile ? { width: 375, height: 667 } : undefined,
       });
-      
-      // Set cookies
+
       if (options.cookies) {
-        await context.addCookies(options.cookies.map(c => ({
-          name: c.name,
-          value: c.value,
-          domain: c.domain || new URL(sanitizedUrl).hostname,
-          path: '/'
-        })));
+        await context.addCookies(
+          options.cookies.map((cookie) => ({
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain || new URL(sanitizedUrl).hostname,
+            path: '/',
+          }))
+        );
       }
-      
+
       const page = await context.newPage();
-      
-      // Navigate to page
-      const waitUntil = options.waitFor === 'networkidle' ? 'networkidle' : options.waitFor || 'load';
+      const waitUntil =
+        options.waitFor === 'networkidle' ? 'networkidle' : options.waitFor || 'load';
       await page.goto(sanitizedUrl, {
         waitUntil,
-        timeout: options.timeout || this.config.timeout || 30000
+        timeout: options.timeout || this.config.timeout || 30_000,
       });
-      
-      // Take screenshot
-      if (options.screenshot) {
-        const screenshotOptions = typeof options.screenshot === 'object' ? options.screenshot : {};
-        screenshot = await page.screenshot({
-          fullPage: screenshotOptions.fullPage,
-          type: screenshotOptions.format || 'png',
-          quality: screenshotOptions.quality
-        });
-      }
-      
-      // Get HTML
-      let html = await page.content();
-      
-      // Apply selectors
-      if (options.selectors) {
-        html = applySelectors(html, options.selectors);
-      }
-      
-      // Extract metadata
-      const metadata = extractMetadata(html, sanitizedUrl);
-      
-      // Convert to requested format
-      let content = html;
-      const format = options.format || 'html';
-      
-      if (format === 'markdown') {
-        content = htmlToMarkdown(html);
-      } else if (format === 'text') {
-        content = htmlToText(html);
-      } else if (format === 'json') {
-        // Use Playwright's evaluate to extract structured data
-        const jsonData = await page.evaluate(() => {
-          return {
-            title: document.title,
-            body: document.body.innerText,
-            links: Array.from(document.querySelectorAll('a')).map(a => a.href),
-            images: Array.from(document.querySelectorAll('img')).map(img => img.src)
-          };
-        });
-        content = JSON.stringify(jsonData, null, 2);
-      }
-      
-      // Extract links and images
-      const links = await page.evaluate(() => 
-        Array.from(document.querySelectorAll('a')).map(a => a.href)
-      );
-      const images = await page.evaluate(() => 
-        Array.from(document.querySelectorAll('img')).map(img => img.src)
-      );
-      
-      return {
-        url: sanitizedUrl,
-        content,
-        metadata,
-        links,
-        images,
-        screenshot,
-        provider: this.name,
-        duration: Date.now() - startTime
-      };
+
+      return callback(page, sanitizedUrl, startedAt);
     } finally {
       await browser.close();
     }
   }
-
-  async isAvailable(): Promise<boolean> {
-    try {
-      if (!this.playwright) {
+  private async loadPlaywright(): Promise<PlaywrightModule> {
+    if (!this.playwright) {
+      try {
         this.playwright = await import('playwright');
+      } catch {
+        throw new Error('Playwright is not installed. Install with: npm install playwright');
       }
-      return true;
-    } catch {
-      return false;
     }
+
+    return this.playwright;
   }
 }

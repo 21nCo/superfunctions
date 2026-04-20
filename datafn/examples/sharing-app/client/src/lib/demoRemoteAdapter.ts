@@ -79,7 +79,18 @@ export class DemoRemoteAdapter implements DatafnRemoteAdapter {
         signal,
       });
 
-      const payload = await response.json();
+      const rawPayload = await response.text();
+      let payload: unknown = null;
+      if (rawPayload.trim().length > 0) {
+        try {
+          payload = JSON.parse(rawPayload);
+        } catch {
+          if (!response.ok) {
+            throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
+          }
+          throw new Error(`Invalid JSON response from ${endpoint}`);
+        }
+      }
 
       if (!response.ok) {
         if (

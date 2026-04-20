@@ -9,7 +9,7 @@
 </script>
 
 <div use:portalAction={'body'}>
-  <ol
+  <div
     role="region"
     aria-label="Notifications"
     class={className}
@@ -17,5 +17,5 @@
     {...rest}
   >
     {@render children?.()}
-  </ol>
+  </div>
 </div>

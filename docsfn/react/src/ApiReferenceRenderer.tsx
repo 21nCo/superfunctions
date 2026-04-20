@@ -1,6 +1,7 @@
+"use client";
+
 import React, { useMemo, useState } from "react";
 import type { ApiReference } from "@docsfn/core";
-import { ScrollArea, ScrollAreaViewport, Tabs, TabsContent, TabsList, TabsTrigger } from "@uifn/react";
 
 export interface ApiReferenceRendererProps {
   api: ApiReference;
@@ -65,6 +66,37 @@ interface RenderSpecModel {
   operations: RenderOperation[];
   schemas: RenderSchema[];
   tags: RenderTag[];
+}
+
+function SimpleTabs(input: {
+  sections: Array<{ value: string; label: string; content: React.ReactNode }>;
+}) {
+  const [activeValue, setActiveValue] = useState(input.sections[0]?.value ?? "");
+  const activeSection =
+    input.sections.find((section) => section.value === activeValue) ?? input.sections[0];
+
+  return (
+    <div data-docsfn-api-tabs="true">
+      <div role="tablist" aria-label="API section tabs">
+        {input.sections.map((section) => {
+          const selected = section.value === activeValue;
+          return (
+            <button
+              key={section.value}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setActiveValue(section.value)}
+            >
+              {section.label}
+            </button>
+          );
+        })}
+      </div>
+      <div role="tabpanel">{activeSection?.content ?? null}</div>
+    </div>
+  );
 }
 
 const METHOD_ORDER = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE"];
@@ -247,80 +279,78 @@ export function ApiReferenceRenderer({ api, className }: ApiReferenceRendererPro
 
       <div className="docsfn-api-endpoints">
         <h2>Operations</h2>
-        <ScrollArea className="docsfn-api-endpoints-scroll">
-          <ScrollAreaViewport>
-            {model.operations.map((operation) => {
-              const operationKey = operation.routePath;
-              const expanded = Boolean(expandedOperations[operationKey]);
+        <div className="docsfn-api-endpoints-scroll">
+          {model.operations.map((operation) => {
+            const operationKey = operation.routePath;
+            const expanded = Boolean(expandedOperations[operationKey]);
 
-              return (
-                <div key={operationKey} className={`docsfn-api-method method-${operation.method.toLowerCase()}`}>
-                  <button
-                    className="docsfn-api-method-header"
-                    onClick={() =>
-                      setExpandedOperations((current) => ({
-                        ...current,
-                        [operationKey]: !expanded,
-                      }))
-                    }
-                    data-expanded={expanded}
-                    aria-expanded={expanded}
-                  >
-                    <span className="docsfn-api-method-badge" data-method={operation.method.toLowerCase()}>
-                      {operation.method}
-                    </span>
-                    <span className="docsfn-api-method-summary">
-                      {operation.summary || operation.path}
-                    </span>
-                    <span className="docsfn-api-method-route">{operation.routePath}</span>
-                  </button>
+            return (
+              <div key={operationKey} className={`docsfn-api-method method-${operation.method.toLowerCase()}`}>
+                <button
+                  className="docsfn-api-method-header"
+                  onClick={() =>
+                    setExpandedOperations((current) => ({
+                      ...current,
+                      [operationKey]: !expanded,
+                    }))
+                  }
+                  data-expanded={expanded}
+                  aria-expanded={expanded}
+                >
+                  <span className="docsfn-api-method-badge" data-method={operation.method.toLowerCase()}>
+                    {operation.method}
+                  </span>
+                  <span className="docsfn-api-method-summary">
+                    {operation.summary || operation.path}
+                  </span>
+                  <span className="docsfn-api-method-route">{operation.routePath}</span>
+                </button>
 
-                  {expanded ? (
-                    <div className="docsfn-api-method-details">
-                      {operation.description ? (
-                        <p className="docsfn-api-method-description">{operation.description}</p>
-                      ) : null}
+                {expanded ? (
+                  <div className="docsfn-api-method-details">
+                    {operation.description ? (
+                      <p className="docsfn-api-method-description">{operation.description}</p>
+                    ) : null}
 
-                      <Tabs defaultValue="parameters">
-                        <TabsList>
-                          <TabsTrigger value="parameters">Parameters</TabsTrigger>
-                          <TabsTrigger value="request">Request</TabsTrigger>
-                          <TabsTrigger value="responses">Responses</TabsTrigger>
-                        </TabsList>
-
-                        <TabsContent value="parameters">
-                          {operation.parameters.length > 0 ? (
-                            <table className="docsfn-api-params-table">
-                              <thead>
-                                <tr>
-                                  <th>Name</th>
-                                  <th>In</th>
-                                  <th>Type</th>
-                                  <th>Required</th>
-                                  <th>Description</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {operation.parameters.map((parameter) => (
-                                  <tr key={`${parameter.in}:${parameter.name}`}>
-                                    <td>
-                                      <code>{parameter.name}</code>
-                                    </td>
-                                    <td>{parameter.in}</td>
-                                    <td>{parameter.schemaType || "-"}</td>
-                                    <td>{parameter.required ? "Yes" : "No"}</td>
-                                    <td>{parameter.description || "-"}</td>
+                    <SimpleTabs
+                      sections={[
+                        {
+                          value: "parameters",
+                          label: "Parameters",
+                          content:
+                            operation.parameters.length > 0 ? (
+                              <table className="docsfn-api-params-table">
+                                <thead>
+                                  <tr>
+                                    <th>Name</th>
+                                    <th>In</th>
+                                    <th>Type</th>
+                                    <th>Required</th>
+                                    <th>Description</th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          ) : (
-                            <p>No parameters.</p>
-                          )}
-                        </TabsContent>
-
-                        <TabsContent value="request">
-                          {operation.requestBody ? (
+                                </thead>
+                                <tbody>
+                                  {operation.parameters.map((parameter) => (
+                                    <tr key={`${parameter.in}:${parameter.name}`}>
+                                      <td>
+                                        <code>{parameter.name}</code>
+                                      </td>
+                                      <td>{parameter.in}</td>
+                                      <td>{parameter.schemaType || "-"}</td>
+                                      <td>{parameter.required ? "Yes" : "No"}</td>
+                                      <td>{parameter.description || "-"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            ) : (
+                              <p>No parameters.</p>
+                            ),
+                        },
+                        {
+                          value: "request",
+                          label: "Request",
+                          content: operation.requestBody ? (
                             <div className="docsfn-api-request-content">
                               {operation.requestBody.content.map((media) => (
                                 <div key={media.mediaType} className="docsfn-api-request-media">
@@ -333,45 +363,47 @@ export function ApiReferenceRenderer({ api, className }: ApiReferenceRendererPro
                             </div>
                           ) : (
                             <p>No request body.</p>
-                          )}
-                        </TabsContent>
-
-                        <TabsContent value="responses">
-                          {operation.responses.length > 0 ? (
-                            operation.responses.map((response) => (
-                              <div key={response.statusCode} className="docsfn-api-response">
-                                <span className="docsfn-api-response-code">{response.statusCode}</span>
-                                <span className="docsfn-api-response-desc">{response.description || "-"}</span>
-                              </div>
-                            ))
-                          ) : (
-                            <p>No responses.</p>
-                          )}
-                        </TabsContent>
-                      </Tabs>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </ScrollAreaViewport>
-        </ScrollArea>
+                          ),
+                        },
+                        {
+                          value: "responses",
+                          label: "Responses",
+                          content:
+                            operation.responses.length > 0 ? (
+                              <>
+                                {operation.responses.map((response) => (
+                                  <div key={response.statusCode} className="docsfn-api-response">
+                                    <span className="docsfn-api-response-code">{response.statusCode}</span>
+                                    <span className="docsfn-api-response-desc">{response.description || "-"}</span>
+                                  </div>
+                                ))}
+                              </>
+                            ) : (
+                              <p>No responses.</p>
+                            ),
+                        },
+                      ]}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {model.schemas.length > 0 ? (
         <div className="docsfn-api-schemas">
           <h2>Schemas</h2>
-          <ScrollArea className="docsfn-api-schemas-scroll">
-            <ScrollAreaViewport>
-              {model.schemas.map((schema) => (
-                <div key={schema.routePath} className="docsfn-api-schema">
-                  <h3>{schema.name}</h3>
-                  {schema.description ? <p>{schema.description}</p> : null}
-                  <pre className="docsfn-api-code">{JSON.stringify(schema.schema, null, 2)}</pre>
-                </div>
-              ))}
-            </ScrollAreaViewport>
-          </ScrollArea>
+          <div className="docsfn-api-schemas-scroll">
+            {model.schemas.map((schema) => (
+              <div key={schema.routePath} className="docsfn-api-schema">
+                <h3>{schema.name}</h3>
+                {schema.description ? <p>{schema.description}</p> : null}
+                <pre className="docsfn-api-code">{JSON.stringify(schema.schema, null, 2)}</pre>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>

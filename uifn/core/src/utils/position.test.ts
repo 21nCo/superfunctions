@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computePosition } from './position';
+import { computePosition, computePositionAtPoint } from './position';
 
 const triggerRect = {
   top: 100,
@@ -64,5 +64,26 @@ describe('position utilities', () => {
     });
 
     expect(result.left).toBe(4);
+  });
+
+  it('positions relative to invocation points for context menus', () => {
+    const result = computePositionAtPoint(
+      {
+        x: 290,
+        y: 190,
+      },
+      contentRect,
+      {
+        viewportWidth: 320,
+        viewportHeight: 200,
+        side: 'right',
+        align: 'start',
+        collisionPadding: 5,
+      }
+    );
+
+    expect(result.left).toBeLessThanOrEqual(195);
+    expect(result.top).toBeLessThanOrEqual(135);
+    expect(result.overflow).toBe(false);
   });
 });

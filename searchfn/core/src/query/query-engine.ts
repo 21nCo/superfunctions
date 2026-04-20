@@ -1,21 +1,23 @@
-import type { IndexedDbManager } from "../storage";
-import type { LruCache } from "../cache";
+import type { LruCache, TermCacheValue, TermPosting, VectorCacheValue } from "../cache";
 import type {
-  QueryToken,
+  DocumentStatsProvider,
+  QueryDocumentScorer,
   QueryOptions,
+  QueryStorage,
+  QueryToken,
   RetrievedPostingChunk,
-  ScoredDocument,
-  DocumentStatsProvider
+  ScoredDocument
 } from "./types";
-import type { TermCacheValue, VectorCacheValue } from "../cache";
-import type { DocId } from "../types";
-import { scorePostings } from "./scoring";
+import type { DocId, StoredPostingChunk } from "../types";
+import { scoreQueryResults } from "./scoring";
 
 export interface QueryEngineDependencies {
-  storage: IndexedDbManager;
+  storage: QueryStorage;
   termCache: LruCache<TermCacheValue>;
   vectorCache: LruCache<VectorCacheValue>;
   stats: DocumentStatsProvider;
+  decodeChunk?: (chunk: StoredPostingChunk) => TermPosting[];
+  scoreDocuments?: QueryDocumentScorer;
 }
 
 export interface QueryResult {
@@ -27,32 +29,27 @@ export class QueryEngine {
   constructor(private readonly deps: QueryEngineDependencies) {}
 
   async execute(tokens: QueryToken[], options?: QueryOptions): Promise<QueryResult> {
-    const postings: RetrievedPostingChunk[] = [];
+    const collectedPostings: RetrievedPostingChunk[] = [];
 
     for (const token of tokens) {
       const cacheKey = this.buildCacheKey(token);
       let cached = this.deps.termCache.get(cacheKey);
       if (!cached) {
-        const chunk = await this.deps.storage.getTermChunk({
-          field: token.field,
-          term: token.term,
-          chunk: 0
-        });
-        if (!chunk) continue;
-        const decoded = this.deps.storage.decodeChunkPayload(chunk);
-        const postings = decoded.postings.map((raw) => parsePosting(raw));
+        const termChunks = await this.loadAllTermChunks(token.field, token.term);
+        if (termChunks.length === 0) continue;
+        const decodedPostings = termChunks.flatMap((chunk) => this.decodeChunk(chunk));
         cached = {
           field: token.field,
           term: token.term,
           chunk: 0,
-          postings,
-          docFrequency: chunk.docFrequency,
-          inverseDocumentFrequency: chunk.inverseDocumentFrequency
+          postings: decodedPostings,
+          docFrequency: termChunks[0]?.docFrequency ?? decodedPostings.length,
+          inverseDocumentFrequency: termChunks[0]?.inverseDocumentFrequency
         };
         this.deps.termCache.set(cacheKey, cached);
       }
       if (token.boost && token.boost !== 1) {
-        postings.push({
+        collectedPostings.push({
           ...cached,
           postings: cached.postings.map((posting) => ({
             ...posting,
@@ -60,16 +57,15 @@ export class QueryEngine {
           })),
         });
       } else {
-        postings.push(cached);
+        collectedPostings.push(cached);
       }
     }
 
     const docLengths = new Map<DocId, number>();
-
     const averageDocLengthFromStats = this.deps.stats.getAverageLength();
     const averageDocLength = averageDocLengthFromStats > 0 ? averageDocLengthFromStats : 1;
 
-    for (const chunk of postings) {
+    for (const chunk of collectedPostings) {
       for (const posting of chunk.postings) {
         const docId = posting.docId;
         if (docLengths.has(docId)) continue;
@@ -78,15 +74,33 @@ export class QueryEngine {
       }
     }
 
-    const scored = scorePostings(postings, docLengths, averageDocLength, {
-      k1: 1.2,
-      b: 0.75,
-      d: 0.5
-    });
-
     const limit = options?.limit ?? 10;
+    const scored = this.deps.scoreDocuments
+      ? await this.deps.scoreDocuments({
+          chunks: collectedPostings,
+          documentLengths: docLengths,
+          averageDocLength,
+          options: {
+            k1: 1.2,
+            b: 0.75,
+            d: 0.5
+          },
+          limit
+        })
+      : scoreQueryResults({
+          chunks: collectedPostings,
+          documentLengths: docLengths,
+          averageDocLength,
+          options: {
+            k1: 1.2,
+            b: 0.75,
+            d: 0.5
+          },
+          limit
+        });
+
     return {
-      postings,
+      postings: collectedPostings,
       documents: scored.slice(0, limit)
     };
   }
@@ -94,9 +108,36 @@ export class QueryEngine {
   private buildCacheKey(token: QueryToken): string {
     return `${token.field}:${token.term}`;
   }
+
+  private async loadAllTermChunks(field: string, term: string): Promise<StoredPostingChunk[]> {
+    const chunks: StoredPostingChunk[] = [];
+    for (let chunkIndex = 0; ; chunkIndex++) {
+      const chunk = await this.deps.storage.getTermChunk({
+        field,
+        term,
+        chunk: chunkIndex,
+      });
+      if (!chunk) {
+        break;
+      }
+      chunks.push(chunk);
+    }
+    return chunks;
+  }
+
+  private decodeChunk(chunk: StoredPostingChunk): TermPosting[] {
+    if (this.deps.decodeChunk) {
+      return this.deps.decodeChunk(chunk);
+    }
+
+    return this.deps.storage
+      .decodeChunkPayload(chunk)
+      .postings.map((raw) => parsePosting(raw))
+      .filter((posting): posting is TermPosting => posting !== null);
+  }
 }
 
-function parsePosting(raw: unknown): { docId: string; termFrequency: number; metadata?: Record<string, unknown> } {
+function parsePosting(raw: unknown): TermPosting | null {
   if (typeof raw === "string") {
     const parsed = safeJsonParse(raw);
     if (parsed && typeof parsed === "object" && "docId" in parsed) {
@@ -108,12 +149,10 @@ function parsePosting(raw: unknown): { docId: string; termFrequency: number; met
         const termFrequency = Number.isFinite(termFrequencyValue) && termFrequencyValue > 0 ? termFrequencyValue : 1;
         return { docId, termFrequency, metadata: parsedRecord.metadata as Record<string, unknown> | undefined };
       }
-      // If docId is not a string or number, treat it as an invalid format
-      throw new Error(`Invalid docId type in parsed posting: ${typeof docIdValue}`);
-    } else {
-      // If it's a string but not valid JSON with docId, treat it as a simple docId
-      return { docId: raw, termFrequency: 1 };
+      return null;
     }
+
+    return { docId: raw, termFrequency: 1 };
   }
 
   if (typeof raw === "number") {
@@ -135,7 +174,7 @@ function parsePosting(raw: unknown): { docId: string; termFrequency: number; met
     }
   }
 
-  throw new Error(`Could not parse posting from unexpected format: ${String(raw)}`);
+  return null;
 }
 
 function safeJsonParse(raw: string): unknown {

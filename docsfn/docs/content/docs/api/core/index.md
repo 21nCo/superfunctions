@@ -29,8 +29,16 @@ npm install @docsfn/core
 | Analytics | [Analytics](./analytics) — canonical event types |
 | RSS | [RSS](./rss) — `generateRSSFeed` |
 | OpenAPI | [OpenAPI](./openapi) — canonical reference model |
-| Diagnostics | [Diagnostics](./diagnostics) — `DocsError`, codes |
+| Search Runtime | [Search Runtime](./search-runtime) — `createDocsSearchRuntime`, client-side querying |
+| Diagnostics | [Diagnostics](./diagnostics) — `DocsError`, codes, legacy code migration |
 | Theme | [Theme](./theme) — `ThemeConfig`, CSS vars |
 | Helpers | [Helpers](./helpers) — breadcrumb/pagination helpers |
+| Compat | Fumadocs v15 compatibility: `transformFumadocsV15` rewrites Fumadocs syntax before compile |
+| Normalize | Internal pipeline: `normalizeSourceEntries` transforms raw entries into page/post/api records |
 
-Re-exports also include **`@docsfn/core`** entry points used by CLI and adapters (see package `src/index.ts`).
+## Entry points
+
+| Entry | Purpose |
+| --- | --- |
+| `@docsfn/core` | Full server-side API |
+| `@docsfn/core/browser` | Browser-safe subset: types, search runtime, analytics, theme utilities. Does not import Node.js modules. |

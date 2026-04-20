@@ -5,7 +5,7 @@ Command-line interface for the PlugFn SDK.
 ## Installation
 
 ```bash
-npm install -g @superfunctions/plugfn-cli
+npm install -g @plugfn/cli
 ```
 
 ## Commands
@@ -53,7 +53,7 @@ Options:
 
 ### `plugfn test`
 
-Test connections and actions.
+Test configured PlugFn providers. This command surface is still being hardened and should not be treated as a full production-readiness proof yet.
 
 ```bash
 plugfn test --provider github
@@ -89,4 +89,3 @@ plugfn generate-types --all
 ## License
 
 Apache-2.0
-

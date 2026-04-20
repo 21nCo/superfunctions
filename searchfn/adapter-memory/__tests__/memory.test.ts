@@ -78,6 +78,26 @@ describe("MemoryAdapter — fuzzy search", () => {
     expect(exactResult[0]).toBe("exact");
     expect(fuzzyResult).toContain("fuzzy-match");
   });
+
+  it("keeps shared vocabulary entries when removing one field bucket", async () => {
+    await adapter.index({
+      resource: "tasks",
+      documents: [
+        { id: "1", fields: { title: "report" } },
+        { id: "2", fields: { body: "report" } },
+      ],
+    });
+
+    await adapter.remove({ resource: "tasks", ids: ["1"] });
+
+    const result = await adapter.search({
+      resource: "tasks",
+      query: "report",
+      fuzzy: true,
+    });
+
+    expect(result).toEqual(["2"]);
+  });
 });
 
 describe("MemoryAdapter — field boosts", () => {
@@ -301,7 +321,9 @@ describe("MemoryAdapter — initialize and name", () => {
 
   it("indexes >10k documents via deterministic chunking", async () => {
     const adapter = new MemoryAdapter();
-    const documents = Array.from({ length: 15000 }, (_, i) => ({
+    // Keep this just above the 10k batching threshold so we still cover
+    // cross-batch indexing without making CI pay for an oversized fixture.
+    const documents = Array.from({ length: 10001 }, (_, i) => ({
       id: `d${i}`,
       fields: { title: `document ${i}` },
     }));
@@ -309,13 +331,13 @@ describe("MemoryAdapter — initialize and name", () => {
 
     const result = await adapter.search({
       resource: "bulk",
-      query: "document 14999",
+      query: "document 10000",
       fields: ["title"],
       limit: 5,
     });
-    expect(result).toContain("d14999");
+    expect(result).toContain("d10000");
     await adapter.dispose();
-  });
+  }, 30000);
 });
 
 describe("MemoryAdapter — prefix search", () => {

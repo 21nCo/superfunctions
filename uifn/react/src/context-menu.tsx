@@ -3,6 +3,7 @@ import { useComposedRefs } from './hooks/use-composed-refs';
 import { useOutsideClick } from './hooks/use-outside-click';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { Portal } from './portal';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * ContextMenu Root
@@ -19,11 +20,11 @@ interface ContextMenuContextValue {
 const ContextMenuContext = createContext<ContextMenuContextValue | undefined>(undefined);
 
 const useContextMenuContext = () => {
-  const context = useContext(ContextMenuContext);
-  if (!context) {
-    throw new Error('ContextMenu components must be used within a ContextMenu');
-  }
-  return context;
+  return assertReactContext(
+    useContext(ContextMenuContext),
+    'ContextMenu',
+    'ContextMenu components must be used within a ContextMenu'
+  );
 };
 
 export interface ContextMenuProps {
@@ -102,9 +103,19 @@ export interface ContextMenuContentProps extends React.HTMLAttributes<HTMLDivEle
 
 export const ContextMenuContent = React.forwardRef<HTMLDivElement, ContextMenuContentProps>(
   (props, ref) => {
-    const { children, style, ...domProps } = props;
+    const { children, style, onKeyDown, ...domProps } = props;
     const context = useContextMenuContext();
-    const composedRef = useComposedRefs(ref, context.contentRef);
+    const focusRef = React.useCallback((node: HTMLDivElement | null) => {
+      if (node && context.open) {
+        requestAnimationFrame(() => {
+          const firstItem = node.querySelector('[role="menuitem"]:not([aria-disabled="true"])') as
+            | HTMLElement
+            | null;
+          firstItem?.focus();
+        });
+      }
+    }, [context.open]);
+    const composedRef = useComposedRefs(ref, context.contentRef, focusRef);
 
     useOutsideClick(context.contentRef, () => {
         context.onOpenChange(false);
@@ -115,6 +126,38 @@ export const ContextMenuContent = React.forwardRef<HTMLDivElement, ContextMenuCo
         context.onOpenChange(false);
     });
 
+    const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      onKeyDown?.(event);
+      if (event.defaultPrevented) return;
+
+      const content = context.contentRef.current;
+      if (!content) return;
+
+      const items = Array.from(
+        content.querySelectorAll('[role="menuitem"]:not([aria-disabled="true"])')
+      ) as HTMLElement[];
+      if (!items.length) return;
+
+      const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        items[(currentIndex + 1 + items.length) % items.length]?.focus();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        items[(currentIndex - 1 + items.length) % items.length]?.focus();
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        items[0]?.focus();
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        items[items.length - 1]?.focus();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        context.onOpenChange(false);
+      }
+    };
+
     if (!context.open) return null;
 
     return (
@@ -122,6 +165,7 @@ export const ContextMenuContent = React.forwardRef<HTMLDivElement, ContextMenuCo
         <div
           ref={composedRef}
           role="menu"
+          tabIndex={-1}
           style={{
             position: 'fixed',
             left: context.point.x,
@@ -134,6 +178,7 @@ export const ContextMenuContent = React.forwardRef<HTMLDivElement, ContextMenuCo
             minWidth: '150px',
             ...style
           }}
+          onKeyDown={handleKeyDown}
           {...domProps}
         >
           {children}
@@ -171,7 +216,8 @@ export const ContextMenuItem = React.forwardRef<HTMLDivElement, ContextMenuItemP
             <div
                 ref={ref}
                 role="menuitem"
-                aria-disabled={disabled}
+                aria-disabled={disabled ? 'true' : undefined}
+                tabIndex={disabled ? -1 : 0}
                 onClick={handleClick}
                 style={{
                     padding: '5px 10px',

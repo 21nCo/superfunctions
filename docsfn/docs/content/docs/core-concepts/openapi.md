@@ -18,7 +18,9 @@ Unsupported major versions fail with **`DOCS_OPENAPI_PARSE_FAILED`**.
 
 ## Where to put specs
 
-Add files under your configured **`content.apiDir`** (often `content/docs/api` or `api`). Each file becomes an **`ApiReference`** with a slug derived from its path.
+Add files under your configured **`content.apiDir`** (commonly `content/api`). Each file becomes an **`ApiReference`** with a slug derived from its path.
+
+Keep Markdown docs and OpenAPI specs as separate collections. If you want Markdown package docs under `/docs/api/...`, place those files under `content/docs/api` and classify their routes with `search.routeScopeOverrides`.
 
 ## API root path
 

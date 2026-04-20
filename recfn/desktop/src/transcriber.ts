@@ -4,7 +4,6 @@
  */
 
 import type { Segment, Transcript } from 'recfn';
-import type { WhisperAdapter } from 'recfn-whisper';
 
 export interface TranscriberOptions {
   language?: string;
@@ -16,12 +15,22 @@ export interface TranscriberResult {
   language: string;
 }
 
+export interface WhisperBatchAdapter {
+  transcribeBatch(
+    audioPath: string,
+    options: {
+      language: string;
+      speakerDiarization: boolean;
+    },
+  ): Promise<Segment[]>;
+}
+
 /**
  * Transcribe an audio file using Whisper adapter.
  * Returns transcript segments.
  */
 export async function transcribeWithWhisper(
-  adapter: WhisperAdapter,
+  adapter: WhisperBatchAdapter,
   audioPath: string,
   options: TranscriberOptions = {},
 ): Promise<TranscriberResult> {

@@ -1,64 +1,49 @@
-import { Document, Embeddings, VectorStore } from "./base.js";
+import { cosineSimilarity, Document, Embeddings, matchesRetrievalFilter, RetrievalOptions, VectorStore } from "./base.js";
 
+/**
+ * Reference-only vector store for local examples and tests.
+ * This backend is intentionally non-production and uses application-side reranking.
+ */
 export class InMemoryVectorStore extends VectorStore {
-  private documents: Document[] = [];
-  private vectors: number[][] = [];
+  readonly backendType = "reference" as const;
+  private readonly documents: Array<Document & { _index: number }> = [];
+  private readonly vectors: number[][] = [];
 
   constructor(private readonly embeddings: Embeddings) {
     super();
   }
 
   async addDocuments(documents: Document[]): Promise<void> {
-    const texts = documents.map(doc => doc.content);
+    const texts = documents.map((document) => document.content);
     const vectors = await this.embeddings.embedDocuments(texts);
-    this.documents.push(...documents);
+    documents.forEach((document, index) => {
+      this.documents.push({ ...document, _index: this.documents.length + index });
+    });
     this.vectors.push(...vectors);
   }
 
-  async search(query: string, options: { k?: number; filter?: Record<string, any> } = {}): Promise<Document[]> {
+  async search(query: string, options: RetrievalOptions = {}): Promise<Document[]> {
     const k = options.k ?? 4;
     const queryVector = await this.embeddings.embedQuery(query);
+    const scored: Array<{ score: number; document: Document & { _index: number } }> = [];
 
-    const scores: { score: number; doc: Document }[] = [];
-
-    for (let i = 0; i < this.vectors.length; i++) {
-      const docVector = this.vectors[i];
-      const doc = this.documents[i];
-
-      // Filter
-      if (options.filter) {
-        let match = true;
-        for (const [key, value] of Object.entries(options.filter)) {
-          if (doc.metadata[key] !== value) {
-            match = false;
-            break;
-          }
-        }
-        if (!match) continue;
+    this.documents.forEach((document, index) => {
+      if (!matchesRetrievalFilter(document.metadata, options.filter)) {
+        return;
       }
+      scored.push({
+        score: cosineSimilarity(queryVector, this.vectors[index]!),
+        document
+      });
+    });
 
-      const score = this.cosineSimilarity(queryVector, docVector);
-      scores.push({ score, doc });
-    }
-
-    return scores
-      .sort((a, b) => b.score - a.score)
+    return scored
+      .sort((left, right) => right.score - left.score || left.document._index - right.document._index)
       .slice(0, k)
-      .map(item => ({ ...item.doc, score: item.score }));
-  }
-
-  private cosineSimilarity(v1: number[], v2: number[]): number {
-    let dotProduct = 0;
-    let magnitude1 = 0;
-    let magnitude2 = 0;
-    for (let i = 0; i < v1.length; i++) {
-      dotProduct += v1[i] * v2[i];
-      magnitude1 += v1[i] * v1[i];
-      magnitude2 += v2[i] * v2[i];
-    }
-    magnitude1 = Math.sqrt(magnitude1);
-    magnitude2 = Math.sqrt(magnitude2);
-    if (magnitude1 === 0 || magnitude2 === 0) return 0;
-    return dotProduct / (magnitude1 * magnitude2);
+      .map(({ score, document }) => ({
+        content: document.content,
+        metadata: { ...document.metadata },
+        score
+      }));
   }
 }

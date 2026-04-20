@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
 import hashlib
 import secrets
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -23,6 +23,7 @@ class SharesServiceConfig(BaseModel):
     db: Any
     storage: Any
     policies: Optional[Any] = None
+    logger: Optional[Any] = None
     namespace: str = "filefn"
     signed_url_ttl_seconds: int = 900
 
@@ -35,6 +36,7 @@ class SharesService:
         self.db = config.db
         self.storage = config.storage
         self.policies = config.policies
+        self.logger = config.logger
         self.namespace = config.namespace
         self.signed_url_ttl_seconds = config.signed_url_ttl_seconds
 
@@ -74,12 +76,41 @@ class SharesService:
     async def _can_share_file(self, file: FileRecord, ctx: FileProviderContext) -> bool:
         return file.ownerId == ctx.principalId
 
-    async def _increment_downloads(self, token_hash: str, current_downloads: int) -> None:
-        await self.db.update(
-            model="fileShares",
-            where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
-            data={"downloads": current_downloads + 1},
-            namespace=self.namespace,
+    async def _reserve_download(self, token_hash: str) -> FileShareRecord:
+        for _ in range(5):
+            current_data = await self.db.find_one(
+                model="fileShares",
+                where=[{"field": "tokenHash", "operator": "eq", "value": token_hash}],
+                namespace=self.namespace,
+            )
+            if not current_data:
+                raise errors.share_not_found()
+
+            current = FileShareRecord(**current_data)
+            if current.revokedAt:
+                raise errors.share_revoked()
+            if current.expiresAt and self._as_utc(current.expiresAt) <= datetime.now(timezone.utc):
+                raise errors.share_expired()
+            if current.maxDownloads is not None and current.downloads >= current.maxDownloads:
+                raise errors.share_downloads_exceeded()
+
+            updated = await self.db.update(
+                model="fileShares",
+                where=[
+                    {"field": "tokenHash", "operator": "eq", "value": token_hash},
+                    {"field": "downloads", "operator": "eq", "value": current.downloads},
+                ],
+                data={"downloads": current.downloads + 1},
+                namespace=self.namespace,
+            )
+            if updated:
+                return FileShareRecord(**updated)
+
+        raise errors.FileFnError(
+            code="FILEFN_SHARE_DOWNLOAD_CONFLICT",
+            message="Could not reserve share download",
+            status=409,
+            details={"tokenHash": token_hash},
         )
 
     async def create_share_link(self, input: CreateShareLinkInput, ctx: FileProviderContext) -> Dict[str, Any]:
@@ -167,14 +198,25 @@ class SharesService:
                     expires_in_seconds=self.signed_url_ttl_seconds,
                     target=storage_target,
                 )
-                await self._increment_downloads(token_hash, share.downloads)
+                await self._reserve_download(token_hash)
                 descriptor = {
                     "url": result["url"],
                     "headers": result.get("headers"),
                     "fileName": file.name,
                     "mimeType": file.mimeType,
                 }
-            except Exception:
+            except Exception as exc:
+                logger_warning = getattr(self.logger, "warning", None)
+                if callable(logger_warning):
+                    logger_warning(
+                        "share signed download url generation failed; falling back to proxy",
+                        {
+                            "fileId": file.fileId,
+                            "versionId": version.versionId,
+                            "storageKey": version.storageKey,
+                            "error": str(exc),
+                        },
+                    )
                 descriptor = {
                     "url": f"/proxy/share-links/{token}/download",
                     "fileName": file.name,
@@ -225,7 +267,7 @@ class SharesService:
 
         storage_target = self._storage_target_for_file(file)
         stream = await self.storage.open_download_stream(key=version.storageKey, target=storage_target)
-        await self._increment_downloads(token_hash, share.downloads)
+        await self._reserve_download(token_hash)
         return {
             "stream": stream,
             "contentType": version.mimeType,

@@ -4,9 +4,8 @@ import asyncio
 from datetime import datetime
 from typing import Any, Optional
 
-from aioapns import APNs, NotificationRequest
-
 from ..errors import PushProviderError
+from .._concurrency import map_with_concurrency
 from ..models import ApnsConfig
 from .provider import (
     PushProvider,
@@ -26,7 +25,9 @@ class ApnsProvider:
             config: APNS configuration
         """
         self.config = config
-        self._client: Optional[APNs] = None
+        self._client: Optional[Any] = None
+        self._notification_request_cls: Optional[Any] = None
+        self._apns_class: Optional[Any] = None
 
     @property
     def name(self) -> str:
@@ -51,6 +52,15 @@ class ApnsProvider:
 
     async def initialize(self) -> None:
         """Initialize APNS client."""
+        try:
+            from aioapns import APNs, NotificationRequest
+        except ImportError as error:  # pragma: no cover - depends on optional extra
+            raise PushProviderError(
+                "APNS provider requires the aioapns dependency"
+            ) from error
+
+        self._apns_class = APNs
+        self._notification_request_cls = NotificationRequest
         self._client = APNs(
             key=self.config.key,
             key_id=self.config.key_id,
@@ -69,6 +79,7 @@ class ApnsProvider:
         """
         if not self._client:
             await self.initialize()
+        assert self._notification_request_cls is not None
 
         results: list[dict[str, Any]] = []
         invalid_tokens: list[str] = []
@@ -110,10 +121,10 @@ class ApnsProvider:
         if request.image_url:
             payload["image_url"] = request.image_url
 
-        # Send to each token in parallel
-        async def send_to_token(token: str) -> dict[str, Any]:
+        # Send to each token with the provider concurrency cap.
+        async def send_to_token(token: str, _index: int) -> dict[str, Any]:
             try:
-                notification = NotificationRequest(
+                notification = self._notification_request_cls(
                     device_token=token,
                     message=payload,
                     priority=(10 if request.priority == "high" else 5),
@@ -139,10 +150,10 @@ class ApnsProvider:
                     "error": error_reason or error_msg,
                 }
 
-        # Send all notifications in parallel
-        send_results = await asyncio.gather(
-            *[send_to_token(token) for token in request.device_tokens],
-            return_exceptions=False,
+        send_results = await map_with_concurrency(
+            request.device_tokens,
+            10,
+            send_to_token,
         )
 
         # Process results

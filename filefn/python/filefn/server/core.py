@@ -1,11 +1,10 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from pydantic import BaseModel, Field
 
 from .events import create_event_emitter
-from .policies import Policy, create_nucleus_policies, create_policy_registry
-from .routed_storage import create_routed_storage_adapter
-from .schema import get_schema
+from .policies import Policy, create_policy_registry
+from .schema import FileFnSchemaOptions, get_schema
 
 
 class RateLimitCategoryConfig(BaseModel):
@@ -103,18 +102,21 @@ class FileFn:
     async def create_upload_session(self, input: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
         from .upload_sessions.service import CreateSessionInput
 
-        return await self.upload_service.create_session(CreateSessionInput(**input), ctx)
+        result = await self.upload_service.create_session(CreateSessionInput(**input), ctx)
+        return cast(Dict[str, Any], result)
 
     async def get_upload_session_status(self, input: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
-        return await self.upload_service.get_session_status(input["uploadSessionId"], ctx)
+        result = await self.upload_service.get_session_status(input["uploadSessionId"], ctx)
+        return cast(Dict[str, Any], result)
 
     async def sign_upload_part(self, input: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
-        return await self.upload_service.sign_part(
+        result = await self.upload_service.sign_part(
             input["uploadSessionId"],
             input["partNumber"],
             input["contentLength"],
             ctx,
         )
+        return cast(Dict[str, Any], result)
 
     async def complete_upload_part(self, input: Dict[str, Any], ctx: Any) -> None:
         await self.upload_service.complete_part(
@@ -126,7 +128,8 @@ class FileFn:
         )
 
     async def complete_upload_session(self, input: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
-        return await self.upload_service.complete_session(input["uploadSessionId"], ctx)
+        result = await self.upload_service.complete_session(input["uploadSessionId"], ctx)
+        return cast(Dict[str, Any], result)
 
     async def abort_upload_session(self, input: Dict[str, Any], ctx: Any) -> None:
         await self.upload_service.abort_session(input["uploadSessionId"], ctx)
@@ -173,7 +176,7 @@ class FileFn:
         self.policy_registry.define(name, **policy)
 
     def get_schema(self) -> Any:
-        return get_schema({"namespace": self.namespace})
+        return get_schema(FileFnSchemaOptions(namespace=self.namespace))
 
 
 def _has_configured_route_rate_limits(config: RateLimitLimitsConfig) -> bool:
@@ -258,6 +261,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
             file_write_checker=file_service,
             processing_service=processing_service,
             namespace=namespace,
+            allow_anonymous_uploads=(config.auth.allow_anonymous_uploads if config.auth is not None else True),
             default_chunk_size_bytes=chunk_size,
             upload_session_ttl_seconds=upload_ttl,
             signed_url_ttl_seconds=signed_url_ttl,
@@ -276,6 +280,7 @@ def create_file_fn(config: FileFnConfig) -> FileFn:
             db=config.db,
             storage=config.storage,
             policies=policy_registry,
+            logger=config.logger,
             namespace=namespace,
             signed_url_ttl_seconds=signed_url_ttl,
         )

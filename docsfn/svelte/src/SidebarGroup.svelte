@@ -28,6 +28,7 @@
     open={item.expanded === true || hasActiveChild}
   >
     <summary class="docsfn-sidebar-group-trigger">
+      <span class="docsfn-sidebar-group-text">{item.text}</span>
       <span class="docsfn-sidebar-group-icon" aria-hidden="true">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
           <path
@@ -39,7 +40,6 @@
           />
         </svg>
       </span>
-      <span class="docsfn-sidebar-group-text">{item.text}</span>
     </summary>
 
     <div class="docsfn-sidebar-group-content">

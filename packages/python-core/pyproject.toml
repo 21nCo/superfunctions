@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sfns"
+name = "superfunctions"
 version = "0.1.0"
-description = "Core abstractions for superfunctions ecosystem - database adapters and HTTP utilities"
+description = "Core HTTP abstractions for the superfunctions ecosystem"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-keywords = ["superfunctions", "sfns", "database", "http", "adapter", "web"]
+keywords = ["superfunctions", "http", "adapter", "web", "openapi"]
 authors = [{ name = "21n", email = "support@superfunctions.dev" }]
 classifiers = [
     "Development Status :: 3 - Alpha",

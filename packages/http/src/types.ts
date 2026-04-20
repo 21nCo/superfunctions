@@ -4,8 +4,11 @@
 
 export type CookieSameSite = 'lax' | 'strict' | 'none';
 
+export const AUTH_ROUTE_MODES = ['none', 'cookie-session', 'bearer', 'hybrid'] as const;
+export type AuthRouteMode = (typeof AUTH_ROUTE_MODES)[number];
+
 export interface AuthRouteMeta {
-  mode: 'none' | 'cookie-session' | 'bearer' | 'hybrid';
+  mode: AuthRouteMode;
   csrf?: boolean;
   scopes?: string[];
   [key: string]: unknown;

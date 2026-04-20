@@ -161,12 +161,13 @@ export function createUploadSessionRoutes(ctx: RouteContext) {
       const requestId = getRequestId(request);
       try {
         const principal = await resolveCaller(request);
+        await checkRateLimit('upload-complete', principal, rateLimits?.uploadComplete);
         // Rate limit check for data plane might differ, but using sign limit for now or skipping
         // await checkRateLimit(`upload-part:${principal.principalId}`, requestId);
 
         const contentLength = parseInt(request.headers.get('content-length') || '0', 10);
         if (!request.body) {
-            throw new Error('Missing request body');
+          throw new FileFnError('FILEFN_INVALID_REQUEST', 'Missing request body', 400);
         }
 
         const result = await service.uploadPartBytes(uploadSessionId, partNumber, request.body, contentLength, {

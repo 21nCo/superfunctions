@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestServer, req, json } from './helpers.js';
 import type { RecFnServer } from '../src/index.js';
+import type { ChatMessage, MeetingMetadata, Participant, Recording } from 'recfn';
 
 describe('Bot API routes', () => {
   let server: RecFnServer;
@@ -208,8 +209,9 @@ describe('Bot API routes', () => {
   });
 
   describe('GET /api/v1/bots/:botId', () => {
-    it('returns bot by ID (TV-BOT-007)', async () => {
-      const createRes = await server.router.handle(
+    it('returns aggregate bot detail by ID (TV-API-001)', async () => {
+      const ts = createTestServer();
+      const createRes = await ts.server.router.handle(
         req('POST', '/api/v1/bots', {
           body: { meetingUrl: 'https://zoom.us/j/123' },
         }),
@@ -217,13 +219,83 @@ describe('Bot API routes', () => {
       const created = await json(createRes);
       const botId = (created.data as Record<string, unknown>).id as string;
 
-      const res = await server.router.handle(
+      await ts.store.addParticipant(
+        botId,
+        {
+          id: 'par_1',
+          botId: 'wrong_bot_id',
+          name: 'Alice',
+          role: 'host',
+          joinedAt: '2026-04-01T10:00:00.000Z',
+          consent: 'granted',
+        },
+        'ns_test',
+      );
+      await ts.store.createRecording(
+        {
+          id: 'rec_1',
+          botId,
+          format: 'mp4',
+          duration: 120000,
+          storageRef: 'recordings/ns_test/rec_1.mp4',
+          size: 1024,
+          createdAt: '2026-04-01T10:05:00.000Z',
+        },
+        'ns_test',
+      );
+      await ts.store.addChatMessage(
+        botId,
+        {
+          participantId: 'par_1',
+          text: 'hello team',
+          timestamp: '2026-04-01T10:01:00.000Z',
+        },
+        'ns_test',
+      );
+      await ts.store.upsertMetadata(
+        botId,
+        {
+          id: 'meta_1',
+          botId: 'wrong_bot_id',
+          title: 'Daily sync',
+          platform: 'zoom',
+          startTime: '2026-04-01T10:00:00.000Z',
+          endTime: '2026-04-01T10:30:00.000Z',
+          chatMessages: [
+            {
+              participantId: 'par_1',
+              text: 'hello team',
+              timestamp: '2026-04-01T10:01:00.000Z',
+            },
+          ],
+        },
+        'ns_test',
+      );
+
+      const res = await ts.server.router.handle(
         req('GET', `/api/v1/bots/${botId}`),
       );
       expect(res.status).toBe(200);
       const body = await json(res);
       expect(body.ok).toBe(true);
-      expect((body.data as Record<string, unknown>).id).toBe(botId);
+      const data = body.data as Record<string, unknown>;
+      expect(data.id).toBe(botId);
+      expect((data.participants as Participant[])).toHaveLength(1);
+      expect((data.recordings as Recording[])).toHaveLength(1);
+      expect((data.chatMessages as ChatMessage[])).toEqual([
+        {
+          participantId: 'par_1',
+          text: 'hello team',
+          timestamp: '2026-04-01T10:01:00.000Z',
+        },
+      ]);
+      expect(data.metadata).toEqual(
+        expect.objectContaining({
+          id: 'meta_1',
+          botId,
+          title: 'Daily sync',
+        } satisfies Partial<MeetingMetadata>),
+      );
     });
 
     it('returns 404 for non-existent bot', async () => {

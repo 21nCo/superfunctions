@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
+import type { Adapter } from "@superfunctions/db";
+import { QueryFailedError } from "@superfunctions/db";
 import {
   DbAdapterOAuthConsentStore,
   DbAdapterOAuthRevocationFailureStore,
@@ -65,9 +67,10 @@ describe("oauth-storage db adapter bridge", () => {
     const tokenByConnection = await tokenVault.getByConnection("conn_db_1");
     expect(tokenByConnection?.tokenId).toBe("tok_db_1");
 
-    await tokenVault.rotateKey("tok_db_1", "kms_2");
-    const rotated = await tokenVault.get("tok_db_1");
-    expect(rotated?.keyRef).toBe("kms_2");
+    await expect(tokenVault.rotateKey("tok_db_1", "kms_2")).rejects.toThrowError(
+      "Token key rotation requires re-encryption"
+    );
+    expect((await tokenVault.get("tok_db_1"))?.keyRef).toBe("kms_1");
 
     await consentStore.put({
       consentId: "consent_db_1",
@@ -179,6 +182,132 @@ describe("oauth-storage db adapter bridge", () => {
     expect((await revocationFailureStore.get("revfail_custom_1"))?.failureId).toBe("revfail_custom_1");
   });
 
+  it("accepts parsed JSON objects from adapters like Drizzle", async () => {
+    const adapter = createParsedJsonAdapter();
+    await adapter.initialize?.();
+
+    const { stateStore, consentStore, revocationFailureStore } = createOAuthDbStorage({ adapter });
+
+    await stateStore.put({
+      stateId: "st_json_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_json_1"
+      },
+      redirectUri: "https://app.example/callback",
+      requestedScopes: ["openid", "profile"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-01T00:05:00.000Z"
+    });
+
+    await consentStore.put({
+      consentId: "consent_json_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_json_1"
+      },
+      scopes: ["openid"],
+      grantedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      metadata: {
+        mode: "parsed"
+      }
+    });
+
+    await revocationFailureStore.put({
+      failureId: "revfail_json_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_json_1"
+      },
+      errorCode: "rate_limited",
+      errorMessage: "retry later",
+      retryable: true,
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      metadata: {
+        reason: "parsed"
+      }
+    });
+
+    expect((await stateStore.get("st_json_1"))?.requestedScopes).toEqual(["openid", "profile"]);
+    expect((await consentStore.get("consent_json_1"))?.metadata).toEqual({ mode: "parsed" });
+    expect((await revocationFailureStore.get("revfail_json_1"))?.metadata).toEqual({ reason: "parsed" });
+  });
+
+  it("rethrows unexpected adapter failures during state consumption", async () => {
+    const adapter = memoryAdapter();
+    await adapter.initialize();
+
+    const stateStore = new DbAdapterOAuthStateStore(adapter);
+    await stateStore.put({
+      stateId: "st_db_error",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_db_error"
+      },
+      redirectUri: "https://app.example/callback",
+      requestedScopes: ["openid"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-01T00:10:00.000Z"
+    });
+
+    const failingAdapter: Adapter = {
+      ...adapter,
+      update: async () => {
+        throw new QueryFailedError("db unavailable");
+      }
+    };
+
+    await expect(
+      new DbAdapterOAuthStateStore(failingAdapter).consume("st_db_error", "2026-01-01T00:01:00.000Z")
+    ).rejects.toMatchObject({
+      message: "db unavailable"
+    });
+  });
+
+  it("rejects invalid parsed JSON values from adapters deterministically", async () => {
+    const adapter = createMalformedParsedJsonAdapter();
+    await adapter.initialize?.();
+
+    const { stateStore, consentStore } = createOAuthDbStorage({ adapter });
+
+    await stateStore.put({
+      stateId: "st_bad_json_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_bad_json_1"
+      },
+      redirectUri: "https://app.example/callback",
+      requestedScopes: ["openid"],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-01T00:05:00.000Z"
+    });
+
+    await consentStore.put({
+      consentId: "consent_bad_json_1",
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_bad_json_1"
+      },
+      scopes: ["openid"],
+      grantedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    await expect(stateStore.get("st_bad_json_1")).rejects.toThrowError(
+      "requested_scopes must be an array of strings"
+    );
+    await expect(consentStore.get("consent_bad_json_1")).rejects.toThrowError(
+      "metadata must be an object"
+    );
+  });
+
   it("fails deterministically when required schema mapping is missing", async () => {
     const adapter = memoryAdapter();
     await adapter.initialize();
@@ -195,3 +324,53 @@ describe("oauth-storage db adapter bridge", () => {
     );
   });
 });
+
+function createParsedJsonAdapter(): Adapter {
+  const adapter = memoryAdapter();
+  return {
+    ...adapter,
+    findOne: async (params) => {
+      const value = await adapter.findOne(params);
+      return value ? parseStoredJsonFields(value as Record<string, unknown>) : value;
+    },
+    findMany: async (params) =>
+      (await adapter.findMany(params)).map((value) => parseStoredJsonFields(value as Record<string, unknown>)),
+    update: async (params) => parseStoredJsonFields(await adapter.update(params) as Record<string, unknown>),
+    upsert: async (params) => parseStoredJsonFields(await adapter.upsert(params) as Record<string, unknown>)
+  };
+}
+
+function createMalformedParsedJsonAdapter(): Adapter {
+  const adapter = memoryAdapter();
+  return {
+    ...adapter,
+    findOne: async (params) => {
+      const value = await adapter.findOne(params);
+      if (!value) {
+        return value;
+      }
+
+      const record = parseStoredJsonFields(value as Record<string, unknown>);
+      if (record.state_id === "st_bad_json_1") {
+        record.requested_scopes = ["openid", 7];
+      }
+
+      if (record.consent_id === "consent_bad_json_1") {
+        record.metadata = ["not-an-object"];
+      }
+
+      return record;
+    }
+  };
+}
+
+function parseStoredJsonFields(record: Record<string, unknown>): Record<string, unknown> {
+  const nextRecord = { ...record };
+  for (const key of ["subject_payload", "requested_scopes", "scope_set", "metadata"]) {
+    const value = nextRecord[key];
+    if (typeof value === "string") {
+      nextRecord[key] = JSON.parse(value);
+    }
+  }
+  return nextRecord;
+}

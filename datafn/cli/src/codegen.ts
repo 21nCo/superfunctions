@@ -86,19 +86,19 @@ export function generateTypes(schemaInput: unknown): string {
 
     const jtName = rel.joinTable ?? `__datafn_join_${Array.isArray(rel.from) ? rel.from[0] : rel.from}_${rel.relation ?? (Array.isArray(rel.to) ? rel.to[0] : rel.to)}`;
     const pascalName = toPascalCase(jtName);
-    const fromCol = rel.joinColumns?.from ?? "fromId";
-    const toCol = rel.joinColumns?.to ?? "toId";
+    const fromCol = rel.joinColumns?.from ?? "from";
+    const toCol = rel.joinColumns?.to ?? "to";
 
     lines.push(`export interface ${pascalName} {`);
-    lines.push(`  ${fromCol}: string;`);
-    lines.push(`  ${toCol}: string;`);
+    lines.push(`  ${renderTsPropertyName(fromCol)}: string;`);
+    lines.push(`  ${renderTsPropertyName(toCol)}: string;`);
 
     // Sort metadata fields for stability
     if (hasMetadata) {
       const sortedMeta = [...rel.metadata!].sort((a, b) => a.name.localeCompare(b.name));
       for (const meta of sortedMeta) {
         const tsType = mapFieldType(meta.type, false);
-        lines.push(`  ${meta.name}: ${tsType};`);
+        lines.push(`  ${renderTsPropertyName(meta.name)}: ${tsType};`);
       }
     }
 
@@ -110,7 +110,7 @@ export function generateTypes(schemaInput: unknown): string {
       for (const cap of canonicalCaps) {
         for (const fieldDef of RELATION_CAPABILITY_FIELD_DEFS[cap]) {
           const tsType = mapFieldType(fieldDef.type, fieldDef.nullable === true);
-          lines.push(`  readonly ${fieldDef.name}?: ${tsType};`);
+          lines.push(`  readonly ${renderTsPropertyName(fieldDef.name)}?: ${tsType};`);
         }
       }
     }
@@ -125,10 +125,10 @@ export function generateTypes(schemaInput: unknown): string {
   lines.push("export interface Tables {");
   for (const resource of resources) {
     const pascalName = toPascalCase(resource.name);
-    lines.push(`  ${resource.name}: ${pascalName};`);
+    lines.push(`  ${renderTsPropertyName(resource.name)}: ${pascalName};`);
   }
   for (const jt of joinTableInterfaces) {
-    lines.push(`  ${jt.name}: ${jt.pascalName};`);
+    lines.push(`  ${renderTsPropertyName(jt.name)}: ${jt.pascalName};`);
   }
   lines.push("}");
   lines.push("");
@@ -139,7 +139,7 @@ export function generateTypes(schemaInput: unknown): string {
     const pascalName = toPascalCase(resource.name);
     // Expose table getters directly on client if desired (TV-CODEGEN-001 doesn't strictly verify accessors, just types)
     // But typically typed client might have `task: DatafnTable<Task>`
-    lines.push(`  ${resource.name}: DatafnTable<${pascalName}>;`);
+    lines.push(`  ${renderTsPropertyName(resource.name)}: DatafnTable<${pascalName}>;`);
   }
   lines.push("};");
   lines.push("");
@@ -148,15 +148,27 @@ export function generateTypes(schemaInput: unknown): string {
 }
 
 function toPascalCase(str: string): string {
-  // Simple conversion: task -> Task, my_task -> MyTask
-  return str.replace(/(^|_)(\w)/g, (_all, _sep, char) => char.toUpperCase());
+  const parts = str
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1));
+  const joined = parts.join("") || "GeneratedType";
+  return /^\d/.test(joined) ? `_${joined}` : joined;
 }
 
 function renderInterfaceField(field: DatafnFieldSchema): string {
   const tsType = mapFieldType(field.type, field.nullable === true);
   const optional = field.required ? "" : "?";
   const readonly = field.readonly ? "readonly " : "";
-  return `${readonly}${field.name}${optional}: ${tsType};`;
+  return `${readonly}${renderTsPropertyName(field.name)}${optional}: ${tsType};`;
+}
+
+function renderTsPropertyName(name: string): string {
+  return isValidTsIdentifier(name) ? name : JSON.stringify(name);
+}
+
+function isValidTsIdentifier(name: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
 }
 
 function mapFieldType(type: string, nullable: boolean): string {

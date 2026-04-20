@@ -9,12 +9,17 @@ export const welcomeEmailTemplate: EmailTemplate = {
       <body>
         <h1>Welcome, {{userName}}!</h1>
         <p>Thanks for joining {{appName}}.</p>
+        {{#if verificationUrl}}
         <p><a href="{{verificationUrl}}">Verify your email</a></p>
+        {{/if}}
       </body>
     </html>
   `,
-  text: "Welcome, {{userName}}! Thanks for joining {{appName}}. Verify your email: {{verificationUrl}}",
-  variables: ["appName", "userName", "verificationUrl"],
+  text: "Welcome, {{userName}}! Thanks for joining {{appName}}.{{#if verificationUrl}} Verify your email: {{verificationUrl}}{{/if}}",
+  variables: ["appName", "userName"],
+  metadata: {
+    optionalVariables: ["verificationUrl"],
+  },
 };
 
 export const passwordResetTemplate: EmailTemplate = {

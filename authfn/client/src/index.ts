@@ -73,7 +73,34 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
       http.requestJson({
         method: 'POST',
         path: '/social/start',
-        body: input
+        body: {
+          ...input,
+          callbackMode: 'json'
+        }
+      }),
+    disconnectSocialAccount: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: `/social/disconnect/${encodeURIComponent(input.provider)}`,
+        csrf: true
+      }),
+    createApiKey: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: '/api-keys',
+        body: input,
+        csrf: true
+      }),
+    listApiKeys: () =>
+      http.requestJson({
+        method: 'GET',
+        path: '/api-keys'
+      }),
+    revokeApiKey: (input) =>
+      http.requestJson({
+        method: 'DELETE',
+        path: `/api-keys/${encodeURIComponent(input.keyId)}`,
+        csrf: true
       }),
     enableTwoFactor: () =>
       http.requestJson({
@@ -87,6 +114,30 @@ export function createAuthFnClient(options: AuthFnClientOptions = {}): AuthFnCli
         path: '/2fa/confirm',
         body: input,
         csrf: true
+      }),
+    completeTwoFactorChallenge: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: '/2fa/challenge',
+        body: input
+      }),
+    disableTwoFactor: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: '/2fa/disable',
+        body: input,
+        csrf: true
+      }),
+    lookupRegion: (input) =>
+      http.requestJson({
+        method: 'POST',
+        path: '/regions/lookup',
+        body: input
+      }),
+    getRuntime: () =>
+      http.requestJson({
+        method: 'GET',
+        path: '/runtime'
       })
   };
 }

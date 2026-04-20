@@ -1,4 +1,4 @@
-import type { OAuthStateStore, OAuthStoredSubject } from "@superfunctions/oauth-storage";
+import type { OAuthStateRecord, OAuthStateStore, OAuthStoredSubject } from "@superfunctions/oauth-storage";
 import type {
   AuthorizationRequest,
   AuthorizationResult,
@@ -19,8 +19,8 @@ export interface OAuthProviderRuntimeConfig {
 export interface OAuthProviderRuntimeConfigResolverInput {
   providerId: string;
   subject: OAuthIntentSubject;
-  redirectUri: string;
-  scopes: string[];
+  redirectUri?: string;
+  scopes?: string[];
   prompt?: string;
   loginHint?: string;
 }
@@ -33,6 +33,7 @@ export interface OAuthCodeExchangeInput {
   provider: OAuthProviderDescriptor;
   code: string;
   redirectUri: string;
+  subject: OAuthIntentSubject;
   codeVerifier?: string;
   scopes?: string[];
 }
@@ -173,6 +174,7 @@ export class DefaultOAuthService implements OAuthService {
       provider,
       code: input.code,
       redirectUri: input.redirectUri,
+      subject: resolveStateSubject(consumedState),
       codeVerifier: consumedState.codeVerifier,
       scopes: consumedState.requestedScopes
     });
@@ -282,5 +284,36 @@ function toStoredSubject(subject: OAuthIntentSubject): OAuthStoredSubject {
   return {
     ...subject,
     metadata: subject.metadata ? { ...subject.metadata } : undefined
+  };
+}
+
+function resolveStateSubject(state: OAuthStateRecord): OAuthIntentSubject {
+  if (state.subject?.kind === "connection") {
+    return { ...state.subject };
+  }
+
+  if (state.subject?.kind === "browser-auth") {
+    return {
+      ...state.subject,
+      metadata: state.subject.metadata ? { ...state.subject.metadata } : undefined
+    };
+  }
+
+  if (state.intentId) {
+    return {
+      kind: "browser-auth",
+      intentId: state.intentId,
+      tenantId: state.tenantId,
+      regionId: state.regionId,
+      returnTo: state.returnTo,
+      metadata: state.metadata ? { ...state.metadata } : undefined
+    };
+  }
+
+  return {
+    kind: "connection",
+    tenantId: state.tenantId ?? "",
+    userId: state.userId ?? "",
+    connectionId: state.connectionId
   };
 }

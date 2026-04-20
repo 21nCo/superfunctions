@@ -15,17 +15,19 @@ export type ClientRef<C> = {
   subscribe(fn: (client: C) => void): () => void;
 };
 
+export type DatafnSvelteValue<T> = {
+  data: T | undefined;
+  loading: boolean;
+  error: DatafnError | null;
+  refreshing: boolean;
+  nextCursor: string | null;
+};
+
 /**
  * Store type that wraps signal value with state properties.
  * Returned by both overloads.
  */
-export type DatafnSvelteStore<T> = Readable<{
-  data: T;
-  loading: boolean;
-  error: DatafnError | null;
-  refreshing: boolean;
-  nextCursor?: string | null;
-}>;
+export type DatafnSvelteStore<T> = Readable<DatafnSvelteValue<T>>;
 
 /**
  * Convert a lifecycle-aware DataFn signal directly to a Svelte readable store.
@@ -49,9 +51,9 @@ export function toSvelteStore<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T>;
  *
  * Accepts a `clientRef` (anything with a `subscribe(fn)` API) and a
  * `signalFactory` that creates a new signal from the current client. The store
- * automatically disposes the old signal and creates a fresh one whenever the
- * client changes, preventing memory leaks and ensuring signals are always
- * bound to the active client.
+ * tears down its subscription to the previous signal before subscribing to the
+ * next one. It does not call `dispose()` because these signals may be shared by
+ * a registry outside the store's ownership.
  */
 export function toSvelteStore<T, C>(
   clientRef: ClientRef<C>,
@@ -70,13 +72,13 @@ export function toSvelteStore<T, C = any>(
 
 /**
  * Direct signal overload: wraps a DatafnSignal as a Svelte readable store.
- * The store emits `{ data, loading, error, refreshing }` on each update.
+ * The store emits `{ data, loading, error, refreshing, nextCursor }` on each update.
  * Does NOT call signal.dispose() on teardown — the signal's lifecycle is
  * managed by the LiveSignalRegistry, allowing multiple stores to share a
  * deduplicated signal safely.
  */
 function toSvelteStoreDirect<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T> {
-  return readable(
+  return readable<DatafnSvelteValue<T>>(
     {
       data: signal.get(),
       loading: signal.loading,
@@ -102,15 +104,22 @@ function toSvelteStoreDirect<T>(signal: DatafnSignal<T>): DatafnSvelteStore<T> {
 }
 
 /**
- * Factory overload: subscribes to clientRef, creates/disposes signal on each
- * client change. Returns a DatafnSvelteStore with { data, loading, error, refreshing }.
+ * Factory overload: subscribes to clientRef and creates a fresh signal on each
+ * client change. Returns a DatafnSvelteStore with
+ * `{ data, loading, error, refreshing, nextCursor }`.
  */
 function toSvelteStoreFactory<T, C>(
   clientRef: ClientRef<C>,
   signalFactory: (client: C) => DatafnSignal<T>,
 ): DatafnSvelteStore<T> {
-  return readable(
-    { data: undefined as unknown as T, loading: true as boolean, error: null as DatafnError | null, refreshing: false as boolean, nextCursor: null as string | null },
+  return readable<DatafnSvelteValue<T>>(
+    {
+      data: undefined,
+      loading: true,
+      error: null,
+      refreshing: false,
+      nextCursor: null,
+    },
     (set) => {
       let currentSignal: DatafnSignal<T> | null = null;
       let currentUnsubSignal: (() => void) | null = null;
@@ -118,7 +127,6 @@ function toSvelteStoreFactory<T, C>(
       const unsubClient = clientRef.subscribe((client) => {
         // Tear down previous signal
         currentUnsubSignal?.();
-        currentSignal?.dispose();
 
         // Create a fresh signal from the new client
         currentSignal = signalFactory(client);
@@ -148,7 +156,6 @@ function toSvelteStoreFactory<T, C>(
       return () => {
         unsubClient();
         currentUnsubSignal?.();
-        currentSignal?.dispose();
         currentSignal = null;
       };
     },

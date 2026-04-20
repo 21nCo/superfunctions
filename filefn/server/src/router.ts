@@ -18,6 +18,15 @@ export interface FileFnRouterConfig {
 
 export function createRouter(config: FileFnRouterConfig) {
   const { uploadRoutes, fileRoutes, grantsRoutes, sharesRoutes, processingRoutes, policyRoutes, quotaRoutes } = config;
+  const reservedTopLevelPaths = new Set([
+    'upload',
+    'policies',
+    'quota',
+    'proxy',
+    'grants',
+    'shares',
+    'processing',
+  ]);
 
   return {
     async handle(request: Request): Promise<Response | null> {
@@ -75,12 +84,14 @@ export function createRouter(config: FileFnRouterConfig) {
         return fileRoutes.listFiles(request);
       }
 
+      // Keep reserved route prefixes above file-id routing so top-level resources never shadow explicit handlers.
       const fileMatch = path.match(/^\/([^/]+)$/);
-      if (fileMatch && method === 'GET') {
+      const isFileRoute = fileMatch && !reservedTopLevelPaths.has(fileMatch[1]);
+      if (isFileRoute && method === 'GET') {
         return fileRoutes.getFile(request, fileMatch[1]);
       }
 
-      if (fileMatch && method === 'DELETE') {
+      if (isFileRoute && method === 'DELETE') {
         return fileRoutes.deleteFile(request, fileMatch[1]);
       }
 

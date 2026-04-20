@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { K } from '../aria/keys';
-import { getNextRovingFocusIndex } from './roving-focus';
+import {
+  getNextEnabledRovingFocusIndex,
+  getNextRovingFocusIndex,
+} from './roving-focus';
 
 describe('roving focus utilities', () => {
   it('moves focus in horizontal flow by default', () => {
@@ -53,5 +56,34 @@ describe('roving focus utilities', () => {
         direction: 'rtl',
       })
     ).toBe(0);
+  });
+
+  it('supports Home and End shortcuts', () => {
+    expect(
+      getNextRovingFocusIndex({
+        key: K.HOME,
+        itemCount: 4,
+        currentIndex: 2,
+      })
+    ).toBe(0);
+
+    expect(
+      getNextRovingFocusIndex({
+        key: K.END,
+        itemCount: 4,
+        currentIndex: 1,
+      })
+    ).toBe(3);
+  });
+
+  it('skips disabled items when resolving the next enabled focus target', () => {
+    expect(
+      getNextEnabledRovingFocusIndex({
+        key: K.ARROW_RIGHT,
+        itemCount: 4,
+        currentIndex: 0,
+        isItemEnabled: (index) => index !== 1,
+      })
+    ).toBe(2);
   });
 });

@@ -15,6 +15,8 @@ export type BeforeHookResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: HookError };
 
+type AfterHookName = "afterQuery" | "afterMutation" | "afterSync";
+
 function wrapError(err: unknown, pluginName: string, hookName: string): HookError {
   if (err && typeof err === "object") {
     const e = err as Record<string, unknown>;
@@ -73,22 +75,28 @@ export async function runBeforeHook<T = unknown>(
 export async function runAfterHook(
   plugins: DatafnPlugin[],
   env: "client" | "server",
-  hookName: keyof DatafnPlugin,
+  hookName: AfterHookName,
   ctx: DatafnHookContext,
   payload: unknown,
   result: unknown,
   preArgs: unknown[] = [],
-): Promise<void> {
+): Promise<unknown> {
   const filtered = plugins.filter((p) => p.runsOn.includes(env));
+  let currentResult = result;
 
   for (const plugin of filtered) {
     const hook = plugin[hookName] as ((...args: unknown[]) => Promise<unknown> | unknown) | undefined;
     if (!hook) continue;
 
     try {
-      await hook(ctx, ...preArgs, payload, result);
+      const nextResult = await hook(ctx, ...preArgs, payload, currentResult);
+      if (nextResult !== undefined) {
+        currentResult = nextResult;
+      }
     } catch (err) {
       console.error(`Plugin ${plugin.name}.${String(hookName)} error:`, err);
     }
   }
+
+  return currentResult;
 }

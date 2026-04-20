@@ -85,15 +85,22 @@ describe("createIndexedDbSearchClient", () => {
 
   it("accepts custom adapter config and defaults", () => {
     const client = createIndexedDbSearchClient({
-      adapterConfig: { dbName: "test-search-db" },
+      adapterConfig: {
+        dbName: "test-search-db",
+        engine: "auto",
+        wasmLoader: async () => {
+          throw new Error("not-loaded-in-constructor-test");
+        },
+      },
       defaults: { limit: 20 },
     });
     expect(client.adapterInfo().name).toBe("indexeddb");
   });
 
   it("supports full lifecycle", async () => {
+    const dbName = `constructors-test-db-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const client = createIndexedDbSearchClient({
-      adapterConfig: { dbName: "constructors-test-db" },
+      adapterConfig: { dbName },
     });
 
     await client.initialize!({

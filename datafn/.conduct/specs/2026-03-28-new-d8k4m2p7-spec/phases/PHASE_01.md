@@ -1,0 +1,29 @@
+- Phase goal: Wire native-backed search into `@datafn/client` and suppress redundant JavaScript indexing when the provider is native-backed.
+- In scope:
+  - JS provider marker handling
+  - query/search routing
+  - mutation/sync/plugin skip logic for native-backed providers
+- Out of scope:
+  - Swift runtime backend implementation
+  - rebuild orchestration
+- Deliverables:
+  - `datafn/client/src/client.ts`
+  - `datafn/client/src/mutate.ts`
+  - `datafn/client/src/sync/engine.ts`
+  - `datafn/client/src/plugins/clientSearch.ts`
+  - `datafn/client/__tests__/native-backed-search*.test.ts`
+- Requirements covered:
+  - `DCFG-001`
+  - `DJS-001`
+  - `DERR-001`
+- Implementation tasks:
+  - Detect `__datafnNativeBacked` providers.
+  - Route `client.search()` and DFQL search clauses through the native provider in native-backed mode.
+  - Skip JavaScript-side search index updates when the provider is native-backed.
+  - Add browser regression tests to prove browser-owned mode remains unchanged.
+- Verification steps:
+  - Run `npm --prefix datafn/client test`
+  - Run `npm --prefix datafn/client run typecheck`
+  - Expected outcome: native-backed search tests and browser regression tests pass.
+- Stop condition:
+  - Report the marker/routing behavior and test summary before beginning Phase 02.

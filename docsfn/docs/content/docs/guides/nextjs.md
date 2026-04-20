@@ -237,7 +237,7 @@ Wire **`DocsSearch`** from **`@docsfn/react`** with **`loadSearchArtifact={() =>
 
 ## Step 8 — Blog routes
 
-Use **`generateBlogParams`**, **`getPostData`** / **`getPostDataOrThrow`**, and **`BlogList`** from **`@docsfn/react`**:
+Use **`generateBlogParams`**, **`getPostData`** / **`getPostDataOrThrow`** from **`@docsfn/next`**, and **`BlogList`** from **`@docsfn/react`**:
 
 - **`app/blog/page.tsx`** — list posts from `manifest.posts` (filter drafts).
 - **`app/blog/[slug]/page.tsx`** — resolve post by slug, **`compileReactContent`** on `post.body`, render **`DocsContent`**.
@@ -264,7 +264,7 @@ Re-use the same **`getManifest()`** helper so content stays consistent.
 | Export | Role |
 | --- | --- |
 | **DocsContent** | Compiled Markdown blocks; `components` prop for custom tags. |
-| **DocsSidebar** / **SidebarGroup** | Navigation tree. |
+| **DocsSidebar** | Navigation tree. |
 | **Breadcrumbs** | Trail + optional custom **separator** component. |
 | **Pagination** | Prev/next; override via props. |
 | **DocsToc** | On-page headings. |

@@ -2,10 +2,11 @@ import React, { createContext, useContext, useRef } from 'react';
 import { useControllableState } from './hooks/use-controllable-state';
 import { useComposedRefs } from './hooks/use-composed-refs';
 import { usePosition, Side, Align } from './hooks/use-position';
-import { useOutsideClick } from './hooks/use-outside-click';
 import { useEscapeKeydown } from './hooks/use-escape-keydown';
 import { useFocusTrap } from './hooks/use-focus-trap';
 import { Portal } from './portal';
+import { useId } from './hooks/use-id';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * Popover Root
@@ -14,6 +15,7 @@ import { Portal } from './portal';
 interface PopoverContextValue {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  contentId: string;
   triggerRef: React.RefObject<HTMLElement>;
   contentRef: React.RefObject<HTMLElement>;
   modal: boolean;
@@ -22,11 +24,11 @@ interface PopoverContextValue {
 const PopoverContext = createContext<PopoverContextValue | undefined>(undefined);
 
 const usePopoverContext = () => {
-  const context = useContext(PopoverContext);
-  if (!context) {
-    throw new Error('Popover components must be used within a Popover');
-  }
-  return context;
+  return assertReactContext(
+    useContext(PopoverContext),
+    'Popover',
+    'Popover components must be used within a Popover'
+  );
 };
 
 export interface PopoverProps {
@@ -51,6 +53,7 @@ export const Popover: React.FC<PopoverProps> = (props) => {
     defaultProp: defaultOpen,
     onChange: onOpenChange,
   });
+  const contentId = useId(undefined, { prefix: 'popover', slot: 'content' });
 
   const triggerRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
@@ -60,6 +63,7 @@ export const Popover: React.FC<PopoverProps> = (props) => {
       value={{
         open: !!open,
         onOpenChange: setOpen,
+        contentId,
         triggerRef,
         contentRef,
         modal,
@@ -95,7 +99,7 @@ export const PopoverTrigger = React.forwardRef<HTMLButtonElement, PopoverTrigger
         type="button"
         aria-haspopup="dialog"
         aria-expanded={context.open}
-        aria-controls={context.open ? 'popover-content' : undefined}
+        aria-controls={context.open ? context.contentId : undefined}
         data-state={context.open ? 'open' : 'closed'}
         onClick={handleClick}
         {...domProps}
@@ -139,7 +143,19 @@ export const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentPro
     } = props;
 
     const context = usePopoverContext();
-    const composedRef = useComposedRefs(ref, context.contentRef);
+    const [contentNode, setContentNode] = React.useState<HTMLDivElement | null>(null);
+    const composedRef = React.useCallback(
+      (node: HTMLDivElement | null) => {
+        setContentNode(node);
+        (context.contentRef as React.MutableRefObject<HTMLElement | null>).current = node;
+        if (typeof ref === 'function') {
+          ref(node);
+        } else if (ref) {
+          (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        }
+      },
+      [context.contentRef, ref]
+    );
 
     const { style: positionStyle } = usePosition(context.triggerRef, context.contentRef, {
       side,
@@ -151,12 +167,40 @@ export const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentPro
     // Focus Trap if modal
     useFocusTrap(context.contentRef, context.open && context.modal);
 
-    // Click Outside
-    useOutsideClick(context.contentRef, (e) => {
-        // Also ignore if clicked on trigger
-        if (context.triggerRef.current?.contains(e.target as Node)) return;
+    React.useEffect(() => {
+      if (!context.open || !contentNode) {
+        return;
+      }
+
+      const ownerDocument = contentNode.ownerDocument;
+
+      const handlePointerDown = (event: MouseEvent | PointerEvent | TouchEvent) => {
+        const target = event.target as Node | null;
+        if (!target) {
+          return;
+        }
+
+        if (contentNode.contains(target)) {
+          return;
+        }
+
+        if (context.triggerRef.current?.contains(target)) {
+          return;
+        }
+
         context.onOpenChange(false);
-    }, context.open);
+      };
+
+      ownerDocument.addEventListener('pointerdown', handlePointerDown);
+      ownerDocument.addEventListener('mousedown', handlePointerDown);
+      ownerDocument.addEventListener('touchstart', handlePointerDown);
+
+      return () => {
+        ownerDocument.removeEventListener('pointerdown', handlePointerDown);
+        ownerDocument.removeEventListener('mousedown', handlePointerDown);
+        ownerDocument.removeEventListener('touchstart', handlePointerDown);
+      };
+    }, [contentNode, context.onOpenChange, context.open, context.triggerRef]);
 
     // Escape Key
     useEscapeKeydown((e) => {
@@ -164,6 +208,9 @@ export const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentPro
         onEscapeKeyDown?.(e);
         if (!e.defaultPrevented) {
             context.onOpenChange(false);
+            queueMicrotask(() => {
+              context.triggerRef.current?.focus();
+            });
         }
     });
 
@@ -174,7 +221,7 @@ export const PopoverContent = React.forwardRef<HTMLDivElement, PopoverContentPro
         <div
           ref={composedRef}
           role="dialog"
-          id="popover-content"
+          id={context.contentId}
           data-state={context.open ? 'open' : 'closed'}
           data-side={side}
           data-align={align}

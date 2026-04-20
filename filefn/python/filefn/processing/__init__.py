@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 from .types import (
     CompressionConfig,
@@ -20,51 +20,32 @@ from .types import (
 THUMBNAIL_SUPPORTED_MIME_TYPES = [
     "image/png",
     "image/jpeg",
-    "image/jpg",
     "image/webp",
     "image/gif",
     "image/tiff",
 ]
 COMPRESSION_SUPPORTED_MIME_TYPES = ["*/*"]
-OCR_SUPPORTED_MIME_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff"]
+OCR_SUPPORTED_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "image/tiff"]
 IMAGE_TRANSFORM_SUPPORTED_MIME_TYPES = THUMBNAIL_SUPPORTED_MIME_TYPES
 VIDEO_SUPPORTED_MIME_TYPES = ["video/*"]
 AUDIO_SUPPORTED_MIME_TYPES = ["audio/*"]
 PDF_PREVIEW_SUPPORTED_MIME_TYPES = ["application/pdf"]
 
 
-class _GenericProcessor:
+class _UnavailableProcessor:
     def __init__(
         self,
         *,
         name: str,
-        kind: str,
         supported_mime_types: List[str],
-        output_mime_type: str,
-        output_suffix: str,
-        metadata: Optional[dict[str, Any]] = None,
+        error_code: str,
     ):
         self.name = name
-        self.kind = kind
         self.supportedMimeTypes = supported_mime_types
-        self.output_mime_type = output_mime_type
-        self.output_suffix = output_suffix
-        self.metadata = metadata or {}
+        self.error_code = error_code
 
-    async def process(self, input: ProcessorInput, get_data: Callable[[], Any]) -> ProcessorResult:
-        data = await get_data()
-        return ProcessorResult(
-            success=True,
-            artifacts=[
-                ProcessorOutputArtifact(
-                    kind=self.kind,
-                    data=data,
-                    mimeType=self.output_mime_type,
-                    storageKey=f"{input.storageKey}{self.output_suffix}",
-                    metadata={**self.metadata, "sourceFileId": input.fileId, "sourceVersionId": input.versionId},
-                )
-            ],
-        )
+    async def process(self, input: ProcessorInput, get_data: Callable[[], Awaitable[bytes]]) -> ProcessorResult:
+        return ProcessorResult(success=False, artifacts=[], error=self.error_code)
 
 
 def create_thumbnail_processor(config: Optional[ThumbnailConfig] = None) -> Processor:
@@ -74,59 +55,53 @@ def create_thumbnail_processor(config: Optional[ThumbnailConfig] = None) -> Proc
 
 
 def create_pdf_preview_processor(config: Optional[PdfPreviewConfig] = None) -> Processor:
-    from .processors.pdf_preview import create_pdf_preview_processor as _create_pdf_preview_processor
+    from .processors.pdf_preview import (
+        create_pdf_preview_processor as _create_pdf_preview_processor,
+    )
 
     return _create_pdf_preview_processor(config)
 
 
 def create_compression_processor(config: Optional[CompressionConfig] = None) -> Processor:
-    from .processors.compression import create_compression_processor as _create_compression_processor
+    from .processors.compression import (
+        create_compression_processor as _create_compression_processor,
+    )
 
     return _create_compression_processor(config)
 
 
 def create_ocr_processor(config: Optional[OCRConfig] = None) -> Processor:
-    cfg = config or OCRConfig()
-    return _GenericProcessor(
+    _ = config or OCRConfig()
+    return _UnavailableProcessor(
         name="ocr",
-        kind="ocr-text",
         supported_mime_types=OCR_SUPPORTED_MIME_TYPES,
-        output_mime_type="text/plain",
-        output_suffix=".ocr.txt",
-        metadata={"language": cfg.language, "outputFormat": cfg.outputFormat},
+        error_code="FILEFN_PROCESSING_OCR_PROVIDER_REQUIRED",
     )
 
 
 def create_image_transform_processor(config: ImageTransformConfig) -> Processor:
-    return _GenericProcessor(
-        name="image-transform",
-        kind="image-transform",
-        supported_mime_types=IMAGE_TRANSFORM_SUPPORTED_MIME_TYPES,
-        output_mime_type="application/octet-stream",
-        output_suffix=".transformed",
-        metadata={"operations": [op.operation for op in config.operations]},
+    from .processors.image_transform import (
+        create_image_transform_processor as _create_image_transform_processor,
     )
+
+    return _create_image_transform_processor(config)
 
 
 def create_video_processor(config: Optional[dict[str, Any]] = None) -> Processor:
-    cfg = config or {}
-    return _GenericProcessor(
+    _ = config or {}
+    return _UnavailableProcessor(
         name="video",
-        kind="video",
         supported_mime_types=VIDEO_SUPPORTED_MIME_TYPES,
-        output_mime_type=cfg.get("mimeType", "video/mp4"),
-        output_suffix=cfg.get("suffix", ".video"),
+        error_code="FILEFN_PROCESSING_VIDEO_PROVIDER_REQUIRED",
     )
 
 
 def create_audio_processor(config: Optional[dict[str, Any]] = None) -> Processor:
-    cfg = config or {}
-    return _GenericProcessor(
+    _ = config or {}
+    return _UnavailableProcessor(
         name="audio",
-        kind="audio",
         supported_mime_types=AUDIO_SUPPORTED_MIME_TYPES,
-        output_mime_type=cfg.get("mimeType", "audio/mpeg"),
-        output_suffix=cfg.get("suffix", ".audio"),
+        error_code="FILEFN_PROCESSING_AUDIO_PROVIDER_REQUIRED",
     )
 
 

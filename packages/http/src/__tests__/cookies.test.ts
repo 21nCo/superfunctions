@@ -22,25 +22,56 @@ describe('cookie helpers', () => {
   });
 
   it('rejects invalid sameSite values with HTTP_META_INVALID', () => {
-    try {
+    expect(() =>
       serializeSetCookie({
         name: 'bad-cookie',
         value: 'x',
         sameSite: 'invalid' as never,
-      });
-      throw new Error('Expected invalid sameSite error');
-    } catch (error) {
-      expect(error).toMatchObject({
-        name: 'BadRequestError',
-        code: 'HTTP_META_INVALID',
-        statusCode: 400,
-      });
-    }
+      })
+    ).toThrowError(/Invalid SameSite value/);
+  });
+
+  it('rejects unsafe cookie names and attributes', () => {
+    expect(() =>
+      serializeSetCookie({
+        name: 'bad;cookie',
+        value: 'x',
+      })
+    ).toThrowError(/Invalid cookie name/);
+
+    expect(() =>
+      serializeSetCookie({
+        name: 'safe-cookie',
+        value: 'x',
+        path: '/foo\r\nSet-Cookie: pwned=1',
+      })
+    ).toThrowError(/Invalid cookie path/);
+
+    expect(() =>
+      serializeSetCookie({
+        name: 'safe-cookie',
+        value: 'x',
+        domain: 'example.com;evil.com',
+      })
+    ).toThrowError(/Invalid cookie domain/);
+  });
+
+  it('rejects SameSite=None cookies without Secure', () => {
+    expect(() =>
+      serializeSetCookie({
+        name: 'authfn.session',
+        value: 'opaque_1',
+        sameSite: 'none',
+        secure: false,
+      })
+    ).toThrowError(/SameSite=None cookies must be Secure/);
   });
 
   it('parses cookie headers and request cookies deterministically', () => {
     const header = '__Secure-authfn.session=opaque_1; authfn.csrf=csrf_1; encoded=hello%20world';
-    expect(parseCookieHeader(header)).toEqual({
+    const parsed = parseCookieHeader(header);
+    expect(Object.getPrototypeOf(parsed)).toBeNull();
+    expect({ ...parsed }).toEqual({
       '__Secure-authfn.session': 'opaque_1',
       'authfn.csrf': 'csrf_1',
       encoded: 'hello world',
@@ -49,11 +80,26 @@ describe('cookie helpers', () => {
     const request = new Request('http://localhost', {
       headers: { cookie: header },
     });
-    expect(parseCookies(request)).toEqual({
+    expect({ ...parseCookies(request) }).toEqual({
       '__Secure-authfn.session': 'opaque_1',
       'authfn.csrf': 'csrf_1',
       encoded: 'hello world',
     });
+  });
+
+  it('handles empty and malformed cookie headers safely', () => {
+    expect(Object.getPrototypeOf(parseCookieHeader(''))).toBeNull();
+    expect({ ...parseCookieHeader('bad-segment; =missing; valid=value; encoded=%E0%A4%A') }).toEqual({
+      valid: 'value',
+      encoded: '%E0%A4%A',
+    });
+  });
+
+  it('does not use a prototype-bearing object for parsed cookies', () => {
+    const parsed = parseCookieHeader('__proto__=value; constructor=ctor');
+    expect(Object.getPrototypeOf(parsed)).toBeNull();
+    expect(parsed.__proto__).toBe('value');
+    expect(parsed.constructor).toBe('ctor');
   });
 
   it('validates typed route metadata for auth and openapi usage', () => {
@@ -70,19 +116,38 @@ describe('cookie helpers', () => {
       })
     ).not.toThrow();
 
-    try {
+    expect(() =>
       assertValidRouteMeta({
         auth: {
           mode: 'unsupported',
         },
-      });
-      throw new Error('Expected invalid route metadata error');
-    } catch (error) {
-      expect(error).toMatchObject({
-        name: 'BadRequestError',
-        code: 'HTTP_META_INVALID',
-        statusCode: 400,
-      });
-    }
+      })
+    ).toThrowError(/Invalid auth route metadata mode/);
+  });
+
+  it('rejects auth metadata without mode or with invalid csrf/scopes types', () => {
+    expect(() =>
+      assertValidRouteMeta({
+        auth: {},
+      })
+    ).toThrowError(/Invalid auth route metadata mode/);
+
+    expect(() =>
+      assertValidRouteMeta({
+        auth: {
+          mode: 'bearer',
+          csrf: 'yes',
+        },
+      })
+    ).toThrowError(/Route auth metadata csrf must be a boolean/);
+
+    expect(() =>
+      assertValidRouteMeta({
+        auth: {
+          mode: 'hybrid',
+          scopes: ['read', 42],
+        },
+      })
+    ).toThrowError(/Route auth metadata scopes must be a string array/);
   });
 });

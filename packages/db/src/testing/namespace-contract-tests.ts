@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { wrapWithRowLevelNamespace, NamespaceRequiredError } from '../adapter/row-level-namespace.js';
+import { NotFoundError } from '../adapter/errors.js';
 import type { Adapter } from '../adapter/types.js';
 
 /**
@@ -185,17 +186,14 @@ export function runRowLevelNamespaceContractTests(
     beforeEach(seedTwoNamespaces);
 
     it('update as A does not affect B records', async () => {
-      // Try updating b1 as user A — should throw NotFoundError
-      try {
-        await db.update({
+      await expect(
+        db.update({
           model: 'task',
           where: [{ field: 'id', operator: 'eq', value: 'b1' }],
           data: { title: 'Hacked' },
           namespace: NS_A,
-        });
-      } catch (_e) {
-        // Expected: not found
-      }
+        }),
+      ).rejects.toMatchObject({ name: NotFoundError.name });
 
       // Verify b1 unchanged
       const raw = await baseAdapter.findMany({
@@ -385,9 +383,7 @@ export function runRowLevelNamespaceContractTests(
     });
 
     it('does not throw on missing namespace', async () => {
-      await expect(
-        disabledDb.findMany({ model: 'task', where: [] }),
-      ).resolves.not.toThrow();
+      await expect(disabledDb.findMany({ model: 'task', where: [] })).resolves.toEqual([]);
     });
   });
 }

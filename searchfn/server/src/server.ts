@@ -38,21 +38,41 @@ export interface SearchFnServer<TContext = unknown> {
 /** Redact sensitive keys from objects before logging. */
 const SENSITIVE_KEYS = /apikey|password|secret|token|authorization|connectionstring/i;
 
-function redact(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (SENSITIVE_KEYS.test(k)) {
-      out[k] = "[REDACTED]";
-    } else if (v && typeof v === "object" && !Array.isArray(v)) {
-      out[k] = redact(v as Record<string, unknown>);
-    } else {
-      out[k] = v;
-    }
+function redact(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redact(entry));
   }
-  return out;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (SENSITIVE_KEYS.test(k)) {
+        out[k] = "[REDACTED]";
+      } else {
+        out[k] = redact(v);
+      }
+    }
+    return out;
+  }
+  return value;
 }
 
-export async function createSearchFnServer<TContext = unknown>(
+function redactContext(value: Record<string, unknown>): Record<string, unknown> {
+  return redact(value) as Record<string, unknown>;
+}
+
+function toErrorLogContext(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      errorName: error.name,
+      errorMessage: error.message,
+    };
+  }
+  return {
+    errorValue: String(error),
+  };
+}
+
+export async function createSearchFnServer<TContext extends ServerContext = ServerContext>(
   config: SearchFnServerConfig<TContext>,
 ): Promise<SearchFnServer<TContext>> {
   const {
@@ -82,28 +102,31 @@ export async function createSearchFnServer<TContext = unknown>(
   // Wrap handler to inject auth + logging
   function wrap(
     action: Action,
-    handler: (req: Request, ctx: any) => Promise<Response>,
-  ): (req: Request, ctx: any) => Promise<Response> {
-    return async (req: Request, ctx: any): Promise<Response> => {
+    handler: (req: Request, ctx: TContext) => Promise<Response>,
+  ): (req: Request, ctx: TContext) => Promise<Response> {
+    return async (req: Request, ctx: TContext): Promise<Response> => {
       const start = Date.now();
       const logCtx: Record<string, unknown> = {
         operation: action,
         adapter: adapter.name,
       };
 
-      logger?.debug("request.start", redact(logCtx));
+      logger?.debug("request.start", redactContext(logCtx));
 
       // Auth check
       if (authorize) {
         try {
           const payload = await getAuthorizationPayload(req, limits.maxPayloadBytes);
-          const allowed = await authorize(ctx as TContext, action, payload);
+          const allowed = await authorize(ctx, action, payload);
           if (!allowed) {
-            logger?.warn("authorization.denied", redact({ ...logCtx }));
+            logger?.warn("authorization.denied", redactContext({ ...logCtx }));
             return errorResponse("FORBIDDEN", "Authorization denied");
           }
-        } catch {
-          logger?.error("authorization.error", redact({ ...logCtx }));
+        } catch (error) {
+          logger?.error("authorization.error", redactContext({
+            ...logCtx,
+            ...toErrorLogContext(error),
+          }));
           return errorResponse("FORBIDDEN", "Authorization denied");
         }
       }
@@ -114,28 +137,29 @@ export async function createSearchFnServer<TContext = unknown>(
           markDegraded();
         }
         const durationMs = Date.now() - start;
-        logger?.info("request.end", redact({
+        logger?.info("request.end", redactContext({
           ...logCtx,
           durationMs,
           success: response.status < 400,
           status: response.status,
         }));
         return response;
-      } catch {
+      } catch (error) {
         markDegraded();
         const durationMs = Date.now() - start;
-        logger?.error("request.error", redact({
+        logger?.error("request.error", redactContext({
           ...logCtx,
           durationMs,
           success: false,
           errorCode: "INTERNAL",
+          ...toErrorLogContext(error),
         }));
         return errorResponse("INTERNAL", "Unexpected server error");
       }
     };
   }
 
-  const routes: Route<any>[] = [
+  const routes: Route<TContext>[] = [
     {
       method: "GET",
       path: `${basePath}/status`,

@@ -4,7 +4,6 @@ import { checkPrototypePollution, validateFieldValue } from "../src/validate.js"
 describe("checkPrototypePollution", () => {
   // TV-SEC-025 — top-level __proto__
   it("rejects top-level __proto__", () => {
-    const result = checkPrototypePollution({ __proto__: {} });
     // Note: __proto__ on object literals is special in JS — test with Object.create(null)
     const obj = Object.create(null);
     obj["__proto__"] = {};
@@ -58,9 +57,6 @@ describe("checkPrototypePollution", () => {
   });
 
   it("rejects deeply nested disallowed keys", () => {
-    const result = checkPrototypePollution({
-      level1: { level2: { level3: { __proto__: {} } } },
-    });
     // Again need to use Object.create(null) for __proto__
     const level3 = Object.create(null);
     level3["__proto__"] = {};
@@ -124,6 +120,11 @@ describe("validateFieldValue", () => {
   // TV-SEC-018 — date field accepts epoch number
   it("accepts epoch number for date field", () => {
     expect(validateFieldValue("date", 1767225600000, false)).toEqual({ ok: true });
+  });
+
+  it("rejects invalid epoch numbers for date field", () => {
+    const result = validateFieldValue("date", Number.NaN, false);
+    expect(result.ok).toBe(false);
   });
 
   it("rejects non-ISO string for date field", () => {

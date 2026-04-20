@@ -32,16 +32,24 @@ export type DemoResetErrorEnvelope = {
 export type DemoResetEnvelope = DemoResetSuccessEnvelope | DemoResetErrorEnvelope;
 
 function parseScenarioFromBody(body: unknown): string {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
+  if (body === null || body === undefined) {
+    return BASELINE_SCENARIO;
+  }
+
+  if (typeof body !== "object" || Array.isArray(body)) {
+    return "";
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(body, "scenario")) {
     return BASELINE_SCENARIO;
   }
 
   const candidate = (body as Record<string, unknown>).scenario;
   if (typeof candidate !== "string") {
-    return BASELINE_SCENARIO;
+    return "";
   }
 
-  return candidate.trim() || BASELINE_SCENARIO;
+  return candidate.trim();
 }
 
 export async function executeDemoReset(

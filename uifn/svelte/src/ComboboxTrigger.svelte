@@ -1,5 +1,15 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { getRequiredContext } from './internal/context';
+
+  interface ComboboxContext {
+    open: boolean;
+    disabled: boolean;
+    contentId: string;
+    input: HTMLInputElement | null;
+    registerTrigger: (el: HTMLElement) => void;
+    setOpen: (value: boolean) => void;
+  }
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -7,7 +17,11 @@
   }
 
   let { children, ...rest }: Props = $props();
-  const ctx = getContext<any>('combobox');
+  const ctx = getRequiredContext<ComboboxContext>(
+    'combobox',
+    'ComboboxTrigger',
+    'Combobox components must be used within a Combobox'
+  );
   let el: HTMLElement;
 
   onMount(() => {
@@ -31,7 +45,7 @@
   type="button"
   aria-haspopup="listbox"
   aria-expanded={ctx.open}
-  aria-controls="combobox-content"
+  aria-controls={ctx.open ? ctx.contentId : undefined}
   data-state={ctx.open ? 'open' : 'closed'}
   data-disabled={ctx.disabled ? '' : undefined}
   disabled={ctx.disabled}

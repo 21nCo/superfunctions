@@ -4,7 +4,14 @@ import { githubOAuthProviderDescriptor, githubProviderPolicy } from "./providers
 import { googleOAuthProviderDescriptor, googleProviderPolicy } from "./providers/google.js";
 import { microsoftOAuthProviderDescriptor, microsoftProviderPolicy } from "./providers/microsoft.js";
 import { yahooOAuthProviderDescriptor, yahooProviderPolicy } from "./providers/yahoo.js";
-import { ProviderPolicyRegistry, type OAuthProviderId, type ProviderPolicyDefinition } from "./policy-registry.js";
+import {
+  ProviderPolicyRegistry,
+  type OAuthProviderId,
+  type ProviderPolicyDefinition,
+  type ProviderPolicyRegistryOptions,
+  clonePolicy,
+} from "./policy-registry.js";
+import { MemoryProviderPolicyAuditStore, MemoryProviderPolicyConsentStore } from "./stores.js";
 
 export const authOAuthProviderIds = ["google", "apple", "github"] as const;
 export type AuthOAuthProviderId = (typeof authOAuthProviderIds)[number];
@@ -25,37 +32,51 @@ export const oauthProviderPolicies: Record<OAuthProviderId, ProviderPolicyDefini
   github: githubProviderPolicy
 };
 
+function cloneOAuthProviderDescriptor(provider: OAuthProviderDescriptor): OAuthProviderDescriptor {
+  return {
+    ...provider,
+    defaultScopes: [...provider.defaultScopes],
+    extraAuthParams: provider.extraAuthParams ? { ...provider.extraAuthParams } : undefined,
+  };
+}
+
 export function getOAuthProviderDescriptor(providerId: OAuthProviderId): OAuthProviderDescriptor {
-  return oauthProviderDescriptors[providerId];
+  return cloneOAuthProviderDescriptor(oauthProviderDescriptors[providerId]);
 }
 
 export function listOAuthProviderDescriptors(): OAuthProviderDescriptor[] {
-  return Object.values(oauthProviderDescriptors);
+  return Object.values(oauthProviderDescriptors).map((provider) => cloneOAuthProviderDescriptor(provider));
 }
 
 export function listAuthOAuthProviderDescriptors(): OAuthProviderDescriptor[] {
-  return authOAuthProviderIds.map((providerId) => oauthProviderDescriptors[providerId]);
+  return authOAuthProviderIds.map((providerId) => cloneOAuthProviderDescriptor(oauthProviderDescriptors[providerId]));
 }
 
 export function getProviderPolicy(providerId: OAuthProviderId): ProviderPolicyDefinition {
-  return oauthProviderPolicies[providerId];
+  return clonePolicy(oauthProviderPolicies[providerId]);
 }
 
 export function listProviderPolicies(): ProviderPolicyDefinition[] {
-  return Object.values(oauthProviderPolicies);
+  return Object.values(oauthProviderPolicies).map((policy) => clonePolicy(policy));
 }
 
 export function listAuthProviderPolicies(): ProviderPolicyDefinition[] {
-  return authOAuthProviderIds.map((providerId) => oauthProviderPolicies[providerId]);
+  return authOAuthProviderIds.map((providerId) => clonePolicy(oauthProviderPolicies[providerId]));
 }
 
 export function createDefaultProviderPolicyRegistry(
-  now?: () => string
+  options?: ProviderPolicyRegistryOptions | (() => string)
 ): ProviderPolicyRegistry {
-  return new ProviderPolicyRegistry(listProviderPolicies(), now);
+  const resolvedOptions = typeof options === "function" ? { now: options } : options;
+  return new ProviderPolicyRegistry(listProviderPolicies(), {
+    ...resolvedOptions,
+    consentStore: resolvedOptions?.consentStore ?? new MemoryProviderPolicyConsentStore(),
+    auditStore: resolvedOptions?.auditStore ?? new MemoryProviderPolicyAuditStore()
+  });
 }
 
 export * from "./policy-registry.js";
+export * from "./stores.js";
 export * from "./providers/google.js";
 export * from "./providers/microsoft.js";
 export * from "./providers/yahoo.js";

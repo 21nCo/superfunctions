@@ -17,7 +17,7 @@ function createManifest(): DocsManifest {
         path: "/docs/a",
         title: "Adapter Intro",
         description: "Adapter intro",
-        body: "Adapter docs body",
+        body: "Adapter docs body with setup details",
         headings: [{ level: 1, text: "Adapter Intro", slug: "adapter-intro" }],
         frontmatter: {},
       },
@@ -183,6 +183,32 @@ describe("search runtime", () => {
         query: "adapter",
       })
     ).rejects.toThrowError(/DOCS_ARTIFACT_INVALID|malformed/);
+  });
+
+  it("uses snapshot-backed search for schema v1 artifacts that lack stored body text", async () => {
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: { enabled: true, scopes: ["docs", "api", "blog"], bodyIndexing: "full" },
+    });
+    const legacyCompatibleArtifact = {
+      ...artifact,
+      documents: artifact.documents.map((document) =>
+        document.kind === "page"
+          ? {
+              ...document,
+              body: "",
+            }
+          : document
+      ),
+    };
+    const runtime = createDocsSearchRuntime({ artifact: legacyCompatibleArtifact });
+
+    const results = await runtime.query({
+      query: "details",
+      scope: "docs",
+      limit: 10,
+    });
+
+    expect(results.map((result) => result.id)).toContain("docs:a");
   });
 
   it("suppresses analytics emission when DNT is enabled (TV-OBS-001)", () => {

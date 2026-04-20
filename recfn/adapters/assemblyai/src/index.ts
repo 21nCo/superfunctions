@@ -1,5 +1,13 @@
 import type { AsrAdapter, AsrOpts } from 'recfn';
 import type { Segment } from 'recfn';
+import {
+  fetchArrayBufferOrThrow,
+  fetchJsonOrThrow,
+  normalizeSpeakerId,
+  pollUntil,
+  readAudioChunkStream,
+  sortSegmentsDeterministically,
+} from 'recfn-shared-cloud';
 
 export interface AssemblyAIAdapterConfig {
   apiKey: string;
@@ -33,9 +41,7 @@ function utterancesToSegments(
   utterances: Array<{ speaker: string; text: string; start: number; end: number }>,
 ): Segment[] {
   return utterances.map((u) => ({
-    speakerId: u.speaker.startsWith('A') || u.speaker.startsWith('B')
-      ? `speaker_${u.speaker}`
-      : u.speaker,
+    speakerId: normalizeSpeakerId(u.speaker),
     startTime: Math.round(u.start),
     endTime: Math.round(u.end),
     text: u.text.trim(),
@@ -47,16 +53,18 @@ function wordsToSegments(words: AssemblyAIWord[], opts: AsrOpts): Segment[] {
   if (words.length === 0) return [];
 
   const segments: Segment[] = [];
-  let currentSpeaker = opts.speakerDiarization && words[0]?.speaker
-    ? words[0].speaker
-    : 'speaker_0';
+  let currentSpeaker = normalizeSpeakerId(
+    opts.speakerDiarization && words[0]?.speaker ? words[0].speaker : undefined,
+  );
   let currentStart = words[0]!.start;
   let currentEnd = words[0]!.end;
   let currentText = words[0]!.text;
 
   for (let i = 1; i < words.length; i++) {
     const w = words[i]!;
-    const speaker = opts.speakerDiarization && w.speaker ? w.speaker : 'speaker_0';
+    const speaker = normalizeSpeakerId(
+      opts.speakerDiarization && w.speaker ? w.speaker : undefined,
+    );
 
     if (speaker === currentSpeaker && w.start - currentEnd < 500) {
       currentEnd = w.end;
@@ -87,13 +95,6 @@ function wordsToSegments(words: AssemblyAIWord[], opts: AsrOpts): Segment[] {
   return segments;
 }
 
-function sortSegments(segments: Segment[]): Segment[] {
-  return [...segments].sort((a, b) => {
-    if (a.startTime !== b.startTime) return a.startTime - b.startTime;
-    return a.speakerId.localeCompare(b.speakerId);
-  });
-}
-
 const SUPPORTED_LANGUAGES = [
   'en', 'es', 'fr', 'de', 'it', 'ja', 'ko', 'pt', 'ru', 'zh',
   'nl', 'pl', 'tr', 'ar', 'hi', 'id', 'th', 'vi', 'sv', 'da',
@@ -114,8 +115,17 @@ export class AssemblyAIAdapter implements AsrAdapter {
     audio: ReadableStream<Uint8Array>,
     opts: AsrOpts,
   ): AsyncIterable<Segment> {
-    const buffer = await this.streamToBuffer(audio);
-    const segments = await this.transcribeFromBuffer(buffer, opts);
+    const chunks = await readAudioChunkStream(
+      audio as ReadableStream<Uint8Array | import('recfn').AudioChunk>,
+    );
+    const combinedSize = chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0);
+    const combined = new Uint8Array(combinedSize);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk.data, offset);
+      offset += chunk.data.byteLength;
+    }
+    const segments = await this.transcribeFromBuffer(combined.buffer, opts);
     for (const seg of segments) {
       yield seg;
     }
@@ -131,21 +141,25 @@ export class AssemblyAIAdapter implements AsrAdapter {
   }
 
   private async uploadFile(audioRef: string): Promise<string> {
-    const res = await this.fetchFn(audioRef);
-    if (!res.ok) throw new Error(`Failed to fetch audio: ${res.status}`);
-    const buffer = await res.arrayBuffer();
+    const buffer = await fetchArrayBufferOrThrow(
+      this.fetchFn,
+      audioRef,
+      'Failed to fetch audio',
+    );
 
-    const uploadRes = await this.fetchFn('https://api.assemblyai.com/v2/upload', {
+    const data = await fetchJsonOrThrow<{ upload_url?: string }>(
+      this.fetchFn,
+      'https://api.assemblyai.com/v2/upload',
+      {
       method: 'POST',
       headers: {
         Authorization: this.apiKey,
         'Content-Type': 'application/octet-stream',
       },
       body: buffer,
-    });
-
-    if (!uploadRes.ok) throw new Error(`AssemblyAI upload error: ${uploadRes.status}`);
-    const data = (await uploadRes.json()) as { upload_url?: string };
+      },
+      'AssemblyAI upload error',
+    );
     if (!data.upload_url) throw new Error('No upload_url in response');
     return data.upload_url;
   }
@@ -153,7 +167,10 @@ export class AssemblyAIAdapter implements AsrAdapter {
   private async transcribeFromUrl(url: string, opts: AsrOpts): Promise<Segment[]> {
     const lang = extractLanguageCode(opts.language);
 
-    const submitRes = await this.fetchFn('https://api.assemblyai.com/v2/transcript', {
+    const submitData = await fetchJsonOrThrow<{ id?: string }>(
+      this.fetchFn,
+      'https://api.assemblyai.com/v2/transcript',
+      {
       method: 'POST',
       headers: {
         Authorization: this.apiKey,
@@ -164,71 +181,54 @@ export class AssemblyAIAdapter implements AsrAdapter {
         language_code: lang,
         speaker_labels: opts.speakerDiarization,
       }),
-    });
-
-    if (!submitRes.ok) throw new Error(`AssemblyAI submit error: ${submitRes.status}`);
-    const submitData = (await submitRes.json()) as { id?: string };
+      },
+      'AssemblyAI submit error',
+    );
     const transcriptId = submitData.id;
     if (!transcriptId) throw new Error('No transcript id');
 
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const pollRes = await this.fetchFn(
-        `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
-        { headers: { Authorization: this.apiKey } },
+    const data = await pollUntil(
+      () =>
+        fetchJsonOrThrow<AssemblyAIResponse>(
+          this.fetchFn,
+          `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
+          { headers: { Authorization: this.apiKey } },
+          'AssemblyAI poll error',
+        ),
+      {
+        intervalMs: 1000,
+        maxAttempts: 60,
+        isDone: (result) =>
+          result.status === 'completed' || result.status === 'error',
+        onExhausted: () => new Error('AssemblyAI transcription timeout'),
+      },
+    );
+
+    if (data.status === 'error') {
+      throw new Error('AssemblyAI transcription failed');
+    }
+    if (data.utterances?.length) {
+      return sortSegmentsDeterministically(
+        utterancesToSegments(data.utterances),
       );
-      if (!pollRes.ok) throw new Error(`AssemblyAI poll error: ${pollRes.status}`);
-      const data = (await pollRes.json()) as AssemblyAIResponse;
-
-      if (data.status === 'completed') {
-        if (data.utterances?.length) {
-          return sortSegments(utterancesToSegments(data.utterances));
-        }
-        const words = data.words ?? [];
-        return sortSegments(wordsToSegments(words, opts));
-      }
-      if (data.status === 'error') {
-        throw new Error('AssemblyAI transcription failed');
-      }
     }
-
-    throw new Error('AssemblyAI transcription timeout');
-  }
-
-  private async streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
-    const chunks: Uint8Array[] = [];
-    const reader = stream.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    const totalLen = chunks.reduce((s, c) => s + c.length, 0);
-    const buffer = new Uint8Array(totalLen);
-    let offset = 0;
-    for (const c of chunks) {
-      buffer.set(c, offset);
-      offset += c.length;
-    }
-    return buffer.buffer;
+    return sortSegmentsDeterministically(wordsToSegments(data.words ?? [], opts));
   }
 
   private async transcribeFromBuffer(buffer: ArrayBuffer, opts: AsrOpts): Promise<Segment[]> {
-    const uploadRes = await this.fetchFn('https://api.assemblyai.com/v2/upload', {
+    const uploadData = await fetchJsonOrThrow<{ upload_url?: string }>(
+      this.fetchFn,
+      'https://api.assemblyai.com/v2/upload',
+      {
       method: 'POST',
       headers: {
         Authorization: this.apiKey,
         'Content-Type': 'application/octet-stream',
       },
       body: buffer,
-    });
-
-    if (!uploadRes.ok) throw new Error(`AssemblyAI upload error: ${uploadRes.status}`);
-    const uploadData = (await uploadRes.json()) as { upload_url?: string };
+      },
+      'AssemblyAI upload error',
+    );
     if (!uploadData.upload_url) throw new Error('No upload_url');
     return this.transcribeFromUrl(uploadData.upload_url, opts);
   }

@@ -30,6 +30,14 @@ class GitHubIssue(BaseModel):
     updated_at: str
 
 
+class GitHubIssueGetParams(BaseModel):
+    """Parameters for getting a GitHub issue."""
+
+    owner: str = Field(..., description="Repository owner")
+    repo: str = Field(..., description="Repository name")
+    issue_number: int = Field(..., description="Issue number")
+
+
 class GitHubRepoParams(BaseModel):
     """Parameters for getting a repository."""
 
@@ -83,6 +91,27 @@ class GitHubIssuesCreateAction(GitHubAction):
                 "labels": validated.labels,
                 "assignees": validated.assignees,
             },
+        )
+
+        return response
+
+
+class GitHubIssuesGetAction(GitHubAction):
+    """Get a GitHub issue."""
+
+    def __init__(self):
+        super().__init__(
+            name="issues.get",
+            display_name="Get Issue",
+            description="Get a GitHub issue by number",
+        )
+
+    async def execute(self, params: Dict[str, Any], context: Any) -> Dict[str, Any]:
+        """Get a GitHub issue."""
+        validated = GitHubIssueGetParams(**params)
+
+        response = await context.http.get(
+            f"/repos/{validated.owner}/{validated.repo}/issues/{validated.issue_number}"
         )
 
         return response
@@ -146,38 +175,33 @@ github_provider = Provider(
     auth_type=AuthType.OAUTH2,
     icon_url="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
     rate_limit={"requests": 5000, "window": 3600000},  # 5000 per hour
+    auth_config={
+        "authorization_url": "https://github.com/login/oauth/authorize",
+        "token_url": "https://github.com/login/oauth/access_token",
+        "scopes": ["repo", "user"],
+        "scope_separator": " ",
+    },
+    actions={
+        "issues.create": GitHubIssuesCreateAction(),
+        "issues.get": GitHubIssuesGetAction(),
+        "repos.get": GitHubReposGetAction(),
+        "pulls.create": GitHubPRsCreateAction(),
+    },
+    triggers={
+        "issues.opened": {
+            "name": "issues.opened",
+            "display_name": "Issue Opened",
+            "description": "Triggered when an issue is opened",
+        },
+        "pull_request.opened": {
+            "name": "pull_request.opened",
+            "display_name": "Pull Request Opened",
+            "description": "Triggered when a pull request is opened",
+        },
+        "push": {
+            "name": "push",
+            "display_name": "Push",
+            "description": "Triggered when code is pushed",
+        },
+    },
 )
-
-# Add auth config
-github_provider.auth_config = {
-    "authorization_url": "https://github.com/login/oauth/authorize",
-    "token_url": "https://github.com/login/oauth/access_token",
-    "scopes": ["repo", "user"],
-    "scope_separator": " ",
-}
-
-# Add actions
-github_provider.actions = {
-    "issues.create": GitHubIssuesCreateAction(),
-    "repos.get": GitHubReposGetAction(),
-    "pulls.create": GitHubPRsCreateAction(),
-}
-
-# Add triggers (webhooks)
-github_provider.triggers = {
-    "issues.opened": {
-        "name": "issues.opened",
-        "display_name": "Issue Opened",
-        "description": "Triggered when an issue is opened",
-    },
-    "pull_request.opened": {
-        "name": "pull_request.opened",
-        "display_name": "Pull Request Opened",
-        "description": "Triggered when a pull request is opened",
-    },
-    "push": {
-        "name": "push",
-        "display_name": "Push",
-        "description": "Triggered when code is pushed",
-    },
-}

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OAuthProviderDescriptor } from "@superfunctions/oauth-core";
+import type { OAuthProviderDescriptor, OAuthProviderRuntimeConfigResolverInput } from "@superfunctions/oauth-core";
 import { MemoryOAuthStateStore, MemoryTokenVault } from "@superfunctions/oauth-storage";
 import { createOAuthFlowService, type OAuthFlowEvent } from "../index.js";
 
@@ -23,7 +23,22 @@ class CountingStateStore extends MemoryOAuthStateStore {
   }
 }
 
-function createHarness(startAt = "2026-01-01T00:00:00.000Z") {
+function createHarness(options?: {
+  startAt?: string;
+  tokenStorageMode?: "encrypted-required" | "plaintext-unsafe";
+  omitTokenStorageMode?: boolean;
+  providerRuntimeConfig?: {
+    google?: {
+      clientId?: string;
+      clientSecret?: string;
+      allowlistedRedirectUris?: string[];
+    };
+  };
+  resolveProviderRuntimeConfig?: (
+    input: OAuthProviderRuntimeConfigResolverInput
+  ) => Promise<{ clientId: string; clientSecret?: string; allowlistedRedirectUris?: string[] }> | { clientId: string; clientSecret?: string; allowlistedRedirectUris?: string[] };
+}) {
+  const startAt = options?.startAt ?? "2026-01-01T00:00:00.000Z";
   let nowMs = Date.parse(startAt);
   const now = () => new Date(nowMs);
   const advanceMs = (ms: number) => {
@@ -51,11 +66,18 @@ function createHarness(startAt = "2026-01-01T00:00:00.000Z") {
       google: {
         clientId: "client_google",
         clientSecret: "secret_google",
-        allowlistedRedirectUris: ["https://app.example/callback"]
+        allowlistedRedirectUris: ["https://app.example/callback"],
+        ...options?.providerRuntimeConfig?.google
       }
     },
+    resolveProviderRuntimeConfig: options?.resolveProviderRuntimeConfig,
     stateStore,
     tokenVault,
+    ...(options?.omitTokenStorageMode
+      ? {}
+      : {
+          tokenStorageMode: options?.tokenStorageMode ?? "plaintext-unsafe"
+        }),
     tokenHttpClient,
     now,
     emitEvent: (event) => events.push(event)
@@ -144,6 +166,56 @@ describe("oauth-flow start/callback invariants", () => {
     });
   });
 
+  it("start() prefers resolver-based runtime config over static config", async () => {
+    const resolveProviderRuntimeConfig = vi.fn(async ({ redirectUri }: OAuthProviderRuntimeConfigResolverInput) => ({
+      clientId: redirectUri === "https://app.example/callback" ? "resolver_client_google" : "fallback_client",
+      clientSecret: "resolver_secret_google",
+      allowlistedRedirectUris: ["https://app.example/callback"]
+    }));
+    const { service } = createHarness({
+      providerRuntimeConfig: {
+        google: {
+          clientId: "static_client_google",
+          clientSecret: "static_secret_google",
+          allowlistedRedirectUris: ["https://app.example/callback"]
+        }
+      },
+      resolveProviderRuntimeConfig
+    });
+
+    const started = await service.start({
+      providerId: "google",
+      tenantId: "tenant_1",
+      userId: "user_1",
+      redirectUri: "https://app.example/callback"
+    });
+
+    expect(resolveProviderRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(new URL(started.authorizationUrl).searchParams.get("client_id")).toBe("resolver_client_google");
+  });
+
+  it("start() fails with OAUTH_RUNTIME_CONFIG_INVALID when resolver omits clientId", async () => {
+    const { service } = createHarness({
+      resolveProviderRuntimeConfig: vi.fn(async () => ({
+        clientId: "",
+        allowlistedRedirectUris: ["https://app.example/callback"]
+      }))
+    });
+
+    await expect(
+      service.start({
+        providerId: "google",
+        tenantId: "tenant_1",
+        userId: "user_1",
+        redirectUri: "https://app.example/callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_RUNTIME_CONFIG_INVALID",
+      status: 500,
+      retryable: false
+    });
+  });
+
   it("handleCallback() succeeds once, persists token, and rejects replay deterministically", async () => {
     const { service, stateStore, tokenVault, events } = createHarness();
 
@@ -186,6 +258,82 @@ describe("oauth-flow start/callback invariants", () => {
       status: 400,
       retryable: false
     });
+  });
+
+  it("handleCallback() keeps legacy plaintext vaults working when tokenStorageMode is omitted", async () => {
+    const { service, tokenVault } = createHarness({
+      omitTokenStorageMode: true
+    });
+
+    const started = await service.start({
+      providerId: "google",
+      tenantId: "tenant_1",
+      userId: "user_1",
+      connectionId: "conn_legacy_plaintext",
+      redirectUri: "https://app.example/callback"
+    });
+
+    const connected = await service.handleCallback({
+      code: "auth-code",
+      state: started.stateId,
+      redirectUri: "https://app.example/callback"
+    });
+
+    expect(connected.connectionId).toBe("conn_legacy_plaintext");
+    await expect(tokenVault.getByConnection("conn_legacy_plaintext")).resolves.toMatchObject({
+      providerId: "google",
+      connectionId: "conn_legacy_plaintext"
+    });
+  });
+
+  it("handleCallback() rejects plaintext persistence by default and emits redaction-safe failure details", async () => {
+    const { service, tokenVault, events } = createHarness({
+      tokenStorageMode: "encrypted-required"
+    });
+
+    const started = await service.start({
+      providerId: "google",
+      tenantId: "tenant_1",
+      userId: "user_1",
+      connectionId: "conn_unsafe_default",
+      redirectUri: "https://app.example/callback"
+    });
+
+    await expect(
+      service.handleCallback({
+        code: "auth-code-unsafe",
+        state: started.stateId,
+        redirectUri: "https://app.example/callback",
+        requestId: "req_unsafe_callback"
+      })
+    ).rejects.toMatchObject({
+      code: "OAUTH_TOKEN_STORAGE_UNSAFE",
+      message: "encrypted token storage is required unless plaintext-unsafe mode is explicitly enabled",
+      status: 500,
+      retryable: false
+    });
+
+    expect(await tokenVault.getByConnection("conn_unsafe_default")).toBeNull();
+
+    const failureEvent = events.find((event) => event.name === "oauth.flow.callback.failed");
+    expect(failureEvent).toMatchObject({
+      providerId: "google",
+      requestId: "req_unsafe_callback",
+      errorCode: "OAUTH_TOKEN_STORAGE_UNSAFE"
+    });
+    expect(failureEvent?.details).toMatchObject({
+      operation: "handleCallback",
+      providerId: "google",
+      connectionId: "conn_unsafe_default",
+      storageMode: "encrypted-required",
+      vaultKind: "plaintext"
+    });
+
+    const serializedEvents = JSON.stringify(events);
+    expect(serializedEvents).not.toContain("access-token");
+    expect(serializedEvents).not.toContain("refresh-token");
+    expect(serializedEvents).not.toContain("secret_google");
+    expect(serializedEvents).not.toContain("encryptedPayload");
   });
 
   it("handleCallback() rejects callback mismatch with deterministic code", async () => {

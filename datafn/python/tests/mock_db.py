@@ -47,17 +47,23 @@ class MockAdapter:
                 
                 rv = r.get(field)
                 if op == "eq":
-                    if rv != val: match = False
+                    if rv != val:
+                        match = False
                 elif op == "gt":
-                    if not (rv > val): match = False
+                    if rv is None or val is None or not (rv > val):
+                        match = False
                 elif op == "gte":
-                    if not (rv >= val): match = False
+                    if rv is None or val is None or not (rv >= val):
+                        match = False
                 elif op == "lt":
-                    if not (rv < val): match = False
+                    if rv is None or val is None or not (rv < val):
+                        match = False
                 elif op == "lte":
-                    if not (rv <= val): match = False
+                    if rv is None or val is None or not (rv <= val):
+                        match = False
                 elif op == "in":
-                    if rv not in val: match = False
+                    if val is None or not isinstance(val, (list, tuple, set)) or rv not in val:
+                        match = False
             if match:
                 filtered.append(r)
         
@@ -65,11 +71,11 @@ class MockAdapter:
         # Only simple sort for now if needed by tests
         if sort:
             # Sort by first field
-            field = sort[0].split(":")[0]
-            desc = "desc" in sort[0]
+            field, _, direction = sort[0].partition(":")
+            desc = direction == "desc"
             filtered.sort(key=lambda x: x.get(field, ""), reverse=desc)
             
-        if limit:
+        if limit is not None:
             filtered = filtered[:limit]
             
         return filtered
@@ -80,7 +86,8 @@ class MockAdapter:
         return res[0] if res else None
 
     async def create(self, model: str, data: Dict[str, Any], namespace: str = "datafn") -> None:
-        if model not in self.data: self.data[model] = []
+        if model not in self.data:
+            self.data[model] = []
         # Ensure ID?
         if "id" not in data:
             import uuid

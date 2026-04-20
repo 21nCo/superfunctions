@@ -269,7 +269,7 @@ class ActionExecutor:
         if time_range:
             # Apply time filter (simplified)
             # In production, this would query from database
-            pass
+            logs = list(logs)
 
         if filters.get("provider"):
             logs = [l for l in logs if l.get("provider") == filters["provider"]]

@@ -1,10 +1,7 @@
 """FCM (Firebase Cloud Messaging) provider for push notifications."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
-
-import firebase_admin
-from firebase_admin import credentials, messaging
 
 from ..errors import PushProviderError
 from ..models import FcmConfig
@@ -26,7 +23,9 @@ class FcmProvider:
             config: FCM configuration
         """
         self.config = config
-        self._app: Optional[firebase_admin.App] = None
+        self._app: Optional[Any] = None
+        self._firebase_admin: Optional[Any] = None
+        self._messaging: Optional[Any] = None
 
     @property
     def name(self) -> str:
@@ -51,6 +50,17 @@ class FcmProvider:
 
     async def initialize(self) -> None:
         """Initialize Firebase app."""
+        try:
+            import firebase_admin
+            from firebase_admin import credentials, messaging
+        except ImportError as error:  # pragma: no cover - depends on optional extra
+            raise PushProviderError(
+                "FCM provider requires the firebase-admin dependency"
+            ) from error
+
+        self._firebase_admin = firebase_admin
+        self._messaging = messaging
+
         # Prevent multiple initializations
         if len(firebase_admin._apps) > 0:
             self._app = firebase_admin._apps.get("[DEFAULT]")
@@ -80,6 +90,7 @@ class FcmProvider:
         """
         if not self._app:
             await self.initialize()
+        assert self._messaging is not None
 
         # Build FCM multicast message
         # Convert all data values to strings (FCM requirement)
@@ -88,38 +99,39 @@ class FcmProvider:
             for key, value in request.data.items():
                 data_str[key] = str(value) if not isinstance(value, str) else value
 
-        message = messaging.MulticastMessage(
-            tokens=request.device_tokens,
-            notification=messaging.Notification(
-                title=request.title,
-                body=request.body,
-                image=request.image_url,
-            ),
-            data=data_str if data_str else None,
-            android=messaging.AndroidConfig(
-                priority=request.priority,
-                ttl=datetime.timedelta(seconds=request.ttl) if request.ttl else None,
-                collapse_key=request.collapse_key,
-                notification=messaging.AndroidNotification(
-                    sound=request.sound or "default",
-                ),
-            ),
-        )
+        invalid_tokens: list[str] = []
+        results: list[dict[str, Any]] = []
+        success_count = 0
+        failed_count = 0
 
         try:
-            # Send multicast message
-            response = messaging.send_each_for_multicast(message)
+            for start in range(0, len(request.device_tokens), 500):
+                chunk_tokens = request.device_tokens[start : start + 500]
+                message = self._messaging.MulticastMessage(
+                    tokens=chunk_tokens,
+                    notification=self._messaging.Notification(
+                        title=request.title,
+                        body=request.body,
+                        image=request.image_url,
+                    ),
+                    data=data_str if data_str else None,
+                    android=self._messaging.AndroidConfig(
+                        priority=request.priority,
+                        ttl=timedelta(seconds=request.ttl) if request.ttl else None,
+                        collapse_key=request.collapse_key,
+                        notification=self._messaging.AndroidNotification(
+                            sound=request.sound or "default",
+                        ),
+                    ),
+                )
+                response = self._messaging.send_each_for_multicast(message)
+                success_count += response.success_count
+                failed_count += response.failure_count
 
-            # Process results
-            invalid_tokens: list[str] = []
-            results: list[dict[str, Any]] = []
+                for idx, send_response in enumerate(response.responses):
+                    token = chunk_tokens[idx]
 
-            for idx, send_response in enumerate(response.responses):
-                token = request.device_tokens[idx]
-
-                if not send_response.success:
-                    # Check if token is invalid
-                    if send_response.exception:
+                    if not send_response.success and send_response.exception:
                         error_code = getattr(send_response.exception, "code", None)
                         if error_code in [
                             "messaging/registration-token-not-registered",
@@ -128,22 +140,22 @@ class FcmProvider:
                         ]:
                             invalid_tokens.append(token)
 
-                results.append(
-                    {
-                        "token": token,
-                        "success": send_response.success,
-                        "error": (
-                            send_response.exception.message
-                            if send_response.exception
-                            else None
-                        ),
-                    }
-                )
+                    results.append(
+                        {
+                            "token": token,
+                            "success": send_response.success,
+                            "error": (
+                                send_response.exception.message
+                                if send_response.exception
+                                else None
+                            ),
+                        }
+                    )
 
             return SendPushResponse(
-                success=response.failure_count == 0,
-                success_count=response.success_count,
-                failed_count=response.failure_count,
+                success=failed_count == 0,
+                success_count=success_count,
+                failed_count=failed_count,
                 invalid_tokens=invalid_tokens,
                 results=results,
                 timestamp=datetime.now(),
@@ -191,6 +203,6 @@ class FcmProvider:
 
     async def close(self) -> None:
         """Close the provider connection."""
-        if self._app:
-            firebase_admin.delete_app(self._app)
+        if self._app and self._firebase_admin:
+            self._firebase_admin.delete_app(self._app)
             self._app = None

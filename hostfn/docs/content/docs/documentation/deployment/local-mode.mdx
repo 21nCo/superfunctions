@@ -30,7 +30,7 @@ hostfn deploy production --local
 ## How It Works
 
 1. Instead of establishing an SSH connection, HostFn creates a `LocalExecutor` that runs commands using Node.js `child_process`
-2. Files are copied using `fs.cpSync` instead of rsync, respecting the same exclude patterns
+2. Files are copied using `fs.cpSync` instead of rsync, using local filtering based on the configured exclude list
 3. All other phases (build, PM2 deployment, health check) work identically
 
 ## Example: Self-Hosted Runner

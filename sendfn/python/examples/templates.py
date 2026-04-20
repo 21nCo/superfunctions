@@ -1,4 +1,9 @@
-"""Email template usage example."""
+"""Email template usage example.
+
+Run after:
+    python -m pip install -e ./packages/python-core
+    python -m pip install -e './sendfn/python[email]'
+"""
 
 import asyncio
 
@@ -23,8 +28,8 @@ async def main():
         ),
     )
 
-    # Create sendfn client
-    sendfn = create_sendfn(config)
+    # Create client
+    client = create_sendfn(config)
 
     # Register a custom template
     custom_template = EmailTemplate(
@@ -56,11 +61,11 @@ async def main():
         variables=["inviteeName", "inviterName", "appName", "inviteUrl", "expiryDays", "message"],
     )
 
-    await sendfn.register_template(custom_template)
+    await client.register_template(custom_template)
 
     # Send email using custom template
     print("Sending invitation email...")
-    transaction = await sendfn.send_email(
+    transaction = await client.send_email(
         SendEmailParams(
             user_id="user-123",
             to="newuser@example.com",
@@ -80,7 +85,7 @@ async def main():
 
     # Use built-in template (welcome-email)
     print("\nSending welcome email using built-in template...")
-    welcome_transaction = await sendfn.send_email(
+    welcome_transaction = await client.send_email(
         SendEmailParams(
             user_id="user-456",
             to="user@example.com",
@@ -96,7 +101,7 @@ async def main():
     print(f"Welcome email sent! Transaction ID: {welcome_transaction.id}")
 
     # List all templates
-    templates = await sendfn.list_templates()
+    templates = await client.list_templates()
     print(f"\nRegistered templates ({len(templates)}):")
     for template in templates:
         print(f"  - {template.id}: {template.name}")

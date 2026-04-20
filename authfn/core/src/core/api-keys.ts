@@ -36,6 +36,7 @@ export async function createApiKey(
   options?: { now?: () => Date; secretPrefix?: string }
 ): Promise<CreatedApiKey> {
   assertValidApiKeyName(input.name);
+  assertValidApiKeyExpiry(input.expiresAt);
   const now = options?.now?.() ?? new Date();
   const secret = createApiKeySecret(options?.secretPrefix);
   const record: AuthFnApiKeyRecord = {
@@ -168,9 +169,9 @@ export async function authenticateApiKey(
     methods: ['api-key'],
     expiresAt: updatedRecord.expiresAt ?? undefined,
     metadata: {
+      ...(updatedRecord.metadata ?? {}),
       ownerUserId: updatedRecord.userId ?? undefined,
-      scopes: updatedRecord.scopes ?? [],
-      ...(updatedRecord.metadata ?? {})
+      scopes: updatedRecord.scopes ?? []
     }
   };
 }
@@ -215,6 +216,18 @@ function assertValidApiKeyName(name: string): void {
       field: 'name',
       maxBytes: 128,
       receivedBytes: bytes
+    });
+  }
+}
+
+function assertValidApiKeyExpiry(expiresAt: Date | undefined): void {
+  if (!expiresAt) {
+    return;
+  }
+
+  if (!(expiresAt instanceof Date) || Number.isNaN(expiresAt.getTime())) {
+    throw new AuthFnValidationError('API key expiry must be a valid date', {
+      field: 'expiresAt'
     });
   }
 }

@@ -9,15 +9,19 @@ export interface UploadOptions {
   triggerTranscription?: boolean;
 }
 
+export type UploadableRecording = Uint8Array | ArrayBuffer | Blob;
+
 /**
  * Upload a recording file to the recfn server.
  */
 export async function uploadRecording(
   client: RecFn,
-  file: Uint8Array | Blob,
+  file: UploadableRecording,
   options: UploadOptions,
 ) {
-  return client.recordings.upload(file, {
+  const payload =
+    file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+  return client.recordings.upload(payload, {
     botId: options.botId,
     transcribe: options.triggerTranscription,
   });

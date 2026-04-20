@@ -6,7 +6,8 @@ import { useId } from './hooks/use-id';
 import { useOutsideClick } from './hooks/use-outside-click';
 import { usePosition, Side, Align } from './hooks/use-position';
 import { Portal } from './portal';
-import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from './dropdown-menu';
+import { DropdownMenuSeparator, DropdownMenuLabel } from './dropdown-menu';
+import { assertReactContext } from './utils/assert-context';
 
 /* -------------------------------------------------------------------------------------------------
  * MenuBar Root
@@ -22,11 +23,11 @@ interface MenuBarContextValue {
 const MenuBarContext = createContext<MenuBarContextValue | undefined>(undefined);
 
 const useMenuBarContext = () => {
-  const context = useContext(MenuBarContext);
-  if (!context) {
-    throw new Error('MenuBar components must be used within a MenuBar');
-  }
-  return context;
+  return assertReactContext(
+    useContext(MenuBarContext),
+    'MenuBar',
+    'MenuBar components must be used within a MenuBar'
+  );
 };
 
 export interface MenuBarProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -56,7 +57,7 @@ export const MenuBar = React.forwardRef<HTMLDivElement, MenuBarProps>(
     const rootRef = useRef<HTMLDivElement>(null);
     const composedRef = useComposedRefs(ref, rootRef);
 
-    const { handleKeyDown } = useRovingFocus({
+    const { handleKeyDown, currentInfo } = useRovingFocus({
       getItems: () => {
         if (!rootRef.current) return [];
         return Array.from(rootRef.current.querySelectorAll('[role="menuitem"]'));
@@ -64,6 +65,15 @@ export const MenuBar = React.forwardRef<HTMLDivElement, MenuBarProps>(
       orientation: 'horizontal',
       loop,
     });
+
+    React.useEffect(() => {
+      if (!currentInfo.id || !rootRef.current) {
+        return;
+      }
+
+      const nextItem = rootRef.current.querySelector<HTMLElement>(`#${currentInfo.id}`);
+      nextItem?.focus();
+    }, [currentInfo.id]);
 
     return (
       <MenuBarContext.Provider
@@ -77,8 +87,7 @@ export const MenuBar = React.forwardRef<HTMLDivElement, MenuBarProps>(
         <div
           ref={composedRef}
           role="menubar"
-          tabIndex={0} // The bar itself might take focus or delegate? Actually usually triggers take focus.
-          // Roving focus will manage tabIndex on triggers.
+          tabIndex={-1}
           onKeyDown={handleKeyDown}
           {...domProps}
         >
@@ -150,9 +159,11 @@ export const MenuBarTrigger = React.forwardRef<HTMLButtonElement, MenuBarTrigger
   (props, ref) => {
     const { onClick, onFocus, onKeyDown, onMouseEnter, ...domProps } = props;
     const context = useMenuBarContext();
-    const menuContext = useContext(MenuBarMenuContext);
-
-    if (!menuContext) throw new Error('MenuBarTrigger must be used within MenuBarMenu');
+    const menuContext = assertReactContext(
+      useContext(MenuBarMenuContext),
+      'MenuBarTrigger',
+      'MenuBarTrigger must be used within MenuBarMenu'
+    );
 
     const composedRef = useComposedRefs(ref, menuContext.triggerRef);
 
@@ -202,8 +213,9 @@ export const MenuBarTrigger = React.forwardRef<HTMLButtonElement, MenuBarTrigger
         aria-controls={menuContext.open ? menuContext.contentId : undefined}
         id={menuContext.triggerId}
         data-state={menuContext.open ? 'open' : 'closed'}
-        tabIndex={menuContext.open ? 0 : -1} // Roving focus manages this usually, but initial state?
-        // Actually Roving Focus sets tabindex.
+        data-menubar-trigger=""
+        data-menu-value={menuContext.value}
+        tabIndex={0}
         onClick={handleClick}
         onFocus={handleFocus}
         onMouseEnter={handleMouseEnter}
@@ -242,12 +254,16 @@ export const MenuBarContent = React.forwardRef<HTMLDivElement, MenuBarContentPro
         } = props;
 
         const context = useMenuBarContext();
-        const menuContext = useContext(MenuBarMenuContext);
-        if (!menuContext) throw new Error('MenuBarContent must be used within MenuBarMenu');
+        const menuContext = assertReactContext(
+          useContext(MenuBarMenuContext),
+          'MenuBarContent',
+          'MenuBarContent must be used within MenuBarMenu'
+        );
 
         const { style: positionStyle } = usePosition(menuContext.triggerRef, menuContext.contentRef, {
             side, align, sideOffset, alignOffset
         });
+        const composedRef = useComposedRefs(ref, menuContext.contentRef);
 
         // Click Outside
         useOutsideClick(menuContext.contentRef, (e) => {
@@ -261,7 +277,7 @@ export const MenuBarContent = React.forwardRef<HTMLDivElement, MenuBarContentPro
         return (
              <Portal>
                  <div
-                     ref={useComposedRefs(ref, menuContext.contentRef)}
+                     ref={composedRef}
                      role="menu"
                      id={menuContext.contentId}
                      aria-labelledby={menuContext.triggerId}
@@ -276,11 +292,38 @@ export const MenuBarContent = React.forwardRef<HTMLDivElement, MenuBarContentPro
                      }}
                      onKeyDown={(e) => {
                          onKeyDown?.(e);
-                         // Handle Arrow Left/Right to switch menus?
-                         if (e.key === 'ArrowRight') {
-                             // Logic to switch to next menu in bar?
-                             // requires access to all triggers or context.
+                         if (e.defaultPrevented) {
+                           return;
                          }
+
+                         if (e.key === 'Escape') {
+                           e.preventDefault();
+                           context.onValueChange('');
+                           menuContext.triggerRef.current?.focus();
+                           return;
+                         }
+
+                         if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') {
+                           return;
+                         }
+
+                         const triggers = Array.from(
+                           context.rootRef.current?.querySelectorAll<HTMLElement>('[data-menubar-trigger]') ?? []
+                         );
+                         const currentIndex = triggers.findIndex(
+                           (trigger) => trigger.id === menuContext.triggerId
+                         );
+                         if (currentIndex === -1 || triggers.length === 0) {
+                           return;
+                         }
+
+                         e.preventDefault();
+                         const direction = e.key === 'ArrowRight' ? 1 : -1;
+                         const nextTrigger =
+                           triggers[(currentIndex + direction + triggers.length) % triggers.length];
+                         const nextValue = nextTrigger.dataset.menuValue ?? '';
+                         context.onValueChange(nextValue);
+                         nextTrigger.focus();
                      }}
                      {...domProps}
                  >
@@ -293,5 +336,58 @@ export const MenuBarContent = React.forwardRef<HTMLDivElement, MenuBarContentPro
 
 MenuBarContent.displayName = 'MenuBarContent';
 
-// Re-export Items for convenience
-export { DropdownMenuItem as MenuBarItem, DropdownMenuSeparator as MenuBarSeparator, DropdownMenuLabel as MenuBarLabel };
+export interface MenuBarItemProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onSelect'> {
+  disabled?: boolean;
+  onSelect?: (event: Event) => void;
+}
+
+export const MenuBarItem = React.forwardRef<HTMLDivElement, MenuBarItemProps>(
+  (props, ref) => {
+    const { children, disabled, onSelect, onClick, onKeyDown, style, ...domProps } = props;
+    const context = useMenuBarContext();
+
+    const handleSelect = (event: React.MouseEvent | React.KeyboardEvent) => {
+      if (disabled) {
+        return;
+      }
+
+      onSelect?.(event.nativeEvent);
+      onClick?.(event as never);
+      if (!event.defaultPrevented) {
+        context.onValueChange('');
+      }
+    };
+
+    return (
+      <div
+        ref={ref}
+        role="menuitem"
+        aria-disabled={disabled ? 'true' : undefined}
+        tabIndex={disabled ? -1 : 0}
+        data-disabled={disabled ? '' : undefined}
+        onClick={handleSelect}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (event.key === 'Enter' || event.key === ' ') {
+            handleSelect(event);
+            event.preventDefault();
+          }
+        }}
+        style={{
+          padding: '5px 10px',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.5 : 1,
+          outline: 'none',
+          ...style,
+        }}
+        {...domProps}
+      >
+        {children}
+      </div>
+    );
+  }
+);
+
+MenuBarItem.displayName = 'MenuBarItem';
+
+export { DropdownMenuSeparator as MenuBarSeparator, DropdownMenuLabel as MenuBarLabel };

@@ -1,172 +1,88 @@
 # @searchfn/server
 
-A lightweight, database-backed full-text search engine designed to work seamlessly as a plugin for **DataFn**.
-
-It provides simple, efficient indexing and search capabilities for your DataFn models without requiring a dedicated search infrastructure (like Elasticsearch) for small-to-medium datasets. It leverages your existing database adapter to store inverted indices.
-
-## Features
-
-- **Zero-Infrastructure**: Uses your existing `@superfunctions/db` adapter (Postgres, SQLite, etc.).
-- **DataFn Integration**: Automatically understands your DataFn schema to index string fields.
-- **Pluggable**: Exposes standard HTTP endpoints compatible with SuperFunctions HTTP abstraction.
-- **Simple API**: Easy-to-use endpoints for manual indexing and querying.
+`@searchfn/server` exposes SearchFn over the shared `@superfunctions/http` router abstraction. It does not implement indexing itself; instead, it wraps any `SearchAdapter` with validated HTTP endpoints.
 
 ## Installation
 
 ```bash
-npm install @searchfn/server @superfunctions/db @datafn/core
+npm install @searchfn/server @searchfn/adapter-memory @superfunctions/http
 ```
+
+Use a concrete adapter such as `@searchfn/adapter-memory`, `@searchfn/adapter-indexeddb`, `@searchfn/adapter-postgres`, `@searchfn/adapter-elasticsearch`, or `@searchfn/adapter-meilisearch`.
 
 ## Quick Start
 
-### 1. Initialize the Server
-
-Integrate `searchfn` into your server setup alongside `datafn`.
-
-```typescript
+```ts
 import { createSearchFnServer } from "@searchfn/server";
-import { PostgresAdapter } from "@superfunctions/db-postgres";
-import { mySchema } from "./schema"; // Your DataFn schema
+import { MemoryAdapter } from "@searchfn/adapter-memory";
 
-// 1. Initialize DB Adapter
-const db = new PostgresAdapter({ connectionString: process.env.DATABASE_URL });
-await db.initialize();
-
-// 2. Create SearchFn Server
-const searchFn = await createSearchFnServer({
-  schema: mySchema,
-  db: db,
-  tablePrefix: "_searchfn_", // Optional: default is "_searchfn_"
+const adapter = new MemoryAdapter();
+await adapter.initialize?.({
+  resources: [{ name: "docs", searchFields: ["title", "body"] }],
 });
 
-// 3. Mount Routes (example using standard Request/Response)
-// You can mount searchFn.router directly if using SuperFunctions HTTP
-// or use a generic handler adapter for Express/Fastify/Next.js.
+const searchfn = await createSearchFnServer({
+  adapter,
+  basePath: "/searchfn",
+});
+
+const response = await searchfn.router.handle(
+  new Request("http://localhost/searchfn/search", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ resource: "docs", query: "hybrid" }),
+  }),
+);
 ```
 
-### 2. Index Your Data
+## Endpoints
 
-Trigger an indexing job. This scans your models and populates the search index.
+- `GET /searchfn/status`
+- `POST /searchfn/index`
+- `POST /searchfn/search`
+- `POST /searchfn/search-all`
+- `POST /searchfn/remove`
+- `POST /searchfn/clear`
 
-```bash
-curl -X POST http://localhost:3000/searchfn/index \
-  -H "Content-Type: application/json" \
-  -d '{ "model": "posts" }'
-```
+All JSON responses use the canonical envelope shape:
 
-### 3. Perform a Search
-
-```bash
-curl -X POST http://localhost:3000/searchfn/search \
-  -H "Content-Type: application/json" \
-  -d '{ "query": "hello world", "model": "posts", "limit": 10 }'
-```
-
-## Architecture
-
-SearchFn uses an **Inverted Index** approach stored in a table (default: `_searchfn_index`) within your database.
-
-- **Tokenization**: Text is split into tokens (words), normalized to lowercase, and stripped of special characters.
-- **Storage**: Maps `token -> [ (model, recordId, field) ]`.
-- **Querying**: Looks up tokens from the query string, finds matching records, and ranks them by occurrence frequency (score).
-
-### Database Schema
-
-The plugin expects (or will attempt to use) a table structure similar to:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `term` | String | The tokenized word |
-| `model` | String | The DataFn model name |
-| `recordId` | String | The ID of the record containing the term |
-| `field` | String | The specific field name |
-
-## API Reference
-
-### `createSearchFnServer(config)`
-
-Creates a new server instance.
-
-**Config Options:**
-
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `schema` | `DatafnSchema` | Yes | Your DataFn application schema. |
-| `db` | `Adapter` | Yes | An initialized `@superfunctions/db` adapter. |
-| `tablePrefix`| `string` | No | Prefix for internal tables. Default: `_searchfn_` |
-
-### HTTP Endpoints
-
-#### `POST /searchfn/index`
-
-Triggers the indexing process.
-
-**Body:**
-```json
-{
-  "model": "optional_model_name"
-}
-```
-If `model` is omitted, all models in the schema with string fields will be indexed.
-
-#### `POST /searchfn/search`
-
-Performs a full-text search.
-
-**Body:**
-```json
-{
-  "query": "search terms",
-  "model": "optional_model_filter",
-  "limit": 20
-}
-```
-
-**Response:**
 ```json
 {
   "ok": true,
-  "results": [
-    {
-      "id": "record_123",
-      "model": "posts",
-      "score": 5,
-      "matches": ["search", "terms"]
-    }
-  ]
+  "result": {}
 }
 ```
 
-## Advanced Usage
+or
 
-### Custom Indexing Logic
-
-You can import `indexData` directly if you want to run indexing as a background job or CLI script instead of via HTTP.
-
-```typescript
-import { indexData } from "@searchfn/server";
-
-await indexData({
-  schema: mySchema,
-  db: db,
-  model: "users"
-});
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "DFQL_INVALID",
+    "message": "Search query must not be empty"
+  }
+}
 ```
 
-### Custom Search Logic
+## Configuration
 
-Similarly, use `searchIndex` for programmatic searching:
-
-```typescript
-import { searchIndex } from "@searchfn/server";
-
-const results = await searchIndex({
-  schema: mySchema,
-  db: db,
-  query: "john doe"
-});
+```ts
+type SearchFnServerConfig<TContext> = {
+  adapter: SearchAdapter;
+  basePath?: string;
+  limits?: Partial<ServerLimits>;
+  authorize?: (
+    ctx: TContext,
+    action: "status" | "index" | "search" | "searchAll" | "remove" | "clear",
+    payload: unknown,
+  ) => Promise<boolean> | boolean;
+  logger?: SearchFnLogger;
+};
 ```
 
-## License
+### Notes
 
-MIT
+- `authorize(...)` runs before each handler and receives the parsed JSON payload when applicable.
+- `limits` controls payload size, query length, search fan-out, and indexing batch caps.
+- `close()` delegates to `adapter.dispose()` when the adapter implements it.

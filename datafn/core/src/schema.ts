@@ -4,7 +4,13 @@
  * Validates and normalizes DataFn schemas according to SCHEMA-001.
  */
 
-import type { DatafnSchema, DatafnResourceSchema, RelationSimpleCapability } from "./types.js";
+import type {
+  DatafnFieldSchema,
+  DatafnRelationSchema,
+  DatafnSchema,
+  DatafnResourceSchema,
+  RelationSimpleCapability,
+} from "./types.js";
 import type {
   CapabilityEntry,
   ResourceCapabilities,
@@ -36,6 +42,24 @@ const SHAREABLE_PRINCIPAL_MODES = new Set(["opaque-id"]);
 const RELATION_SIMPLE_CAPABILITIES: ReadonlySet<RelationSimpleCapability> = new Set([
   "timestamps",
   "audit",
+]);
+
+const FIELD_TYPES: ReadonlySet<DatafnFieldSchema["type"]> = new Set([
+  "string",
+  "number",
+  "boolean",
+  "object",
+  "array",
+  "date",
+  "file",
+  "json",
+]);
+
+const RELATION_TYPES: ReadonlySet<DatafnRelationSchema["type"]> = new Set([
+  "one-many",
+  "many-one",
+  "many-many",
+  "htree",
 ]);
 
 // Canonical ordering for relation capabilities (RCAP-004)
@@ -195,6 +219,7 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
     }
 
     const fieldNames = new Set<string>();
+    const normalizedFields: DatafnResourceSchema["fields"] = [];
     for (const field of r.fields) {
       if (typeof field !== "object" || field === null || Array.isArray(field)) {
         return err("SCHEMA_INVALID", "Invalid schema: field must be object", {
@@ -216,7 +241,35 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
           { path: "resources" }
         );
       }
+      const normalizedType =
+        f.type === "id" ? "string" : (f.type as DatafnFieldSchema["type"]);
+      if (!FIELD_TYPES.has(normalizedType)) {
+        return err(
+          "SCHEMA_INVALID",
+          `Invalid schema: field.type must be one of ${[...FIELD_TYPES].join(", ")}`,
+          { path: `resources.${r.name}.fields.${f.name}.type` }
+        );
+      }
+      let normalizedRequired: boolean;
+      if (typeof f.required === "boolean") {
+        normalizedRequired = f.required;
+      } else if (f.required === undefined) {
+        // Preserve legacy shorthand: `required` defaulted to false, except for `id`.
+        normalizedRequired = f.name === "id";
+      } else {
+        return err(
+          "SCHEMA_INVALID",
+          "Invalid schema: field.required must be boolean",
+          { path: `resources.${r.name}.fields.${f.name}.required` }
+        );
+      }
       fieldNames.add(f.name);
+      normalizedFields.push({
+        ...(f as Omit<DatafnFieldSchema, "type" | "required">),
+        name: f.name,
+        type: normalizedType,
+        required: normalizedRequired,
+      });
     }
 
     const resourceCapsResult = parseResourceCapabilities(r.capabilities);
@@ -254,18 +307,40 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
       search: string[];
       vector: string[];
     };
+    const normalizeIndexFields = (
+      value: unknown,
+      path: string,
+    ): DatafnEnvelope<string[]> => {
+      if (value === undefined) return ok([]);
+      if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+        return err(
+          "SCHEMA_INVALID",
+          "Invalid schema: index definitions must be string[]",
+          { path },
+        );
+      }
+      return ok([...value]);
+    };
     if (Array.isArray(r.indices)) {
+      const baseIndices = normalizeIndexFields(r.indices, `resources.${r.name}.indices`);
+      if (!baseIndices.ok) return baseIndices;
       normalizedIndices = {
-        base: r.indices as string[],
+        base: baseIndices.result,
         search: [],
         vector: [],
       };
     } else if (r.indices && typeof r.indices === "object") {
       const idx = r.indices as Record<string, unknown>;
+      const base = normalizeIndexFields(idx.base, `resources.${r.name}.indices.base`);
+      if (!base.ok) return base;
+      const search = normalizeIndexFields(idx.search, `resources.${r.name}.indices.search`);
+      if (!search.ok) return search;
+      const vector = normalizeIndexFields(idx.vector, `resources.${r.name}.indices.vector`);
+      if (!vector.ok) return vector;
       normalizedIndices = {
-        base: (idx.base as string[]) || [],
-        search: (idx.search as string[]) || [],
-        vector: (idx.vector as string[]) || [],
+        base: base.result,
+        search: search.result,
+        vector: vector.result,
       };
     } else {
       normalizedIndices = { base: [], search: [], vector: [] };
@@ -287,13 +362,14 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
     normalizedResources.push({
       ...r,
       capabilities: resourceCapsResult.result as DatafnResourceSchema["capabilities"],
-      fields: [...(r.fields as DatafnResourceSchema["fields"]), ...injectedFields],
+      fields: [...normalizedFields, ...injectedFields],
       indices: normalizedIndices,
     } as DatafnResourceSchema);
   }
 
   // Normalize relations (default to empty array)
   const relations = Array.isArray(s.relations) ? s.relations : [];
+  const normalizedRelations: DatafnSchema["relations"] = [];
 
   // Validate relation fields
   for (const rel of relations) {
@@ -304,11 +380,106 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
     }
     const r = rel as Record<string, unknown>;
 
+    if (r.from === undefined || r.to === undefined || r.type === undefined) {
+      return err(
+        "SCHEMA_INVALID",
+        "Invalid schema: relation.from, relation.to, and relation.type are required",
+        { path: "relations" },
+      );
+    }
+
+    const normalizeRelationEndpoint = (
+      ref: unknown,
+      side: "from" | "to",
+    ): DatafnEnvelope<string | string[]> => {
+      if (typeof ref === "string") return ok(ref);
+      if (!Array.isArray(ref) || ref.length === 0 || !ref.every((value) => typeof value === "string")) {
+        return err(
+          "SCHEMA_INVALID",
+          `Invalid schema: relation.${side} must be a string or non-empty string[]`,
+          { path: `relations.${side}` },
+        );
+      }
+      return ok([...ref] as string[]);
+    };
+
+    const normalizedFrom = normalizeRelationEndpoint(r.from, "from");
+    if (!normalizedFrom.ok) return normalizedFrom;
+    const normalizedTo = normalizeRelationEndpoint(r.to, "to");
+    if (!normalizedTo.ok) return normalizedTo;
+
+    if (!RELATION_TYPES.has(r.type as DatafnRelationSchema["type"])) {
+      return err(
+        "SCHEMA_INVALID",
+        `Invalid schema: relation.type must be one of ${[...RELATION_TYPES].join(", ")}`,
+        { path: "relations.type" },
+      );
+    }
+    if (r.relation !== undefined && typeof r.relation !== "string") {
+      return err("SCHEMA_INVALID", "Invalid schema: relation.relation must be string", {
+        path: "relations.relation",
+      });
+    }
+    if (r.inverse !== undefined && typeof r.inverse !== "string") {
+      return err("SCHEMA_INVALID", "Invalid schema: relation.inverse must be string", {
+        path: "relations.inverse",
+      });
+    }
+    if (r.cache !== undefined && typeof r.cache !== "boolean") {
+      return err("SCHEMA_INVALID", "Invalid schema: relation.cache must be boolean", {
+        path: "relations.cache",
+      });
+    }
+    if (r.fkField !== undefined && typeof r.fkField !== "string") {
+      return err("SCHEMA_INVALID", "Invalid schema: relation.fkField must be string", {
+        path: "relations.fkField",
+      });
+    }
+    if (r.pathField !== undefined && typeof r.pathField !== "string") {
+      return err("SCHEMA_INVALID", "Invalid schema: relation.pathField must be string", {
+        path: "relations.pathField",
+      });
+    }
+    if (r.metadata !== undefined) {
+      if (!Array.isArray(r.metadata)) {
+        return err("SCHEMA_INVALID", "Invalid schema: relation.metadata must be array", {
+          path: "relations.metadata",
+        });
+      }
+      for (const field of r.metadata) {
+        if (typeof field !== "object" || field === null || Array.isArray(field)) {
+          return err("SCHEMA_INVALID", "Invalid schema: relation.metadata items must be objects", {
+            path: "relations.metadata",
+          });
+        }
+        const metaField = field as Record<string, unknown>;
+        if (typeof metaField.name !== "string") {
+          return err("SCHEMA_INVALID", "Invalid schema: relation.metadata.name must be string", {
+            path: "relations.metadata.name",
+          });
+        }
+        if (
+          !["string", "number", "boolean", "date", "object", "json"].includes(
+            metaField.type as string,
+          )
+        ) {
+          return err(
+            "SCHEMA_INVALID",
+            "Invalid schema: relation.metadata.type must be one of string, number, boolean, date, object, json",
+            { path: `relations.metadata.${metaField.name}.type` },
+          );
+        }
+      }
+    }
+
     // CLI-004: Validate that from/to reference declared resource names
-    const validateRelationRef = (ref: unknown, side: "from" | "to") => {
-      const refs = Array.isArray(ref) ? ref : (typeof ref === "string" ? [ref] : []);
+    const validateRelationRef = (
+      ref: string | string[],
+      side: "from" | "to",
+    ): DatafnEnvelope<never> | null => {
+      const refs = Array.isArray(ref) ? ref : [ref];
       for (const name of refs) {
-        if (typeof name === "string" && !resourceNames.has(name)) {
+        if (!resourceNames.has(name)) {
           return err(
             "SCHEMA_INVALID",
             `Invalid schema: relation.${side} references unknown resource "${name}". Available: ${[...resourceNames].join(", ")}`,
@@ -318,14 +489,10 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
       }
       return null;
     };
-    if (r.from !== undefined) {
-      const e = validateRelationRef(r.from, "from");
-      if (e) return e;
-    }
-    if (r.to !== undefined) {
-      const e = validateRelationRef(r.to, "to");
-      if (e) return e;
-    }
+    const fromRefError = validateRelationRef(normalizedFrom.result, "from");
+    if (fromRefError) return fromRefError;
+    const toRefError = validateRelationRef(normalizedTo.result, "to");
+    if (toRefError) return toRefError;
 
     if (r.joinTable !== undefined && typeof r.joinTable !== "string") {
       return err("SCHEMA_INVALID", "Invalid schema: relation.joinTable must be string", {
@@ -347,6 +514,7 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
     }
 
     // RCAP-001, RCAP-002, RCAP-003: Validate relation capabilities if present
+    let normalizedRelationCapabilities: RelationSimpleCapability[] | undefined;
     if (r.capabilities !== undefined) {
       if (r.type !== "many-many") {
         return err(
@@ -357,6 +525,7 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
       }
       const capResult = resolveRelationCapabilities(r.capabilities);
       if (!capResult.ok) return capResult;
+      normalizedRelationCapabilities = capResult.result;
 
       // RCAP-003: Detect collisions between relation metadata fields and injected capability fields
       if (Array.isArray(r.metadata) && capResult.result.length > 0) {
@@ -373,6 +542,13 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
         }
       }
     }
+
+    normalizedRelations.push({
+      ...(r as Omit<DatafnRelationSchema, "from" | "to" | "capabilities">),
+      from: normalizedFrom.result,
+      to: normalizedTo.result,
+      capabilities: normalizedRelationCapabilities,
+    });
   }
 
   const namespaced = resolveNamespaced(s);
@@ -380,7 +556,7 @@ export function validateSchema(schema: unknown): DatafnEnvelope<DatafnSchema> {
   return ok({
     capabilities: globalCapabilities,
     resources: normalizedResources,
-    relations: relations as DatafnSchema["relations"],
+    relations: normalizedRelations,
     namespaced,
   });
 }

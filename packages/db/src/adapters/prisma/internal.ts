@@ -1,98 +1,181 @@
-import type { InternalCrud, InternalColumnDef } from '../../adapter/types.js';
+import type {
+  InternalCrud,
+  InternalColumnDef,
+  InternalWhereClause,
+} from '../../adapter/types.js';
+import {
+  assertInternalColumnDefs,
+  assertInternalIdentifier,
+  assertInternalTableName,
+  assertInternalWhereClauses,
+  internalOperatorSql,
+  normalizeInternalResultCount,
+  parseInternalOrderBy,
+  quoteInternalIdentifier,
+  type InternalSqlDialect,
+} from '../internal-utils.js';
 
-const TABLE_NAME_RE = /^__datafn_[a-z0-9_]+$/;
+export type PrismaProvider = 'postgresql' | 'mysql' | 'sqlite' | 'cockroachdb';
 
-const OP_MAP: Record<string, string> = {
-  eq: '=',
-  ne: '!=',
-  gt: '>',
-  gte: '>=',
-  lt: '<',
-  lte: '<=',
-};
+function providerToDialect(provider: PrismaProvider): InternalSqlDialect {
+  return provider === 'mysql' ? 'mysql' : provider === 'sqlite' ? 'sqlite' : 'postgres';
+}
 
-function mapOp(op: string): string {
-  const mapped = OP_MAP[op];
-  if (!mapped) throw new Error(`Unsupported internal CRUD operator: ${op}`);
-  return mapped;
+function resolvePrismaProvider(prisma: any, provider?: PrismaProvider): PrismaProvider {
+  const resolved =
+    provider ??
+    prisma?._engineConfig?.activeProvider ??
+    prisma?._activeProvider ??
+    prisma?.$engineConfig?.activeProvider;
+
+  if (
+    resolved === 'postgresql' ||
+    resolved === 'mysql' ||
+    resolved === 'sqlite' ||
+    resolved === 'cockroachdb'
+  ) {
+    return resolved;
+  }
+
+  throw new Error(
+    'Prisma internal CRUD requires a provider (postgresql, mysql, sqlite, or cockroachdb) or a PrismaClient exposing activeProvider',
+  );
+}
+
+function placeholderFor(provider: PrismaProvider, index: number): string {
+  return provider === 'postgresql' || provider === 'cockroachdb' ? `$${index}` : '?';
 }
 
 function buildWhereSQL(
-  where: Array<{ field: string; op: string; value: unknown }>,
-): { clause: string; params: unknown[] } {
-  if (where.length === 0) return { clause: '', params: [] };
+  where: InternalWhereClause[],
+  provider: PrismaProvider,
+  dialect: InternalSqlDialect,
+  startIndex = 1,
+): { clause: string; params: unknown[]; nextIndex: number } {
+  if (where.length === 0) {
+    return { clause: '', params: [], nextIndex: startIndex };
+  }
+
+  assertInternalWhereClauses(where);
 
   const parts: string[] = [];
   const params: unknown[] = [];
-  for (const w of where) {
-    parts.push(`${w.field} ${mapOp(w.op)} ?`);
-    params.push(w.value);
+  let nextIndex = startIndex;
+
+  for (const clause of where) {
+    const fieldSql = quoteInternalIdentifier(clause.field, dialect);
+
+    if (clause.value === null && clause.op === 'eq') {
+      parts.push(`${fieldSql} IS NULL`);
+      continue;
+    }
+
+    if (clause.value === null && clause.op === 'ne') {
+      parts.push(`${fieldSql} IS NOT NULL`);
+      continue;
+    }
+
+    parts.push(
+      `${fieldSql} ${internalOperatorSql(clause.op)} ${placeholderFor(provider, nextIndex++)}`,
+    );
+    params.push(clause.value);
   }
 
-  return { clause: ` WHERE ${parts.join(' AND ')}`, params };
+  return { clause: ` WHERE ${parts.join(' AND ')}`, params, nextIndex };
 }
 
-export function createPrismaInternalCrud(prisma: any): InternalCrud {
-  const ensuredTables = new Set<string>();
+export function createPrismaInternalCrud(
+  prisma: any,
+  provider?: PrismaProvider,
+): InternalCrud {
+  const resolvedProvider = resolvePrismaProvider(prisma, provider);
+  const dialect = providerToDialect(resolvedProvider);
+  const ensurePromises = new Map<string, Promise<void>>();
 
   return {
     async ensureTable(name: string, columns: InternalColumnDef[]): Promise<void> {
-      if (!TABLE_NAME_RE.test(name)) {
-        throw new Error(`ensureTable: table name must start with "__datafn_": "${name}"`);
+      assertInternalTableName(name);
+      assertInternalColumnDefs(columns);
+
+      if (ensurePromises.has(name)) {
+        return ensurePromises.get(name)!;
       }
 
-      if (ensuredTables.has(name)) return;
+      const promise = (async () => {
+        const colDefs = columns.map((col) => {
+          const sqlType = col.type === 'text' ? 'TEXT' : 'INTEGER';
+          const pk = col.primaryKey ? ' PRIMARY KEY' : '';
+          return `${quoteInternalIdentifier(col.name, dialect)} ${sqlType}${pk}`;
+        });
 
-      const colDefs = columns.map((col) => {
-        const sqlType = col.type === 'text' ? 'TEXT' : 'INTEGER';
-        const pk = col.primaryKey ? ' PRIMARY KEY' : '';
-        return `${col.name} ${sqlType}${pk}`;
-      });
+        const ddl = `CREATE TABLE IF NOT EXISTS ${quoteInternalIdentifier(name, dialect)} (${colDefs.join(', ')})`;
+        await prisma.$executeRawUnsafe(ddl);
+      })();
 
-      const ddl = `CREATE TABLE IF NOT EXISTS ${name} (${colDefs.join(', ')})`;
-      await prisma.$executeRawUnsafe(ddl);
-      ensuredTables.add(name);
+      ensurePromises.set(name, promise);
+      try {
+        await promise;
+      } catch (error) {
+        ensurePromises.delete(name);
+        throw error;
+      }
     },
 
     async create(
       table: string,
       data: Record<string, unknown>,
     ): Promise<Record<string, unknown>> {
+      assertInternalTableName(table);
       const cols = Object.keys(data);
-      const placeholders = cols.map(() => '?').join(', ');
-      const vals = cols.map((k) => data[k]);
+      cols.forEach((col) => assertInternalIdentifier(col, 'column name'));
 
-      const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`;
+      const placeholders = cols
+        .map((_, index) => placeholderFor(resolvedProvider, index + 1))
+        .join(', ');
+      const vals = cols.map((key) => data[key]);
+
+      const sql = `INSERT INTO ${quoteInternalIdentifier(table, dialect)} (${cols
+        .map((col) => quoteInternalIdentifier(col, dialect))
+        .join(', ')}) VALUES (${placeholders})`;
       await prisma.$executeRawUnsafe(sql, ...vals);
+
+      if (data.id !== undefined && data.id !== null) {
+        return (
+          (await this.findOne(table, [{ field: 'id', op: 'eq', value: data.id }])) ??
+          data
+        );
+      }
+
       return data;
     },
 
     async findOne(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
     ): Promise<Record<string, unknown> | null> {
-      const { clause, params } = buildWhereSQL(where);
-      const sql = `SELECT * FROM ${table}${clause} LIMIT 1`;
+      assertInternalTableName(table);
+      const { clause, params } = buildWhereSQL(where, resolvedProvider, dialect);
+      const sql = `SELECT * FROM ${quoteInternalIdentifier(table, dialect)}${clause} LIMIT 1`;
       const rows: Record<string, unknown>[] = await prisma.$queryRawUnsafe(sql, ...params);
       return rows[0] ?? null;
     },
 
     async findMany(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
       opts?: { orderBy?: string; limit?: number },
     ): Promise<Record<string, unknown>[]> {
-      const { clause, params } = buildWhereSQL(where);
-      let sql = `SELECT * FROM ${table}${clause}`;
+      assertInternalTableName(table);
+      const { clause, params } = buildWhereSQL(where, resolvedProvider, dialect);
+      let sql = `SELECT * FROM ${quoteInternalIdentifier(table, dialect)}${clause}`;
 
       if (opts?.orderBy) {
-        const desc = opts.orderBy.startsWith('-');
-        const field = desc ? opts.orderBy.slice(1) : opts.orderBy;
-        sql += ` ORDER BY ${field} ${desc ? 'DESC' : 'ASC'}`;
+        const order = parseInternalOrderBy(opts.orderBy);
+        sql += ` ORDER BY ${quoteInternalIdentifier(order.field, dialect)} ${order.direction}`;
       }
 
       if (typeof opts?.limit === 'number') {
-        sql += ` LIMIT ${opts.limit}`;
+        sql += ` LIMIT ${Math.trunc(opts.limit)}`;
       }
 
       return await prisma.$queryRawUnsafe(sql, ...params);
@@ -100,27 +183,42 @@ export function createPrismaInternalCrud(prisma: any): InternalCrud {
 
     async update(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
       data: Record<string, unknown>,
     ): Promise<number> {
+      assertInternalTableName(table);
       const cols = Object.keys(data);
-      const setParts = cols.map((col) => `${col} = ?`);
-      const setParams = cols.map((k) => data[k]);
+      cols.forEach((col) => assertInternalIdentifier(col, 'column name'));
 
-      const { clause, params: whereParams } = buildWhereSQL(where);
-      const sql = `UPDATE ${table} SET ${setParts.join(', ')}${clause}`;
+      if (cols.length === 0) {
+        return 0;
+      }
 
-      return await prisma.$executeRawUnsafe(sql, ...setParams, ...whereParams);
+      const setParts = cols.map(
+        (col, index) => `${quoteInternalIdentifier(col, dialect)} = ${placeholderFor(resolvedProvider, index + 1)}`,
+      );
+      const setParams = cols.map((key) => data[key]);
+
+      const {
+        clause,
+        params: whereParams,
+      } = buildWhereSQL(where, resolvedProvider, dialect, cols.length + 1);
+      const sql = `UPDATE ${quoteInternalIdentifier(table, dialect)} SET ${setParts.join(', ')}${clause}`;
+
+      return normalizeInternalResultCount(
+        await prisma.$executeRawUnsafe(sql, ...setParams, ...whereParams),
+      );
     },
 
     async delete(
       table: string,
-      where: Array<{ field: string; op: string; value: unknown }>,
+      where: InternalWhereClause[],
     ): Promise<number> {
-      const { clause, params } = buildWhereSQL(where);
-      const sql = `DELETE FROM ${table}${clause}`;
+      assertInternalTableName(table);
+      const { clause, params } = buildWhereSQL(where, resolvedProvider, dialect);
+      const sql = `DELETE FROM ${quoteInternalIdentifier(table, dialect)}${clause}`;
 
-      return await prisma.$executeRawUnsafe(sql, ...params);
+      return normalizeInternalResultCount(await prisma.$executeRawUnsafe(sql, ...params));
     },
   };
 }

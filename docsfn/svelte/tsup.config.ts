@@ -6,6 +6,20 @@ import esbuildSvelte from "esbuild-svelte";
 import { SVELTE_PUBLIC_TYPES } from "./src/public-types";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_COMPONENTS = [
+  "ApiReferenceRenderer",
+  "Breadcrumbs",
+  "DocsContent",
+  "DocsLayout",
+  "DocsSearch",
+  "DocsSidebar",
+  "DocsToc",
+  "EmbeddedPage",
+  "Pagination",
+  "SidebarGroup",
+  "TopBar",
+  "VersionSwitcher",
+];
 
 export default defineConfig({
   entry: ["src/index.ts"],
@@ -22,6 +36,25 @@ export default defineConfig({
     await copyFile(
       path.join(dirname, "src/theme-base.css"),
       path.join(dirname, "dist/theme-base.css")
+    );
+    await Promise.all(
+      PUBLIC_COMPONENTS.flatMap((componentName) => [
+        writeFile(
+          path.join(dirname, `dist/${componentName}.js`),
+          `export { ${componentName} as default } from "./index.js";\n`,
+          "utf8"
+        ),
+        writeFile(
+          path.join(dirname, `dist/${componentName}.cjs`),
+          `module.exports = require("./index.cjs").${componentName};\n`,
+          "utf8"
+        ),
+        writeFile(
+          path.join(dirname, `dist/${componentName}.d.ts`),
+          `export { ${componentName} as default } from "./index";\n`,
+          "utf8"
+        ),
+      ])
     );
   },
 });

@@ -4,6 +4,7 @@ Nominatim geocoding provider (OpenStreetMap)
 
 import httpx
 from typing import Optional, List
+from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import (
     GeoProvider,
     GeoLocation,
@@ -188,52 +189,11 @@ class NominatimProvider:
         return results
     
     async def get_place_details(self, place_id: str, fields: Optional[List[str]] = None) -> GeoPlace:
-        """Get details for a specific place"""
-        params = {
-            'place_id': place_id,
-            'format': 'json',
-            'addressdetails': 1
-        }
-        
-        headers = {'User-Agent': self.user_agent}
-        
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f'{self.endpoint}/lookup',
-                params=params,
-                headers=headers
-            )
-            response.raise_for_status()
-            data = response.json()
-        
-        if not data:
-            raise ValueError(f"Place {place_id} not found")
-        
-        item = data[0] if isinstance(data, list) else data
-        
-        location = GeoLocation(
-            lat=float(item.get('lat', 0)),
-            lng=float(item.get('lon', 0))
-        )
-        
-        address_data = item.get('address', {})
-        address = GeoAddress(
-            formatted=item.get('display_name', ''),
-            street=address_data.get('road'),
-            city=address_data.get('city'),
-            state=address_data.get('state'),
-            country=address_data.get('country'),
-            postalCode=address_data.get('postcode'),
-            countryCode=address_data.get('country_code')
-        )
-        
-        return GeoPlace(
-            id=place_id,
-            name=item.get('name', ''),
-            location=location,
-            address=address,
-            types=item.get('type', '').split(',') if item.get('type') else None,
-            provider=self.name
+        """Nominatim does not provide full place-details parity."""
+        raise BrowseFnError(
+            "UNSUPPORTED_PROVIDER_CAPABILITY",
+            "Provider nominatim does not support full place-details retrieval.",
+            provider=self.name,
         )
     
     async def is_available(self) -> bool:

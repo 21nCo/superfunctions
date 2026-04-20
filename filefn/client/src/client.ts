@@ -142,10 +142,50 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
   const retryOptions = resolveRetryOptions(config.retryOptions);
   const baseUrl = config.baseUrl.replace(/\/$/, "");
 
-  async function getHeaders(): Promise<Record<string, string>> {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+  async function readResponseBody(response: Response): Promise<{
+    rawBody: string;
+    parsedBody: unknown;
+    isJson: boolean;
+  }> {
+    if (typeof response.text === "function") {
+      const rawBody = await response.text();
+      if (!rawBody) {
+        return { rawBody, parsedBody: undefined, isJson: false };
+      }
+
+      try {
+        return { rawBody, parsedBody: JSON.parse(rawBody), isJson: true };
+      } catch {
+        if (typeof response.json === "function") {
+          try {
+            const parsedBody = await response.json();
+            return { rawBody, parsedBody, isJson: true };
+          } catch {
+            // Fall back to the raw text body when a second parse is not possible.
+          }
+        }
+        return { rawBody, parsedBody: rawBody, isJson: false };
+      }
+    }
+
+    if (typeof response.json === "function") {
+      const parsedBody = await response.json();
+      return {
+        rawBody: typeof parsedBody === "string" ? parsedBody : "",
+        parsedBody,
+        isJson: true,
+      };
+    }
+
+    return { rawBody: "", parsedBody: undefined, isJson: false };
+  }
+
+  async function getHeaders(includeJsonContentType = false): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {};
+
+    if (includeJsonContentType) {
+      headers["Content-Type"] = "application/json";
+    }
 
     if (config.getAuthHeaders) {
       const authHeaders = await config.getAuthHeaders();
@@ -165,7 +205,8 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
   ): Promise<T> {
     return withRetry(
       async () => {
-        const headers = await getHeaders();
+        const hasJsonBody = body !== undefined;
+        const headers = await getHeaders(hasJsonBody);
         if (extraHeaders) {
           Object.assign(headers, extraHeaders);
         }
@@ -177,12 +218,8 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
         });
 
         if (!response.ok) {
-          let errorBody: unknown;
-          try {
-            errorBody = await response.json();
-          } catch {
-            errorBody = await response.text();
-          }
+          const { rawBody, parsedBody, isJson } = await readResponseBody(response);
+          const errorBody = rawBody ? (isJson ? parsedBody : rawBody) : parsedBody;
           throw new FileFnHttpError(
             `HTTP ${response.status}: ${response.statusText}`,
             response.status,
@@ -190,7 +227,29 @@ export function createHttpClient(config: FileFnClientConfig): HttpClient {
           );
         }
 
-        const json = await response.json();
+        const contentLength =
+          typeof response.headers?.get === "function"
+            ? response.headers.get("content-length")
+            : null;
+        const contentType =
+          typeof response.headers?.get === "function"
+            ? response.headers.get("content-type") || ""
+            : "";
+        if (response.status === 204 || contentLength === '0') {
+          return undefined as T;
+        }
+
+        const { rawBody, parsedBody, isJson } = await readResponseBody(response);
+        if (!rawBody) {
+          if (parsedBody === undefined) {
+            return undefined as T;
+          }
+          if (!isJson) {
+            return parsedBody as T;
+          }
+        }
+
+        const json = parsedBody;
 
         // Unwrap canonical envelope { ok: true, data: T }
         if (

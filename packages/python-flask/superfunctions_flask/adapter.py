@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
-from typing import Any, Callable, Dict, List
+import threading
+from typing import Any, Awaitable, Callable, Coroutine, Dict, List, cast
 
-from flask import Blueprint, Request as FlaskRequest, Response as FlaskResponse, jsonify, request
+from flask import Blueprint, jsonify, request
+from flask import Request as FlaskRequest
+from flask import Response as FlaskResponse
 from superfunctions.http import (
     HttpError,
-    HttpMethod,
-    Request,
     Response,
     Route,
     RouteContext,
@@ -18,6 +20,8 @@ from superfunctions.http import (
 
 SUPERFUNCTIONS_ROUTE_ATTR = "__superfunctions_route__"
 SUPERFUNCTIONS_ROUTE_META_ATTR = "__superfunctions_route_meta__"
+DEFAULT_ASYNC_HANDLER_TIMEOUT = 30.0
+logger = logging.getLogger(__name__)
 
 
 class FlaskRequestAdapter:
@@ -62,10 +66,10 @@ class FlaskRequestAdapter:
 def to_flask_response(response: Response) -> FlaskResponse:
     """
     Convert superfunctions.http.Response to Flask Response.
-    
+
     Args:
         response: superfunctions Response object
-    
+
     Returns:
         Flask Response object
     """
@@ -85,7 +89,7 @@ def to_flask_response(response: Response) -> FlaskResponse:
         )
     else:
         flask_response = FlaskResponse(status=response.status)
-    
+
     # Add headers
     for key, value in response.headers.items():
         flask_response.headers[key] = value
@@ -102,48 +106,99 @@ def to_flask_response(response: Response) -> FlaskResponse:
             httponly=cookie.http_only,
             samesite=cookie.same_site,
         )
-    
+
     return flask_response
+
+
+def _internal_error_response() -> FlaskResponse:
+    return to_flask_response(
+        Response(
+            status=500,
+            body={
+                "error": {
+                    "message": "Internal server error",
+                    "code": "INTERNAL_ERROR",
+                }
+            },
+        )
+    )
+
+
+def _run_async_handler(factory: Callable[[], Awaitable[Response]]) -> Response:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(cast(Coroutine[Any, Any, Response], factory()))
+
+    result: dict[str, Response] = {}
+    error: dict[str, BaseException] = {}
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(
+                asyncio.wait_for(factory(), timeout=DEFAULT_ASYNC_HANDLER_TIMEOUT)
+            )
+        except asyncio.TimeoutError:
+            error["value"] = TimeoutError(
+                f"Flask adapter async handler timed out after {DEFAULT_ASYNC_HANDLER_TIMEOUT:g}s"
+            )
+        except BaseException as exc:
+            error["value"] = exc
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+
+    if "value" in error:
+        raise error["value"]
+    if "value" not in result:
+        raise RuntimeError("Flask adapter failed to execute async handler")
+    return result["value"]
+
+
+def _create_request_context(path_params: Dict[str, Any]) -> tuple[FlaskRequestAdapter, RouteContext]:
+    current_request = cast(FlaskRequest, cast(Any, request)._get_current_object())
+    adapted_request = FlaskRequestAdapter(current_request)
+    context = RouteContext(
+        params=path_params,
+        query=dict(current_request.args),
+        headers=dict(current_request.headers),
+        url=current_request.url,
+        method=current_request.method,
+    )
+    return adapted_request, context
+
+
+def _invoke_flask_handler(
+    handler: Callable,
+    path_params: Dict[str, Any],
+    *,
+    log_label: str,
+) -> FlaskResponse:
+    try:
+        adapted_request, context = _create_request_context(path_params)
+        response = _run_async_handler(lambda: handler(adapted_request, context))
+        return to_flask_response(response)
+    except HttpError as error:
+        return to_flask_response(error.to_response())
+    except Exception:
+        logger.exception("Unhandled error while processing Flask %s", log_label)
+        return _internal_error_response()
 
 
 def create_handler(handler: Callable, route: Route):
     """
     Create a Flask handler from a superfunctions handler.
-    
+
     Args:
         handler: superfunctions route handler
-    
+
     Returns:
         Flask-compatible handler
     """
 
     def flask_handler(**path_params):
-        try:
-            # Create adapted request
-            adapted_request = FlaskRequestAdapter(request)
-            
-            # Create context
-            context = RouteContext(
-                params=path_params,
-                query=dict(request.args),
-                headers=dict(request.headers),
-                url=request.url,
-                method=request.method,
-            )
-            
-            # Call handler (async)
-            response = asyncio.run(handler(adapted_request, context))
-            
-            # Convert response
-            return to_flask_response(response)
-        
-        except HttpError as e:
-            # Convert HTTP errors to responses
-            return to_flask_response(e.to_response())
-        
-        except Exception as e:
-            # Handle unexpected errors
-            return jsonify({"error": {"message": str(e), "code": "INTERNAL_ERROR"}}), 500
+        return _invoke_flask_handler(handler, path_params, log_label="route")
 
     setattr(flask_handler, SUPERFUNCTIONS_ROUTE_ATTR, route)
     setattr(flask_handler, SUPERFUNCTIONS_ROUTE_META_ATTR, route.meta)
@@ -157,29 +212,29 @@ def create_blueprint(
 ) -> Blueprint:
     """
     Create a Flask Blueprint from superfunctions routes.
-    
+
     Args:
         routes: List of superfunctions Route objects
         name: Blueprint name
         url_prefix: URL prefix for all routes
-    
+
     Returns:
         Flask Blueprint instance
-    
+
     Example:
         >>> from superfunctions.http import Route, HttpMethod, Response
         >>> from superfunctions_flask import create_blueprint
-        >>> 
+        >>>
         >>> async def get_user(request, context):
         ...     user_id = context.params["id"]
         ...     return Response(status=200, body={"id": user_id})
-        >>> 
+        >>>
         >>> routes = [
         ...     Route(method=HttpMethod.GET, path="/users/<id>", handler=get_user)
         ... ]
-        >>> 
+        >>>
         >>> blueprint = create_blueprint(routes, url_prefix="/api")
-        >>> 
+        >>>
         >>> # Use with Flask app
         >>> app.register_blueprint(blueprint)
     """
@@ -214,44 +269,31 @@ def create_blueprint(
 def to_flask_handler(handler: Callable) -> Callable:
     """
     Convert a single superfunctions handler to Flask handler.
-    
+
     This is useful for adding handlers directly to Flask routes.
-    
+
     Args:
         handler: superfunctions route handler
-    
+
     Returns:
         Flask-compatible handler
-    
+
     Example:
         >>> from flask import Flask
         >>> from superfunctions_flask import to_flask_handler
         >>> from superfunctions.http import Response
-        >>> 
+        >>>
         >>> app = Flask(__name__)
-        >>> 
+        >>>
         >>> async def get_user(request, context):
         ...     return Response(status=200, body={"id": context.params["id"]})
-        >>> 
+        >>>
         >>> @app.route("/users/<id>")
         >>> def route(id):
         ...     return to_flask_handler(get_user)(id=id)
     """
 
     def wrapper(**kwargs):
-        adapted_request = FlaskRequestAdapter(request)
-        context = RouteContext(
-            params=kwargs,
-            query=dict(request.args),
-            headers=dict(request.headers),
-            url=request.url,
-            method=request.method,
-        )
-        
-        try:
-            response = asyncio.run(handler(adapted_request, context))
-            return to_flask_response(response)
-        except HttpError as e:
-            return to_flask_response(e.to_response())
+        return _invoke_flask_handler(handler, kwargs, log_label="handler")
 
     return wrapper

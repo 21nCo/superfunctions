@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createCollapsible } from './collapsible';
 
 describe('collapsible primitive', () => {
@@ -19,5 +19,20 @@ describe('collapsible primitive', () => {
 
     expect(collapsible.state.open).toBe(false);
     expect(collapsible.state.lastError?.code).toBe('UIFN_ERR_DISABLED_INTERACTION');
+  });
+
+  it('keeps controlled open state stable until syncOpen is applied', () => {
+    const onOpenChange = vi.fn();
+    const collapsible = createCollapsible({
+      open: false,
+      onOpenChange,
+    });
+
+    collapsible.actions.toggle();
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(collapsible.state.open).toBe(false);
+
+    collapsible.actions.syncOpen(true);
+    expect(collapsible.state.open).toBe(true);
   });
 });

@@ -16,7 +16,7 @@ test.describe("record sharing lifecycle", () => {
     await resetBaseline(request);
   });
 
-test("viewer denial, editor upgrade, and revoke", async ({ browser, request }) => {
+  test("viewer denial, editor upgrade, and revoke", async ({ browser, request }) => {
     const aliceContext = await browser.newContext();
     const bobContext = await browser.newContext();
     const alicePage = await aliceContext.newPage();

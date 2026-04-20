@@ -1,10 +1,49 @@
 from typing import Any, Dict, List, Optional, Union, Literal, Protocol, runtime_checkable
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, model_validator
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+        validate_by_alias=True,
+        arbitrary_types_allowed=True,
+    )
+
+    @classmethod
+    def _alias_to_field(cls) -> Dict[str, str]:
+        return {
+            field.alias: name
+            for name, field in cls.model_fields.items()
+            if field.alias and field.alias != name
+        }
+
+    def __getattr__(self, name: str) -> Any:
+        field_name = type(self)._alias_to_field().get(name)
+        if field_name is not None:
+            return super().__getattribute__(field_name)
+        return super().__getattr__(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        field_name = type(self)._alias_to_field().get(name)
+        super().__setattr__(field_name or name, value)
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(*args, **kwargs)
+
+    def dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(*args, **kwargs)
 
 # ===== Common Types =====
 
 Provider = str
+CanonicalWebProviderId = Literal['cheerio', 'puppeteer', 'playwright', 'firecrawl', 'jina']
+CanonicalPythonWebProviderId = Literal['bs4']
+CanonicalImageProviderId = Literal['unsplash', 'pixabay', 'pexels']
+CanonicalGeoProviderId = Literal['nominatim', 'google-maps', 'mapbox']
 
 class RateLimitConfig(BaseModel):
     requests: int
@@ -13,9 +52,19 @@ class RateLimitConfig(BaseModel):
 class CacheConfig(BaseModel):
     enabled: bool
     ttl: Optional[int] = None
-    storage: Optional[Literal['memory', 'indexeddb', 'file', 'database']] = None
+    storage: Optional[str] = None
     max_size: Optional[int] = Field(None, alias="maxSize")
     # key_generator omitted as it's a function
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_aliases(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        data = dict(raw)
+        if "defaultTTL" in data and "ttl" not in data:
+            data["ttl"] = data.pop("defaultTTL")
+        return data
 
 class ProviderConfig(BaseModel):
     api_key: Optional[str] = Field(None, alias="apiKey")
@@ -23,9 +72,13 @@ class ProviderConfig(BaseModel):
     timeout: Optional[int] = None
     rate_limit: Optional[RateLimitConfig] = Field(None, alias="rateLimit")
     extra: Dict[str, Any] = Field(default_factory=dict)
-
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+        validate_by_alias=True,
+        arbitrary_types_allowed=True,
+        extra="allow",
+    )
 
 class RetryConfig(BaseModel):
     enabled: bool
@@ -55,9 +108,6 @@ class EventData(BaseModel):
     error: Optional[Exception] = None
     key: Optional[str] = None
     timestamp: float
-
-    class Config:
-        arbitrary_types_allowed = True
 
 # ===== Metrics =====
 
@@ -126,6 +176,8 @@ class GetPageOptions(BaseModel):
     proxy: Optional[str] = None
     cache: Optional[Union[bool, CacheOptions]] = None
     retry: Optional[RetryOptions] = None
+    include_links: Optional[bool] = Field(None, alias="includeLinks")
+    include_images: Optional[bool] = Field(None, alias="includeImages")
 
 class OpenGraph(BaseModel):
     title: Optional[str] = None
@@ -173,7 +225,8 @@ class MetadataOptions(BaseModel):
     timeout: Optional[int] = None
     concurrency: Optional[int] = None
     cache: Optional[bool] = None
-    # on_progress omitted
+    max_batch_override: Optional[int] = Field(None, alias="maxBatchOverride")
+    on_progress: Optional[Any] = Field(None, alias="onProgress", exclude=True)
 
 class MetadataResult(BaseModel):
     success: bool
@@ -278,6 +331,7 @@ class Watermark(BaseModel):
     opacity: Optional[float] = None
 
 class ImageDownloadOptions(BaseModel):
+    provider: Optional[str] = None
     destination: Optional[str] = None
     filename: Optional[str] = None
     size: Optional[Literal['small', 'medium', 'large', 'original']] = None
@@ -289,7 +343,8 @@ class ImageDownloadOptions(BaseModel):
     watermark: Optional[Watermark] = None
     metadata: Optional[bool] = None
     overwrite: Optional[bool] = None
-    # on_progress omitted
+    concurrency: Optional[int] = None
+    on_progress: Optional[Any] = Field(None, alias="onProgress", exclude=True)
 
 class ImageMetadata(BaseModel):
     format: str

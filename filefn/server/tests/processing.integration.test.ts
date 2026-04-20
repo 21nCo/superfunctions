@@ -167,10 +167,10 @@ describe('ProcessingService Integration', () => {
         })
       );
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      const artifacts = await service.listArtifacts('file_0001', {});
-      expect(artifacts.length).toBeGreaterThanOrEqual(0);
+      await vi.waitFor(async () => {
+        const artifacts = await service.listArtifacts('file_0001', {});
+        expect(artifacts.length).toBeGreaterThan(0);
+      });
     });
   });
 

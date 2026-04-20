@@ -7,6 +7,7 @@ const config: DocsConfig = {
     description: "The documentation toolchain for superfunctions",
     basePath: "/docs",
     canonicalUrl: "https://docsfn.superfunctions.dev",
+    showFooter: false,
     editLink: {
       pattern: "https://github.com/21nCo/super-functions/edit/dev/docsfn/docs/{path}",
     },
@@ -41,6 +42,10 @@ const config: DocsConfig = {
     enabled: true,
     scopes: ["docs", "api", "blog"],
     bodyIndexing: "summary",
+    routeScopeOverrides: [
+      { pattern: "/docs/api", scope: "api" },
+      { pattern: "/docs/api/**", scope: "api" },
+    ],
   },
   auth: { enabled: false, mode: "public" },
   analytics: { enabled: false, provider: "watchfn", respectDnt: true },

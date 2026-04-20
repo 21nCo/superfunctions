@@ -1,5 +1,7 @@
 import { createUIFnError, type UIFnError } from '../errors';
+import { createControllableStateController } from '../state/machine';
 import { createFocusTrapState } from '../utils/focus-trap';
+import { composePublicId, generateId, registerPublicId } from '../utils/id';
 import {
   computePosition,
   type Align,
@@ -17,6 +19,7 @@ export interface PopoverProps {
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onOpenChangeDetail?: (open: boolean, reason: DialogChangeReason) => void;
+  idBase?: string;
   modal?: boolean;
   closeOnEscape?: boolean;
   closeOnOutsideInteraction?: boolean;
@@ -33,14 +36,23 @@ export interface PopoverProps {
   reducedMotion?: boolean;
 }
 
+export interface PopoverIds {
+  baseId: string;
+  triggerId: string;
+  contentId: string;
+}
+
 export interface PopoverState {
   open: boolean;
+  controlled: boolean;
   modal: boolean;
   trapFocus: boolean;
+  focusTrapActive: boolean;
   scrollLock: boolean;
   scrollLocked: boolean;
   closeOnEscape: boolean;
   closeOnOutsideInteraction: boolean;
+  ids: PopoverIds;
   focusedElementId: string | null;
   returnFocusId: string | null;
   position: PositionResult | null;
@@ -97,8 +109,28 @@ function resolveChangeReason(nextOpen: boolean, reason?: DialogChangeReason): Di
   return nextOpen ? 'open-programmatic' : 'close-programmatic';
 }
 
+function createPopoverIds(props: PopoverProps): PopoverIds {
+  const baseId = props.idBase
+    ? registerPublicId(props.idBase, {
+        package: '@uifn/core',
+        component: 'Popover',
+      })
+    : generateId('popover');
+
+  return {
+    baseId,
+    triggerId: registerPublicId(composePublicId({ prefix: baseId, slot: 'trigger' })),
+    contentId: registerPublicId(composePublicId({ prefix: baseId, slot: 'content' })),
+  };
+}
+
 export function createPopover(props: PopoverProps): PopoverMachine {
-  const open = props.open ?? props.defaultOpen ?? false;
+  const openController = createControllableStateController<boolean>({
+    value: props.open,
+    defaultValue: props.defaultOpen ?? false,
+    onChange: props.onOpenChange,
+  });
+  const open = openController.getValue();
   const modal = props.modal ?? false;
   const trapFocus = props.trapFocus ?? modal;
   const scrollLock = props.scrollLock ?? modal;
@@ -109,15 +141,19 @@ export function createPopover(props: PopoverProps): PopoverMachine {
   const collisionPadding = props.collisionPadding ?? 5;
   const collisionDetection = props.collisionDetection ?? true;
 
-  const initialFocusId = props.initialFocusId ?? 'popover-content';
+  const ids = createPopoverIds(props);
+  const initialFocusId = props.initialFocusId ?? ids.contentId;
   const store = createStore<PopoverState, boolean>({
     open,
+    controlled: openController.isControlled(),
     modal,
     trapFocus,
+    focusTrapActive: open && trapFocus,
     scrollLock,
     scrollLocked: open && modal && scrollLock,
     closeOnEscape: props.closeOnEscape ?? true,
     closeOnOutsideInteraction: props.closeOnOutsideInteraction ?? true,
+    ids,
     focusedElementId: open ? initialFocusId : null,
     returnFocusId: props.returnFocusId ?? null,
     position: null,
@@ -176,20 +212,26 @@ export function createPopover(props: PopoverProps): PopoverMachine {
       nextValue: nextOpen,
       inputModality,
     };
+    const result =
+      source === 'controlled-sync'
+        ? openController.syncValue(nextOpen)
+        : openController.requestValue(nextOpen);
+    const resolvedOpen = result.value;
 
     if (nextOpen) {
       const trapState = state.trapFocus
         ? focusTrap.activate({
-            entryFocusId: state.focusedElementId ?? 'popover-content',
+            entryFocusId: state.focusedElementId ?? state.ids.contentId,
             returnFocusId: state.returnFocusId,
           })
         : focusTrap.getState();
       presence.setPresent(true);
       store.patchState(
         {
-          open: true,
-          scrollLocked: state.modal && state.scrollLock,
-          focusedElementId: trapState.currentFocusId ?? 'popover-content',
+          open: resolvedOpen,
+          focusTrapActive: resolvedOpen && state.trapFocus,
+          scrollLocked: resolvedOpen && state.modal && state.scrollLock,
+          focusedElementId: trapState.currentFocusId ?? state.ids.contentId,
           returnFocusId: trapState.returnFocusId,
           cleanup: {
             timers: presence.getState().timers,
@@ -210,7 +252,8 @@ export function createPopover(props: PopoverProps): PopoverMachine {
       presence.cleanup();
       store.patchState(
         {
-          open: false,
+          open: resolvedOpen,
+          focusTrapActive: false,
           scrollLocked: false,
           focusedElementId: trapState.currentFocusId,
           returnFocusId: trapState.returnFocusId,
@@ -227,7 +270,6 @@ export function createPopover(props: PopoverProps): PopoverMachine {
       );
     }
 
-    props.onOpenChange?.(nextOpen);
     props.onOpenChangeDetail?.(nextOpen, reason);
   };
 

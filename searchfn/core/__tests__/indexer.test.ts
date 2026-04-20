@@ -20,4 +20,20 @@ describe("Indexer", () => {
     expect(titleFreq?.get("quick")).toBe(1);
     expect(titleFreq?.get("brown")).toBe(1);
   });
+
+  it("keeps cached batch tokens scoped to the current document id", () => {
+    const indexer = new Indexer();
+    const results = indexer.ingestBatch([
+      {
+        docId: "doc-1",
+        fields: { title: "shared text" },
+      },
+      {
+        docId: "doc-2",
+        fields: { title: "shared text" },
+      },
+    ]);
+
+    expect(results.map((result) => result.docId)).toEqual(["doc-1", "doc-2"]);
+  });
 });

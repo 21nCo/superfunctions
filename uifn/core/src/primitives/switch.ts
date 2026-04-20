@@ -1,5 +1,6 @@
 import { createUIFnError, type UIFnError } from '../errors';
 import { K } from '../aria/keys';
+import { createControllableStateController } from '../state/machine';
 import { type ChangeMeta, createStore } from './shared';
 
 export interface SwitchProps {
@@ -14,10 +15,13 @@ export interface SwitchProps {
 
 export interface SwitchState {
   checked: boolean;
+  controlled: boolean;
   disabled: boolean;
   required: boolean;
   name?: string;
   value: string;
+  ariaChecked: 'true' | 'false';
+  pressed: boolean;
   formValue: Record<string, string>;
   lastChangeMeta?: ChangeMeta<boolean>;
   lastError: UIFnError | null;
@@ -54,28 +58,41 @@ export function createSwitch(props: SwitchProps): SwitchMachine {
   const required = props.required ?? false;
   const value = props.value ?? 'on';
   const name = props.name;
+  const controlledState = createControllableStateController<boolean>({
+    value: props.checked,
+    defaultValue: props.defaultChecked ?? false,
+    onChange: props.onCheckedChange,
+  });
 
   const store = createStore<SwitchState, boolean>({
-    checked: initialChecked,
+    checked: controlledState.getValue(),
+    controlled: controlledState.isControlled(),
     disabled,
     required,
     name,
     value,
-    formValue: getFormValue(name, value, initialChecked),
+    ariaChecked: controlledState.getValue() ? 'true' : 'false',
+    pressed: controlledState.getValue(),
+    formValue: getFormValue(name, value, controlledState.getValue()),
     lastError: null,
   });
 
   const emitChecked = (nextChecked: boolean, meta: ChangeMeta<boolean>) => {
+    const result =
+      meta.source === 'controlled-sync'
+        ? controlledState.syncValue(nextChecked)
+        : controlledState.requestValue(nextChecked);
     store.patchState(
       {
-        checked: nextChecked,
-        formValue: getFormValue(name, value, nextChecked),
+        checked: result.value,
+        ariaChecked: result.value ? 'true' : 'false',
+        pressed: result.value,
+        formValue: getFormValue(name, value, result.value),
         lastChangeMeta: meta,
         lastError: null,
       },
       meta
     );
-    props.onCheckedChange?.(nextChecked);
   };
 
   const ensureEnabled = (): boolean => {
@@ -103,6 +120,9 @@ export function createSwitch(props: SwitchProps): SwitchMachine {
       }
 
       const state = store.getState();
+      if (state.checked === checked) {
+        return;
+      }
       emitChecked(checked, {
         source: 'programmatic',
         reason: 'set-checked',
@@ -146,6 +166,10 @@ export function createSwitch(props: SwitchProps): SwitchMachine {
     },
     syncChecked(checked) {
       const state = store.getState();
+      if (state.checked === checked) {
+        return;
+      }
+
       emitChecked(checked, {
         source: 'controlled-sync',
         reason: 'sync-checked',

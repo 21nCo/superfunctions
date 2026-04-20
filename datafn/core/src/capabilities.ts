@@ -131,7 +131,21 @@ export function resolveCapabilities(
   }
 
   if (Array.isArray(resourceCaps)) {
-    return dedupeCapabilities([...base, ...resourceCaps]);
+    const resolved = dedupeCapabilities(base);
+
+    for (const entry of resourceCaps) {
+      const key = toCapabilityKey(entry);
+      const existingIndex = resolved.findIndex((candidate) => toCapabilityKey(candidate) === key);
+      if (existingIndex === -1) {
+        resolved.push(entry);
+        continue;
+      }
+      if (key === "shareable") {
+        resolved[existingIndex] = entry;
+      }
+    }
+
+    return resolved;
   }
 
   if (isObject(resourceCaps) && Array.isArray(resourceCaps.exclude)) {

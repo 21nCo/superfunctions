@@ -9,6 +9,15 @@ import defaultMdxComponents from "fumadocs-ui/mdx";
 import { notFound } from "next/navigation";
 import { gitConfig } from "@/app/layout.config";
 import { Mermaid } from "@/components/mdx/mermaid";
+import type { ComponentProps, ComponentType } from "react";
+
+interface DocsPageData {
+  body: ComponentType<{ components?: Record<string, unknown> }>;
+  description?: string;
+  full?: boolean;
+  title: string;
+  toc?: ComponentProps<typeof DocsPage>["toc"];
+}
 
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
@@ -17,7 +26,7 @@ export default async function Page(props: {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
-  const data = page.data as any;
+  const data = page.data as DocsPageData;
   const MDX = data.body;
 
   return (
@@ -40,7 +49,7 @@ export default async function Page(props: {
   );
 }
 
-export async function generateStaticParams() {
+export function generateStaticParams() {
   return source.generateParams();
 }
 
@@ -51,7 +60,7 @@ export async function generateMetadata(props: {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
-  const data = page.data as any;
+  const data = page.data as DocsPageData;
   const docsPath = params.slug?.length ? `/docs/${params.slug.join("/")}` : "/docs";
   const image = "/opengraph-image";
 

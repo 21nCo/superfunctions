@@ -66,6 +66,7 @@ const docsConfigSchema = z.object({
       .refine((value) => value === undefined || value.startsWith("/"), "site.basePath must start with '/'"),
     canonicalUrl: z.string().url("site.canonicalUrl must be a valid URL").optional(),
     defaultLocale: z.string().min(1).optional(),
+    showFooter: z.boolean().optional(),
     theme: z.record(z.unknown()).optional(),
     editLink: z.record(z.unknown()).optional(),
     pageActions: z.array(z.record(z.unknown())).optional(),
@@ -110,6 +111,14 @@ const docsConfigSchema = z.object({
       scopes: z.array(z.enum(["docs", "api", "blog"])),
       bodyIndexing: z.enum(["full", "summary", "disabled"]).optional(),
       maxArtifactBytes: z.number().int().positive().optional(),
+      routeScopeOverrides: z
+        .array(
+          z.object({
+            pattern: z.string().min(1, "search.routeScopeOverrides[].pattern is required"),
+            scope: z.string().min(1, "search.routeScopeOverrides[].scope is required"),
+          })
+        )
+        .optional(),
     })
     .optional(),
   auth: z

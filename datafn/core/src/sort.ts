@@ -3,6 +3,10 @@ export interface SortTerm {
   direction: "asc" | "desc";
 }
 
+function isSortDirection(direction: string): direction is SortTerm["direction"] {
+  return direction === "asc" || direction === "desc";
+}
+
 /**
  * Parse DFQL sort strings into structured sort terms.
  * Handles "field", "field:asc", "field:desc", "-field".
@@ -18,7 +22,10 @@ export function parseSortTerms(sort: string[] | undefined): SortTerm[] {
     const colonIdx = term.indexOf(":");
     if (colonIdx !== -1) {
       const field = term.slice(0, colonIdx);
-      const direction = term.slice(colonIdx + 1) as "asc" | "desc";
+      const direction = term.slice(colonIdx + 1);
+      if (!isSortDirection(direction)) {
+        throw new Error(`Invalid sort direction "${direction}" for term "${term}"`);
+      }
       return { field, direction };
     }
     return { field: term, direction: "asc" };

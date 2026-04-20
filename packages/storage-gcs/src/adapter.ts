@@ -122,24 +122,61 @@ export function createGCSStorageAdapter(config: GCSStorageConfig): StorageAdapte
           contentType: input.contentType,
         },
       });
+      let streamError: Error | null = null;
+      gcstream.on('error', (err) => {
+        streamError = err;
+      });
 
       return new WritableStream({
         write(chunk) {
           return new Promise((resolve, reject) => {
+            if (streamError) {
+              reject(streamError);
+              return;
+            }
             const buffer = chunk instanceof Uint8Array ? Buffer.from(chunk) : chunk;
             const ok = gcstream.write(buffer);
             if (ok) {
               resolve();
             } else {
-              gcstream.once('drain', resolve);
-              gcstream.once('error', reject);
+              const cleanup = () => {
+                gcstream.off('drain', onDrain);
+                gcstream.off('error', onError);
+              };
+              const onDrain = () => {
+                cleanup();
+                resolve();
+              };
+              const onError = (err: Error) => {
+                cleanup();
+                reject(err);
+              };
+              gcstream.once('drain', onDrain);
+              gcstream.once('error', onError);
             }
           });
         },
         close() {
           return new Promise((resolve, reject) => {
-            gcstream.end(() => resolve());
-            gcstream.once('error', reject);
+            if (streamError) {
+              reject(streamError);
+              return;
+            }
+            const cleanup = () => {
+              gcstream.off('finish', onFinish);
+              gcstream.off('error', onError);
+            };
+            const onFinish = () => {
+              cleanup();
+              resolve(undefined);
+            };
+            const onError = (err: Error) => {
+              cleanup();
+              reject(err);
+            };
+            gcstream.once('finish', onFinish);
+            gcstream.once('error', onError);
+            gcstream.end();
           });
         },
         abort(reason) {

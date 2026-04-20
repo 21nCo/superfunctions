@@ -48,7 +48,10 @@ if (values.help || !command) {
     printHelp();
     process.exit(1);
   }
-})();
+})().catch((error) => {
+  console.error(error instanceof Error ? `✗ Error: ${error.message}` : error);
+  process.exit(1);
+});
 
 function validateAndResolveExplicitPath(path: string): string {
   const ext = extname(path);
@@ -136,8 +139,7 @@ async function loadTypeScriptSchema(path: string): Promise<unknown> {
     }
     const needTsx =
       err.code === 'ERR_UNKNOWN_FILE_EXTENSION' ||
-      err.message?.includes('Unknown file extension') ||
-      err.message?.includes('.ts');
+      err.message?.includes('Unknown file extension');
     if (needTsx && typeof (globalThis as any).Bun === 'undefined') {
       try {
         const { register } = await import('tsx/esm/api');

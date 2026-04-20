@@ -17,6 +17,7 @@ __license__ = "MIT"
 from .client import RecFnHttpClient
 from .recfn import RecFn
 from .types import (
+    AggregateBotDetail,
     Analytics,
     ApiError,
     Bot,
@@ -38,6 +39,7 @@ __all__ = [
     "RecFn",
     "RecFnHttpClient",
     "Analytics",
+    "AggregateBotDetail",
     "ApiError",
     "Bot",
     "BotConfig",

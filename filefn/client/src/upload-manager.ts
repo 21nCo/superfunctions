@@ -150,7 +150,10 @@ export async function prepareUploadInput(
     const result = await preprocessor.process(context);
     const nextFile = result.file;
     const nextFileName = result.fileName || currentFileName(nextFile, prepared.fileName);
-    const nextMimeType = result.mimeType || currentMimeType(nextFile) || prepared.mimeType;
+    const derivedMimeType = currentMimeType(nextFile);
+    const nextMimeType =
+      result.mimeType ||
+      (derivedMimeType !== 'application/octet-stream' ? derivedMimeType : prepared.mimeType);
     const nextMetadata = result.metadata ?? prepared.metadata;
     const nextLocalSource = {
       ...derivePendingLocalSource(nextFileName, nextMimeType, nextFile.size),
@@ -190,17 +193,35 @@ export class UploadManager {
     this.abortController = new AbortController();
   }
 
+  bindAbortSignal(signal: AbortSignal | undefined): void {
+    if (!signal) {
+      return;
+    }
+    if (signal.aborted) {
+      this.abortController.abort();
+      return;
+    }
+    signal.addEventListener('abort', () => {
+      this.abortController.abort();
+    }, { once: true });
+  }
+
   createHandle(
     input: UploadInput,
-    startUpload: () => Promise<UploadResult>,
+    startUpload: (handle: UploadHandle) => Promise<UploadResult>,
+    initialState?: Partial<Pick<UploadHandle, 'uploadSessionId' | 'uploadSessionToken' | 'fileId'>>,
   ): UploadHandle {
     let uploadPromise: Promise<UploadResult> | null = null;
-    const fileId = input.fileId ?? generateFileId();
+    const isResumedUpload = Boolean(initialState?.uploadSessionId);
+    const fileId = input.fileId ?? (isResumedUpload ? undefined : generateFileId());
+    if (!input.fileId && fileId) {
+      input.fileId = fileId;
+    }
 
     const handle: UploadHandle = {
-      uploadSessionId: "",
-      uploadSessionToken: undefined,
-      fileId,
+      uploadSessionId: initialState?.uploadSessionId ?? "",
+      uploadSessionToken: initialState?.uploadSessionToken,
+      fileId: initialState?.fileId ?? fileId,
       onProgress: (callback) => {
         this.progressCallbacks.push(callback);
       },
@@ -209,11 +230,12 @@ export class UploadManager {
       },
       done: async () => {
         if (!uploadPromise) {
-          uploadPromise = startUpload();
+          uploadPromise = startUpload(handle);
         }
         const result = await uploadPromise;
         handle.uploadSessionId = this.session?.uploadSessionId || "";
         handle.uploadSessionToken = this.uploadSessionToken;
+        handle.fileId = result.fileId;
         return result;
       },
     };
@@ -221,7 +243,7 @@ export class UploadManager {
     return handle;
   }
 
-  async startUpload(input: UploadInput): Promise<UploadResult> {
+  async startUpload(input: UploadInput, handle?: UploadHandle): Promise<UploadResult> {
     const signal = this.abortController.signal;
     const prepared = await prepareUploadInput(input, [...this.preprocessors, ...(input.preprocessors || [])]);
     this.file = prepared.file;
@@ -274,6 +296,11 @@ export class UploadManager {
       fileSize: prepared.size,
     };
     this.uploadSessionToken = initResponse.uploadSessionToken;
+    if (handle) {
+      handle.uploadSessionId = uploadSessionId;
+      handle.uploadSessionToken = this.uploadSessionToken;
+      handle.fileId = prepared.fileId;
+    }
 
     await this.uploadAllParts(signal);
 
@@ -301,6 +328,7 @@ export class UploadManager {
     uploadSessionId: string,
     file: Blob,
     uploadSessionToken?: string,
+    handle?: UploadHandle,
   ): Promise<UploadResult> {
     const signal = this.abortController.signal;
     this.file = file;
@@ -318,6 +346,13 @@ export class UploadManager {
       chunkSizeBytes: status.chunkSizeBytes,
       fileSize: status.fileSize,
     };
+    if (handle) {
+      handle.uploadSessionId = uploadSessionId;
+      handle.uploadSessionToken = this.uploadSessionToken;
+      if (status.fileId) {
+        handle.fileId = status.fileId;
+      }
+    }
 
     const recordedParts = status.recordedParts || status.uploadedParts || [];
     this.completedParts = new Set(recordedParts);
@@ -332,6 +367,9 @@ export class UploadManager {
       this.uploadSessionToken,
       signal,
     );
+    if (handle) {
+      handle.fileId = result.fileId;
+    }
     return result;
   }
 

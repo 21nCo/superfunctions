@@ -8,6 +8,10 @@ import {
   formatAnalytics,
   formatCalendarList,
 } from '../src/output.js';
+import {
+  DEFAULT_TRANSCRIPT_REDACTION_MESSAGE,
+  runTranscriptGetCommand,
+} from '../src/commands/transcript.js';
 
 describe('output formatters', () => {
   describe('formatJson', () => {
@@ -160,5 +164,92 @@ describe('config', () => {
       exitSpy.mockRestore();
       consoleSpy.mockRestore();
     }
+  });
+});
+
+describe('transcript command safety', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('defaults to redacted transcript retrieval and safe stdout text output (TV-CLI-001)', async () => {
+    const getMock = vi.fn().mockResolvedValue({
+      ok: true,
+      data: '[REDACTED]: budget discussion',
+    });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runTranscriptGetCommand(
+      {
+        transcripts: { get: getMock },
+      } as never,
+      'text',
+      'rec_123',
+      { format: 'text' },
+    );
+
+    expect(getMock).toHaveBeenCalledWith('rec_123', {
+      format: 'text',
+      redact: true,
+    });
+    expect(consoleSpy).toHaveBeenCalledWith(DEFAULT_TRANSCRIPT_REDACTION_MESSAGE);
+  });
+
+  it('requires explicit include-pii opt-in before printing raw transcript content', async () => {
+    const getMock = vi.fn().mockResolvedValue({
+      ok: true,
+      data: 'Alice: budget discussion',
+    });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runTranscriptGetCommand(
+      {
+        transcripts: { get: getMock },
+      } as never,
+      'text',
+      'rec_123',
+      { format: 'text', includePii: true },
+    );
+
+    expect(getMock).toHaveBeenCalledWith('rec_123', {
+      format: 'text',
+      redact: false,
+    });
+    expect(consoleSpy).toHaveBeenCalledWith('Alice: budget discussion');
+  });
+
+  it('keeps machine-readable output safe by default unless include-pii is set', async () => {
+    const getMock = vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        id: 'trx_1',
+        segments: [{ text: 'Alice budget discussion' }],
+      },
+    });
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await runTranscriptGetCommand(
+      {
+        transcripts: { get: getMock },
+      } as never,
+      'json',
+      'rec_123',
+      { format: 'json' },
+    );
+
+    expect(getMock).toHaveBeenCalledWith('rec_123', {
+      format: 'json',
+      redact: true,
+    });
+    expect(consoleSpy).toHaveBeenCalledWith(
+      JSON.stringify(
+        {
+          redacted: true,
+          message: DEFAULT_TRANSCRIPT_REDACTION_MESSAGE,
+        },
+        null,
+        2,
+      ),
+    );
   });
 });

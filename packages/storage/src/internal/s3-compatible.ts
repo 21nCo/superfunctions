@@ -43,7 +43,7 @@ export function createS3CompatibleStorageAdapter(config: S3CompatibleAdapterConf
     name,
     bucket,
     client,
-    capabilities = DEFAULT_CAPABILITIES,
+    capabilities = { ...DEFAULT_CAPABILITIES },
     statNotFoundErrorNames = ['NotFound'],
     downloadNotFoundErrorNames = ['NoSuchKey'],
   } = config;
@@ -186,7 +186,7 @@ export function createS3CompatibleStorageAdapter(config: S3CompatibleAdapterConf
           Key: input.key,
           UploadId: input.uploadId,
           MultipartUpload: {
-            Parts: input.parts
+            Parts: [...input.parts]
               .sort((a, b) => a.partNumber - b.partNumber)
               .map((part) => ({
                 PartNumber: part.partNumber,

@@ -1,0 +1,26 @@
+- Phase goal: Deliver standalone in-memory SearchFn usage through a memory adapter and ergonomic convenience API.
+- In scope:
+  - memory adapter
+  - `InMemorySearchFn`
+  - end-to-end in-memory indexing and querying
+- Out of scope:
+  - on-disk persistence
+  - docs polish
+- Deliverables:
+  - `searchfn/swift/Sources/SearchFnMemoryAdapter/*`
+  - `searchfn/swift/Sources/SearchFnConvenience/InMemorySearchFn.swift`
+  - `searchfn/swift/Tests/SearchFnMemoryAdapterTests/*`
+- Requirements covered:
+  - `SMEM-001`
+  - `SDET-001`
+  - `SERR-001`
+- Implementation tasks:
+  - Wrap `SearchFnCore` in an in-memory adapter conforming to `SearchFnAdapter`.
+  - Support initialize, index, search, searchAll, remove, clear, and dispose.
+  - Implement `InMemorySearchFn` as a thin wrapper over the client.
+  - Add tests for idempotent remove/clear and disposed-state errors.
+- Verification steps:
+  - Run `swift test --package-path searchfn/swift --filter SearchFnMemoryAdapterTests`
+  - Expected outcome: in-memory workflow tests pass end-to-end.
+- Stop condition:
+  - Report the public in-memory entrypoints and passing tests before beginning Phase 03.
