@@ -50,6 +50,17 @@ async function resolveLatestCheckpointId(
   const checkpointsRoot = path.resolve(context.repoRoot, session.artifactRoot, 'checkpoints');
   const entries = await readdir(checkpointsRoot, {
     withFileTypes: true,
+  }).catch((error: unknown) => {
+    if (
+      error
+      && typeof error === 'object'
+      && 'code' in error
+      && (error as { code?: string }).code === 'ENOENT'
+    ) {
+      return [];
+    }
+
+    throw error;
   });
   const manifests = await Promise.all(
     entries

@@ -22,7 +22,7 @@ export function analyzeAlignment(
   return [
     createFinding({
       findingId: 'df_alignment',
-      severity: drift > 24 ? 'medium' : 'low',
+      severity: 'medium',
       category: 'alignment',
       summary: `Interactive elements drift by ${drift}px on their left edge alignment.`,
       evidenceReferences: [bundle.layoutPath],

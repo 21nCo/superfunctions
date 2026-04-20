@@ -1308,7 +1308,16 @@ async function loadFlow(repoRoot: string, file: string): Promise<FlowDocument> {
     });
   }
 
-  const absolutePath = path.resolve(repoRoot, file);
+  const normalizedFile = path.normalize(file);
+  const absolutePath = path.resolve(repoRoot, normalizedFile);
+  const relativeToRoot = path.relative(repoRoot, absolutePath);
+  if (relativeToRoot === '..' || relativeToRoot.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToRoot)) {
+    throw createProbefnError({
+      code: 'E_CONFIG_INVALID',
+      message: 'Flow files must stay within the repository root.',
+      retryable: false,
+    });
+  }
   const parsed = YAML.parse(await readFile(absolutePath, 'utf8')) as FlowDocument;
   if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.steps)) {
     throw createProbefnError({

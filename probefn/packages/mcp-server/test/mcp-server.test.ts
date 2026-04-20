@@ -276,6 +276,47 @@ describe.sequential('mcp server', () => {
       }
     }
   });
+
+  it('rejects normalized flow paths that escape the repository root', async () => {
+    const response = await client!.request('tools/call', {
+      name: 'probefn_run_flow',
+      arguments: {
+        sessionId: 'sess_console_error',
+        file: 'test/fixtures/vite-console-error/flows/../../../../../../outside.yaml',
+      },
+    });
+
+    expect(response.result).toEqual({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              ok: false,
+              schemaVersion: '1.0',
+              error: {
+                code: 'E_CONFIG_INVALID',
+                message: 'Flow files must stay within the repository root.',
+                retryable: false,
+              },
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      structuredContent: {
+        ok: false,
+        schemaVersion: '1.0',
+        error: {
+          code: 'E_CONFIG_INVALID',
+          message: 'Flow files must stay within the repository root.',
+          retryable: false,
+        },
+      },
+      isError: true,
+    });
+  });
 });
 
 class McpTestClient {

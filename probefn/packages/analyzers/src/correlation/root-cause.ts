@@ -64,14 +64,15 @@ export function correlateRootCause(
       .match(/\b(submit|order|checkout)\b/),
   );
 
-  if (planConsoleEvent && submitNetworkEvent) {
+  const submitPlanEvent = planConsoleEvent ?? planPageError;
+  if (submitPlanEvent && submitNetworkEvent) {
     return {
       hypotheses: [
         {
           hypothesisId: 'rh_submit_plan',
           confidence: submitAction ? 0.9 : 0.87,
           statement: 'The submit handler reads a missing plan object after the order form submit.',
-          evidenceEventIds: [planConsoleEvent.eventId, submitNetworkEvent.eventId],
+          evidenceEventIds: [submitPlanEvent.eventId, submitNetworkEvent.eventId],
           evidenceArtifactPaths: dedupeStrings([
             latestCheckpoint?.manifestPath,
             ...(latestCheckpoint?.artifactPaths ?? []).slice(0, 2),

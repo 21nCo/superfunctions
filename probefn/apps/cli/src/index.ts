@@ -147,7 +147,8 @@ async function main(): Promise<void> {
 }
 
 function isEntrypoint(): boolean {
-  return process.argv[1] !== undefined && process.argv[1] === fileURLToPath(import.meta.url);
+  return process.argv[1] !== undefined
+    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 }
 
 if (isEntrypoint()) {

@@ -35,7 +35,8 @@ Comparison results include:
 - pixel diff summary
 - semantic/layout regressions
 - diff image path
-- missing-baseline or mismatch errors when the key does not resolve
+- missing-baseline errors when the key does not resolve
+- mismatch errors when the baseline exists but the comparison cannot be satisfied cleanly
 
 ## Baseline Storage
 

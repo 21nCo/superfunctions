@@ -10,8 +10,10 @@ export function analyzeClippingFallback(
     }
 
     if (
-      (element.overflowX === 'hidden' || element.overflowY === 'hidden') &&
-      (element.textOverflow !== 'clip' || element.scrollWidth > element.clientWidth + 1)
+      ((element.overflowX === 'hidden')
+        && (element.textOverflow !== 'clip' || element.scrollWidth > element.clientWidth + 1))
+      || ((element.overflowY === 'hidden')
+        && element.scrollHeight > element.clientHeight + 1)
     ) {
       findings.push(createFinding({
         findingId: 'df_clip',

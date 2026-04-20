@@ -32,7 +32,7 @@ Implement deterministic page modeling, selector-first action execution, and atom
 
 # Verification steps
 
-1. Run `pnpm --filter @probefn/browser-runner test -- --runInBand`.
+1. Run `pnpm --filter @probefn/browser-runner test`.
    Expected outcome: action and checkpoint tests pass.
 2. Run `pnpm --filter @probefn/core test`.
    Expected outcome: checkpoint atomicity and delta-summary tests pass.

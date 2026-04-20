@@ -159,7 +159,7 @@ export class DevServerManager {
 
     if (session.child && session.child.exitCode === null && session.child.signalCode === null) {
       session.stopping = true;
-      session.child.kill('SIGTERM');
+      terminateChildProcessGroup(session.child);
       await once(session.child, 'exit');
       await session.exitMonitor;
     } else {
@@ -244,7 +244,7 @@ export class DevServerManager {
       cwd: path.resolve(this.repoRoot, devServer.cwd ?? '.'),
       shell: true,
       detached: true,
-      env: process.env,
+      env: createAllowedEnvironment(devServer.envAllowlist),
     });
     session.child = child;
     if (typeof child.pid === 'number') {
@@ -388,5 +388,34 @@ export class DevServerManager {
 
   private async persistManifest(session: ManagedSessionState): Promise<void> {
     await this.artifactStore.writeRunManifest(session.runId, session.manifest);
+  }
+}
+
+function createAllowedEnvironment(envAllowlist: string[]): NodeJS.ProcessEnv {
+  const nextEnv: NodeJS.ProcessEnv = {};
+  for (const key of envAllowlist) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      nextEnv[key] = value;
+    }
+  }
+
+  return {
+    ...nextEnv,
+    PATH: process.env.PATH,
+  };
+}
+
+function terminateChildProcessGroup(child: ChildProcess): void {
+  const pid = child.pid;
+  if (typeof pid !== 'number') {
+    child.kill('SIGTERM');
+    return;
+  }
+
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
   }
 }

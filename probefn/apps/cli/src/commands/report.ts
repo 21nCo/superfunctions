@@ -19,9 +19,10 @@ export async function runReportCommand(
     });
   }
 
+  const format = parseReportFormat(getFlagValue(args.slice(1), '--format') ?? 'json');
   const envelope = await exportSessionReport(context.runtime, {
     sessionId: requireFlag(args.slice(1), '--session', 'Missing required --session flag.'),
-    format: (getFlagValue(args.slice(1), '--format') ?? 'json') as 'json' | 'markdown',
+    format,
   });
   const success = expectSuccess(envelope);
   const data = success.data as {
@@ -31,6 +32,18 @@ export async function runReportCommand(
     envelope,
     human: data.reportPath,
   };
+}
+
+function parseReportFormat(value: string): 'json' | 'markdown' {
+  if (value === 'json' || value === 'markdown') {
+    return value;
+  }
+
+  throw createProbefnError({
+    code: 'E_CONFIG_INVALID',
+    message: `Unsupported report format ${value}. Expected json or markdown.`,
+    retryable: false,
+  });
 }
 
 function expectSuccess(envelope: ProbefnEnvelope<JsonValue>) {

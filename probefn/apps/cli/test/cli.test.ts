@@ -121,6 +121,30 @@ describe.sequential('cli', () => {
       },
     });
   });
+
+  it('rejects unsupported report formats before exporting', async () => {
+    const result = await runCli([
+      'report',
+      'export',
+      '--session',
+      'sess_healthy',
+      '--format',
+      'html',
+      '--json',
+    ]);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(JSON.parse(result.stderr)).toEqual({
+      ok: false,
+      schemaVersion: '1.0',
+      error: {
+        code: 'E_CONFIG_INVALID',
+        message: 'Unsupported report format html. Expected json or markdown.',
+        retryable: false,
+      },
+    });
+  });
 });
 
 async function seedHealthySession(): Promise<void> {
