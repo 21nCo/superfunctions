@@ -62,7 +62,7 @@ describe('Metadata API routes', () => {
     });
   });
 
-  it('returns null instead of placeholder metadata when none is stored', async () => {
+  it('returns placeholder metadata when none is stored', async () => {
     const createRes = await server.router.handle(
       req('POST', '/api/v1/bots', {
         body: { meetingUrl: 'https://zoom.us/j/123' },
@@ -77,6 +77,11 @@ describe('Metadata API routes', () => {
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.ok).toBe(true);
-    expect(body.data).toBeNull();
+    expect(body.data).toEqual({
+      id: botId,
+      botId,
+      platform: 'zoom',
+      chatMessages: [],
+    });
   });
 });

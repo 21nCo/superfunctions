@@ -55,6 +55,28 @@ describe('TranscriptStreamManager', () => {
     );
   });
 
+  it('defaults participant consent when omitted from a joined frame', () => {
+    const frame = createFrame('participant_joined', {
+      id: 'par_1',
+      botId: 'bot_1',
+      name: 'Alice',
+      role: 'attendee',
+      joinedAt: '2026-04-01T10:00:00.000Z',
+    });
+
+    expect(JSON.parse(frame)).toEqual({
+      type: 'participant_joined',
+      data: {
+        id: 'par_1',
+        botId: 'bot_1',
+        name: 'Alice',
+        role: 'attendee',
+        joinedAt: '2026-04-01T10:00:00.000Z',
+        consent: 'pending',
+      },
+    });
+  });
+
   it('enforces maximum connections per bot limit', () => {
     for (let i = 0; i < MAX_CONNECTIONS_PER_BOT; i++) {
       manager.addConnection('bot_limit', createMockWebSocket());

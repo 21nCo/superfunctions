@@ -330,15 +330,15 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     // Broadcast participant events to websocket and fire webhooks
     const { buildParticipantJoinedPayload, buildParticipantLeftPayload } = await import('../webhooks/events.js');
     adapter.onParticipantJoin(async (participant) => {
-      if (config.streamManager) {
-        config.streamManager.broadcast(botId, 'participant_joined', participant);
-      }
-      // Ensure consent default: pending when bot joins, unknown if platform omits
+      // Normalize participant payload before persistence and websocket emission.
       const p = {
         ...participant,
         botId,
         consent: participant.consent ?? 'pending',
       };
+      if (config.streamManager) {
+        config.streamManager.broadcast(botId, 'participant_joined', p);
+      }
       await store.addParticipant(botId, p, bot.namespace);
       webhookDeliverer.deliver(bot.namespace, 'participant.joined', buildParticipantJoinedPayload(botId, p)).catch(() => {});
     });

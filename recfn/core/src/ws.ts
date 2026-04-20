@@ -35,7 +35,7 @@ export const TRANSCRIPT_STREAM_FRAME_SCHEMA = {
   participant_joined: {
     direction: 'server_to_client',
     requiresData: true,
-    requiredKeys: ['id', 'botId', 'name', 'role', 'joinedAt', 'consent'],
+    requiredKeys: ['id', 'botId', 'name', 'role', 'joinedAt'],
   },
   participant_left: {
     direction: 'server_to_client',
@@ -157,9 +157,11 @@ function parseParticipant(value: unknown): Participant | null {
     !isString(value.botId) ||
     !isString(value.name) ||
     !isOneOf(value.role, PARTICIPANT_ROLES) ||
-    !isString(value.joinedAt) ||
-    !isOneOf(value.consent, CONSENT_STATUSES)
+    !isString(value.joinedAt)
   ) {
+    return null;
+  }
+  if (value.consent !== undefined && !isOneOf(value.consent, CONSENT_STATUSES)) {
     return null;
   }
   if (value.email !== undefined && !isString(value.email)) {
@@ -175,7 +177,7 @@ function parseParticipant(value: unknown): Participant | null {
     name: value.name,
     role: value.role,
     joinedAt: value.joinedAt,
-    consent: value.consent,
+    consent: value.consent ?? 'pending',
     ...(value.email !== undefined ? { email: value.email } : {}),
     ...(value.leftAt !== undefined ? { leftAt: value.leftAt } : {}),
   };

@@ -4,7 +4,7 @@ import type { RecFnStore } from './store/types.js';
 import { assertProductionStore } from './store/db.js';
 import type { ValidateApiKey } from './middleware/auth.js';
 import type { QueueAdapter } from './integrations/flowfn.js';
-import { MemoryLogger, type Logger } from './integrations/logfn.js';
+import { createNoopLogger, type Logger } from './integrations/logfn.js';
 import type { StorageAdapter } from './integrations/storage.js';
 import { assertProductionStorage } from './integrations/storage.js';
 import type { SearchFnClient } from './integrations/searchfn.js';
@@ -98,7 +98,7 @@ export function createRecFnServer(config: RecFnServerConfig): RecFnServer {
     metrics,
   } = config;
   const runtime = resolveEnvironment(environment);
-  const resolvedLogger = logger ?? new MemoryLogger();
+  const resolvedLogger = logger ?? createNoopLogger();
 
   if (runtime === 'production') {
     assertProductionStore(store);
