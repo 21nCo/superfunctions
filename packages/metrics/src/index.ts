@@ -20,7 +20,8 @@ export function createMetricsEmitter(
 
 export function createNamespacedEmitter(namespace: string, emitter: MetricsEmitter): MetricsEmitter {
   const normalized = namespace.trim();
-  if (!normalized || normalized.includes('..')) {
+  const segments = normalized.split('.');
+  if (!normalized || normalized.includes('..') || segments.some((segment) => segment.length === 0)) {
     throw new Error('METRIC_NAMESPACE_INVALID');
   }
 

@@ -244,4 +244,275 @@ describe("oauth-router route factories", () => {
     ]);
     expect(connectionRoutes.map((route) => route.meta?.auth?.mode)).toEqual(["hybrid", "none", "hybrid"]);
   });
+
+  it("uses an absolute fallback redirect URL when browser callback completion has no returnTo", async () => {
+    const browser = createFlowServiceMocks();
+    browser.handleCallback.mockResolvedValue({
+      providerId: "google",
+      subject: {
+        kind: "browser-auth",
+        intentId: "intent_01"
+      },
+      tokenSet: {
+        accessToken: "access_01"
+      }
+    } satisfies OAuthFlowCallbackResult);
+
+    const browserRoutes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: browser.service,
+      resolveStartInput: async (request) => (await request.json()) as never,
+      callbackMode: "redirect"
+    });
+    const browserRouter = createRouter({ routes: browserRoutes });
+
+    const redirectResponse = await browserRouter.handle(
+      new Request("https://app.example/auth/social/callback/google?code=code_02&state=st_01")
+    );
+
+    expect(redirectResponse.status).toBe(302);
+    expect(redirectResponse.headers.get("location")).toBe("https://app.example/");
+  });
+
+  it("preserves resolver-provided requestId when the start header is absent", async () => {
+    const { service, start } = createFlowServiceMocks();
+    const routes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async () => ({
+        providerId: "google",
+        tenantId: "tenant_1",
+        userId: "user_1",
+        redirectUri: "https://app.example/callback",
+        requestId: "req_from_resolver"
+      })
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/oauth/connections/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "req_from_resolver"
+      })
+    );
+  });
+
+  it("preserves resolver-provided requestId for browser start routes when the header is absent", async () => {
+    const { service, start } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async () => ({
+        providerId: "google",
+        subject: {
+          kind: "browser-auth",
+          intentId: "intent_01",
+          returnTo: "https://app.example/post-auth",
+        },
+        redirectUri: "https://app.example/callback",
+        requestId: "req_from_browser_resolver",
+      }),
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/auth/social/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "req_from_browser_resolver",
+      })
+    );
+  });
+
+  it("derives callback redirectUri from the current request URL when none is provided explicitly", async () => {
+    const { service, handleCallback } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("https://app.example/auth/social/callback/google?code=code_03&state=st_03")
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleCallback).toHaveBeenCalledWith({
+      providerId: "google",
+      code: "code_03",
+      state: "st_03",
+      redirectUri: "https://app.example/auth/social/callback/google",
+      requestId: undefined
+    });
+  });
+
+  it("preserves non-transient callback query params when inferring redirectUri", async () => {
+    const { service, handleCallback } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request(
+        "https://app.example/auth/social/callback/google?tenant=tenant_01&code=code_05&state=st_05"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleCallback).toHaveBeenCalledWith({
+      providerId: "google",
+      code: "code_05",
+      state: "st_05",
+      redirectUri: "https://app.example/auth/social/callback/google?tenant=tenant_01",
+      requestId: undefined
+    });
+  });
+
+  it("rejects explicitly empty callback redirectUri values", async () => {
+    const { service } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never,
+      resolveCallbackInput: async () => ({
+        code: "code_04",
+        state: "st_04",
+        redirectUri: ""
+      })
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("https://app.example/auth/social/callback/google")
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "redirectUri is required",
+      code: "OAUTH_ROUTE_INVALID_INPUT",
+    });
+  });
+
+  it("rejects invalid disconnect payload fields before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/oauth/connections/disconnect/google", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          connectionId: "conn_01",
+          revokeRemote: "false"
+        })
+      })
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "revokeRemote must be a boolean",
+      code: "OAUTH_ROUTE_INVALID_INPUT",
+    });
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string required route fields before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthConnectionRoutes({
+      basePath: "/oauth/connections",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/oauth/connections/disconnect/google", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          connectionId: 123,
+          revokeRemote: true
+        })
+      })
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "connectionId is required",
+      code: "OAUTH_ROUTE_INVALID_INPUT",
+    });
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid browser disconnect payload fields before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/auth/social/disconnect/google", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          connectionId: "conn_01",
+          tokenTypeHint: "bad_hint"
+        })
+      })
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "tokenTypeHint must be access_token or refresh_token",
+      code: "OAUTH_ROUTE_INVALID_INPUT",
+    });
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it("rejects null browser disconnect payloads before calling disconnect", async () => {
+    const { service, disconnect } = createFlowServiceMocks();
+    const routes = createOAuthBrowserRoutes({
+      basePath: "/auth/social",
+      flowService: service,
+      resolveStartInput: async (request) => (await request.json()) as never
+    });
+    const router = createRouter({ routes });
+
+    const response = await router.handle(
+      new Request("http://localhost/auth/social/disconnect/google", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "null"
+      })
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "disconnect body must be a JSON object",
+      code: "OAUTH_ROUTE_INVALID_INPUT",
+    });
+    expect(disconnect).not.toHaveBeenCalled();
+  });
 });

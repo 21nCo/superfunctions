@@ -137,9 +137,36 @@ export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
 
   private async executeWithRetry(url: string, init: RequestInitLike): Promise<ResponseLike> {
     let attempt = 1;
-    let response = await this.fetcher(url, init);
-
     while (true) {
+      let response: ResponseLike;
+      try {
+        response = await this.fetcher(url, init);
+      } catch (error) {
+        const decision = decideRetry(
+          {
+            attempt,
+            status: 503
+          },
+          this.retryPolicy
+        );
+
+        if (!decision.retry) {
+          throw new OAuthHttpError("OAuth provider request failed", {
+            code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+            status: 502,
+            retryable: false,
+            cause: error,
+            details: {
+              transportFailure: true
+            }
+          });
+        }
+
+        await this.sleep(decision.delayMs);
+        attempt += 1;
+        continue;
+      }
+
       const decision = decideRetry(
         {
           attempt,
@@ -155,7 +182,6 @@ export class DefaultOAuthTokenHttpClient implements OAuthTokenHttpClient {
 
       await this.sleep(decision.delayMs);
       attempt += 1;
-      response = await this.fetcher(url, init);
     }
   }
 }
@@ -189,12 +215,12 @@ export async function disconnectWithRevoke(
       code: "INTERNAL_ERROR",
       status: 502,
       retryable: false,
+      cause: revokeError,
       details: {
         remoteRevokeAttempted: true,
         localTokenDeleted,
         connectionDeleted,
-        revokeErrorCode: revokeError.code,
-        revokeMessage: revokeError.message
+        revokeErrorCode: revokeError.code
       }
     });
   }
@@ -337,8 +363,9 @@ function createAuthHeaders(
     params.set("client_id", credentials.clientId);
     params.set("client_secret", credentials.clientSecret);
   } else {
-    params.set("client_id", credentials.clientId);
-    const auth = Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`, "utf8").toString("base64");
+    const authUser = encodeURIComponent(credentials.clientId);
+    const authPassword = encodeURIComponent(credentials.clientSecret);
+    const auth = Buffer.from(`${authUser}:${authPassword}`, "utf8").toString("base64");
     headers.authorization = `Basic ${auth}`;
   }
 
@@ -371,6 +398,15 @@ function parseResponseBody(rawBodyText: string, contentType: string | null): unk
 }
 
 function normalizeTokenResponse(parsedBody: unknown): OAuthTokenEndpointResponse {
+  if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+    throw new OAuthHttpError("OAuth token response body must be a JSON object", {
+      code: "OAUTH_TOKEN_EXCHANGE_FAILED",
+      status: 502,
+      retryable: false,
+      details: { parsedBodyKeys: [] }
+    });
+  }
+
   const payload = parsedBody as Record<string, unknown>;
   const accessToken = asString(payload.access_token);
   if (!accessToken) {
@@ -378,7 +414,7 @@ function normalizeTokenResponse(parsedBody: unknown): OAuthTokenEndpointResponse
       code: "OAUTH_TOKEN_EXCHANGE_FAILED",
       status: 502,
       retryable: false,
-      details: { parsedBody: payload }
+      details: { parsedBodyKeys: Object.keys(payload).slice(0, 10) }
     });
   }
 
@@ -488,7 +524,8 @@ function ensureOAuthHttpError(error: unknown): OAuthHttpError {
   return new OAuthHttpError(error instanceof Error ? error.message : "OAuth HTTP request failed", {
     code: "INTERNAL_ERROR",
     status: 500,
-    retryable: false
+    retryable: false,
+    cause: error
   });
 }
 

@@ -9,6 +9,9 @@
     "lint": {
       "dependsOn": ["^build"]
     },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
     "test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"]
@@ -27,6 +30,14 @@
     },
     "deploy": {
       "dependsOn": ["build"]
+    },
+    "scan": {
+      "dependsOn": ["build"],
+      "outputs": ["scan-results/**", "reports/**"]
+    },
+    "package": {
+      "dependsOn": ["build"],
+      "outputs": ["artifacts/**", "packages/**"]
     },
     "clean": {
       "cache": false

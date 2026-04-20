@@ -7,23 +7,20 @@ import hashlib
 import json
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
 from urllib.parse import urlencode
 
 from cryptography.fernet import Fernet
-
 from superfunctions.oauth import (
     OAuthBrowserAuthSubject,
     OAuthFlowDisconnectInput,
-    OAuthFlowError,
     OAuthFlowEvent,
     OAuthFlowIdentityHooks,
     OAuthFlowResolvedIdentity,
     OAuthFlowService,
     OAuthFlowServiceConfig,
     OAuthFlowStartInput,
-    OAuthFlowSubject,
     OAuthHttpError,
     OAuthProviderDescriptor,
     OAuthProviderRuntimeConfig,
@@ -33,7 +30,6 @@ from superfunctions.oauth import (
     OAuthStateRecord,
     OAuthTokenEndpointRequest,
     OAuthTokenEndpointResponse,
-    OAuthTokenSet,
     TokenRecord,
     apply_subject_to_state_record,
     create_oauth_flow_service,
@@ -59,11 +55,16 @@ from ..types import (
     OAuthStateReplayedError,
     PluginAbortedError,
     RedirectUriDisallowedError,
+    TableSchema,
     ValidationError,
 )
 
 SOCIAL_PROVIDER_IDS = ("google", "apple", "github")
 DEFAULT_STATE_TTL_SECONDS = 600
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -89,7 +90,7 @@ class SocialProviderConfig:
 class SocialOAuthPluginConfig:
     providers: Dict[str, SocialProviderConfig] = field(default_factory=dict)
     fetcher: Optional[Any] = None
-    now: Callable[[], datetime] = datetime.utcnow
+    now: Callable[[], datetime] = _utcnow
     state_ttl_seconds: int = DEFAULT_STATE_TTL_SECONDS
     encryption_key_ref: str = "oauth-default"
 
@@ -240,7 +241,7 @@ class DbEncryptedTokenVault:
             data={
                 "encrypted_payload": rotated,
                 "key_ref": new_key_ref,
-                "updated_at": self.now().isoformat() + "Z",
+                "updated_at": self.now().isoformat(),
             },
             namespace=self.config.namespace,
         )
@@ -984,7 +985,7 @@ class SocialOAuthService:
                     config=self.config,
                     request=request,
                     runtime=runtime,
-                    pluginName="socialOAuth",
+                    plugin_name="socialOAuth",
                 ),
                 payload,
             )
@@ -1008,8 +1009,8 @@ class SocialOAuthService:
                         config=self.config,
                         request=request,
                         runtime=runtime,
-                        pluginName="socialOAuth",
-                        actorId=actor_id,
+                        plugin_name="socialOAuth",
+                        actor_id=actor_id,
                     ),
                     payload,
                 )
@@ -1078,7 +1079,7 @@ class SocialOAuthService:
                         config=self.config,
                         request=request,
                         runtime=runtime,
-                        actorId=user["id"],
+                        actor_id=user["id"],
                     ),
                     user,
                 )
@@ -1108,14 +1109,14 @@ def authfn_social_oauth_plugin(
     resolved = config or SocialOAuthPluginConfig()
     plugin = AuthFnPlugin(
         name="socialOAuth",
-        schema_factory=lambda _cfg: _social_schema(),
+        schema_factory=lambda _cfg: cast(List[TableSchema], _social_schema()),
         routes_factory=lambda _ctx: [
             {"method": "POST", "path": "/social/start"},
             {"method": "GET", "path": "/social/callback/:provider"},
             {"method": "POST", "path": "/social/disconnect/:provider"},
         ],
     )
-    setattr(plugin, "_authfn_config", resolved)
+    plugin._authfn_config = resolved
     return plugin
 
 
@@ -1390,6 +1391,8 @@ def _state_from_row(row: Dict[str, Any]) -> OAuthStateRecord:
                 "providerId": row["provider_id"],
                 "redirectUri": row["redirect_uri"],
                 "requestedScopes": _parse_json_array(row.get("requested_scopes")) or [],
+                "codeVerifier": row.get("code_verifier"),
+                "nonce": row.get("nonce"),
                 "subject": subject_payload or None,
                 "createdAt": row["created_at"],
                 "expiresAt": row["expires_at"],

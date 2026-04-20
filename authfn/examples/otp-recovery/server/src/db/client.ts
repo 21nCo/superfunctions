@@ -155,7 +155,8 @@ function coerceRecord<T>(model: string, record: T): T {
 
 function parseDateValue(value: unknown): Date | null {
   if (typeof value === 'number') {
-    return new Date(value);
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   if (typeof value !== 'string') {
@@ -165,5 +166,6 @@ function parseDateValue(value: unknown): Date | null {
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(value)
     ? `${value.replace(' ', 'T')}Z`
     : value;
-  return new Date(normalized);
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }

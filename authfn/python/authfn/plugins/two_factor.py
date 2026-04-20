@@ -7,8 +7,8 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
 from cryptography.fernet import Fernet
@@ -27,7 +27,7 @@ BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
 
 def _default_now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def _create_id(prefix: str) -> str:
@@ -35,7 +35,33 @@ def _create_id(prefix: str) -> str:
 
 
 def _hash_code(code: str) -> str:
-    return hashlib.sha256(_normalize_code(code).encode("utf-8")).hexdigest()
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        _normalize_code(code).encode("utf-8"),
+        salt.encode("utf-8"),
+        200_000,
+        dklen=32,
+    )
+    return "$".join(["pbkdf2-sha256", "200000", salt, digest.hex()])
+
+
+def _verify_code_hash(stored_hash: str, code: str) -> bool:
+    normalized = _normalize_code(code)
+    parts = stored_hash.split("$")
+    if len(parts) == 4 and parts[0] == "pbkdf2-sha256":
+        iterations = int(parts[1])
+        salt = parts[2]
+        expected = parts[3]
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            normalized.encode("utf-8"),
+            salt.encode("utf-8"),
+            iterations,
+            dklen=32,
+        ).hex()
+        return hmac.compare_digest(digest, expected)
+    return hmac.compare_digest(stored_hash, hashlib.sha256(normalized.encode("utf-8")).hexdigest())
 
 
 def _normalize_code(code: str) -> str:
@@ -88,8 +114,17 @@ def _generate_totp(secret: str, now: datetime, digits: int, period_seconds: int)
     return str(binary % (10**digits)).zfill(digits)
 
 
-def _derive_fernet_key(namespace: str, key_ref: str) -> bytes:
-    digest = hashlib.sha256(f"{namespace}:{key_ref}:two-factor".encode("utf-8")).digest()
+def _normalize_fernet_key(value: bytes | str) -> bytes:
+    if isinstance(value, str):
+        value = value.encode("utf-8")
+    if len(value) == 44:
+        try:
+            decoded = base64.urlsafe_b64decode(value)
+            if len(decoded) == 32:
+                return value
+        except Exception:
+            pass
+    digest = hashlib.sha256(value).digest()
     return base64.urlsafe_b64encode(digest)
 
 
@@ -103,6 +138,7 @@ class TwoFactorPluginConfig:
     period_seconds: int = 30
     window: int = 1
     encryption_key_ref: str = "authfn-2fa"
+    encryption_key_resolver: Optional[Callable[[str], bytes | str]] = None
 
 
 class TwoFactorService:
@@ -320,9 +356,8 @@ class TwoFactorService:
             order_by=[],
             namespace=self.config.namespace,
         )
-        normalized = _hash_code(code)
         for row in rows:
-            if row.get("usedAt") is None and hmac.compare_digest(row["codeHash"], normalized):
+            if row.get("usedAt") is None and _verify_code_hash(row["codeHash"], code):
                 await self.config.database.update(
                     model="two_factor_recovery_codes",
                     where=[{"field": "id", "operator": "eq", "value": row["id"]}],
@@ -347,7 +382,10 @@ class TwoFactorService:
         return False
 
     def _cipher(self) -> Fernet:
-        return Fernet(_derive_fernet_key(self.config.namespace, self.plugin_config.encryption_key_ref))
+        resolver = self.plugin_config.encryption_key_resolver
+        if resolver is None:
+            raise ValidationError("Two-factor encryption_key_resolver must be configured")
+        return Fernet(_normalize_fernet_key(resolver(self.plugin_config.encryption_key_ref)))
 
 
 def authfn_two_factor_plugin(config: Optional[TwoFactorPluginConfig] = None) -> AuthFnPlugin:
@@ -409,7 +447,7 @@ def authfn_two_factor_plugin(config: Optional[TwoFactorPluginConfig] = None) -> 
             {"method": "POST", "path": "/2fa/disable"},
         ],
     )
-    setattr(plugin, "_authfn_config", resolved)
+    plugin._authfn_config = resolved
     return plugin
 
 

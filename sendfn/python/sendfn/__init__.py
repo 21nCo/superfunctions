@@ -32,16 +32,39 @@ Example:
     ... ))
 """
 
+from importlib import import_module
+from pathlib import Path
+import sys
+
 __version__ = "0.1.0"
+
+
+def _bootstrap_repo_local_superfunctions() -> None:
+    """Prefer the monorepo shared Python core when it is available locally."""
+    try:
+        import_module("superfunctions.db")
+        return
+    except ModuleNotFoundError as error:
+        if error.name not in {"superfunctions", "superfunctions.db"}:
+            raise
+        repo_python_core = Path(__file__).resolve().parents[3] / "packages" / "python-core"
+        if repo_python_core.exists():
+            sys.path.insert(0, str(repo_python_core))
+
+
+_bootstrap_repo_local_superfunctions()
 
 from .client import Sendfn, SendfnConfig, create_sendfn
 from .database.memory import MemoryAdapter
 from .errors import (
+    DatabaseError,
     EmailProviderError,
     PushProviderError,
+    SmsProviderError,
     SendfnError,
     SuppressionError,
     TemplateError,
+    ValidationError,
 )
 from .models import (
     ApnsConfig,
@@ -64,18 +87,6 @@ from .models import (
     SmsTransaction,
     SuppressionList,
 )
-
-# Push providers
-from .push import ApnsProvider, DeviceTokenManager, FcmProvider, PushService
-
-# SMS providers
-from .sms import ConsoleSmsProvider, SmsService
-
-# Events and webhooks
-from .events import AwsSesWebhookHandler, EventTracker
-
-# HTTP API
-from .http import create_sendfn_router, create_sendfn_routes
 
 __all__ = [
     # Main client

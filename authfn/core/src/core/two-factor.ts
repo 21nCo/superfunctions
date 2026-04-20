@@ -1,5 +1,7 @@
 import {
-  createHash,
+  NotFoundError,
+} from '@superfunctions/db';
+import {
   createHmac,
   randomBytes,
   timingSafeEqual
@@ -16,6 +18,7 @@ import type {
 } from '../types.js';
 import type { TwoFactorPluginConfig } from '../plugin-types.js';
 import {
+  AuthFnConfigError,
   AuthFnConflictError,
   AuthFnNotFoundError,
   AuthFnTwoFactorInvalidCodeError,
@@ -126,6 +129,7 @@ export async function createTwoFactorEnrollment(
     id: existing?.id ?? createIdentifier('tfa'),
     userId: user.id,
     secretEncrypted: encryptedSecret,
+    lastUsedCounter: null,
     confirmedAt: null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now
@@ -137,6 +141,7 @@ export async function createTwoFactorEnrollment(
       where: [{ field: 'id', operator: 'eq', value: existing.id }],
       data: {
         secretEncrypted: encryptedSecret,
+        lastUsedCounter: null,
         confirmedAt: null,
         updatedAt: now
       },
@@ -468,12 +473,65 @@ async function verifyTwoFactorTotp(
   code: string,
   pluginConfig: TwoFactorPluginConfig
 ): Promise<void> {
+  const now = resolveNow(pluginConfig);
   const secret = await decryptSecret(config, pluginConfig, enrollment.secretEncrypted);
-  if (!verifyTotpCode(secret, normalizeTwoFactorCode(code), pluginConfig, resolveNow(pluginConfig))) {
-    throw new AuthFnTwoFactorInvalidCodeError('Two-factor authentication code is invalid', {
-      userId: enrollment.userId
-    });
+  const normalizedCode = normalizeTwoFactorCode(code);
+  let currentEnrollment: AuthFnTwoFactorEnrollmentRecord = enrollment;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const matchedCounter = verifyTotpCode(
+      secret,
+      normalizedCode,
+      pluginConfig,
+      now,
+      currentEnrollment.lastUsedCounter ?? null
+    );
+    if (matchedCounter === null) {
+      break;
+    }
+
+    try {
+      const affected = await config.database.updateMany({
+        model: 'two_factor_enrollments',
+        where: [
+          { field: 'id', operator: 'eq', value: currentEnrollment.id },
+          {
+            field: 'lastUsedCounter',
+            operator: 'eq',
+            value: currentEnrollment.lastUsedCounter ?? null,
+            connector: 'AND'
+          }
+        ],
+        data: {
+          lastUsedCounter: matchedCounter,
+          updatedAt: now
+        },
+        namespace: namespace(config)
+      });
+      if (affected === 0) {
+        throw new NotFoundError('two_factor_enrollments', [
+          { field: 'id', operator: 'eq', value: currentEnrollment.id },
+          {
+            field: 'lastUsedCounter',
+            operator: 'eq',
+            value: currentEnrollment.lastUsedCounter ?? null,
+            connector: 'AND'
+          }
+        ]);
+      }
+      return;
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) {
+        throw error;
+      }
+
+      currentEnrollment = await requireTwoFactorEnrollment(config, enrollment.userId);
+    }
   }
+
+  throw new AuthFnTwoFactorInvalidCodeError('Two-factor authentication code is invalid', {
+    userId: enrollment.userId
+  });
 }
 
 async function encryptSecret(
@@ -498,16 +556,24 @@ function createSecretCipher(
   config: Pick<AuthFnConfig, 'namespace'>,
   pluginConfig: TwoFactorPluginConfig
 ): AesGcmTokenCipher {
+  const resolver = pluginConfig.encryptionKeyResolver;
+  if (!resolver) {
+    throw new AuthFnConfigError('Two-factor encryptionKeyResolver must be configured', {
+      keyRef: pluginConfig.encryptionKeyRef ?? DEFAULT_ENCRYPTION_KEY_REF,
+      namespace: namespace(config)
+    });
+  }
+
   return new AesGcmTokenCipher(async (keyRef) => {
-    const resolved = await pluginConfig.encryptionKeyResolver?.(keyRef);
+    const resolved = await resolver(keyRef);
     if (resolved) {
       return resolved;
     }
 
-    const namespaceValue = namespace(config);
-    return createHash('sha256')
-      .update(`${namespaceValue}:${keyRef}:two-factor`)
-      .digest();
+    throw new AuthFnConfigError('Two-factor encryptionKeyResolver must be configured', {
+      keyRef,
+      namespace: namespace(config)
+    });
   });
 }
 
@@ -556,8 +622,9 @@ function verifyTotpCode(
   secret: string,
   code: string,
   pluginConfig: TwoFactorPluginConfig,
-  now: Date
-): boolean {
+  now: Date,
+  lastUsedCounter: number | null
+): number | null {
   const digits = pluginConfig.digits ?? DEFAULT_DIGITS;
   const periodSeconds = pluginConfig.periodSeconds ?? DEFAULT_PERIOD_SECONDS;
   const window = pluginConfig.window ?? DEFAULT_WINDOW;
@@ -565,13 +632,18 @@ function verifyTotpCode(
   const key = decodeBase32(secret);
 
   for (let offset = -window; offset <= window; offset += 1) {
-    const generated = generateTotp(key, counter + offset, digits);
+    const candidateCounter = counter + offset;
+    if (lastUsedCounter !== null && candidateCounter <= lastUsedCounter) {
+      continue;
+    }
+
+    const generated = generateTotp(key, candidateCounter, digits);
     if (safeCompareString(generated, code)) {
-      return true;
+      return candidateCounter;
     }
   }
 
-  return false;
+  return null;
 }
 
 function generateTotp(key: Buffer, counter: number, digits: number): string {

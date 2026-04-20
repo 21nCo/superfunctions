@@ -1,0 +1,2 @@
+id, desc, status, completedAt, completionDoc
+2026-03-29-change-n4k7m2p9-spec,Expand clifn into a parser-agnostic reusable CLI builder toolkit and define the extfn adoption path,1,2026-03-29T05:58:25Z,

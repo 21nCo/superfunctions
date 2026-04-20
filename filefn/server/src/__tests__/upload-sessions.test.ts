@@ -569,6 +569,7 @@ describe('@filefn/server upload sessions', () => {
       ) as any;
 
       expect(status.uploadSessionId).toBe(uploadSessionId);
+      expect(status.fileId).toMatch(/^file_/);
       expect(status.recordedParts).toEqual([]);
     });
   });

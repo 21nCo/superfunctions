@@ -8,6 +8,26 @@ export class ConfigError extends Error {
   }
 }
 
+function validateIntValue(
+  key: string,
+  value: number,
+  options: { min?: number; max?: number }
+): number {
+  if (!Number.isSafeInteger(value)) {
+    throw new ConfigError('ENV_VALUE_INVALID', `${key} must be an integer`);
+  }
+
+  if (options.min !== undefined && value < options.min) {
+    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be >= ${options.min}`);
+  }
+
+  if (options.max !== undefined && value > options.max) {
+    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be <= ${options.max}`);
+  }
+
+  return value;
+}
+
 export function readIntEnv(
   key: string,
   options: { defaultValue: number; min?: number; max?: number; env?: NodeJS.ProcessEnv }
@@ -15,23 +35,15 @@ export function readIntEnv(
   const env = options.env ?? process.env;
   const raw = env[key];
   if (raw === undefined || raw === '') {
-    return options.defaultValue;
+    return validateIntValue(key, options.defaultValue, options);
   }
 
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
+  const normalized = raw.trim();
+  if (!/^-?\d+$/.test(normalized)) {
     throw new ConfigError('ENV_VALUE_INVALID', `${key} must be an integer`);
   }
 
-  if (options.min !== undefined && parsed < options.min) {
-    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be >= ${options.min}`);
-  }
-
-  if (options.max !== undefined && parsed > options.max) {
-    throw new ConfigError('ENV_VALUE_OUT_OF_RANGE', `${key} must be <= ${options.max}`);
-  }
-
-  return parsed;
+  return validateIntValue(key, Number.parseInt(normalized, 10), options);
 }
 
 export function readIntEnvOrDefault(
@@ -40,8 +52,11 @@ export function readIntEnvOrDefault(
 ): number {
   try {
     return readIntEnv(key, options);
-  } catch {
-    return options.defaultValue;
+  } catch (error) {
+    if (!(error instanceof ConfigError)) {
+      throw error;
+    }
+    return validateIntValue(key, options.defaultValue, options);
   }
 }
 
@@ -51,15 +66,19 @@ export function readStringEnv(
 ): string {
   const env = options.env ?? process.env;
   const raw = env[key];
-  if (raw === undefined) {
-    return options.defaultValue;
+  const validateStringValue = (value: string): string => {
+    if (!options.allowEmpty && value.trim().length === 0) {
+      throw new ConfigError('ENV_VALUE_INVALID', `${key} must not be empty`);
+    }
+
+    return value;
+  };
+
+  if (raw === undefined || (!options.allowEmpty && raw === '')) {
+    return validateStringValue(options.defaultValue);
   }
 
-  if (!options.allowEmpty && raw.trim().length === 0) {
-    throw new ConfigError('ENV_VALUE_INVALID', `${key} must not be empty`);
-  }
-
-  return raw;
+  return validateStringValue(raw);
 }
 
 export function readBooleanEnv(

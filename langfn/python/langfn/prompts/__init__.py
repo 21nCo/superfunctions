@@ -1,5 +1,18 @@
+from .chat_template import ChatTemplate
 from .few_shot import FewShotPrompt
-from .registry import PromptRegistry
-from .template import ChatPromptTemplate, PromptTemplate
+from .template import PromptTemplate
 
-__all__ = ["FewShotPrompt", "PromptRegistry", "ChatPromptTemplate", "PromptTemplate"]
+ChatPromptTemplate = ChatTemplate
+
+try:
+    from .registry import PromptRegistry
+except ModuleNotFoundError:  # pragma: no cover - optional shared DB dependency at import time
+    PromptRegistry = None  # type: ignore[assignment]
+
+__all__ = [
+    "ChatPromptTemplate",
+    "ChatTemplate",
+    "FewShotPrompt",
+    "PromptRegistry",
+    "PromptTemplate",
+]

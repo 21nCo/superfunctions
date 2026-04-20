@@ -37,7 +37,7 @@ export interface CallbackStateMatchInput {
 
 export function assertRedirectUriAllowed(redirectUri: string, allowlistedRedirectUris: ReadonlyArray<string>): void {
   if (allowlistedRedirectUris.length === 0) {
-    return;
+    throw new OAuthCoreError("OAUTH_REDIRECT_DISALLOWED", "redirect URI allowlist must not be empty");
   }
 
   if (!allowlistedRedirectUris.includes(redirectUri)) {
@@ -69,7 +69,19 @@ export async function consumeStateOrThrow(
     return consumed;
   }
 
-  const existing = await stateStore.get(stateId);
+  let existing: OAuthStateRecord | null = null;
+  try {
+    existing = await stateStore.get(stateId);
+  } catch (error) {
+    throw new OAuthCoreError("OAUTH_STATE_INVALID", "OAuth state could not be validated", {
+      status: 500,
+      retryable: true,
+      details: {
+        stateId,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    });
+  }
   if (existing?.consumedAt) {
     throw new OAuthCoreError("OAUTH_STATE_REPLAYED", "OAuth state already consumed");
   }

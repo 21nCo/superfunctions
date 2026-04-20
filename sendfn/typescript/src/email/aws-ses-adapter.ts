@@ -5,7 +5,6 @@ import {
   SendEmailResponse
 } from './provider';
 import { AwsSesConfig } from '../types';
-import { EmailProviderError } from '../errors';
 import {
   SESClient,
   SendEmailCommand,
@@ -160,7 +159,7 @@ export class AwsSesAdapter implements EmailProvider {
   }
 
   validateEmail(email: string): boolean {
-    const emailRegex = /^[^S@]+@[^S@]+\.[^S@]+$/;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   }
 
@@ -177,7 +176,7 @@ export class AwsSesAdapter implements EmailProvider {
   }
 
   private handleError(error: any): SendEmailResponse {
-    let code = 'UNKNOWN_ERROR';
+    let code = 'SENDFN_INTERNAL_ERROR';
     let retryable = false;
 
     if (error instanceof MessageRejected) {
@@ -186,8 +185,8 @@ export class AwsSesAdapter implements EmailProvider {
       code = 'LIMIT_EXCEEDED';
       retryable = true;
     } else if (error.name === 'ThrottlingException') {
-        code = 'THROTTLING';
-        retryable = true;
+      code = 'THROTTLING';
+      retryable = true;
     }
 
     return {

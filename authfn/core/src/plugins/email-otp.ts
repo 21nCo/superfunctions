@@ -1,7 +1,7 @@
 import type { Route } from '@superfunctions/http';
 import type { EmailOtpPluginConfig } from '../plugin-types.js';
 import type { AuthFnPlugin, AuthFnPluginRuntimeContext, AuthFnSchemaDefinition } from '../types.js';
-import { createAuthFnRouteMeta } from '../http/router.js';
+import { createAuthFnRouteMeta, readOptionalJson } from '../http/router.js';
 import { issueSession } from '../core/sessions.js';
 import { issueSessionCookies } from '../core/cookies.js';
 import { jsonSuccess } from '../http/envelopes.js';
@@ -63,10 +63,10 @@ function createOtpRoutes(
         mode: 'none'
       }),
       handler: async (request) => {
-        const body = await request.json() as {
+        const body = await readOptionalJson<{
           purpose?: 'verify-email' | 'sign-in' | 'reset-password';
           email?: string;
-        };
+        }>(request);
         const result = await sendOtpChallenge(ctx.config, ctx.hooks, config, {
           request,
           purpose: body.purpose ?? 'verify-email',
@@ -86,11 +86,11 @@ function createOtpRoutes(
         mode: 'none'
       }),
       handler: async (request) => {
-        const body = await request.json() as {
+        const body = await readOptionalJson<{
           purpose?: 'verify-email' | 'sign-in' | 'reset-password';
           email?: string;
           code?: string;
-        };
+        }>(request);
         const verification = await verifyOtpChallenge(ctx.config, config, {
           request,
           purpose: body.purpose ?? 'verify-email',

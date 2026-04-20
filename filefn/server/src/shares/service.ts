@@ -18,6 +18,14 @@ export interface FileShareRecord {
   revokedAt: string | null;
 }
 
+interface FilePermissionRecord {
+  fileId: string;
+  userId?: string | null;
+  tenantId?: string | null;
+  canShare?: boolean;
+  expiresAt?: string | null;
+}
+
 export interface SharesServiceConfig {
   db: Adapter;
   storage: StorageAdapter;
@@ -42,6 +50,17 @@ function generateToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
+function isGrantExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) {
+    return false;
+  }
+  const expiresAtMs = Date.parse(expiresAt);
+  if (Number.isNaN(expiresAtMs)) {
+    return false;
+  }
+  return expiresAtMs <= Date.now();
+}
+
 export function createSharesService(config: SharesServiceConfig) {
   const { db, storage, policies, namespace = 'filefn', signedUrlTtlSeconds = 900 } = config;
 
@@ -54,7 +73,25 @@ export function createSharesService(config: SharesServiceConfig) {
   }
 
   async function canShareFile(file: FileRecord, ctx: FileProviderContext): Promise<boolean> {
-    return file.ownerId === ctx.principalId;
+    if (file.ownerId === ctx.principalId) {
+      return true;
+    }
+    if (!ctx.principalId) {
+      return false;
+    }
+
+    const grants = await db.findMany<FilePermissionRecord>({
+      model: 'filePermissions',
+      where: [{ field: 'fileId', operator: 'eq', value: file.fileId }],
+      namespace,
+    });
+
+    return grants.some((grant) => {
+      if (!grant?.canShare || isGrantExpired(grant.expiresAt)) {
+        return false;
+      }
+      return grant.userId === ctx.principalId || (grant.tenantId && grant.tenantId === ctx.tenantId);
+    });
   }
 
   async function incrementDownloads(tokenHash: string, currentDownloads: number): Promise<void> {

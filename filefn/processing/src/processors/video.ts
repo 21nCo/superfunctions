@@ -1,5 +1,10 @@
-import sharp from 'sharp';
-import type { Processor, ProcessorInput, ProcessorResult } from '../types.js';
+import type {
+  Processor,
+  ProcessorInput,
+  ProcessorResult,
+  VideoConfig,
+  VideoProcessorProvider,
+} from '../types.js';
 
 const SUPPORTED_MIME_TYPES = [
   'video/mp4',
@@ -10,27 +15,13 @@ const SUPPORTED_MIME_TYPES = [
   'video/x-matroska',
 ];
 
-export interface VideoTranscodeOptions {
-  codec?: 'h264' | 'h265' | 'vp9' | 'av1';
-  resolution?: '1080p' | '720p' | '480p' | '360p';
-  bitrate?: string;
-  fps?: number;
-}
-
-export interface VideoPosterOptions {
-  timestamp?: number;
-  width?: number;
-  height?: number;
-  format?: 'jpeg' | 'png' | 'webp';
-  quality?: number;
-}
-
-export interface VideoConfig {
-  generatePoster?: boolean;
-  posterOptions?: VideoPosterOptions;
-  transcode?: boolean;
-  transcodeOptions?: VideoTranscodeOptions;
-  extractMetadata?: boolean;
+function requireProvider(provider: VideoProcessorProvider | undefined): VideoProcessorProvider {
+  if (!provider) {
+    throw new Error(
+      'Video processing requires a provider. Pass config.provider or use createCommandVideoProvider().',
+    );
+  }
+  return provider;
 }
 
 export function createVideoProcessor(config: VideoConfig = {}): Processor {
@@ -40,6 +31,7 @@ export function createVideoProcessor(config: VideoConfig = {}): Processor {
     transcode = true,
     transcodeOptions = {},
     extractMetadata = false,
+    provider,
   } = config;
 
   const {
@@ -74,16 +66,20 @@ export function createVideoProcessor(config: VideoConfig = {}): Processor {
         const videoData = await getData();
         const artifacts = [];
         const baseKey = input.storageKey.replace(/\.[^.]+$/, '');
+        const runtime = (generatePoster || transcode || extractMetadata)
+          ? requireProvider(provider)
+          : undefined;
 
-        if (generatePoster) {
-          const posterData = await generateVideoPoster(
+        if (generatePoster && runtime) {
+          const posterData = await runtime.generatePoster({
+            input,
             videoData,
             timestamp,
             width,
             height,
             format,
-            quality
-          );
+            quality,
+          });
 
           const posterMimeType =
             format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg';
@@ -108,24 +104,21 @@ export function createVideoProcessor(config: VideoConfig = {}): Processor {
           });
         }
 
-        if (transcode) {
-          const transcodedData = await transcodeVideo(
+        if (transcode && runtime) {
+          const transcoded = await runtime.transcode({
+            input,
             videoData,
             codec,
             resolution,
             bitrate,
-            fps
-          );
-
-          const outputExtension = codec === 'vp9' ? 'webm' : codec === 'av1' ? 'webm' : 'mp4';
-          const outputMimeType =
-            codec === 'vp9' || codec === 'av1' ? 'video/webm' : 'video/mp4';
+            fps,
+          });
 
           artifacts.push({
             kind: `video-transcoded-${resolution}`,
-            data: transcodedData,
-            mimeType: outputMimeType,
-            storageKey: `${baseKey}-${resolution}.${outputExtension}`,
+            data: transcoded.data,
+            mimeType: transcoded.mimeType,
+            storageKey: `${baseKey}-${resolution}.${transcoded.extension}`,
             metadata: {
               codec,
               resolution,
@@ -134,14 +127,17 @@ export function createVideoProcessor(config: VideoConfig = {}): Processor {
               sourceFileId: input.fileId,
               sourceVersionId: input.versionId,
               originalSize: videoData.length,
-              transcodedSize: transcodedData.length,
-              compressionRatio: transcodedData.length / videoData.length,
+              transcodedSize: transcoded.data.length,
+              compressionRatio: videoData.length > 0 ? transcoded.data.length / videoData.length : 0,
             },
           });
         }
 
-        if (extractMetadata) {
-          const metadata = await extractVideoMetadata(videoData);
+        if (extractMetadata && runtime) {
+          const metadata = await runtime.extractMetadata({
+            input,
+            videoData,
+          });
           const metadataJson = JSON.stringify(metadata, null, 2);
           const metadataBytes = new TextEncoder().encode(metadataJson);
 
@@ -170,98 +166,6 @@ export function createVideoProcessor(config: VideoConfig = {}): Processor {
         };
       }
     },
-  };
-}
-
-async function generateVideoPoster(
-  videoData: Uint8Array,
-  timestamp: number,
-  width: number,
-  height: number,
-  format: 'jpeg' | 'png' | 'webp',
-  quality: number
-): Promise<Uint8Array> {
-  void timestamp;
-
-  const posterImage = await sharp({
-    create: {
-      width,
-      height,
-      channels: 3,
-      background: { r: 30, g: 30, b: 40 },
-    },
-  })
-    .composite([
-      {
-        input: Buffer.from(
-          `<svg width="${width}" height="${height}">
-            <rect width="100%" height="100%" fill="#1e1e28"/>
-            <circle cx="${width / 2}" cy="${height / 2}" r="80" fill="#ffffff" opacity="0.8"/>
-            <polygon points="${width / 2 - 25},${height / 2 - 35} ${width / 2 - 25},${height / 2 + 35} ${width / 2 + 35},${height / 2}" fill="#1e1e28"/>
-          </svg>`
-        ),
-        top: 0,
-        left: 0,
-      },
-    ]);
-
-  let pipeline = posterImage;
-
-  switch (format) {
-    case 'jpeg':
-      pipeline = pipeline.jpeg({ quality, mozjpeg: true });
-      break;
-    case 'png':
-      pipeline = pipeline.png({ quality, compressionLevel: 9 });
-      break;
-    case 'webp':
-      pipeline = pipeline.webp({ quality });
-      break;
-  }
-
-  const buffer = await pipeline.toBuffer();
-  return new Uint8Array(buffer);
-}
-
-async function transcodeVideo(
-  videoData: Uint8Array,
-  codec: string,
-  resolution: string,
-  bitrate: string,
-  fps: number
-): Promise<Uint8Array> {
-  void codec;
-  void resolution;
-  void bitrate;
-  void fps;
-
-  const mockTranscodedData = new Uint8Array(Math.floor(videoData.length * 0.7));
-  mockTranscodedData.set(videoData.slice(0, Math.min(100, videoData.length)));
-
-  const header = new TextEncoder().encode(
-    `TRANSCODED:codec=${codec},resolution=${resolution},bitrate=${bitrate},fps=${fps}\n`
-  );
-  mockTranscodedData.set(header, 0);
-
-  return mockTranscodedData;
-}
-
-async function extractVideoMetadata(videoData: Uint8Array): Promise<Record<string, unknown>> {
-  void videoData;
-
-  return {
-    duration: 125.5,
-    width: 1920,
-    height: 1080,
-    codec: 'h264',
-    fps: 30,
-    bitrate: '3500000',
-    audioCodec: 'aac',
-    audioSampleRate: 48000,
-    audioChannels: 2,
-    fileSize: videoData.length,
-    container: 'mp4',
-    creationTime: new Date().toISOString(),
   };
 }
 

@@ -102,13 +102,7 @@ function hashPayload(input: CreateSessionInput, ctx: { principalId?: string; ten
     tn: ctx.tenantId
   };
   const str = JSON.stringify(payload);
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return hash.toString(16);
+  return createHash('sha256').update(str).digest('hex');
 }
 
 function isAnonymousContext(ctx: FileProviderContext): boolean {
@@ -125,6 +119,14 @@ function generateUploadSessionToken(): string {
 
 function hashUploadSessionToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function isExpiredAt(expiresAt: string): boolean {
+  const expiresAtMs = Date.parse(expiresAt);
+  if (Number.isNaN(expiresAtMs)) {
+    return true;
+  }
+  return expiresAtMs <= Date.now();
 }
 
 async function forEachBodyChunk(
@@ -410,7 +412,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
           uploadSessionId,
           status: 'pending',
           policy: input.policy,
-          fileId: input.fileId || null,
+          fileId,
           fileName: input.fileName,
           mimeType: input.mimeType,
           size: input.size,
@@ -448,7 +450,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         fileName: input.fileName,
         size: input.size,
         uploadMode,
-        fileId: input.fileId,
+        fileId,
       });
 
       return { uploadSessionId, uploadMode, chunkSizeBytes, totalParts, expiresAt, warnings, uploadSessionToken };
@@ -456,6 +458,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
     async getSessionStatus(uploadSessionId: string, ctx: FileProviderContext, uploadSessionToken?: string): Promise<{
       uploadSessionId: string;
+      fileId?: string;
       status: string;
       totalParts: number;
       recordedParts: number[];
@@ -487,6 +490,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
 
       return {
         uploadSessionId,
+        fileId: session.fileId ?? undefined,
         status: session.status,
         totalParts: session.totalParts,
         recordedParts,
@@ -502,7 +506,6 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       headers?: Record<string, string>;
       expiresAt: string;
     }> {
-      void ctx;
       const session = await db.findOne<UploadSession>({
         model: 'uploadSessions',
         where: [{ field: 'uploadSessionId', operator: 'eq', value: uploadSessionId }],
@@ -513,7 +516,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
 
       if (session.uploadMode === 'proxy') {
@@ -566,7 +569,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (session.uploadMode !== 'proxy') throw errors.noSupportedUploadMode();
 
@@ -653,7 +656,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
       this.assertSessionAccess(session, ctx, uploadSessionToken);
       if (session.status === 'aborted') throw errors.uploadAborted();
       if (session.status === 'completed') throw errors.uploadAlreadyCompleted();
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
       if (partNumber < 1 || partNumber > session.totalParts) throw errors.invalidPartNumber();
       if (!etag || etag.trim() === '') throw errors.invalidEtag();
 
@@ -714,7 +717,7 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
         if (file) return { fileId: file.fileId, versionId: file.currentVersionId };
         throw errors.uploadAlreadyCompleted();
       }
-      if (new Date(session.expiresAt) < new Date()) throw errors.uploadExpired();
+      if (isExpiredAt(session.expiresAt)) throw errors.uploadExpired();
 
       const parts = await db.findMany<{ partNumber: number; etag: string }>({
         model: 'uploadParts',
@@ -779,12 +782,15 @@ export function createUploadSessionService(config: UploadSessionServiceConfig) {
                 const partKey = proxyPartKey(session.storageKey, part.partNumber);
                 const readStream = await storage.openDownloadStream({ key: partKey, target: policyStorageTarget });
                 const reader = readStream.getReader();
-                
-                // Pipe the part to the final file
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    await writer.write(value);
+
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        await writer.write(value);
+                    }
+                } finally {
+                    reader.releaseLock();
                 }
             }
         } finally {

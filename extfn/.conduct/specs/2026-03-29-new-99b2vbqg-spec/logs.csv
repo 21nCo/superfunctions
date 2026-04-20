@@ -1,0 +1,12 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-03-29T01:42:25Z,unknown,Codex Desktop,spec,unknown-agent,,.conduct/specs/2026-03-29-new-99b2vbqg-spec
+2026-03-29T06:23:06Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_00,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_00-2026-03-29-ube14ji8-report.md
+2026-03-29T06:36:57Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_01,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_01-2026-03-29-ln3rg6gf-report.md
+2026-03-29T06:44:08Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_02,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_02-2026-03-29-rbcmd1ic-report.md
+2026-03-29T07:29:47Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_03,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_03-2026-03-29-7gvebubd-report.md
+2026-03-29T07:38:48Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_04,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_04-2026-03-29-q4x8m2np-report.md
+2026-03-29T07:48:56Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_05,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_05-2026-03-29-r8m3p4kx-report.md
+2026-03-29T08:33:06Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_06,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_06-2026-03-29-a6j3kq9p-report.md
+2026-03-29T08:56:32Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_07,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_07-2026-03-29-k9m2x4rq-report.md
+2026-03-29T09:46:40Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_08,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_08-2026-03-29-n8q4m2r7-report.md
+2026-03-29T11:08:28Z,unknown,Codex Desktop,execute,unknown-agent,PHASE_09,extfn/.conduct/specs/2026-03-29-new-99b2vbqg-spec/phase-reports/PHASE_09-2026-03-29-m4z8k2p1-report.md

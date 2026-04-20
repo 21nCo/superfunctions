@@ -2,6 +2,9 @@ import { ApnsClient, Notification, NotificationOptions } from 'apns2';
 import { PushProvider, PushProviderCapabilities, SendPushRequest, SendPushResponse } from './provider';
 import { ApnsConfig } from '../types';
 import { PushProviderError } from '../errors';
+import { mapWithConcurrency } from '../utils/concurrency';
+
+const APNS_CONCURRENCY_LIMIT = 10;
 
 export class ApnsProvider implements PushProvider {
   readonly name = 'apns';
@@ -30,14 +33,13 @@ export class ApnsProvider implements PushProvider {
   }
 
   async sendPush(params: SendPushRequest): Promise<SendPushResponse> {
-    const results: { token: string; success: boolean; error?: string }[] = [];
     const invalidTokens: string[] = [];
-    let successCount = 0;
-    let failedCount = 0;
 
-    // APNS2 client sends one by one, but we can do parallel
-    const promises = params.deviceTokens.map(async (token) => {
-        const notification = new Notification(token, {
+    const results = await mapWithConcurrency(
+      params.deviceTokens,
+      APNS_CONCURRENCY_LIMIT,
+      async (token) => {
+        const notification: any = new Notification(token, {
             alert: {
                 title: params.title,
                 body: params.body,
@@ -61,21 +63,28 @@ export class ApnsProvider implements PushProvider {
 
         try {
             await this.client.send(notification);
-            results.push({ token, success: true });
-            successCount++;
+            return { token, success: true };
         } catch (error: any) {
-            failedCount++;
             let errMsg = error.reason || error.message;
             
             if (error.reason === 'BadDeviceToken' || error.reason === 'Unregistered') {
                 invalidTokens.push(token);
             }
             
-            results.push({ token, success: false, error: errMsg });
+            return { token, success: false, error: errMsg };
         }
-    });
+      }
+    );
 
-    await Promise.all(promises);
+    let successCount = 0;
+    let failedCount = 0;
+    for (const result of results) {
+      if (result.success) {
+        successCount += 1;
+      } else {
+        failedCount += 1;
+      }
+    }
 
     return {
         success: failedCount === 0,

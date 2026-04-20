@@ -35,6 +35,7 @@ describe('Completion Size Validation', () => {
     mockDb.findOne.mockResolvedValue({
       uploadSessionId: 'sess_1',
       status: 'in_progress',
+      uploadMode: 'multipart-signed-url',
       totalParts: 1,
       size: 100, // Expected
       expiresAt: new Date(Date.now() + 10000).toISOString(),
@@ -54,5 +55,7 @@ describe('Completion Size Validation', () => {
     const body = await res.json();
     expect(body.error.code).toBe('FILEFN_UPLOAD_SIZE_MISMATCH');
     expect(body.error.details).toEqual({ expected: 100, actual: 99 });
+    expect(mockStorage.completeMultipartUpload).toHaveBeenCalled();
+    expect(mockStorage.statObject).toHaveBeenCalledWith({ key: 'key', target: 'durable' });
   });
 });

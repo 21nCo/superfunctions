@@ -1,5 +1,5 @@
 import { SendfnDatabaseAdapter, FindEventParams } from '../database/adapter';
-import { CommunicationEvent, CreateEvent } from '../types';
+import { CommunicationEvent, CreateEvent, QueryEventsParams } from '../types';
 
 export class EventTracker {
   constructor(private adapter: SendfnDatabaseAdapter) {}
@@ -15,7 +15,7 @@ export class EventTracker {
     return this.adapter.getEventsByReference(referenceId, referenceType);
   }
 
-  async queryEvents(params: FindEventParams): Promise<CommunicationEvent[]> {
+  async queryEvents(params: QueryEventsParams | FindEventParams): Promise<CommunicationEvent[]> {
     return this.adapter.findEvents(params);
   }
 }

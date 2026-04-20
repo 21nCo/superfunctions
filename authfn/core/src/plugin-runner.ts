@@ -8,7 +8,7 @@ import type {
   AuthFnPluginRuntimeContext,
   AuthFnSession
 } from './types.js';
-import { AuthFnPluginAbortedError } from './core/errors.js';
+import { AuthFnError as AuthFnErrorClass, AuthFnPluginAbortedError } from './core/errors.js';
 import { emitAuthEvent, eventRequestId } from './core/observability.js';
 
 const BEFORE_HOOK_NAMES = [
@@ -232,11 +232,17 @@ async function runAfterHooks(
 }
 
 function isAuthFnError(error: unknown): error is AuthFnError {
+  if (error instanceof AuthFnErrorClass) {
+    return true;
+  }
+
   return Boolean(
     error
       && typeof error === 'object'
-      && 'code' in error
+      && Object.prototype.hasOwnProperty.call(error, 'code')
       && typeof (error as { code?: unknown }).code === 'string'
+      && Object.prototype.hasOwnProperty.call(error, 'status')
+      && typeof (error as { status?: unknown }).status === 'number'
   );
 }
 

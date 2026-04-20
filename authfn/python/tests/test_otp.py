@@ -155,6 +155,7 @@ async def test_send_verify_replay_and_expire() -> None:
     assert sent["sent"] is True
     stored = db.storage["otp_challenges"][0]
     assert stored["codeHash"] != "731942"
+    assert stored["codeHash"].startswith("pbkdf2-sha256$")
 
     verified = await service.verify_challenge("verify-email", "ada@example.com", "731942")
     assert verified["verified"] is True
@@ -181,6 +182,34 @@ async def test_send_verify_replay_and_expire() -> None:
         "verify-email",
     ]
     assert "731942" not in repr(delivery.events)
+
+
+@pytest.mark.asyncio
+async def test_max_attempts_locks_on_configured_limit() -> None:
+    db = MockDatabaseAdapter()
+    delivery = DeliveryRecorder()
+    clock = FixedClock(datetime(2026, 3, 22, 0, 0, 0))
+
+    service = EmailOtpService(
+        AuthFnConfig(database=db, namespace="authfn"),
+        EmailOtpPluginConfig(
+            delivery=delivery,
+            code_generator=lambda: "731942",
+            now=clock.now,
+            max_attempts=2,
+        ),
+    )
+
+    await service.send_challenge("sign-in", "ada@example.com")
+    with pytest.raises(OtpInvalidError):
+        await service.verify_challenge("sign-in", "ada@example.com", "000000")
+    stored = db.storage["otp_challenges"][0]
+    assert stored["attemptCount"] == 1
+    with pytest.raises(OtpInvalidError):
+        await service.verify_challenge("sign-in", "ada@example.com", "000000")
+    assert stored["attemptCount"] == 2
+    with pytest.raises(OtpInvalidError):
+        await service.verify_challenge("sign-in", "ada@example.com", "731942")
 
 
 @pytest.mark.asyncio

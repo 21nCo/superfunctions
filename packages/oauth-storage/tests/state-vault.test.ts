@@ -90,6 +90,19 @@ class InMemorySqlClient implements SqlClient {
       return { rowsAffected: deleted };
     }
 
+    if (normalized.startsWith("UPDATE OAUTH_STATES")) {
+      const consumedAt = params[0] as string;
+      const stateId = params[1] as string;
+      const cutoff = params[2] as string;
+      const row = this.states.get(stateId);
+      if (!row || row.consumed_at || Date.parse(row.expires_at) <= Date.parse(cutoff)) {
+        return { rowsAffected: 0 };
+      }
+
+      this.states.set(stateId, { ...row, consumed_at: consumedAt });
+      return { rowsAffected: 1 };
+    }
+
     return { rowsAffected: 0 };
   }
 }
@@ -252,6 +265,37 @@ describe("oauth-storage state and vault", () => {
     const decrypted = await vault.getTokenSet("tok_rotate");
     expect(decrypted?.tokenSet.accessToken).toBe("at_rotate");
     expect(decrypted?.tokenSet.refreshToken).toBe("rt_rotate");
+  });
+
+  it("removes stale connection indexes when reusing a token id for a new connection", async () => {
+    const vault = new MemoryTokenVault();
+
+    await vault.put({
+      tokenId: "tok_reused",
+      tenantId: "t1",
+      userId: "u1",
+      providerId: "google",
+      connectionId: "conn_old",
+      encryptedPayload: '{"accessToken":"old"}',
+      keyRef: "kms_1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    await vault.put({
+      tokenId: "tok_reused",
+      tenantId: "t1",
+      userId: "u1",
+      providerId: "google",
+      connectionId: "conn_new",
+      encryptedPayload: '{"accessToken":"new"}',
+      keyRef: "kms_1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z"
+    });
+
+    expect(await vault.getByConnection("conn_old")).toBeNull();
+    expect((await vault.getByConnection("conn_new"))?.tokenId).toBe("tok_reused");
   });
 
   it("indexes shared consents and revocation failures by provider and subject", async () => {

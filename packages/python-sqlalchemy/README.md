@@ -17,7 +17,7 @@ pip install superfunctions-sqlalchemy[postgres]
 # With MySQL
 pip install superfunctions-sqlalchemy[mysql]
 
-# With async support
+# Optional async driver dependency for applications that also use SQLAlchemy async APIs separately
 pip install superfunctions-sqlalchemy[asyncpg]
 ```
 
@@ -52,36 +52,44 @@ auth = create_authfn(
 - ✅ Query builders (where, orderBy, limit, offset)
 - ✅ All SQL operators
 - ✅ Works with PostgreSQL, MySQL, SQLite
-- ✅ Sync and async engines
+- ✅ Sync SQLAlchemy engines
 
 ## Example
 
 ```python
+import asyncio
+
 from sqlalchemy import create_engine
 from superfunctions_sqlalchemy import create_adapter
 from superfunctions.db import CreateParams, FindManyParams, WhereClause, Operator
 
-engine = create_engine("postgresql://localhost/mydb")
-adapter = create_adapter(engine)
+async def main() -> None:
+    engine = create_engine("postgresql://localhost/mydb")
+    adapter = create_adapter(engine)
 
-# Create
-user = await adapter.create(
-    CreateParams(
-        model="users",
-        data={"name": "Alice", "email": "alice@example.com"},
+    # Create
+    user = await adapter.create(
+        CreateParams(
+            model="users",
+            data={"name": "Alice", "email": "alice@example.com"},
+        )
     )
-)
 
-# Query
-users = await adapter.find_many(
-    FindManyParams(
-        model="users",
-        where=[
-            WhereClause(field="email", operator=Operator.LIKE, value="%@example.com")
-        ],
-        limit=10,
+    # Query
+    users = await adapter.find_many(
+        FindManyParams(
+            model="users",
+            where=[
+                WhereClause(field="email", operator=Operator.LIKE, value="%@example.com")
+            ],
+            limit=10,
+        )
     )
-)
+
+    print(user, users)
+
+
+asyncio.run(main())
 ```
 
 ## License

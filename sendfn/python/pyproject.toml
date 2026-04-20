@@ -26,7 +26,8 @@ classifiers = [
 ]
 dependencies = [
   "pydantic>=2.5.0",
-  "superfunctions>=0.1.0",
+  "email-validator>=2.0.0",
+  "superfunctions==0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -80,6 +81,11 @@ asyncio_mode = "auto"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.sendfn.release_gate]
+shared_install = "python -m pip install -e ./packages/python-core"
+package_install = "python -m pip install -e './sendfn/python[dev,email,push,fastapi]'"
+test_command = "python -m pytest sendfn/python/tests"
 
 [tool.mypy]
 python_version = "3.10"

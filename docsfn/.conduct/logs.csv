@@ -11,8 +11,3 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-22T20:45:00Z,claude-sonnet-4-6,Cursor,execute-issue,unknown-agent,,docsfn/.conduct/issue-completions/2026-03-22-n5q8k3m1-completion.md
 2026-03-25T11:22:18Z,GPT-5 Codex,Codex Desktop,audit,audit,,.conduct/audits/2026-03-25-r8m4p2q7-full-audit.md
 2026-03-25T13:07:36Z,GPT-5 Codex,Codex Desktop,spec,spec,,.conduct/specs/2026-03-25-audit-fix-k6m3p9r2-spec
-2026-03-26T12:00:00Z,Claude Opus 4.6,Claude Code CLI,audit,claude-opus-4-6,,.conduct/audits/2026-03-26-k7m4p9q2-full-audit.md
-2026-03-27T12:00:00Z,Claude Opus 4.6,Claude Code CLI,execute-issue,claude-opus-4-6,,docsfn/.conduct/issue-completions/2026-03-27-r7k4m9n2-completion.md
-2026-03-27T14:30:00Z,Claude Opus 4.6,Claude Code CLI,audit,claude-opus-4-6,,.conduct/audits/2026-03-27-m9k4p2r7-full-audit.md
-2026-03-28T10:00:00Z,Claude Opus 4.6,Claude Code CLI,audit,claude-opus-4-6,,.conduct/audits/2026-03-28-omwryphm-full-audit.md
-2026-03-28T12:00:00Z,Claude Opus 4.6,Claude Code CLI,execute-issue,claude-opus-4-6,,docsfn/.conduct/issue-completions/2026-03-28-fdpohq7w-completion.md

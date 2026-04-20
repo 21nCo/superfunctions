@@ -400,4 +400,41 @@ describe('PHASE_02 upload mode and proxy semantics', () => {
     expect(conflictingPutRes.status).toBe(409);
     expect(conflictBody.error.code).toBe('FILEFN_PART_CONFLICT');
   });
+
+  it('TV-UPLOAD-PROXY-NEG-002: missing proxy PUT body returns a structured 400 error', async () => {
+    const db = createMemoryDb();
+    const storage = createMemoryStorage({ signedUploadUrls: false, multipart: false, proxyStreamingUpload: true });
+    const service = createUploadSessionService({
+      db: db.db,
+      storage: storage.adapter as any,
+      policies: policyRegistry() as any,
+      events: { emit: vi.fn() } as any,
+    });
+    const routes = createUploadSessionRoutes({ service, auth: { required: false } });
+
+    const initReq = new Request('http://localhost/upload/init', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: jsonBody({ policy: 'p1', fileName: 'proxy.txt', size: 3, mimeType: 'text/plain' }),
+    });
+    const initRes = await routes.initSession(initReq);
+    const initBody = await initRes.json();
+    const uploadSessionId = initBody.data.uploadSessionId as string;
+    const uploadSessionToken = initBody.data.uploadSessionToken as string;
+
+    const putReq = new Request(`http://localhost/upload/${uploadSessionId}/parts/1`, {
+      method: 'PUT',
+      headers: {
+        'content-length': '3',
+        'content-type': 'text/plain',
+        'x-upload-session-token': uploadSessionToken,
+      },
+    });
+
+    const putRes = await routes.uploadPartBytes(putReq, uploadSessionId, 1);
+    const putBody = await putRes.json();
+
+    expect(putRes.status).toBe(400);
+    expect(putBody.error.code).toBe('FILEFN_INVALID_REQUEST');
+  });
 });

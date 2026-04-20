@@ -1,9 +1,18 @@
 import gzip
 import io
-from typing import Any, Optional, List
-from ..types import Processor, ProcessorInput, ProcessorResult, ProcessorOutputArtifact, CompressionConfig
+from typing import Any, Optional
+
+from ..types import (
+    CompressionConfig,
+    Processor,
+    ProcessorInput,
+    ProcessorOutputArtifact,
+    ProcessorResult,
+)
 
 SUPPORTED_MIME_TYPES = ['*/*']
+UNSUPPORTED_ALGORITHM_ERROR = 'FILEFN_PROCESSING_UNSUPPORTED_COMPRESSION_ALGORITHM'
+COMPRESSION_FAILED_ERROR = 'FILEFN_PROCESSING_COMPRESSION_FAILED'
 
 class CompressionProcessor:
     def __init__(self, config: Optional[CompressionConfig] = None):
@@ -15,17 +24,17 @@ class CompressionProcessor:
 
     async def process(self, input: ProcessorInput, get_data: Any) -> ProcessorResult:
         if self.algorithm != 'gzip':
-             return ProcessorResult(success=False, artifacts=[], error=f"Unsupported algorithm: {self.algorithm}")
+             return ProcessorResult(success=False, artifacts=[], error=UNSUPPORTED_ALGORITHM_ERROR)
 
         try:
             data = await get_data()
-            
+
             out_buffer = io.BytesIO()
             with gzip.GzipFile(fileobj=out_buffer, mode='wb', compresslevel=self.level) as f:
                 f.write(data)
-            
+
             compressed_data = out_buffer.getvalue()
-            
+
             artifacts = [ProcessorOutputArtifact(
                 kind='compressed',
                 data=compressed_data,
@@ -42,8 +51,8 @@ class CompressionProcessor:
 
             return ProcessorResult(success=True, artifacts=artifacts)
 
-        except Exception as e:
-            return ProcessorResult(success=False, artifacts=[], error=str(e))
+        except Exception:
+            return ProcessorResult(success=False, artifacts=[], error=COMPRESSION_FAILED_ERROR)
 
 def create_compression_processor(config: Optional[CompressionConfig] = None) -> Processor:
     return CompressionProcessor(config)

@@ -1,16 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UploadManager } from '../upload-manager.js';
 import { createHttpClient } from '../client.js';
 
 describe('PHASE_02 client proxy upload', () => {
   const mockFetch = vi.fn();
-  global.fetch = mockFetch;
 
   const httpClient = createHttpClient({ baseUrl: 'http://localhost' });
   const manager = new UploadManager(httpClient);
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('TV-CLIENT-001: anonymous proxy upload forwards uploadSessionToken on follow-up requests', async () => {
@@ -83,15 +87,18 @@ describe('PHASE_02 client proxy upload', () => {
 
     const signCall = mockFetch.mock.calls[1];
     expect(signCall[0]).toBe('http://localhost/upload/sess_1/parts/1/sign');
-    expect(signCall[1].headers['x-upload-session-token']).toBe('upls_live_0001');
+    const signHeaders = new Headers(signCall[1].headers as HeadersInit);
+    expect(signHeaders.get('x-upload-session-token')).toBe('upls_live_0001');
 
     const putCall = mockFetch.mock.calls[2];
     expect(putCall[0]).toBe('http://localhost/upload/sess_1/parts/1');
     expect(putCall[1].method).toBe('PUT');
-    expect(putCall[1].headers['x-upload-session-token']).toBe('upls_live_0001');
+    const putHeaders = new Headers(putCall[1].headers as HeadersInit);
+    expect(putHeaders.get('x-upload-session-token')).toBe('upls_live_0001');
 
     const completeCall = mockFetch.mock.calls[3];
     expect(completeCall[0]).toBe('http://localhost/upload/sess_1/complete');
-    expect(completeCall[1].headers['x-upload-session-token']).toBe('upls_live_0001');
+    const completeHeaders = new Headers(completeCall[1].headers as HeadersInit);
+    expect(completeHeaders.get('x-upload-session-token')).toBe('upls_live_0001');
   });
 });

@@ -39,7 +39,7 @@ function MermaidContent({ chart }: { chart: string }) {
   });
 
   const { svg, bindFunctions } = use(
-    cachePromise(`${chart}-${resolvedTheme}`, () => {
+    cachePromise(`${id}-${chart}-${resolvedTheme}`, () => {
       return mermaid.render(id, chart.replaceAll('\\n', '\n'));
     }),
   );

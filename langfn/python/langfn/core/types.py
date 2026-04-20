@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -12,9 +12,17 @@ class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
+    @computed_field(return_type=int)
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+    @classmethod
+    def from_counts(cls, prompt_tokens: int = 0, completion_tokens: int = 0) -> "TokenUsage":
+        return cls(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
 
 
 class Cost(BaseModel):
@@ -73,6 +81,39 @@ class ChatResponse(BaseModel):
     parsed: Optional[Any] = None
 
 
+class BatchRequest(BaseModel):
+    prompt: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BatchError(BaseModel):
+    code: str
+    message: str
+
+
+class BatchResult(BaseModel):
+    ok: bool
+    index: int
+    content: Optional[str] = None
+    trace_id: Optional[str] = None
+    response: Optional[CompletionResponse] = None
+    error: Optional[BatchError] = None
+
+
+class FeedbackRequest(BaseModel):
+    trace_id: str
+    client_key: Optional[str] = None
+    rating: float
+    comment: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceQuery(BaseModel):
+    limit: int = 10
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
 class ContentEvent(BaseModel):
     type: Literal["content"] = "content"
     content: str
@@ -122,6 +163,12 @@ class EndEvent(BaseModel):
     trace_id: Optional[str] = None
 
 
+class ErrorEvent(BaseModel):
+    type: Literal["error"] = "error"
+    error: Any
+    trace_id: Optional[str] = None
+
+
 StreamEvent = Union[
     ContentEvent,
     ToolCallEvent,
@@ -130,4 +177,5 @@ StreamEvent = Union[
     TraceEvent,
     ReasoningEvent,
     EndEvent,
+    ErrorEvent,
 ]

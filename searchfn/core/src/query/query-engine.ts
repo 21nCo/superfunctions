@@ -1,21 +1,23 @@
-import type { IndexedDbManager } from "../storage";
-import type { LruCache } from "../cache";
+import type { LruCache, TermCacheValue, TermPosting, VectorCacheValue } from "../cache";
 import type {
-  QueryToken,
+  DocumentStatsProvider,
+  QueryDocumentScorer,
   QueryOptions,
+  QueryStorage,
+  QueryToken,
   RetrievedPostingChunk,
-  ScoredDocument,
-  DocumentStatsProvider
+  ScoredDocument
 } from "./types";
-import type { TermCacheValue, VectorCacheValue } from "../cache";
 import type { DocId, StoredPostingChunk } from "../types";
-import { scorePostings } from "./scoring";
+import { scoreQueryResults } from "./scoring";
 
 export interface QueryEngineDependencies {
-  storage: IndexedDbManager;
+  storage: QueryStorage;
   termCache: LruCache<TermCacheValue>;
   vectorCache: LruCache<VectorCacheValue>;
   stats: DocumentStatsProvider;
+  decodeChunk?: (chunk: StoredPostingChunk) => TermPosting[];
+  scoreDocuments?: QueryDocumentScorer;
 }
 
 export interface QueryResult {
@@ -35,9 +37,7 @@ export class QueryEngine {
       if (!cached) {
         const termChunks = await this.loadAllTermChunks(token.field, token.term);
         if (termChunks.length === 0) continue;
-        const decodedPostings = termChunks.flatMap((chunk) =>
-          this.deps.storage.decodeChunkPayload(chunk).postings.map((raw) => parsePosting(raw)).filter(Boolean),
-        );
+        const decodedPostings = termChunks.flatMap((chunk) => this.decodeChunk(chunk));
         cached = {
           field: token.field,
           term: token.term,
@@ -62,7 +62,6 @@ export class QueryEngine {
     }
 
     const docLengths = new Map<DocId, number>();
-
     const averageDocLengthFromStats = this.deps.stats.getAverageLength();
     const averageDocLength = averageDocLengthFromStats > 0 ? averageDocLengthFromStats : 1;
 
@@ -75,13 +74,31 @@ export class QueryEngine {
       }
     }
 
-    const scored = scorePostings(collectedPostings, docLengths, averageDocLength, {
-      k1: 1.2,
-      b: 0.75,
-      d: 0.5
-    });
-
     const limit = options?.limit ?? 10;
+    const scored = this.deps.scoreDocuments
+      ? await this.deps.scoreDocuments({
+          chunks: collectedPostings,
+          documentLengths: docLengths,
+          averageDocLength,
+          options: {
+            k1: 1.2,
+            b: 0.75,
+            d: 0.5
+          },
+          limit
+        })
+      : scoreQueryResults({
+          chunks: collectedPostings,
+          documentLengths: docLengths,
+          averageDocLength,
+          options: {
+            k1: 1.2,
+            b: 0.75,
+            d: 0.5
+          },
+          limit
+        });
+
     return {
       postings: collectedPostings,
       documents: scored.slice(0, limit)
@@ -107,9 +124,20 @@ export class QueryEngine {
     }
     return chunks;
   }
+
+  private decodeChunk(chunk: StoredPostingChunk): TermPosting[] {
+    if (this.deps.decodeChunk) {
+      return this.deps.decodeChunk(chunk);
+    }
+
+    return this.deps.storage
+      .decodeChunkPayload(chunk)
+      .postings.map((raw) => parsePosting(raw))
+      .filter((posting): posting is TermPosting => posting !== null);
+  }
 }
 
-function parsePosting(raw: unknown): { docId: string; termFrequency: number; metadata?: Record<string, unknown> } {
+function parsePosting(raw: unknown): TermPosting | null {
   if (typeof raw === "string") {
     const parsed = safeJsonParse(raw);
     if (parsed && typeof parsed === "object" && "docId" in parsed) {
@@ -121,11 +149,10 @@ function parsePosting(raw: unknown): { docId: string; termFrequency: number; met
         const termFrequency = Number.isFinite(termFrequencyValue) && termFrequencyValue > 0 ? termFrequencyValue : 1;
         return { docId, termFrequency, metadata: parsedRecord.metadata as Record<string, unknown> | undefined };
       }
-      return { docId: String(docIdValue), termFrequency: 1 };
-    } else {
-      // If it's a string but not valid JSON with docId, treat it as a simple docId
-      return { docId: raw, termFrequency: 1 };
+      return null;
     }
+
+    return { docId: raw, termFrequency: 1 };
   }
 
   if (typeof raw === "number") {
@@ -147,7 +174,7 @@ function parsePosting(raw: unknown): { docId: string; termFrequency: number; met
     }
   }
 
-  return { docId: String(raw), termFrequency: 1 };
+  return null;
 }
 
 function safeJsonParse(raw: string): unknown {
