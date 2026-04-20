@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 from ..client import LangFn
-from ..core.errors import ToolExecutionError
+from ..core.errors import AgentMaxIterationsError, ToolExecutionError
 from ..core.types import Message
 from ..tools.base import Tool
+from ..tools.policy import ToolPolicy
 
 
 @dataclass
@@ -28,6 +29,7 @@ class ToolAgent:
         self._tools = list(tools)
         self._max_iterations = max_iterations
         self._tool_map = {t.name: t for t in self._tools}
+        self._policy = lang._security if isinstance(getattr(lang, "_security", None), ToolPolicy) else ToolPolicy(**(getattr(lang, "_security", None) or {}))
 
     async def run(self, prompt: str, *, system: Optional[str] = None) -> ToolAgentResult:
         messages: List[Dict[str, Any]] = []
@@ -57,8 +59,13 @@ class ToolAgent:
                 tool = self._tool_map.get(call.name)
                 if tool is None:
                     raise ToolExecutionError(f"Unknown tool: {call.name}", metadata={"tool": call.name})
-                result = await tool.run(call.arguments)
+                result = await tool.run(call.arguments, context=tool_context(self._policy))
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
 
-        raise ToolExecutionError("Max iterations exceeded", metadata={"max_iterations": self._max_iterations})
+        raise AgentMaxIterationsError("Agent exceeded max iterations", metadata={"max_iterations": self._max_iterations})
 
+
+def tool_context(policy: ToolPolicy):
+    from ..tools.base import ToolContext
+
+    return ToolContext(metadata={}, policy=policy)

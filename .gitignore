@@ -96,6 +96,7 @@ venv
 .svelte-kit/
 .docsfn/
 docsfn/.tmp/
+.tmp/jscpd/langfn/
 
 # Apple / Xcode user artifacts
 DerivedData/

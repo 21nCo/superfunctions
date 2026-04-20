@@ -45,6 +45,7 @@
     "ci:plan": "node scripts/ci-plan.mjs",
     "ci:python:package": "node scripts/ci-run-python-package.mjs",
     "gate:audit-fix-o4u9k2m7": "node scripts/gate-audit-fix-o4u9k2m7.mjs",
+    "gate:langfn-release": "node scripts/gate-langfn-release.mjs",
     "gate:plugfn-release": "node plugfn/scripts/gate-plugfn-release.mjs",
     "gate:packages-oauth-shared": "node scripts/gate-packages-oauth-shared.mjs",
     "verify:uifn-release": "node scripts/verify-uifn-release.mjs"

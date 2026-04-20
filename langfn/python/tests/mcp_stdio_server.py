@@ -7,9 +7,12 @@ from pydantic import BaseModel
 
 def _ensure_import_path():
     here = os.path.dirname(__file__)
+    repo_root = os.path.abspath(os.path.join(here, "..", "..", ".."))
     pkg_root = os.path.abspath(os.path.join(here, ".."))
-    if pkg_root not in sys.path:
-        sys.path.insert(0, pkg_root)
+    shared_python_root = os.path.join(repo_root, "packages", "python-core")
+    for entry in [pkg_root, shared_python_root]:
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
 
 
 _ensure_import_path()
@@ -43,4 +46,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

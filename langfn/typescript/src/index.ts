@@ -1,5 +1,7 @@
 export * from "./client.js";
+export * from "./core/errors.js";
 export * from "./core/types.js";
+export * from "./http/index.js";
 export * from "./models/base.js";
 export * from "./tools/base.js";
 export * from "./orchestration/chain.js";
@@ -18,3 +20,5 @@ export * as utils from "./utils/index.js";
 export * as observability from "./observability/index.js";
 export * as http from "./http/index.js";
 export * as structured from "./structured/index.js";
+export * as evaluation from "./evaluation/index.js";
+export * as mcp from "./mcp/index.js";

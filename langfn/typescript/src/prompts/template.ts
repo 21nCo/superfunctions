@@ -1,39 +1,64 @@
+import { ValidationError } from "../core/errors.js";
+
 export interface PromptVariables {
-  [key: string]: string | number | boolean;
+  [key: string]: string | number | boolean | null | undefined;
+}
+
+export interface PromptTemplateConfig {
+  template: string;
+  variables?: string[];
+  name?: string;
+  version?: string;
+  description?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+const PLACEHOLDER = /\{([a-zA-Z0-9_]+)\}/g;
+
+function extractVariables(template: string): string[] {
+  const names: string[] = [];
+  for (const match of template.matchAll(PLACEHOLDER)) {
+    const name = match[1];
+    if (!names.includes(name)) {
+      names.push(name);
+    }
+  }
+  return names;
 }
 
 export class PromptTemplate {
-  constructor(private readonly config: {
-    template: string;
-    variables?: string[];
-  }) {}
+  readonly template: string;
+  readonly variables: readonly string[];
+  readonly name?: string;
+  readonly version?: string;
+  readonly description?: string;
+  readonly tags: readonly string[];
+  readonly metadata: Readonly<Record<string, unknown>>;
 
-  format(variables: PromptVariables): string {
-    let result = this.config.template;
-    for (const [key, value] of Object.entries(variables)) {
-      result = result.replace(new RegExp(`{${key}}`, "g"), String(value));
-    }
-    return result;
+  constructor(config: string | PromptTemplateConfig) {
+    const resolved = typeof config === "string" ? { template: config } : config;
+    this.template = resolved.template;
+    this.variables = [...(resolved.variables ?? extractVariables(resolved.template))];
+    this.name = resolved.name;
+    this.version = resolved.version;
+    this.description = resolved.description;
+    this.tags = [...(resolved.tags ?? [])];
+    this.metadata = { ...(resolved.metadata ?? {}) };
   }
-}
 
-export interface ChatMessageTemplate {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
+  format(variables: PromptVariables = {}): string {
+    const missing = this.variables.filter((name) => !(name in variables));
+    if (missing.length) {
+      throw new ValidationError(`Missing template variables: ${missing.join(", ")}`, {
+        metadata: { missing, variables: [...this.variables] }
+      });
+    }
 
-export class ChatPromptTemplate {
-  constructor(private readonly config: {
-    messages: ChatMessageTemplate[];
-  }) {}
+    return this.template.replace(PLACEHOLDER, (_, name: string) => String(variables[name]));
+  }
 
-  format(variables: PromptVariables): any[] {
-    return this.config.messages.map(msg => {
-      let content = msg.content;
-      for (const [key, value] of Object.entries(variables)) {
-        content = content.replace(new RegExp(`{${key}}`, "g"), String(value));
-      }
-      return { role: msg.role, content };
-    });
+  get requiredVariables(): readonly string[] {
+    return this.variables;
   }
 }
