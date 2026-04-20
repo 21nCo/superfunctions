@@ -23,6 +23,8 @@
     "datafn/svelte",
     "filefn/*",
     "clifn/*",
+    "probefn/apps/*",
+    "probefn/packages/*",
     "packages/*",
     "filefn/examples/full-demo/*"
   ],

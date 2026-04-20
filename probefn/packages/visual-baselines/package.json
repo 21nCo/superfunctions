@@ -1,0 +1,25 @@
+{
+  "name": "@probefn/visual-baselines",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@probefn/analyzers": "workspace:*",
+    "@probefn/contracts": "workspace:*",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/pngjs": "^6.0.5",
+    "@probefn/browser-runner": "workspace:*",
+    "@probefn/core": "workspace:*",
+    "@probefn/dev-server": "workspace:*",
+    "@probefn/storage": "workspace:*"
+  }
+}

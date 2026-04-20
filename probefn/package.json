@@ -1,0 +1,26 @@
+{
+  "name": "probefn",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "probefn": "jiti apps/cli/src/index.ts",
+    "test": "turbo run test",
+    "test:vectors": "jiti scripts/test-vectors.ts",
+    "typecheck": "turbo run typecheck",
+    "spec:list": "find .conduct/specs -maxdepth 1 -type d | sort"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "jiti": "^2.4.2",
+    "turbo": "^2.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.4",
+    "zod": "^3.24.4"
+  }
+}

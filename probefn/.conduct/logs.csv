@@ -1,0 +1,4 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-04-15T12:43:55Z,gpt-5,Codex Desktop,spec,codex,,".conduct/specs/2026-04-15-new-384qfawh-spec"
+2026-04-16T05:33:00Z,gpt-5,Codex Desktop,audit,codex,,".conduct/audits/2026-04-16-x4k9p2r-full-audit.md"
+2026-04-16T06:14:28Z,gpt-5,Codex Desktop,audit,codex,,".conduct/audits/2026-04-16-q7m2v8kc-full-audit.md"

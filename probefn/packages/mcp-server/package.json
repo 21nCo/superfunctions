@@ -1,0 +1,24 @@
+{
+  "name": "@probefn/mcp-server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@probefn/analyzers": "workspace:*",
+    "@probefn/browser-runner": "workspace:*",
+    "@probefn/contracts": "workspace:*",
+    "@probefn/core": "workspace:*",
+    "@probefn/dev-server": "workspace:*",
+    "@probefn/storage": "workspace:*",
+    "@probefn/visual-baselines": "workspace:*",
+    "yaml": "^2.8.1",
+    "zod": "^3.24.4"
+  }
+}

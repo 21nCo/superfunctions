@@ -1,0 +1,22 @@
+{
+  "name": "@probefn/analyzers",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@probefn/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@probefn/browser-runner": "workspace:*",
+    "@probefn/core": "workspace:*",
+    "@probefn/dev-server": "workspace:*",
+    "@probefn/storage": "workspace:*"
+  }
+}
