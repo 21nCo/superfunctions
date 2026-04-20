@@ -2,10 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TeamsAdapter } from '../src/index.js';
 import type { Page } from 'playwright';
 
-function createMockPage(): Page {
-  const evaluate = vi.fn()
-    .mockResolvedValueOnce(false)
-    .mockResolvedValue([]);
+function createMockPage(evaluateResults: unknown[] = []): Page {
+  const queuedResults = [...evaluateResults];
+  const evaluate = vi.fn(async () => {
+    if (queuedResults.length === 0) {
+      return [];
+    }
+    return queuedResults.shift();
+  });
   const waitForSelector = vi.fn().mockRejectedValue(new Error('timeout'));
   const waitForTimeout = vi.fn().mockResolvedValue(undefined);
   const $ = vi.fn().mockResolvedValue({ fill: vi.fn().mockResolvedValue(undefined) });
@@ -29,7 +33,7 @@ describe('TeamsAdapter (TV-PLAT-003, PLAT-004)', () => {
   let adapter: TeamsAdapter;
 
   beforeEach(() => {
-    mockPage = createMockPage();
+    mockPage = createMockPage([false, [], []]);
     adapter = new TeamsAdapter({ testPage: mockPage });
   });
 
@@ -69,7 +73,27 @@ describe('TeamsAdapter (TV-PLAT-003, PLAT-004)', () => {
     expect(Array.isArray(participants)).toBe(true);
   });
 
-  it('getAudioStream returns ReadableStream', async () => {
+  it('getAudioStream yields non-empty audio chunks when prerequisites are satisfied', async () => {
+    mockPage = createMockPage([
+      false,
+      [],
+      [],
+      {
+        ok: true,
+        sessionId: 'teams_capture_session',
+        sampleRate: 48000,
+        channels: 1,
+      },
+      {
+        chunks: [[9, 8, 7, 6]],
+        done: true,
+        error: null,
+        sampleRate: 48000,
+        channels: 1,
+      },
+    ]);
+    adapter = new TeamsAdapter({ testPage: mockPage });
+
     await adapter.join('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc123', {
       displayName: 'Bot',
       joinTimeout: 30000,
@@ -84,6 +108,43 @@ describe('TeamsAdapter (TV-PLAT-003, PLAT-004)', () => {
 
     const stream = adapter.getAudioStream();
     expect(stream).toBeInstanceOf(ReadableStream);
+    const reader = stream.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(Array.from(first.value!.data)).toEqual([9, 8, 7, 6]);
+    expect(first.value!.data.byteLength).toBeGreaterThan(0);
+  });
+
+  it('fails with PLATFORM_CAPTURE_UNAVAILABLE when Teams capture prerequisites are missing', async () => {
+    mockPage = createMockPage([
+      false,
+      [],
+      [],
+      {
+        ok: false,
+        reason: 'Teams audio capture requires display-media capture support in this browser runtime.',
+        details: { missingCapabilities: ['getDisplayMedia'] },
+      },
+    ]);
+    adapter = new TeamsAdapter({ testPage: mockPage });
+
+    await adapter.join('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc123', {
+      displayName: 'Bot',
+      joinTimeout: 30000,
+      autoLeaveOnEmpty: true,
+      autoLeaveEmptyTimeout: 30000,
+      consentMessage: 'Recording',
+      enableRealTimeTranscript: false,
+      asrProvider: 'whisper',
+      recordingFormat: 'mp4',
+      language: 'en-US',
+    });
+
+    const stream = adapter.getAudioStream();
+    const reader = stream.getReader();
+    await expect(reader.read()).rejects.toMatchObject({
+      code: 'PLATFORM_CAPTURE_UNAVAILABLE',
+    });
   });
 
   it('getMetadata returns MeetingMetadata', async () => {

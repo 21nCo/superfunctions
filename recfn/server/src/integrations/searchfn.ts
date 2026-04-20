@@ -2,6 +2,7 @@ import { MemoryAdapter } from '@searchfn/adapter-memory';
 
 export interface TranscriptSearchDocument {
   segmentId?: string;
+  segmentIndex?: number;
   recordingId: string;
   botId: string;
   participantId: string;
@@ -23,6 +24,11 @@ export interface TranscriptSearchResultItem {
   score: number;
   document?: TranscriptSearchDocument;
 }
+
+type SearchResultRow = {
+  id: string | number;
+  score: number;
+};
 
 function createSegmentId(recordingId: string, index: number): string {
   return `${recordingId}::seg::${index}`;
@@ -55,14 +61,16 @@ export function createSearchFnClient(): SearchFnClient {
         limit: opts?.limit ?? 20,
       });
 
-      let items = results.map((r) => ({
+      let items = results.map((r: SearchResultRow) => ({
         docId: String(r.id),
         score: r.score,
         document: docIdToMeta.get(String(r.id)),
       }));
 
       if (opts?.botId) {
-        items = items.filter((i) => i.document?.botId === opts.botId);
+        items = items.filter(
+          (i: TranscriptSearchResultItem) => i.document?.botId === opts.botId,
+        );
       }
 
       return items;

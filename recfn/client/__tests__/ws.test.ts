@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { TRANSCRIPT_STREAM_FRAME_SCHEMA } from 'recfn';
 import { RecFn } from '../src/index.js';
 
 describe('Transcript WebSocket stream', () => {
@@ -133,5 +134,79 @@ describe('Transcript WebSocket stream', () => {
       stream.close();
       done();
     });
+  });
+
+  it('emits canonical status events and uses the shared schema (TV-WS-002)', (done) => {
+    expect(TRANSCRIPT_STREAM_FRAME_SCHEMA.status.requiredKeys).toEqual(['botStatus']);
+
+    let wsInstance: { onmessage?: (ev: { data: string }) => void } = {};
+
+    vi.stubGlobal(
+      'WebSocket',
+      vi.fn().mockImplementation(() => {
+        wsInstance = {
+          readyState: 1,
+          send: vi.fn(),
+          close: vi.fn(),
+        };
+        setTimeout(() => {
+          wsInstance.onmessage?.({
+            data: JSON.stringify({
+              type: 'status',
+              data: { botStatus: 'recording' },
+            }),
+          });
+        }, 10);
+        return wsInstance;
+      }),
+    );
+
+    const client = new RecFn({
+      baseUrl: 'http://localhost:3000',
+      apiKey: 'sk-test',
+    });
+
+    const stream = client.transcripts.stream('bot_123');
+    stream.on('status', (data) => {
+      expect(data.botStatus).toBe('recording');
+      stream.close();
+      done();
+    });
+  });
+
+  it('ignores legacy status frames that do not match the canonical schema (TV-WS-002)', async () => {
+    let wsInstance: { onmessage?: (ev: { data: string }) => void } = {};
+
+    vi.stubGlobal(
+      'WebSocket',
+      vi.fn().mockImplementation(() => {
+        wsInstance = {
+          readyState: 1,
+          send: vi.fn(),
+          close: vi.fn(),
+        };
+        return wsInstance;
+      }),
+    );
+
+    const client = new RecFn({
+      baseUrl: 'http://localhost:3000',
+      apiKey: 'sk-test',
+    });
+
+    const stream = client.transcripts.stream('bot_123');
+    const statusListener = vi.fn();
+    stream.on('status', statusListener);
+
+    wsInstance.onmessage?.({
+      data: JSON.stringify({
+        type: 'status',
+        data: { status: 'recording' },
+      }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(statusListener).not.toHaveBeenCalled();
+    stream.close();
   });
 });

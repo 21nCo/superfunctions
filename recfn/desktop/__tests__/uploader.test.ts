@@ -36,4 +36,22 @@ describe('uploader', () => {
       expect(result.data.id).toBe('rec_123');
     }
   });
+
+  it('normalizes ArrayBuffer payloads before upload', async () => {
+    const mockUpload = vi.fn().mockResolvedValue({ ok: true, data: { id: 'rec_456' } });
+    const client = {
+      recordings: { upload: mockUpload },
+    } as unknown as RecFn;
+
+    await uploadRecording(
+      client,
+      new Uint8Array([4, 5, 6]).buffer,
+      { botId: 'bot_2', triggerTranscription: true },
+    );
+
+    expect(mockUpload).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      expect.objectContaining({ botId: 'bot_2', transcribe: true }),
+    );
+  });
 });

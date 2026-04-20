@@ -1,83 +1,91 @@
-# BrowseFn Python SDK
+# BrowseFn Python
 
-> Comprehensive self-hosted web browsing and data extraction platform for developers.
+The Python package published from this directory is `browsefn`.
 
-The Python SDK for BrowseFn provides a unified interface for:
-
-- Web scraping and crawling (HTML, Markdown, Text)
-- Image search and download
-- Geolocation services (Geocoding, Reverse Geocoding)
-- Provider-agnostic interface (swap providers easily)
-
-## Status
-
-🚧 **Alpha**
-
-## Features
-
-- **Type-safe**: Built with Pydantic for robust data validation.
-- **Async**: Fully asynchronous API using `httpx`.
-- **Extensible**: Easy to add custom providers.
-- **Batteries included**: Comes with basic providers (BeautifulSoup).
-
-## Installation
+## Install
 
 ```bash
 pip install browsefn
 ```
 
-## Usage
+## Public Exports
 
-### Web Scraping
+```python
+from browsefn import (
+    browse_fn,
+    BrowseFn,
+    BrowseFnConfig,
+    WebConfig,
+    ImageConfig,
+    GeoConfig,
+    BeautifulSoupProvider,
+    UnsplashProvider,
+    PixabayProvider,
+    PexelsProvider,
+    NominatimProvider,
+    GoogleMapsProvider,
+    MapboxProvider,
+    create_browsefn_router,
+)
+```
+
+## Canonical Provider IDs
+
+- Web ids emitted by the Python package: `cheerio`
+- Accepted Python web aliases: `bs4`, `beautifulsoup`
+- Image ids: `unsplash`, `pixabay`, `pexels`
+- Geo ids: `nominatim`, `google-maps`, `mapbox`
+
+## Example
 
 ```python
 import asyncio
-from browsefn import browse_fn
-from browsefn.web.providers.bs4 import BeautifulSoupProvider
 
-async def main():
-    # Initialize
-    browse = browse_fn()
-    
-    # Register a provider (e.g., BeautifulSoup)
-    bs4_provider = BeautifulSoupProvider()
-    browse.web.register_provider("beautifulsoup", bs4_provider)
-    browse.web.config.default_provider = "beautifulsoup"
-    
-    # Get a page
-    page = await browse.web.get_page("https://example.com")
-    
-    print(f"Title: {page.metadata.title}")
-    print(f"Content length: {len(page.content)}")
+from browsefn import BrowseFnConfig, WebConfig, browse_fn
 
-if __name__ == "__main__":
-    asyncio.run(main())
+
+async def main() -> None:
+    browse = browse_fn(
+        BrowseFnConfig(
+            web=WebConfig(defaultProvider="cheerio"),
+            cache={"enabled": True, "ttl": 60_000},
+        )
+    )
+
+    page = await browse.web.get_page(
+        "https://example.com",
+        {
+            "format": "text",
+            "includeLinks": True,
+        },
+    )
+
+    print(page.provider)
+    print(page.metadata.title)
+
+
+asyncio.run(main())
 ```
 
-### Configuration
+## Router
 
-You can configure BrowseFn using the `BrowseFnConfig` object.
+The Python router uses `superfunctions.http` and returns canonical BrowseFn envelopes.
 
 ```python
-from browsefn import browse_fn, BrowseFnConfig, WebConfig
+from browsefn import browse_fn, create_browsefn_router
 
-config = BrowseFnConfig(
-    web=WebConfig(
-        default_provider="firecrawl",
-        # ...
-    )
-)
-browse = browse_fn(config)
+browse = browse_fn()
+routes = create_browsefn_router(browse)
 ```
 
-## Development
+## Repo-Root Verification
 
-1.  **Install dependencies**:
-    ```bash
-    pip install -e ".[test]"
-    ```
+```bash
+python3 -m compileall browsefn/python/browsefn browsefn/python/tests
+python3 -m pytest browsefn/python/tests/test_web.py browsefn/python/tests/test_images.py browsefn/python/tests/test_geo.py browsefn/python/tests/test_router.py -q
+```
 
-2.  **Run tests**:
-    ```bash
-    pytest
-    ```
+## Related Files
+
+- [Package overview](../README.md)
+- [Testing guide](./TESTING.md)

@@ -4,6 +4,7 @@ Mapbox geocoding provider
 
 import httpx
 from typing import Optional, List
+from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import (
     GeoProvider,
     GeoLocation,
@@ -29,7 +30,7 @@ class MapboxProvider:
     async def reverse_geocode(self, location: GeoLocation) -> ReverseGeocodeResult:
         """Convert coordinates to address"""
         if not self.api_key:
-            raise ValueError("Mapbox API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Mapbox API key is required", provider=self.name)
         
         params = {'access_token': self.api_key}
         
@@ -42,7 +43,7 @@ class MapboxProvider:
             data = response.json()
         
         if not data.get('features'):
-            raise Exception("No results found")
+            raise BrowseFnError("UPSTREAM_NOT_FOUND", "No results found", provider=self.name)
         
         result = data['features'][0]
         
@@ -71,7 +72,7 @@ class MapboxProvider:
     async def geocode(self, address: str, options: GeocodeOptions) -> List[ReverseGeocodeResult]:
         """Convert address to coordinates"""
         if not self.api_key:
-            raise ValueError("Mapbox API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Mapbox API key is required", provider=self.name)
         
         params = {
             'access_token': self.api_key,
@@ -130,7 +131,7 @@ class MapboxProvider:
     async def search(self, options: GeoSearchOptions) -> List[GeoPlace]:
         """Search for places"""
         if not self.api_key:
-            raise ValueError("Mapbox API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Mapbox API key is required", provider=self.name)
         
         params = {
             'access_token': self.api_key,
@@ -189,6 +190,7 @@ class MapboxProvider:
                 location=location,
                 address=address,
                 types=result.get('place_type'),
+                rating=result.get('properties', {}).get('rating'),
                 provider=self.name
             )
             results.append(place)
@@ -198,7 +200,7 @@ class MapboxProvider:
     async def get_place_details(self, place_id: str, fields: Optional[List[str]] = None) -> GeoPlace:
         """Get details for a specific place"""
         if not self.api_key:
-            raise ValueError("Mapbox API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Mapbox API key is required", provider=self.name)
         
         # Mapbox doesn't have a separate place details endpoint
         # We'll fetch the place by ID
@@ -213,7 +215,7 @@ class MapboxProvider:
             data = response.json()
         
         if not data.get('features'):
-            raise ValueError(f"Place {place_id} not found")
+            raise BrowseFnError("UPSTREAM_NOT_FOUND", f"Place {place_id} not found", provider=self.name)
         
         result = data['features'][0]
         coords = result.get('center', [0, 0])
@@ -241,6 +243,7 @@ class MapboxProvider:
             location=location,
             address=address,
             types=result.get('place_type'),
+            rating=result.get('properties', {}).get('rating'),
             provider=self.name
         )
     

@@ -2,6 +2,8 @@ import type { Bot, BotStatus } from 'recfn';
 import { assertTransition } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
+import type { QueueAdapter } from '../integrations/flowfn.js';
+import { QUEUE_NAMES } from '../integrations/flowfn.js';
 import type { TranscriptStreamManager } from '../ws/transcript-stream.js';
 import type { RealtimeTranscriptionPipeline } from '../transcription/realtime.js';
 import type { WebhookPayload } from '../webhooks/events.js';
@@ -24,6 +26,7 @@ export interface LifecycleDeps {
   realtimePipeline?: RealtimeTranscriptionPipeline;
   webhookDeliverer?: WebhookDeliverer;
   metrics?: MetricsEmitter;
+  queue?: QueueAdapter;
 }
 
 export async function transitionBot(
@@ -33,7 +36,15 @@ export async function transitionBot(
   newStatus: BotStatus,
   errorMessage?: string,
 ): Promise<Bot | null> {
-  const { store, logger, streamManager, realtimePipeline, webhookDeliverer, metrics } = deps;
+  const {
+    store,
+    logger,
+    streamManager,
+    realtimePipeline,
+    webhookDeliverer,
+    metrics,
+    queue,
+  } = deps;
 
   const bot = await store.getBot(botId, namespace);
   if (!bot) return null;
@@ -60,10 +71,24 @@ export async function transitionBot(
   });
 
   if (streamManager) {
-    streamManager.broadcast(botId, 'status', { status: newStatus });
+    streamManager.broadcast(botId, 'status', { botStatus: newStatus });
   }
 
-  if (newStatus === 'leaving' || newStatus === 'left' || newStatus === 'error') {
+  if (newStatus === 'leaving' && queue) {
+    await queue.enqueue(QUEUE_NAMES.RECORDING_UPLOAD, {
+      type: 'recording.finalize',
+      data: { botId, namespace },
+      createdAt: new Date().toISOString(),
+    });
+    logger.info('recording.finalization.queued', { botId, namespace });
+  }
+
+  if (
+    newStatus === 'leaving' ||
+    newStatus === 'finalizing' ||
+    newStatus === 'left' ||
+    newStatus === 'error'
+  ) {
     if (realtimePipeline) realtimePipeline.stop(botId);
     if (streamManager) streamManager.closeAll(botId, 1000, `Bot transitioned to ${newStatus}`);
   }

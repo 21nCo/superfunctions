@@ -12,7 +12,7 @@ import type { OutputFormat } from './output.js';
 
 program
   .name('recfn')
-  .description('RecFn CLI — bot management, recordings, transcripts, analytics, calendars')
+  .description('RecFn CLI — bot management, recordings, transcripts, analytics, calendars (PII-safe transcript defaults)')
   .option('-f, --format <format>', 'Output format: text, json', 'text')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();

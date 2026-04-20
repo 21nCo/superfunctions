@@ -52,7 +52,7 @@ asyncio.run(main())
 ## API Resources
 
 - **bots** — create, get, list, leave, delete
-- **recordings** — list, get, download_url, download
+- **recordings** — list, get, download_url, download, upload
 - **transcripts** — get, transcribe, search, stream (WebSocket)
 - **participants** — list
 - **chat** — list

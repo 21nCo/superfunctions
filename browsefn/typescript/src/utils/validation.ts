@@ -2,7 +2,13 @@
  * Validation utilities
  */
 
-import type { GetPageOptions, ImageSearchOptions, GeoLocation } from '../core/types.js';
+import { BrowseFnError } from '../core/errors.js';
+import type {
+  GetPageOptions,
+  ImageDownloadOptions,
+  ImageSearchOptions,
+  GeoLocation,
+} from '../core/types.js';
 
 /**
  * Validate GetPageOptions
@@ -35,23 +41,137 @@ export function validateGetPageOptions(options: GetPageOptions): void {
  */
 export function validateImageSearchOptions(options: ImageSearchOptions): void {
   if (options.orientation && !['landscape', 'portrait', 'square'].includes(options.orientation)) {
-    throw new Error(`Invalid orientation: ${options.orientation}`);
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: `Invalid orientation: ${options.orientation}.`,
+    });
   }
   
   if (options.orderBy && !['relevant', 'latest', 'popular'].includes(options.orderBy)) {
-    throw new Error(`Invalid orderBy: ${options.orderBy}`);
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: `Invalid orderBy: ${options.orderBy}.`,
+    });
   }
   
-  if (options.page && options.page < 1) {
-    throw new Error('Page must be >= 1');
+  if (options.page !== undefined && options.page < 1) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'Page must be greater than or equal to 1.',
+    });
   }
   
-  if (options.perPage && (options.perPage < 1 || options.perPage > 100)) {
-    throw new Error('perPage must be between 1 and 100');
+  if (options.perPage !== undefined && (options.perPage < 1 || options.perPage > 100)) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'perPage must be between 1 and 100.',
+    });
   }
   
   if (options.filters?.license && !['free', 'premium', 'editorial'].includes(options.filters.license)) {
-    throw new Error(`Invalid license: ${options.filters.license}`);
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: `Invalid license: ${options.filters.license}.`,
+    });
+  }
+}
+
+export function validateImageDownloadOptions(options: ImageDownloadOptions): void {
+  if (!options.destination) {
+    return;
+  }
+
+  if (options.format && !['jpeg', 'png', 'webp'].includes(options.format)) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: `Invalid download format: ${options.format}.`,
+    });
+  }
+
+  if (
+    options.quality !== undefined &&
+    (!Number.isFinite(options.quality) || options.quality < 0 || options.quality > 100)
+  ) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'quality must be between 0 and 100.',
+    });
+  }
+
+  if (
+    options.maxWidth !== undefined &&
+    (!Number.isInteger(options.maxWidth) || options.maxWidth <= 0)
+  ) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'maxWidth must be a positive integer.',
+    });
+  }
+
+  if (
+    options.maxHeight !== undefined &&
+    (!Number.isInteger(options.maxHeight) || options.maxHeight <= 0)
+  ) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'maxHeight must be a positive integer.',
+    });
+  }
+
+  if (options.crop) {
+    const { x, y, width, height } = options.crop;
+    if (
+      ![x, y, width, height].every((value) => Number.isInteger(value)) ||
+      x < 0 ||
+      y < 0 ||
+      width <= 0 ||
+      height <= 0
+    ) {
+      throw new BrowseFnError({
+        code: 'INVALID_ARGUMENT',
+        message: 'crop must contain non-negative integer coordinates and positive dimensions.',
+      });
+    }
+  }
+
+  if (options.watermark) {
+    if (!options.watermark.text && !options.watermark.image) {
+      throw new BrowseFnError({
+        code: 'INVALID_ARGUMENT',
+        message: 'watermark requires text or image input.',
+      });
+    }
+    if (
+      options.watermark.opacity !== undefined &&
+      (!Number.isFinite(options.watermark.opacity) ||
+        options.watermark.opacity < 0 ||
+        options.watermark.opacity > 1)
+    ) {
+      throw new BrowseFnError({
+        code: 'INVALID_ARGUMENT',
+        message: 'watermark opacity must be between 0 and 1.',
+      });
+    }
+  }
+
+  if (
+    options.maxRedirects !== undefined &&
+    (!Number.isInteger(options.maxRedirects) || options.maxRedirects < 0)
+  ) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'maxRedirects must be a non-negative integer.',
+    });
+  }
+
+  if (
+    options.maxPayloadBytes !== undefined &&
+    (!Number.isInteger(options.maxPayloadBytes) || options.maxPayloadBytes <= 0)
+  ) {
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'maxPayloadBytes must be a positive integer.',
+    });
   }
 }
 
@@ -60,11 +180,17 @@ export function validateImageSearchOptions(options: ImageSearchOptions): void {
  */
 export function validateGeoLocation(location: GeoLocation): void {
   if (location.lat < -90 || location.lat > 90) {
-    throw new Error('Latitude must be between -90 and 90');
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'Latitude must be between -90 and 90.',
+    });
   }
   
   if (location.lng < -180 || location.lng > 180) {
-    throw new Error('Longitude must be between -180 and 180');
+    throw new BrowseFnError({
+      code: 'INVALID_ARGUMENT',
+      message: 'Longitude must be between -180 and 180.',
+    });
   }
 }
 

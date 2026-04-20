@@ -30,6 +30,10 @@ export interface ZoomAdapterConfig {
   sdkConfig: ZoomMeetingSdkConfig;
 }
 
+type InternalBotConfig = BotConfig & {
+  __botId?: string;
+};
+
 export class ZoomAdapter implements PlatformAdapter {
   readonly platform = 'zoom' as const;
 
@@ -38,6 +42,9 @@ export class ZoomAdapter implements PlatformAdapter {
   private participantTracker: ParticipantTracker;
   private chatTracker: ChatTracker;
   private connected = false;
+  private botId = '';
+  private joinedAt?: string;
+  private endedAt?: string;
 
   constructor(config: ZoomAdapterConfig) {
     this.sdk = config.sdk;
@@ -47,11 +54,16 @@ export class ZoomAdapter implements PlatformAdapter {
 
     this.sdk.on('meeting-ended', () => {
       this.connected = false;
+      this.endedAt = this.endedAt ?? new Date().toISOString();
     });
   }
 
   async join(meetingUrl: string, config: BotConfig): Promise<void> {
     await this.sdk.init(this.sdkConfig);
+    this.botId = (config as InternalBotConfig).__botId ?? this.botId;
+    this.participantTracker.setBotId(this.botId);
+    this.joinedAt = new Date().toISOString();
+    this.endedAt = undefined;
 
     const { meetingNumber, password } = parseMeetingUrl(meetingUrl);
     const displayName = config.displayName ?? 'RecFn Bot';
@@ -72,6 +84,7 @@ export class ZoomAdapter implements PlatformAdapter {
     this.sdk.stopRawVideo();
     await this.sdk.leave();
     this.connected = false;
+    this.endedAt = this.endedAt ?? new Date().toISOString();
   }
 
   getAudioStream(): ReadableStream<AudioChunk> {
@@ -87,7 +100,7 @@ export class ZoomAdapter implements PlatformAdapter {
     if (tracked.length > 0) {
       return tracked;
     }
-    return snapshotParticipants(this.sdk, '');
+    return snapshotParticipants(this.sdk, this.botId);
   }
 
   onParticipantJoin(cb: (p: Participant) => void): void {
@@ -114,8 +127,10 @@ export class ZoomAdapter implements PlatformAdapter {
     const info = this.sdk.getMeetingInfo();
     return {
       id: info.meetingNumber,
-      botId: '',
+      botId: this.botId,
       title: info.meetingTopic,
+      startTime: this.joinedAt,
+      endTime: this.endedAt,
       platform: 'zoom',
       chatMessages: this.chatTracker.getMessages(),
     };

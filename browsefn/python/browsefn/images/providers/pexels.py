@@ -1,11 +1,7 @@
-"""
-Pexels image provider
-"""
-
 import httpx
 from typing import Optional
+from browsefn.core.errors import BrowseFnError
 from browsefn.core.types import (
-    ImageProvider,
     ImageSearchOptions,
     ImageSearchResult,
     ImageResult,
@@ -16,6 +12,7 @@ from browsefn.core.types import (
     DownloadResult,
     ProviderConfig
 )
+from ._shared import build_search_result, download_image, passes_dimension_filters
 
 
 class PexelsProvider:
@@ -31,7 +28,7 @@ class PexelsProvider:
     async def search(self, query: str, options: ImageSearchOptions) -> ImageSearchResult:
         """Search for images on Pexels"""
         if not self.api_key:
-            raise ValueError("Pexels API key is required")
+            raise BrowseFnError("PROVIDER_UNAVAILABLE", "Pexels API key is required", provider=self.name)
         
         # Build request params
         params = {
@@ -58,22 +55,14 @@ class PexelsProvider:
             response.raise_for_status()
             data = response.json()
         
-        # Parse results
         results = []
         for item in data.get('photos', []):
-            # Apply filters if specified
-            if options.filters:
-                width = item.get('width', 0)
-                height = item.get('height', 0)
-                
-                if options.filters.min_width and width < options.filters.min_width:
-                    continue
-                if options.filters.min_height and height < options.filters.min_height:
-                    continue
-                if options.filters.max_width and width > options.filters.max_width:
-                    continue
-                if options.filters.max_height and height > options.filters.max_height:
-                    continue
+            if not passes_dimension_filters(
+                options.filters,
+                width=item.get('width', 0),
+                height=item.get('height', 0),
+            ):
+                continue
             
             src = item.get('src', {})
             photographer = item.get('photographer', '')
@@ -105,34 +94,17 @@ class PexelsProvider:
             )
             results.append(result)
         
-        return ImageSearchResult(
+        return build_search_result(
             query=query,
             total=data.get('total_results', 0),
             page=params['page'],
-            perPage=params['per_page'],
+            per_page=params['per_page'],
             results=results,
-            nextPage=params['page'] + 1 if len(results) > 0 else None,
-            provider=self.name
+            provider=self.name,
         )
     
     async def download(self, url: str, options: ImageDownloadOptions) -> DownloadResult:
-        """Download image from URL"""
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                
-                return DownloadResult(
-                    success=True,
-                    path=options.filename or 'image.jpg',
-                    size=len(response.content),
-                    format='jpeg'
-                )
-        except Exception as error:
-            return DownloadResult(
-                success=False,
-                error=str(error)
-            )
+        return await download_image(url, options)
     
     async def is_available(self) -> bool:
         """Check if Pexels API is available"""

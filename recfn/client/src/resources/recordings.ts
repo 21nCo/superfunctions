@@ -3,6 +3,16 @@ import type { RecFnHttpClient } from '../client.js';
 import type { ApiResult } from '../client.js';
 
 export function createRecordingsResource(client: RecFnHttpClient) {
+  function toUploadBlob(file: Blob | Uint8Array): Blob {
+    if (file instanceof Blob) {
+      return file;
+    }
+
+    const bytes = new Uint8Array(file.byteLength);
+    bytes.set(file);
+    return new Blob([bytes.buffer], { type: 'application/octet-stream' });
+  }
+
   return {
     async list(botId: string): Promise<ApiResult<{ recordings: Recording[] }>> {
       return client.request('GET', `/api/v1/bots/${botId}/recordings`);
@@ -55,8 +65,7 @@ export function createRecordingsResource(client: RecFnHttpClient) {
       opts: { botId: string; transcribe?: boolean },
     ): Promise<ApiResult<Recording & { downloadUrl?: string }>> {
       const path = `/api/v1/recordings/upload?botId=${encodeURIComponent(opts.botId)}${opts.transcribe ? '&transcribe=true' : ''}`;
-      const blob =
-        file instanceof Blob ? file : new Blob([file], { type: 'application/octet-stream' });
+      const blob = toUploadBlob(file);
       const formData = new FormData();
       formData.append('file', blob, 'recording.webm');
 

@@ -147,7 +147,7 @@ export class ProviderManager<T extends WebProvider | ImageProvider | GeoProvider
    * List all registered providers
    */
   list(): string[] {
-    return Array.from(this.providers.keys());
+    return Array.from(this.providers.keys()).sort();
   }
 
   /**
@@ -162,7 +162,7 @@ export class ProviderManager<T extends WebProvider | ImageProvider | GeoProvider
       }
     }
 
-    return available;
+    return available.sort();
   }
 
   /**

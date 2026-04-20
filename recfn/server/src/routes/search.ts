@@ -1,11 +1,82 @@
 import type { Route, RouteContext } from '@superfunctions/http';
+import type { Participant } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
-import type { SearchFnClient } from '../integrations/searchfn.js';
+import type {
+  SearchFnClient,
+  TranscriptSearchDocument,
+  TranscriptSearchResultItem,
+} from '../integrations/searchfn.js';
 import { authenticate } from '../middleware/auth.js';
 import { checkSearchQueryLength } from '../middleware/limits.js';
 import { ok, err } from '../middleware/envelope.js';
 import { ErrorCode } from 'recfn';
+import { createTranscriptSearchDocuments } from '../search/indexer.js';
+
+type SearchParticipant = Pick<Participant, 'id' | 'name' | 'email' | 'role'>;
+
+type SearchContextSegment = {
+  speakerId: string;
+  startTime: number;
+  endTime: number;
+  text: string;
+};
+
+type TranscriptSearchHit = {
+  recordingId: string;
+  botId: string;
+  participant: SearchParticipant | null;
+  segment: SearchContextSegment & { confidence: number };
+  context: SearchContextSegment[];
+};
+
+function compareSearchResults(
+  a: TranscriptSearchResultItem,
+  b: TranscriptSearchResultItem,
+): number {
+  if (a.score !== b.score) {
+    return b.score - a.score;
+  }
+
+  const aDoc = a.document;
+  const bDoc = b.document;
+  const recordingCmp = (aDoc?.recordingId ?? '').localeCompare(bDoc?.recordingId ?? '');
+  if (recordingCmp !== 0) {
+    return recordingCmp;
+  }
+
+  const aIndex = aDoc?.segmentIndex ?? Number.MAX_SAFE_INTEGER;
+  const bIndex = bDoc?.segmentIndex ?? Number.MAX_SAFE_INTEGER;
+  if (aIndex !== bIndex) {
+    return aIndex - bIndex;
+  }
+
+  return a.docId.localeCompare(b.docId);
+}
+
+function toContextSegment(doc: TranscriptSearchDocument): SearchContextSegment {
+  return {
+    speakerId: doc.participantId,
+    startTime: doc.startTime,
+    endTime: doc.endTime,
+    text: doc.text,
+  };
+}
+
+function toParticipantSummary(
+  participant: Participant | undefined,
+): SearchParticipant | null {
+  if (!participant) {
+    return null;
+  }
+
+  return {
+    id: participant.id,
+    name: participant.name,
+    email: participant.email,
+    role: participant.role,
+  };
+}
 
 export interface SearchRouteDeps {
   store: RecFnStore;
@@ -55,42 +126,64 @@ export function createSearchRoutes(deps: SearchRouteDeps): Route[] {
         }
 
         const results = await searchClient.search(trimmed, { limit: limitNum, botId });
+        const orderedResults = [...results].sort(compareSearchResults);
+        const participantCache = new Map<string, Map<string, Participant>>();
+        const transcriptDocumentCache = new Map<string, TranscriptSearchDocument[]>();
 
         const enriched = await Promise.all(
-          results.map(async (item) => {
+          orderedResults.map(async (item): Promise<TranscriptSearchHit | null> => {
             const doc = item.document;
             if (!doc) {
-              return {
-                recordingId: '',
-                botId: '',
-                segment: {},
-                context: [] as unknown[],
-              };
+              return null;
             }
 
             const recording = await store.getRecording(doc.recordingId, auth.namespace);
-            const transcript = recording
-              ? await store.getTranscript(doc.recordingId, auth.namespace)
-              : null;
-
-            let context: unknown[] = [];
-            if (transcript?.segments) {
-              const idx = transcript.segments.findIndex(
-                (s) =>
-                  s.speakerId === doc.participantId &&
-                  s.startTime === doc.startTime &&
-                  s.text === doc.text,
-              );
-              if (idx >= 0) {
-                const before = transcript.segments.slice(Math.max(0, idx - 1), idx);
-                const after = transcript.segments.slice(idx + 1, idx + 2);
-                context = [...before, transcript.segments[idx], ...after].filter(Boolean);
-              }
+            if (!recording) {
+              return null;
             }
+
+            let transcriptDocs = transcriptDocumentCache.get(doc.recordingId);
+            if (!transcriptDocs) {
+              const transcript = await store.getTranscript(doc.recordingId, auth.namespace);
+              if (!transcript) {
+                return null;
+              }
+              transcriptDocs = createTranscriptSearchDocuments({
+                recordingId: doc.recordingId,
+                botId: doc.botId,
+                segments: transcript.segments,
+              });
+              transcriptDocumentCache.set(doc.recordingId, transcriptDocs);
+            }
+
+            let participantsById = participantCache.get(doc.botId);
+            if (!participantsById) {
+              const participants = await store.getParticipants(doc.botId, auth.namespace);
+              participantsById = new Map(
+                participants.map((participant) => [participant.id, participant]),
+              );
+              participantCache.set(doc.botId, participantsById);
+            }
+
+            const contextIndex = transcriptDocs.findIndex(
+              (segmentDoc) =>
+                segmentDoc.segmentId === doc.segmentId ||
+                (segmentDoc.participantId === doc.participantId &&
+                  segmentDoc.startTime === doc.startTime &&
+                  segmentDoc.endTime === doc.endTime &&
+                  segmentDoc.text === doc.text),
+            );
+            const context =
+              contextIndex >= 0
+                ? transcriptDocs
+                    .slice(Math.max(0, contextIndex - 1), contextIndex + 2)
+                    .map(toContextSegment)
+                : [toContextSegment(doc)];
 
             return {
               recordingId: doc.recordingId,
               botId: doc.botId,
+              participant: toParticipantSummary(participantsById.get(doc.participantId)),
               segment: {
                 speakerId: doc.participantId,
                 startTime: doc.startTime,
@@ -104,7 +197,9 @@ export function createSearchRoutes(deps: SearchRouteDeps): Route[] {
         );
 
         return ok({
-          results: enriched.filter((r) => r.recordingId),
+          results: enriched.filter(
+            (result): result is TranscriptSearchHit => result !== null,
+          ),
           nextCursor: null,
         });
       },

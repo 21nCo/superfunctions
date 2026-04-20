@@ -1,113 +1,154 @@
-"""
-Web scraper service
-"""
+"""Web scraping service with canonical provider selection and metadata batching."""
 
 import asyncio
-from typing import Dict, Optional, List
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from browsefn.core.errors import BrowseFnError
+from browsefn.core.provider_manager import ProviderManager
+from browsefn.core.provider_registry import (
+    normalize_python_web_provider_id,
+    normalize_web_provider_id,
+    sort_provider_ids,
+)
 from browsefn.core.types import (
-    WebConfig,
     GetPageOptions,
-    PageResult,
-    WebProvider,
     MetadataOptions,
     MetadataResult,
-    PageMetadata
+    PageMetadata,
+    PageResult,
+    WebConfig,
+    WebProvider,
 )
-from browsefn.core.provider_manager import ProviderManager
-from browsefn.utils.html_utils import extract_metadata
+from browsefn.utils.validation import validate_page_options, validate_url
 
 
 class WebScraper:
-    """Web scraping service with provider management"""
-    
+    """Web scraping service with fallback and batch metadata support."""
+
+    MAX_METADATA_BATCH = 50
+
     def __init__(self, config: Optional[WebConfig] = None):
         self.config = config or WebConfig()
         self.providers: Dict[str, WebProvider] = {}
         self.provider_manager = ProviderManager(
             self.providers,
-            self.config.default_provider,
-            self.config.fallback_chain
+            self._normalize_provider_id(self.config.default_provider),
+            [self._normalize_provider_id(name) for name in (self.config.fallback_chain or []) if self._normalize_provider_id(name)],
         )
 
-    def register_provider(self, name: str, provider: WebProvider):
-        """Register a web scraping provider"""
-        self.provider_manager.register_provider(name, provider)
+    def _normalize_provider_id(self, name: Optional[str]) -> Optional[str]:
+        return normalize_web_provider_id(name) or normalize_python_web_provider_id(name)
+
+    def _required_capabilities(self, options: GetPageOptions) -> Dict[str, bool]:
+        return {
+            "javascript": bool(options.javascript),
+            "screenshots": bool(options.screenshot),
+            "selectors": bool(options.selectors and (options.selectors.include or options.selectors.exclude)),
+            "headers": bool(options.headers),
+            "cookies": bool(options.cookies),
+            "proxy": bool(options.proxy),
+        }
+
+    def _assert_provider_capabilities(self, provider_name: str, provider: WebProvider, options: GetPageOptions) -> None:
+        required = self._required_capabilities(options)
+        missing = [
+            capability
+            for capability, enabled in required.items()
+            if enabled and not getattr(provider.capabilities, capability, False)
+        ]
+        if not missing:
+            return
+
+        if "javascript" in missing or "screenshots" in missing:
+            raise BrowseFnError(
+                "UNSUPPORTED_PROVIDER_CAPABILITY",
+                f"Provider {provider_name} cannot satisfy javascript or screenshot requirements.",
+                provider=provider_name,
+            )
+
+        capability = missing[0]
+        raise BrowseFnError(
+            "UNSUPPORTED_PROVIDER_CAPABILITY",
+            f"Provider {provider_name} cannot satisfy {capability} requirements.",
+            provider=provider_name,
+        )
+
+    def register_provider(self, name: str, provider: WebProvider) -> None:
+        canonical_name = self._normalize_provider_id(name) or name
+        self.provider_manager.register_provider(canonical_name, provider)
+        if not self.provider_manager.default_provider:
+            self.provider_manager.default_provider = canonical_name
 
     async def get_page(self, url: str, options: Optional[GetPageOptions] = None) -> PageResult:
-        """Fetch a single web page"""
+        validate_url(url)
         options = options or GetPageOptions()
-        provider = self.provider_manager.get_provider(options.provider)
-        return await provider.get_page(url, options)
+        validate_page_options(options)
+        requested_provider = self._normalize_provider_id(options.provider)
+
+        async def executor(provider: WebProvider, provider_name: str) -> PageResult:
+            self._assert_provider_capabilities(provider_name, provider, options)
+            result = await provider.get_page(url, options)
+            result.provider = provider_name
+            return result
+
+        return await self.provider_manager.execute_with_fallback(requested_provider, executor)
 
     async def get_multiple_metadata(
         self,
         urls: List[str],
-        options: Optional[MetadataOptions] = None
+        options: Optional[MetadataOptions] = None,
     ) -> List[MetadataResult]:
-        """Fetch metadata for multiple URLs concurrently"""
         options = options or MetadataOptions()
-        concurrency = options.concurrency or 5
-        
-        # Create semaphore for concurrency control
+        max_batch = options.max_batch_override or self.MAX_METADATA_BATCH
+        if len(urls) > max_batch:
+            raise BrowseFnError(
+                "INVALID_ARGUMENT",
+                "Metadata batch size exceeds the configured maximum.",
+            )
+
+        concurrency = max(1, options.concurrency or 5)
         semaphore = asyncio.Semaphore(concurrency)
+        progress_callback = options.on_progress if callable(options.on_progress) else None
+        ordered_results: List[Optional[MetadataResult]] = [None] * len(urls)
         completed = 0
-        total = len(urls)
-        
-        async def fetch_metadata(url: str) -> MetadataResult:
-            """Fetch metadata for a single URL"""
+
+        async def fetch_metadata(index: int, url: str) -> None:
             nonlocal completed
-            
             async with semaphore:
                 start_time = datetime.now()
-                
                 try:
-                    # Fetch page with minimal options
-                    page_options = GetPageOptions(
-                        format='html',
-                        timeout=options.timeout or 10000,
-                        cache=options.cache
+                    page_result = await self.get_page(
+                        url,
+                        GetPageOptions(format="html", timeout=options.timeout or 10000, cache=options.cache),
                     )
-                    
-                    provider = self.provider_manager.get_provider()
-                    page_result = await provider.get_page(url, page_options)
-                    
-                    # Filter metadata fields if specified
-                    metadata_dict = page_result.metadata.dict()
+                    metadata_dict = page_result.metadata.model_dump()
                     if options.fields:
                         metadata_dict = {
-                            k: v for k, v in metadata_dict.items()
-                            if k in options.fields or k == 'url'
+                            key: value
+                            for key, value in metadata_dict.items()
+                            if key in options.fields or key == "url"
                         }
-                    
                     metadata = PageMetadata(**metadata_dict)
-                    duration = (datetime.now() - start_time).total_seconds() * 1000
-                    
-                    result = MetadataResult(
+                    ordered_results[index] = MetadataResult(
                         success=True,
                         data=metadata,
                         cached=page_result.cached,
-                        duration=duration,
-                        provider=page_result.provider
+                        duration=(datetime.now() - start_time).total_seconds() * 1000,
+                        provider=page_result.provider,
                     )
-                    
                 except Exception as error:
-                    duration = (datetime.now() - start_time).total_seconds() * 1000
-                    result = MetadataResult(
+                    ordered_results[index] = MetadataResult(
                         success=False,
                         error=str(error),
-                        duration=duration
+                        duration=(datetime.now() - start_time).total_seconds() * 1000,
                     )
-                
-                # Update progress
                 completed += 1
-                # Note: onProgress callback omitted since it's a function type
-                
-                return result
-        
-        # Fetch all URLs concurrently
-        tasks = [fetch_metadata(url) for url in urls]
-        results = await asyncio.gather(*tasks)
-        
-        return results
+                if progress_callback:
+                    progress_callback(completed, len(urls))
 
+        await asyncio.gather(*(fetch_metadata(index, url) for index, url in enumerate(urls)))
+        return [result for result in ordered_results if result is not None]
+
+    def list_providers(self) -> List[str]:
+        return sort_provider_ids(self.providers.keys())

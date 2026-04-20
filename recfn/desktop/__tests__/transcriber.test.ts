@@ -1,13 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
-import { transcribeWithWhisper, buildTranscript } from '../src/transcriber.js';
-import { WhisperAdapter } from 'recfn-whisper';
+import {
+  transcribeWithWhisper,
+  buildTranscript,
+  type WhisperBatchAdapter,
+} from '../src/transcriber.js';
 import type { Segment } from 'recfn';
 
-function createMockAdapter(segments: Segment[]): WhisperAdapter {
-  const runner = {
-    run: vi.fn(async () => ({ segments })),
+function createMockAdapter(segments: Segment[]): WhisperBatchAdapter {
+  return {
+    transcribeBatch: vi.fn(async () => segments),
   };
-  return new WhisperAdapter({ runner } as never);
 }
 
 describe('transcriber', () => {
@@ -33,7 +35,10 @@ describe('transcriber', () => {
       language: 'es-ES',
       speakerDiarization: true,
     });
-    expect(adapter.transcribeBatch).toBeDefined();
+    expect(adapter.transcribeBatch).toHaveBeenCalledWith('/tmp/audio.wav', {
+      language: 'es-ES',
+      speakerDiarization: true,
+    });
   });
 
   it('buildTranscript produces transcript shape', () => {

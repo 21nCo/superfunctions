@@ -69,7 +69,7 @@ describe("RateLimiter", () => {
     await limiter.checkLimit("test");
     expect(await limiter.checkLimit("test")).toBe(false);
 
-    limiter.reset("test");
+    await limiter.reset("test");
 
     expect(await limiter.checkLimit("test")).toBe(true);
   });
@@ -86,6 +86,24 @@ describe("RateLimiter", () => {
 
     // Should have waited approximately 200ms
     expect(duration).toBeGreaterThanOrEqual(150);
-    expect(await limiter.checkLimit("test")).toBe(true);
+    expect(await limiter.checkLimit("test")).toBe(false);
+  });
+
+  it("should expose the shared middleware import path", () => {
+    const limiter = new RateLimiter({ requests: 1, window: 1000 });
+    expect(limiter.getImportPath()).toBe("@superfunctions/middleware/rate-limit");
+  });
+
+  it("should surface remaining and retry delay when rate limited", async () => {
+    const limiter = new RateLimiter({ requests: 1, window: 1000 });
+
+    expect(await limiter.checkLimit("unsplash")).toBe(true);
+    expect(await limiter.checkLimit("unsplash")).toBe(false);
+
+    const status = limiter.getStatus("unsplash");
+    expect(status.allowed).toBe(false);
+    expect(status.provider).toBe("unsplash");
+    expect(status.remaining).toBe(0);
+    expect(status.retryAfterMs).toBeGreaterThan(0);
   });
 });

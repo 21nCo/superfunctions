@@ -6,6 +6,7 @@ export type BotStatus =
   | 'joined'
   | 'recording'
   | 'leaving'
+  | 'finalizing'
   | 'left'
   | 'done'
   | 'error';

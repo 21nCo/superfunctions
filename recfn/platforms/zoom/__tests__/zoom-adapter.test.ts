@@ -226,7 +226,9 @@ describe('ZoomAdapter', () => {
 
   describe('participant tracking', () => {
     it('tracks participants via SDK events', async () => {
-      await adapter.join('https://zoom.us/j/1234567890', {});
+      await adapter.join('https://zoom.us/j/1234567890', {
+        __botId: 'bot_zoom_1',
+      } as { __botId: string });
 
       const joinedParticipants: Array<{ id: string; name: string }> = [];
       adapter.onParticipantJoin((p) =>
@@ -248,6 +250,7 @@ describe('ZoomAdapter', () => {
       expect(all).toHaveLength(1);
       expect(all[0].name).toBe('Alice');
       expect(all[0].email).toBe('alice@example.com');
+      expect(all[0].botId).toBe('bot_zoom_1');
       expect(all[0].role).toBe('host');
       expect(all[0].consent).toBe('pending');
       expect(all[0].joinedAt).toBeDefined();
@@ -275,10 +278,14 @@ describe('ZoomAdapter', () => {
     });
 
     it('snapshots SDK participants when no tracked participants', async () => {
+      await adapter.join('https://zoom.us/j/1234567890', {
+        __botId: 'bot_zoom_snapshot',
+      } as { __botId: string });
       // Before any join/leave events, getParticipants falls back to SDK snapshot
       const participants = await adapter.getParticipants();
       expect(participants).toHaveLength(2);
       expect(participants[0].name).toBe('Alice');
+      expect(participants[0].botId).toBe('bot_zoom_snapshot');
       expect(participants[0].role).toBe('host');
       expect(participants[1].name).toBe('Bob');
       expect(participants[1].role).toBe('attendee');
@@ -329,13 +336,28 @@ describe('ZoomAdapter', () => {
 
   describe('getMetadata', () => {
     it('returns meeting metadata from SDK', async () => {
-      await adapter.join('https://zoom.us/j/1234567890', {});
+      await adapter.join('https://zoom.us/j/1234567890', {
+        __botId: 'bot_zoom_meta',
+      } as { __botId: string });
       const metadata = await adapter.getMetadata();
 
       expect(metadata.id).toBe('1234567890');
+      expect(metadata.botId).toBe('bot_zoom_meta');
       expect(metadata.title).toBe('Test Meeting');
+      expect(metadata.startTime).toBeDefined();
       expect(metadata.platform).toBe('zoom');
       expect(metadata.chatMessages).toEqual([]);
+    });
+
+    it('sets metadata endTime after leave', async () => {
+      await adapter.join('https://zoom.us/j/1234567890', {
+        __botId: 'bot_zoom_meta_end',
+      } as { __botId: string });
+      await adapter.leave();
+
+      const metadata = await adapter.getMetadata();
+      expect(metadata.botId).toBe('bot_zoom_meta_end');
+      expect(metadata.endTime).toBeDefined();
     });
 
     it('includes captured chat messages in metadata', async () => {

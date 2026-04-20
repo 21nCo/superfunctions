@@ -1,29 +1,31 @@
-export type WebSocketFrameType =
-  | 'segment'
-  | 'participant_joined'
-  | 'participant_left'
-  | 'status'
-  | 'error'
-  | 'ping'
-  | 'pong';
+import type {
+  TranscriptStreamErrorData,
+  TranscriptStreamFrame,
+  TranscriptStreamFrameType,
+} from 'recfn';
+import {
+  TRANSCRIPT_STREAM_FRAME_SCHEMA,
+  parseTranscriptStreamFrame,
+  serializeTranscriptStreamFrame,
+} from 'recfn';
 
-export interface WebSocketFrame<T = any> {
-  type: WebSocketFrameType;
-  data?: T;
-}
+export {
+  TRANSCRIPT_STREAM_FRAME_SCHEMA,
+};
 
-export interface ErrorFrameData {
-  code: string;
-  message: string;
-}
+export type WebSocketFrameType = TranscriptStreamFrameType;
+export type WebSocketFrame = TranscriptStreamFrame;
+export type ErrorFrameData = TranscriptStreamErrorData;
 
-export function createFrame<T>(type: WebSocketFrameType, data?: T): string {
-  if (data === undefined) {
-    return JSON.stringify({ type });
+export function createFrame(type: WebSocketFrameType, data?: unknown): string {
+  const frame = data === undefined ? { type } : { type, data };
+  const parsed = parseTranscriptStreamFrame(frame);
+  if (!parsed) {
+    throw new Error(`Invalid transcript frame for type "${type}".`);
   }
-  return JSON.stringify({ type, data });
+  return serializeTranscriptStreamFrame(parsed);
 }
 
 export function createErrorFrame(code: string, message: string): string {
-  return createFrame<ErrorFrameData>('error', { code, message });
+  return createFrame('error', { code, message });
 }

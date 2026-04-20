@@ -6,10 +6,61 @@ import asyncio
 import json
 from typing import Any, AsyncIterator, Tuple
 
-import websockets
+try:
+    import websockets
+except ModuleNotFoundError:  # pragma: no cover - exercised in environments without optional deps
+    class _MissingWebsocketsModule:
+        def connect(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise ModuleNotFoundError(
+                "websockets is required for transcript streaming. Install the recfn "
+                "Python package with its runtime dependencies."
+            )
+
+    websockets = _MissingWebsocketsModule()
 
 from .client import RecFnHttpClient
 from .types import Participant, Segment, _parse_participant, _parse_segment
+
+STATUS_REQUIRED_KEYS = ("botStatus",)
+
+
+def _parse_transcript_frame(raw: str) -> Tuple[str, Any] | None:
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(msg, dict):
+        return None
+
+    frame_type = msg.get("type", "")
+    data = msg.get("data")
+
+    if frame_type == "pong":
+        return None
+    if frame_type == "segment" and isinstance(data, dict):
+        return ("segment", _parse_segment(data))
+    if frame_type == "participant_joined" and isinstance(data, dict):
+        return ("participant_joined", _parse_participant(data))
+    if frame_type == "participant_left" and isinstance(data, dict):
+        participant_id = data.get("participantId")
+        if isinstance(participant_id, str):
+            return ("participant_left", {"participant_id": participant_id})
+        return None
+    if frame_type == "status" and isinstance(data, dict):
+        # Only accept the canonical status payload shape.
+        bot_status = data.get(STATUS_REQUIRED_KEYS[0])
+        if isinstance(bot_status, str):
+            return ("status", {"bot_status": bot_status})
+        return None
+    if frame_type == "error" and isinstance(data, dict):
+        code = data.get("code")
+        message = data.get("message")
+        if isinstance(code, str) and isinstance(message, str):
+            return ("error", {"code": code, "message": message})
+        return None
+
+    return None
 
 
 async def transcript_stream(
@@ -42,31 +93,9 @@ async def transcript_stream(
         ping_task = asyncio.create_task(send_ping(ws))
         try:
             async for raw in ws:
-                try:
-                    msg = json.loads(raw)
-                    t = msg.get("type", "")
-                    if t == "pong":
-                        continue
-                    data = msg.get("data")
-                    if t == "segment":
-                        yield ("segment", _parse_segment(data) if isinstance(data, dict) else data)
-                    elif t == "participant_joined":
-                        yield (
-                            "participant_joined",
-                            _parse_participant(data) if isinstance(data, dict) else data,
-                        )
-                    elif t == "participant_left":
-                        pid = data.get("participantId", "") if isinstance(data, dict) else ""
-                        yield ("participant_left", {"participant_id": pid})
-                    elif t == "status":
-                        bs = data.get("botStatus", "") if isinstance(data, dict) else ""
-                        yield ("status", {"bot_status": bs})
-                    elif t == "error":
-                        code = data.get("code", "") if isinstance(data, dict) else ""
-                        msg_text = data.get("message", "") if isinstance(data, dict) else ""
-                        yield ("error", {"code": code, "message": msg_text})
-                except (json.JSONDecodeError, KeyError):
-                    pass
+                parsed = _parse_transcript_frame(raw)
+                if parsed is not None:
+                    yield parsed
         finally:
             ping_task.cancel()
             try:

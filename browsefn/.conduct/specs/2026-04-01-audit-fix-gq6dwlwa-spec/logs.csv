@@ -1,0 +1,12 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-04-01T10:35:11Z,GPT-5 Codex,Codex Desktop,spec,unknown-agent,,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec
+2026-04-01T11:07:52Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_00,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_00-2026-04-01-ha4w2sfa-report.md
+2026-04-01T11:32:16Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_01,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_01-2026-04-01-n4pz1m2q-report.md
+2026-04-01T11:43:10Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_02,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_02-2026-04-01-x7k2m1qd-report.md
+2026-04-01T12:06:09Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_03,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_03-2026-04-01-r8v4k1mc-report.md
+2026-04-01T12:12:48Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_04,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_04-2026-04-01-q3m9k7vd-report.md
+2026-04-01T12:31:33Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_05,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_05-2026-04-01-k6r2n9qd-report.md
+2026-04-01T12:46:55Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_06,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_06-2026-04-01-m2x8p4qs-report.md
+2026-04-01T12:52:44Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_07,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_07-2026-04-01-v9n3q2kt-report.md
+2026-04-01T13:02:11Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_08,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_08-2026-04-01-t6p4w8qn-report.md
+2026-04-01T13:42:27Z,GPT-5 Codex,Codex Desktop,execute,unknown-agent,PHASE_09,browsefn/.conduct/specs/2026-04-01-audit-fix-gq6dwlwa-spec/phase-reports/PHASE_09-2026-04-01-c9m4r2vx-report.md

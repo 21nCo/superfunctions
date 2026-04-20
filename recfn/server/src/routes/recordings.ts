@@ -3,6 +3,7 @@ import { ErrorCode } from 'recfn';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import type { StorageAdapter } from '../integrations/filefn.js';
+import { createDownloadResponse } from '../integrations/filefn.js';
 import { authenticate } from '../middleware/auth.js';
 import { ok, err } from '../middleware/envelope.js';
 import { generateSignedUrl } from '../recording/signed-url.js';
@@ -56,14 +57,19 @@ export function createRecordingRoutes(deps: RecordingRouteDeps): Route[] {
             downloadUrl = await generateSignedUrl(
               recording.storageRef,
               storage,
+              {
+                proxyUrl: new URL(
+                  `/api/v1/recordings/${recording.id}/download`,
+                  request.url,
+                ).toString(),
+              },
             );
           } catch {
             // Storage may not have the file yet
           }
         }
 
-        const { namespace: _ns, ...rest } = recording;
-        return ok({ ...rest, downloadUrl });
+        return ok({ ...recording, downloadUrl });
       },
     },
 
@@ -90,15 +96,19 @@ export function createRecordingRoutes(deps: RecordingRouteDeps): Route[] {
           );
         }
 
-        const signedUrl = await generateSignedUrl(
-          recording.storageRef,
-          storage,
-        );
+        try {
+          const signedUrl = await generateSignedUrl(
+            recording.storageRef,
+            storage,
+          );
 
-        return new Response(null, {
-          status: 302,
-          headers: { Location: signedUrl },
-        });
+          return new Response(null, {
+            status: 302,
+            headers: { Location: signedUrl },
+          });
+        } catch {
+          return createDownloadResponse(storage, recording.storageRef);
+        }
       },
     },
   ];

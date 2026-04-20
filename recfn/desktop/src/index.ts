@@ -5,6 +5,7 @@
 
 export {
   getCaptureStreams,
+  stopCaptureStreams,
   createMockCaptureProvider,
   type CaptureProvider,
   type CaptureSource,

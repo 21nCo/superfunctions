@@ -6,16 +6,9 @@ import type { ValidateApiKey } from '../middleware/auth.js';
 import type { CalendarTokenStore } from '../calendar/token-store.js';
 import type { GoogleCalendarClient } from '../calendar/google.js';
 import type { OutlookCalendarClient } from '../calendar/outlook.js';
+import type { CalendarService } from '../calendar/service.js';
 import { authenticate } from '../middleware/auth.js';
 import { ok, err } from '../middleware/envelope.js';
-import {
-  googleEventsToCalendarEvents,
-  type GoogleCalendarEvent,
-} from '../calendar/google.js';
-import {
-  outlookEventsToCalendarEvents,
-  type OutlookCalendarEvent,
-} from '../calendar/outlook.js';
 
 export interface CalendarRouteDeps {
   store: RecFnStore;
@@ -24,6 +17,7 @@ export interface CalendarRouteDeps {
   tokenStore: CalendarTokenStore;
   googleClient: GoogleCalendarClient;
   outlookClient: OutlookCalendarClient;
+  calendarService: CalendarService;
 }
 
 const PROVIDERS = ['google', 'outlook'] as const;
@@ -133,36 +127,14 @@ export function createCalendarRoutes(deps: CalendarRouteDeps): Route[] {
         const to = url.searchParams.get('to') ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
         try {
-          if (calendar.provider === 'google') {
-            const events = await googleClient.listEvents(tokens.accessToken, { from, to });
-            const botIdMap = await store.getEventBotIds(
-              calendarId,
-              events.map((e) => e.id),
-              auth.namespace,
-            );
-            const calEvents = googleEventsToCalendarEvents(
-              events as GoogleCalendarEvent[],
-              calendarId,
-              botIdMap,
-            );
-            return ok({ events: calEvents });
-          } else {
-            const events = await outlookClient.listEvents(tokens.accessToken, { from, to });
-            const botIdMap = await store.getEventBotIds(
-              calendarId,
-              events.map((e) => e.id),
-              auth.namespace,
-            );
-            const calEvents = outlookEventsToCalendarEvents(
-              events as OutlookCalendarEvent[],
-              calendarId,
-              botIdMap,
-            );
-            return ok({ events: calEvents });
-          }
+          const events = await deps.calendarService.listEvents(calendarId, auth.namespace, {
+            from,
+            to,
+          });
+          return ok({ events });
         } catch (e) {
           return err(
-            ErrorCode.CALENDAR_AUTH_FAILED,
+            (e as import('recfn').RecFnError).code ?? ErrorCode.CALENDAR_AUTH_FAILED,
             e instanceof Error ? e.message : 'Failed to fetch calendar events.',
           );
         }
