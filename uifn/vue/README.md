@@ -36,6 +36,16 @@ The Experimental Vue package does not currently claim:
 
 See the root `uifn/README.md` for the compatibility matrix and the `verify:uifn-release` contract. This package remains in the release gate for manifest, export-map, and pack-hygiene checks even while Experimental.
 
+## Example Playground
+
+The experimental Vue playground lives in [`uifn/examples/vue-playground`](../examples/vue-playground) and is documented from the shared example hub at [`uifn/examples/README.md`](../examples/README.md).
+
+Run it from the repository root with:
+
+```bash
+npm --workspace @uifn/examples run dev:vue
+```
+
 ## License
 
 MIT

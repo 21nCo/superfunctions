@@ -1,0 +1,24 @@
+{
+  "name": "@uifn/example-vue-playground",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Vue example workspace for uifn (experimental)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 6113",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 6113"
+  },
+  "dependencies": {
+    "@uifn/core": "*",
+    "@uifn/examples-shared": "*",
+    "@uifn/vue": "*",
+    "vue": "^3.5.26"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "playwright": "^1.55.0",
+    "typescript": "^6.0.2",
+    "vite": "^5.4.21"
+  }
+}

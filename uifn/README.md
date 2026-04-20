@@ -94,6 +94,18 @@ Passing `npm run verify:uifn-release -- --dry-run` is only a contract preview. P
 
 See `uifn/.conduct/SPEC.md` for the public release-contract baseline.
 
+## Example Playgrounds
+
+Scenario-driven example apps live in [`uifn/examples/README.md`](./examples/README.md).
+
+Run the example bundle verification from the repository root:
+
+```bash
+npm run verify:uifn-examples
+```
+
+The example hub documents the React playground, Svelte playground, and experimental Vue playground, along with their fixed local dev ports.
+
 ## License
 
 MIT

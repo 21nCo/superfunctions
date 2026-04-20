@@ -51,6 +51,16 @@ Display-helper contract:
 
 See the root `uifn/README.md` for the compatibility matrix, the release-blocking package matrix, and the `verify:uifn-release` contract.
 
+## Example Playground
+
+The React playground lives in [`uifn/examples/react-playground`](../examples/react-playground) and is documented from the shared example hub at [`uifn/examples/README.md`](../examples/README.md).
+
+Run it from the repository root with:
+
+```bash
+npm --workspace @uifn/examples run dev:react
+```
+
 ## License
 
 MIT

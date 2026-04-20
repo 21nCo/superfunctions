@@ -8,6 +8,8 @@
     "botfn/*",
     "hostfn/*",
     "authfn/*",
+    "uifn/*",
+    "uifn/examples/*",
     "authfn/examples/*",
     "authfn/examples/*/*",
     "extfn/*",
@@ -22,7 +24,6 @@
     "filefn/*",
     "clifn/*",
     "packages/*",
-    "filefn/*",
     "filefn/examples/full-demo/*"
   ],
   "scripts": {
@@ -48,7 +49,8 @@
     "gate:langfn-release": "node scripts/gate-langfn-release.mjs",
     "gate:plugfn-release": "node plugfn/scripts/gate-plugfn-release.mjs",
     "gate:packages-oauth-shared": "node scripts/gate-packages-oauth-shared.mjs",
-    "verify:uifn-release": "node scripts/verify-uifn-release.mjs"
+    "verify:uifn-release": "node scripts/verify-uifn-release.mjs",
+    "verify:uifn-examples": "npm --workspace @uifn/examples run verify"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
