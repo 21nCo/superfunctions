@@ -1,2 +1,3 @@
 id, desc, status, completedAt, completionDoc
 2026-03-20-audit-fix-dhrtycgi-spec,Define the work to make uifn core react and svelte production-ready and release-hygienic,1,2026-03-20T18:21:46Z,
+2026-03-26-new-mrxtiesy-spec,Define the work to add deterministic private example apps for uifn across React Svelte and experimental Vue,1,2026-03-26T09:28:16Z,

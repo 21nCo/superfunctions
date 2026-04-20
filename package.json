@@ -20,6 +20,7 @@
     "packages/*",
     "21n/*",
     "uifn/*",
+    "uifn/examples/*",
     "memoryfn/*",
     "watchfn/*",
     "secfn/*",
@@ -54,7 +55,8 @@
     "clean": "turbo run clean && rm -rf node_modules",
     "check:duplication": "node scripts/check-duplication.mjs",
     "gate:audit-fix-o4u9k2m7": "node scripts/gate-audit-fix-o4u9k2m7.mjs",
-    "verify:uifn-release": "node scripts/verify-uifn-release.mjs"
+    "verify:uifn-release": "node scripts/verify-uifn-release.mjs",
+    "verify:uifn-examples": "npm --workspace @uifn/examples run verify"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",

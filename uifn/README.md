@@ -60,6 +60,18 @@ npm run verify:uifn-release -- --dry-run
 
 The release gate command is implemented at `scripts/verify-uifn-release.mjs` and enforces package-level build/lint/test/type/export-map/pack checks.
 
+## Example Playgrounds
+
+Scenario-driven example apps live in [`uifn/examples/README.md`](./examples/README.md).
+
+Run the example bundle verification from the repository root:
+
+```bash
+npm run verify:uifn-examples
+```
+
+The example hub documents the React playground, Svelte playground, and experimental Vue playground, along with their fixed local dev ports.
+
 ## License
 
 MIT

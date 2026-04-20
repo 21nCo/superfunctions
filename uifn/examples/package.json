@@ -1,0 +1,13 @@
+{
+  "name": "@uifn/examples",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Example hub and runner commands for uifn playground apps",
+  "scripts": {
+    "dev:react": "npm run dev --workspace @uifn/example-react-playground",
+    "dev:svelte": "npm run dev --workspace @uifn/example-svelte-playground",
+    "dev:vue": "npm run dev --workspace @uifn/example-vue-playground",
+    "build": "npm run build --workspace @uifn/examples-shared && npm run build --workspace @uifn/example-react-playground && npm run build --workspace @uifn/example-svelte-playground && npm run build --workspace @uifn/example-vue-playground",
+    "verify": "node ./scripts/verify.mjs"
+  }
+}

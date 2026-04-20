@@ -48,6 +48,16 @@ export function Example() {
 - React: `18.2+`
 - Node.js: `18.x`, `20.x`, `22.x`
 
+## Example Playground
+
+The React playground lives in [`uifn/examples/react-playground`](../examples/react-playground) and is documented from the shared example hub at [`uifn/examples/README.md`](../examples/README.md).
+
+Run it from the repository root with:
+
+```bash
+npm --workspace @uifn/examples run dev:react
+```
+
 ## License
 
 MIT

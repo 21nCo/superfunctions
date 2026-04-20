@@ -1,0 +1,24 @@
+{
+  "name": "@uifn/examples-shared",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Shared scenarios, capability metadata, and fixtures for uifn examples",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm exec --yes --package typescript@6.0.2 -- tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2"
+  }
+}

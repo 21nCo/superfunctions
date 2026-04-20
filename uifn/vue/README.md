@@ -29,6 +29,16 @@ It does **not** currently ship a stable composable-first surface such as `useChe
 - Vue: `3.5+`
 - Node.js: `18.x`, `20.x`, `22.x`
 
+## Example Playground
+
+The experimental Vue playground lives in [`uifn/examples/vue-playground`](../examples/vue-playground) and is documented from the shared example hub at [`uifn/examples/README.md`](../examples/README.md).
+
+Run it from the repository root with:
+
+```bash
+npm --workspace @uifn/examples run dev:vue
+```
+
 ## License
 
 MIT

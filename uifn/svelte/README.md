@@ -40,6 +40,16 @@ npm install @uifn/core @uifn/svelte
 - Svelte: `5.x`
 - Node.js: `18.x`, `20.x`, `22.x`
 
+## Example Playground
+
+The Svelte playground lives in [`uifn/examples/svelte-playground`](../examples/svelte-playground) and is documented from the shared example hub at [`uifn/examples/README.md`](../examples/README.md).
+
+Run it from the repository root with:
+
+```bash
+npm --workspace @uifn/examples run dev:svelte
+```
+
 ## License
 
 MIT
