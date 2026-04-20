@@ -79,6 +79,7 @@ export interface CompressionConfig {
 export interface OCRConfig {
   language?: string;
   outputFormat?: 'text' | 'hocr' | 'json' | 'all';
+  provider?: OCRProcessorProvider;
 }
 
 export type ImageTransformOperation = 'resize' | 'crop' | 'rotate';
@@ -117,6 +118,8 @@ export interface VideoTranscodeOptions {
   resolution?: '1080p' | '720p' | '480p' | '360p';
   bitrate?: string;
   fps?: number;
+  includeAudio?: boolean;
+  audioCodec?: 'aac' | 'opus' | 'copy';
 }
 
 export interface VideoPosterOptions {
@@ -133,6 +136,63 @@ export interface VideoConfig {
   transcode?: boolean;
   transcodeOptions?: VideoTranscodeOptions;
   extractMetadata?: boolean;
+  provider?: VideoProcessorProvider;
+}
+
+export interface VideoPosterRequest {
+  input: ProcessorInput;
+  videoData: Uint8Array;
+  timestamp: number;
+  duration?: number;
+  width: number;
+  height: number;
+  format: 'jpeg' | 'png' | 'webp';
+  quality: number;
+}
+
+export interface VideoTranscodeRequest {
+  input: ProcessorInput;
+  videoData: Uint8Array;
+  codec: 'h264' | 'h265' | 'vp9' | 'av1';
+  resolution: '1080p' | '720p' | '480p' | '360p';
+  bitrate: string;
+  fps: number;
+  includeAudio?: boolean;
+  audioCodec?: 'aac' | 'opus' | 'copy';
+}
+
+export interface VideoMetadataRequest {
+  input: ProcessorInput;
+  videoData: Uint8Array;
+}
+
+export interface VideoTranscodeResult {
+  data: Uint8Array;
+  mimeType: string;
+  extension: string;
+}
+
+export interface VideoProcessorProvider {
+  generatePoster(request: VideoPosterRequest): Promise<Uint8Array>;
+  transcode(request: VideoTranscodeRequest): Promise<VideoTranscodeResult>;
+  extractMetadata(request: VideoMetadataRequest): Promise<Record<string, unknown>>;
+}
+
+export interface OCRProviderRequest {
+  input: ProcessorInput;
+  imageData: Uint8Array;
+  language: string;
+  includeHOCR: boolean;
+}
+
+export interface OCRProviderResult {
+  text: string;
+  confidence: number;
+  hocr?: string | null;
+}
+
+export interface OCRProcessorProvider {
+  recognize(request: OCRProviderRequest): Promise<OCRProviderResult>;
 }
 
 export interface AudioTranscodeOptions {
@@ -147,4 +207,43 @@ export interface AudioConfig {
   transcodeOptions?: AudioTranscodeOptions;
   extractMetadata?: boolean;
   generateWaveform?: boolean;
+  provider?: AudioProcessorProvider;
+}
+
+export interface AudioMetadataRequest {
+  input: ProcessorInput;
+  audioData: Uint8Array;
+}
+
+export interface AudioWaveformRequest {
+  input: ProcessorInput;
+  audioData: Uint8Array;
+  samples?: number;
+}
+
+export interface AudioTranscodeRequest {
+  input: ProcessorInput;
+  audioData: Uint8Array;
+  codec: 'mp3' | 'aac' | 'opus' | 'vorbis' | 'flac';
+  bitrate: string;
+  sampleRate: number;
+  channels: number;
+}
+
+export interface AudioWaveformResult {
+  samples: number[];
+  peakAmplitude: number;
+  duration: number;
+}
+
+export interface AudioTranscodeResult {
+  data: Uint8Array;
+  mimeType: string;
+  extension: string;
+}
+
+export interface AudioProcessorProvider {
+  transcode(request: AudioTranscodeRequest): Promise<AudioTranscodeResult>;
+  extractMetadata(request: AudioMetadataRequest): Promise<Record<string, unknown>>;
+  generateWaveform(request: AudioWaveformRequest): Promise<AudioWaveformResult>;
 }

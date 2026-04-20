@@ -3,12 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "npm exec --yes --package=tsx@4.20.5 -- tsx watch src/index.ts",
     "build": "tsc"
   },
   "dependencies": {
-    "@hono/node-server": "^1.11.1",
-    "hono": "^4.3.7",
     "@filefn/server": "*",
     "@filefn/processing": "*"
   },

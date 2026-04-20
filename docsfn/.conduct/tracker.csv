@@ -6,5 +6,3 @@ id, desc, status, completedAt, completionDoc
 2026-03-22-q9x3k7m2-issue,docsfn/docs contains library-level code (types + renderer + layout) that belongs in @docsfn/core and @docsfn/svelte due to missing browser-safe sub-entry,1,2026-03-22T20:30:00Z,2026-03-22-p7k4m8r2-completion
 2026-03-22-v8k3m7q2-issue,docsfn layout + table rendering + sidebar collapse semantics + TOC active indicator are broken across core and framework packages,1,2026-03-22T20:45:00Z,2026-03-22-n5q8k3m1-completion
 2026-03-25-audit-fix-k6m3p9r2-spec,Make docsfn production-ready for repo-wide Fumadocs replacement by fixing renderer parity public package contracts dogfood truthfulness and release proof gaps,1,2026-03-26T05:08:29Z,
-2026-03-26-k7m4p9q2-full-audit,Docsfn docs do not reflect latest implemented code — 6 FAIL and 15 PARTIAL findings,1,2026-03-27T12:00:00Z,2026-03-27-r7k4m9n2-completion
-2026-03-28-combined-audit-fix,Docsfn docs — 19 remaining findings from re-audit + thorough audit (5 FAIL + 14 PARTIAL),1,2026-03-28T12:00:00Z,2026-03-28-fdpohq7w-completion

@@ -29,7 +29,7 @@ All HostFn behavior is controlled by a single `hostfn.config.json` file in your 
   "build": {
     "command": "npm run build",
     "directory": "dist",
-    "nodeModules": "production"
+    "nodeModules": "all"
   },
   "start": {
     "command": "npm start",
@@ -48,7 +48,8 @@ All HostFn behavior is controlled by a single `hostfn.config.json` file in your 
   "sync": {
     "exclude": [
       "node_modules", ".git", ".github",
-      "dist", "build", ".env", ".env.*", "*.log"
+      "dist", "build", ".env", ".env.*", "*.log",
+      ".turbo", ".wrangler"
     ]
   },
   "backup": {
@@ -69,16 +70,16 @@ The application name. Used to derive the remote directory (`/var/www/{name}-{env
 
 ### `runtime` (required)
 
-The application runtime. Currently supported values:
+The application runtime. Currently, HostFn executes the `nodejs` runtime. Other values are reserved in the schema for future adapters:
 
 | Value | Description |
 |---|---|
 | `nodejs` | Node.js application |
-| `python` | Python (planned) |
-| `go` | Go (planned) |
-| `ruby` | Ruby (planned) |
-| `rust` | Rust (planned) |
-| `docker` | Docker (planned) |
+| `python` | Planned |
+| `go` | Planned |
+| `ruby` | Planned |
+| `rust` | Planned |
+| `docker` | Planned |
 
 ### `version` (required)
 
@@ -128,7 +129,7 @@ Controls how your application is built on the server.
 "build": {
   "command": "npm run build",
   "directory": "dist",
-  "nodeModules": "production"
+  "nodeModules": "all"
 }
 ```
 
@@ -136,11 +137,11 @@ Controls how your application is built on the server.
 |---|---|---|---|
 | `command` | `string` | — | Build command to run (e.g., `npm run build`) |
 | `directory` | `string` | `"dist"` | Build output directory |
-| `nodeModules` | `"all" \| "production" \| "none"` | `"production"` | Which node_modules to install |
+| `nodeModules` | `"all" \| "production" \| "none"` | `"all"` when `build.command` is set, otherwise `"production"` | Which node_modules to install |
 
 If `build` is omitted, HostFn skips the build step and installs only production dependencies.
 
-When a `build.command` is present, HostFn installs **all** dependencies (including devDependencies) first so the build can succeed, then the PM2 process runs from the built output.
+When `build.nodeModules` is omitted, HostFn defaults to installing **all** dependencies when `build.command` is present. Set `build.nodeModules` to `"production"` or `"none"` to override that behavior.
 
 ## Start Configuration
 
@@ -176,11 +177,11 @@ Controls post-deployment health verification.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `path` | `string` | `"/health"` | HTTP path to check |
-| `timeout` | `number` | `60` | Overall timeout in seconds |
+| `timeout` | `number` | `60` | Per-attempt curl timeout in seconds |
 | `retries` | `number` | `10` | Number of health check attempts |
 | `interval` | `number` | `3` | Seconds between retries |
 
-HostFn uses `curl` on the server to check `http://localhost:{port}{path}`. A `200-299` status code is considered healthy.
+HostFn uses `curl --max-time {timeout} -sf` on the server to check `http://localhost:{port}{path}`. Success follows curl's `-f` exit-code behavior rather than an explicit `200-299` status check in HostFn itself, so 3xx responses can also count as healthy even though HostFn does not pass `-L` to follow redirects.
 
 ## Environment Variables Configuration
 
@@ -203,7 +204,8 @@ Controls which files are synced to the server via rsync.
 "sync": {
   "exclude": [
     "node_modules", ".git", ".github",
-    "dist", "build", ".env", ".env.*", "*.log"
+    "dist", "build", ".env", ".env.*", "*.log",
+    ".turbo", ".wrangler"
   ]
 }
 ```

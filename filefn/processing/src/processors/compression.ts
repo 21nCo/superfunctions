@@ -18,6 +18,13 @@ export function createCompressionProcessor(config: CompressionConfig = {}): Proc
       try {
         const data = await getData();
 
+        if (data.length === 0) {
+          return {
+            success: true,
+            artifacts: [],
+          };
+        }
+
         const compressedData = await compress(data, algorithm, level);
 
         const compressionRatio = compressedData.length / data.length;

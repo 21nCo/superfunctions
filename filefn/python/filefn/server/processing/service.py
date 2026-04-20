@@ -1,7 +1,7 @@
 import asyncio
+import secrets
 from datetime import datetime, timezone
-import random
-from typing import Any, Callable, Dict, List, Optional, Protocol, Set
+from typing import Any, Callable, Dict, List, Optional, Protocol, Set, cast
 
 from pydantic import BaseModel
 
@@ -84,7 +84,7 @@ class FileArtifactRecord(BaseModel):
 
 
 def _generate_id() -> str:
-    return f"art_{datetime.now(timezone.utc).timestamp()}_{random.randint(0, 10000)}"
+    return f"art_{secrets.token_urlsafe(12)}"
 
 
 def _supports_processor(processor: Processor, mime_type: str) -> bool:
@@ -109,6 +109,7 @@ class ProcessingService:
         self.namespace = config.namespace
         self.enabled = config.enabled
         self.queue_name = "filefn.processing"
+        self._background_tasks: Set[asyncio.Task[Any]] = set()
 
     def _file_storage_target(self, policy_name: Optional[str]) -> str:
         policy = self.policies.get(policy_name) if (self.policies and policy_name) else None
@@ -122,11 +123,22 @@ class ProcessingService:
         if not ctx.principalId:
             return set()
 
-        grants = await self.db.find_many(
-            model="filePermissions",
-            where=[],
-            namespace=self.namespace,
+        grants: List[Dict[str, Any]] = []
+        grants.extend(
+            await self.db.find_many(
+                model="filePermissions",
+                where=[{"field": "userId", "operator": "eq", "value": ctx.principalId}],
+                namespace=self.namespace,
+            )
         )
+        if ctx.tenantId:
+            grants.extend(
+                await self.db.find_many(
+                    model="filePermissions",
+                    where=[{"field": "tenantId", "operator": "eq", "value": ctx.tenantId}],
+                    namespace=self.namespace,
+                )
+            )
 
         readable: Set[str] = set()
         for grant in grants:
@@ -179,10 +191,12 @@ class ProcessingService:
                         }
                     )
                     return {"enqueued": True, "jobId": result.get("jobId")}
-                except Exception:
-                    raise errors.processing_enqueue_failed()
+                except Exception as exc:
+                    raise errors.processing_enqueue_failed() from exc
 
-        asyncio.create_task(self._safe_run_processing(ProcessorInput(**input), ctx))
+        task = asyncio.create_task(self._safe_run_processing(ProcessorInput(**input), ctx))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         return {"enqueued": False}
 
     async def _safe_run_processing(self, input: ProcessorInput, ctx: FileProviderContext) -> None:
@@ -339,7 +353,7 @@ class ProcessingService:
             order_by=[{"field": "createdAt", "direction": "desc"}],
             namespace=self.namespace,
         )
-        return artifacts
+        return cast(List[Dict[str, Any]], artifacts)
 
     async def get_artifact_download_url(
         self,

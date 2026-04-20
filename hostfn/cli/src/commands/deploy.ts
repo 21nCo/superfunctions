@@ -1,7 +1,7 @@
 import ora from 'ora';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { mkdtempSync, rmSync, cpSync } from 'fs';
+import { mkdtempSync, rmSync, cpSync, existsSync } from 'fs';
 import { Logger } from '../utils/logger.js';
 import { ConfigLoader } from '../config/loader.js';
 import { createSSHConnection, SSHConnection } from '../core/ssh.js';
@@ -23,6 +23,37 @@ interface DeployOptions {
   dryRun: boolean;
   service?: string;
   all?: boolean;
+}
+
+interface InstallPlan {
+  nodeModulesMode: 'all' | 'production' | 'none';
+  useCi: boolean;
+  installCmd: string | null;
+}
+
+function computeInstallPlan(
+  config: HostfnConfig,
+  hasLockFile: boolean,
+): InstallPlan {
+  const nodeModulesMode =
+    config.build?.nodeModules ?? (config.build?.command ? 'all' : 'production');
+
+  const installCmd =
+    nodeModulesMode === 'none'
+      ? null
+      : hasLockFile
+        ? (nodeModulesMode === 'all'
+            ? 'npm ci --install-links'
+            : 'npm ci --production --install-links')
+        : (nodeModulesMode === 'all'
+            ? 'npm install --install-links'
+            : 'npm install --production --install-links');
+
+  return {
+    nodeModulesMode,
+    useCi: hasLockFile,
+    installCmd,
+  };
 }
 
 export async function deployCommand(
@@ -310,8 +341,16 @@ async function deploySingleService(
     Logger.section('Pre-flight Checks');
     Logger.br();
 
-    // For local mode, skip rsync and SSH connection
+    // Local mode still relies on rsync so include the same pre-flight check.
     if (options.local) {
+      const rsyncSpinner = ora('Checking rsync availability...').start();
+      const hasRsync = await FileSync.isRsyncAvailable();
+      if (!hasRsync) {
+        rsyncSpinner.fail('rsync not installed');
+        throw new Error('rsync is required for deployment. Please install it first.');
+      }
+      rsyncSpinner.succeed('rsync available');
+
       const localSpinner = ora('Initializing local deployment...').start();
       ssh = new LocalExecutor();
       localSpinner.succeed('Local mode ready');
@@ -407,8 +446,15 @@ async function deploySingleService(
         // Rewrite package.json to use file: references for workspace deps
         workspaceManager.rewritePackageJson(sourceDir, bundleDir);
 
-        bundleSpinner.text = 'Generating lockfile...';
-        await workspaceManager.generateLockfile(bundleDir);
+        const { nodeModulesMode } = computeInstallPlan(
+          config,
+          existsSync(join(bundleDir, 'package-lock.json')),
+        );
+
+        if (nodeModulesMode !== 'none') {
+          bundleSpinner.text = 'Generating lockfile...';
+          await workspaceManager.generateLockfile(bundleDir, sourceDir);
+        }
         
         bundleSpinner.succeed('Workspace dependencies bundled');
         Logger.br();
@@ -422,22 +468,29 @@ async function deploySingleService(
     Logger.br();
 
     if (options.local) {
-      // Local mode: copy files directly
+      // Local mode: use rsync locally so include/exclude behavior stays aligned
+      // with the remote deploy path.
       const syncSpinner = ora('Copying files locally...').start();
-      
-      cpSync(actualSourceDir, remoteDir, {
-        recursive: true,
-        filter: (src) => {
-          const relativePath = src.replace(actualSourceDir, '');
-          const excludePatterns = config.sync?.exclude || [
-            'node_modules',
-            '.git',
-            'dist',
-            '.env',
-            '*.log',
-          ];
-          return !excludePatterns.some(pattern => relativePath.includes(pattern));
-        },
+      const rawExcludes = config.sync?.exclude || [
+        'node_modules',
+        '.git',
+        '.github',
+        'dist',
+        'build',
+        '.env',
+        '.env.*',
+        '*.log',
+        '.turbo',
+        '.wrangler',
+      ];
+      const localExcludes = bundleDir
+        ? rawExcludes.map((pattern) => (pattern === 'dist' || pattern === 'build') ? `/${pattern}` : pattern)
+        : rawExcludes;
+
+      await FileSync.syncLocal(actualSourceDir, remoteDir, {
+        exclude: localExcludes,
+        include: config.sync?.include,
+        verbose: false,
       });
       
       syncSpinner.succeed('Files copied successfully');
@@ -449,10 +502,10 @@ async function deploySingleService(
       // excludes the service's own dist folder and not workspace deps' compiled output
       // (e.g. __workspace__/@21n/email/dist which is needed for type declarations).
       const rawExcludes = config.sync?.exclude || [
-        'node_modules', '.git', 'dist', '.env', '*.log',
+        'node_modules', '.git', '.github', 'dist', 'build', '.env', '.env.*', '*.log', '.turbo', '.wrangler',
       ];
       const syncExcludes = bundleDir
-        ? rawExcludes.map(p => p === 'dist' ? '/dist' : p)
+        ? rawExcludes.map(p => (p === 'dist' || p === 'build') ? `/${p}` : p)
         : rawExcludes;
       
       await FileSync.sync(
@@ -461,6 +514,7 @@ async function deploySingleService(
         host,
         {
           exclude: syncExcludes,
+          include: config.sync?.include,
           verbose: false,
         }
       );
@@ -484,31 +538,23 @@ async function deploySingleService(
     );
     const hasLockFile = lockFileCheck.stdout.trim() === 'exists';
 
-    // If build command exists, install all dependencies (including dev); otherwise production only
-    const needsDevDeps = !!config.build?.command;
-    const hasWorkspaceDeps = !!bundleDir;
+    const { installCmd } = computeInstallPlan(config, hasLockFile);
 
-    // --ignore-scripts: prevents postinstall scripts running on the server
-    // (avoids platform-specific binary issues like esbuild in drizzle-kit).
-    // npm ci: used when a lockfile is present (workspace bundles always have one,
-    // generated locally). npm ci is fast (cache extraction, no resolution) and
-    // deletes+reinstalls node_modules cleanly — no stale state possible.
-    const useCi = hasLockFile;
-    const installCmd = useCi
-      ? (needsDevDeps ? 'npm ci --install-links --ignore-scripts' : 'npm ci --production --install-links --ignore-scripts')
-      : (needsDevDeps ? 'npm install --install-links --ignore-scripts' : 'npm install --production --install-links --ignore-scripts');
-    
-    const installResult = await ssh.exec(
-      installCmd,
-      { cwd: remoteDir, streaming: false }
-    );
-    
-    if (installResult.exitCode !== 0) {
-      installSpinner.fail('Dependency installation failed');
-      const errorOutput = installResult.stderr || installResult.stdout;
-      throw new Error(`${installCmd} failed: ${errorOutput}`);
+    if (installCmd) {
+      const installResult = await ssh.exec(
+        installCmd,
+        { cwd: remoteDir, streaming: false }
+      );
+
+      if (installResult.exitCode !== 0) {
+        installSpinner.fail('Dependency installation failed');
+        const errorOutput = installResult.stderr || installResult.stdout;
+        throw new Error(`${installCmd} failed: ${errorOutput}`);
+      }
+      installSpinner.succeed('Dependencies installed');
+    } else {
+      installSpinner.info('Skipping dependency installation (build.nodeModules=none)');
     }
-    installSpinner.succeed('Dependencies installed');
 
     // Build application
     if (config.build?.command) {
@@ -665,8 +711,9 @@ EOF`);
 
     const healthSpinner = ora('Waiting for service to be ready...').start();
     const healthPath = config.health?.path || '/health';
+    const timeout = config.health?.timeout || 60;
     const retries = config.health?.retries || 10;
-    const interval = config.health?.interval || 3000;
+    const interval = config.health?.interval || 3;
     
     let healthy = false;
     for (let i = 0; i < retries; i++) {
@@ -674,7 +721,7 @@ EOF`);
       
       // Check health via SSH using curl on localhost
       const healthCheckResult = await ssh.exec(
-        `curl -sf http://localhost:${envConfig.port}${healthPath}`,
+        `curl --max-time ${timeout} -sf http://localhost:${envConfig.port}${healthPath}`,
         { cwd: remoteDir, streaming: false }
       );
       
@@ -685,7 +732,7 @@ EOF`);
       }
       
       if (i < retries - 1) {
-        await new Promise(resolve => setTimeout(resolve, interval));
+        await new Promise(resolve => setTimeout(resolve, interval * 1000));
       }
     }
     
@@ -785,8 +832,19 @@ async function dryRunDeploy(
   Logger.log(`   → Exclude: ${config.sync?.exclude?.join(', ')}`);
   Logger.br();
   
+  const hasLocalLockFile = existsSync(join(process.cwd(), 'package-lock.json'));
+  const workspaceManager = new WorkspaceManager();
+  const isWorkspace = await workspaceManager.detectWorkspace(process.cwd());
+  const hasBundledWorkspaceDeps =
+    isWorkspace && workspaceManager.getWorkspaceDependencies(process.cwd()).length > 0;
+  const { installCmd } = computeInstallPlan(config, hasLocalLockFile || hasBundledWorkspaceDeps);
+
   Logger.log('3. Remote Build');
-  Logger.log('   → npm ci --production');
+  if (installCmd) {
+    Logger.log(`   → ${installCmd}`);
+  } else {
+    Logger.log('   → Skip dependency installation (build.nodeModules=none)');
+  }
   if (config.build?.command) {
     Logger.log(`   → ${config.build.command}`);
   }

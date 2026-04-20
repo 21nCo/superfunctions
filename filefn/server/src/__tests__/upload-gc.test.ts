@@ -246,7 +246,7 @@ describe('PHASE_02 upload cleanup semantics', () => {
 
     expect(result.deletedSessions).toBe(2);
     expect(result.abortedMultipart).toBe(1);
-    expect(storage.adapter.abortMultipartUpload).toHaveBeenCalledWith({ key: 'k_mp', uploadId: 'up_mp' });
+    expect(storage.adapter.abortMultipartUpload).toHaveBeenCalledWith({ key: 'k_mp', target: 'durable', uploadId: 'up_mp' });
 
     const remainingSessions = db.all('uploadSessions').map((s) => s.uploadSessionId);
     expect(remainingSessions).toEqual(['s_done']);
@@ -254,8 +254,8 @@ describe('PHASE_02 upload cleanup semantics', () => {
     const remainingParts = db.all('uploadParts').map((p) => p.uploadSessionId);
     expect(remainingParts).toEqual(['s_done']);
 
-    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_proxy.part1' });
-    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_proxy.part2' });
+    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_proxy.part1', target: 'durable' });
+    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_proxy.part2', target: 'durable' });
 
     const secondRun = await service.cleanupExpiredSessions();
     expect(secondRun.deletedSessions).toBe(0);
@@ -315,7 +315,7 @@ describe('PHASE_02 upload cleanup semantics', () => {
     });
     expect(parts).toHaveLength(0);
 
-    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_abort.part1' });
-    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_abort.part2' });
+    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_abort.part1', target: 'durable' });
+    expect(storage.adapter.deleteObject).toHaveBeenCalledWith({ key: 'k_abort.part2', target: 'durable' });
   });
 });

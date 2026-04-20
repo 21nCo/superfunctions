@@ -96,7 +96,7 @@ After removing the lock, you can deploy normally.
 
 ## Lock Behavior in Error Scenarios
 
-HostFn always releases the lock in its `finally` block, regardless of what happens during deployment:
+HostFn releases the lock in its `finally` block whenever the process can still run cleanup logic:
 
 | Scenario | Lock Released |
 |---|---|
@@ -125,14 +125,22 @@ This ensures only one deployment workflow runs at a time for the `production` gr
 
 ### Retry on Lock Conflict
 
-If your CI/CD pipeline encounters a lock conflict, you can retry the deployment after a delay:
+If your CI/CD pipeline encounters a lock conflict, add retry logic around the deploy command:
 
 ```yaml title=".github/workflows/deploy.yml"
-- name: Deploy
-  run: hostfn deploy production --ci
+- name: Deploy with retry
+  run: |
+    for attempt in 1 2 3; do
+      if hostfn deploy production --ci; then
+        exit 0
+      fi
+      if [ "$attempt" -lt 3 ]; then
+        sleep 120
+      fi
+    done
+    exit 1
   env:
     HOSTFN_SSH_KEY: ${{ secrets.SSH_KEY }}
-  timeout-minutes: 10
 ```
 
 The 5-minute stale lock timeout means any lock conflict will resolve itself within that window.

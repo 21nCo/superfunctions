@@ -1,37 +1,74 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import type { Adapter } from '@superfunctions/db';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
 import {
   authFnPasswordPlugin,
   authFnTwoFactorPlugin,
+  confirmTwoFactorEnrollment,
   createAuthFn,
+  createTwoFactorEnrollment,
   createUser,
   issueSession,
   issueSessionCookies,
+  verifyTwoFactorCode,
   type AuthFnConfig
 } from '../index.js';
 
 const TEST_NOW = new Date('2026-03-22T00:00:00.000Z');
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const TEST_2FA_KEY = Buffer.alloc(32, 7);
 
-function createConfig(): AuthFnConfig {
+function createClock(start: Date = TEST_NOW) {
+  let current = new Date(start);
+  return {
+    now: () => new Date(current),
+    advanceSeconds: (seconds: number) => {
+      current = new Date(current.getTime() + (seconds * 1000));
+    }
+  };
+}
+
+function createConfig(clock = createClock()): AuthFnConfig {
+  const twoFactorConfig = createTwoFactorPluginConfig(clock);
   return {
     database: memoryAdapter({ debug: false }),
     namespace: 'authfn',
     plugins: [
       authFnPasswordPlugin(),
-      authFnTwoFactorPlugin({
-        issuer: 'authfn-tests',
-        now: () => TEST_NOW,
-        recoveryCodeCount: 3
-      })
+      authFnTwoFactorPlugin(twoFactorConfig)
     ]
+  };
+}
+
+function createTwoFactorPluginConfig(clock: ReturnType<typeof createClock>) {
+  return {
+    issuer: 'authfn-tests',
+    now: clock.now,
+    recoveryCodeCount: 3,
+    encryptionKeyResolver: () => TEST_2FA_KEY
+  };
+}
+
+function createPrismaStyleUpdateWrapper(base: Adapter): Adapter {
+  return {
+    ...base,
+    async update(params) {
+      if (
+        params.model === 'two_factor_enrollments'
+        && 'lastUsedCounter' in params.data
+      ) {
+        throw new Error('two-factor replay protection must not rely on adapter.update re-read semantics');
+      }
+
+      return base.update(params);
+    }
   };
 }
 
 function cookieHeaderFromSetCookies(setCookies: string[]): string {
   return setCookies
-    .map((cookie) => cookie.slice(0, cookie.indexOf(';')))
+    .map((cookie) => cookie.split(';', 1)[0])
     .join('; ');
 }
 
@@ -74,7 +111,8 @@ function generateTotp(secret: string, now: Date = TEST_NOW, digits = 6, periodSe
 
 describe('@authfn/core two factor plugin', () => {
   it('enrolls, confirms, gates password sign-in, satisfies challenges, and supports disable', async () => {
-    const config = createConfig();
+    const clock = createClock();
+    const config = createConfig(clock);
     const auth = createAuthFn(config);
 
     const signUp = await auth.router.handle(
@@ -118,7 +156,7 @@ describe('@authfn/core two factor plugin', () => {
           'x-authfn-csrf': csrfToken!
         },
         body: JSON.stringify({
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -142,13 +180,14 @@ describe('@authfn/core two factor plugin', () => {
     expect(gatedBody.error.code).toBe('AUTHFN_2FA_REQUIRED');
     expect(gated.headers.getSetCookie()).toHaveLength(0);
 
+    clock.advanceSeconds(30);
     const challenge = await auth.router.handle(
       new Request('https://account.example.com/auth/2fa/challenge', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           challengeId: gatedBody.error.details.challengeId,
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -157,6 +196,19 @@ describe('@authfn/core two factor plugin', () => {
     const challengeBody = await challenge.json();
     expect(challengeBody.data.twoFactorSatisfied).toBe(true);
     expect(challengeBody.data.session.methods).toEqual(['password', 'two-factor']);
+
+    const replayedChallenge = await auth.router.handle(
+      new Request('https://account.example.com/auth/2fa/challenge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: gatedBody.error.details.challengeId,
+          code: generateTotp(enrollBody.data.secret, clock.now())
+        })
+      })
+    );
+    expect(replayedChallenge.status).toBe(400);
+    expect((await replayedChallenge.json()).error.code).toBe('AUTHFN_2FA_INVALID_CODE');
 
     const gatedForRecovery = await auth.router.handle(
       new Request('https://account.example.com/auth/sign-in/password', {
@@ -206,6 +258,7 @@ describe('@authfn/core two factor plugin', () => {
     expect(recoveryReuse.status).toBe(400);
     expect((await recoveryReuse.json()).error.code).toBe('AUTHFN_2FA_INVALID_CODE');
 
+    clock.advanceSeconds(30);
     const currentCookieHeader = cookieHeaderFromSetCookies(challenge.headers.getSetCookie());
     const currentCsrf = challenge.headers.getSetCookie()
       .find((cookie) => cookie.startsWith('authfn.csrf='))
@@ -219,7 +272,7 @@ describe('@authfn/core two factor plugin', () => {
           'x-authfn-csrf': currentCsrf!
         },
         body: JSON.stringify({
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -240,8 +293,50 @@ describe('@authfn/core two factor plugin', () => {
     expect((await postDisable.json()).data.session.methods).toEqual(['password']);
   });
 
+  it('accepts valid TOTP codes without relying on adapter update re-read semantics', async () => {
+    const clock = createClock();
+    const twoFactorConfig = createTwoFactorPluginConfig(clock);
+    const config: AuthFnConfig = {
+      database: createPrismaStyleUpdateWrapper(memoryAdapter({ debug: false })),
+      namespace: 'authfn',
+      plugins: [
+        authFnPasswordPlugin(),
+        authFnTwoFactorPlugin(twoFactorConfig)
+      ]
+    };
+
+    const user = await createUser(config, {
+      primaryEmail: 'adapter-compat@example.com'
+    });
+    const created = await createTwoFactorEnrollment(config, user, twoFactorConfig);
+
+    await expect(
+      confirmTwoFactorEnrollment(
+        config,
+        user.id,
+        generateTotp(created.secret, clock.now()),
+        twoFactorConfig
+      )
+    ).resolves.toMatchObject({
+      userId: user.id
+    });
+
+    clock.advanceSeconds(30);
+    await expect(
+      verifyTwoFactorCode(
+        config,
+        user.id,
+        generateTotp(created.secret, clock.now()),
+        twoFactorConfig
+      )
+    ).resolves.toEqual({
+      usedRecoveryCode: false
+    });
+  });
+
   it('supports confirming and satisfying 2fa with deterministic recovery/session helpers', async () => {
-    const config = createConfig();
+    const clock = createClock();
+    const config = createConfig(clock);
     const auth = createAuthFn(config);
     const user = await createUser(config, {
       primaryEmail: 'bea@example.com'
@@ -276,7 +371,7 @@ describe('@authfn/core two factor plugin', () => {
           'x-authfn-csrf': issued.csrfToken
         },
         body: JSON.stringify({
-          code: generateTotp(enrollBody.data.secret)
+          code: generateTotp(enrollBody.data.secret, clock.now())
         })
       })
     );
@@ -291,7 +386,8 @@ describe('@authfn/core two factor plugin', () => {
         authFnPasswordPlugin(),
         authFnTwoFactorPlugin({
           issuer: 'authfn-tests',
-          now: () => TEST_NOW
+          now: createClock().now,
+          encryptionKeyResolver: () => TEST_2FA_KEY
         })
       ]
     });
@@ -322,5 +418,52 @@ describe('@authfn/core two factor plugin', () => {
     );
     expect(enroll.status).toBe(200);
     expect((await enroll.json()).data.recoveryCodes).toHaveLength(10);
+  });
+
+  it('requires an explicit two-factor encryption key resolver', async () => {
+    const auth = createAuthFn({
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn',
+      plugins: [
+        authFnPasswordPlugin(),
+        authFnTwoFactorPlugin({
+          issuer: 'authfn-tests',
+          now: () => TEST_NOW
+        })
+      ]
+    });
+
+    const signUp = await auth.router.handle(
+      new Request('https://account.example.com/auth/sign-up/password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'ada@example.com',
+          password: 'Sup3rSecurePassphrase!'
+        })
+      })
+    );
+    const signUpCookies = signUp.headers.getSetCookie();
+    const cookieHeader = cookieHeaderFromSetCookies(signUpCookies);
+    const csrfToken = signUpCookies
+      .find((cookie) => cookie.startsWith('authfn.csrf='))
+      ?.slice('authfn.csrf='.length, signUpCookies.find((cookie) => cookie.startsWith('authfn.csrf='))?.indexOf(';') ?? -1);
+
+    const enroll = await auth.router.handle(
+      new Request('https://account.example.com/auth/2fa/enroll', {
+        method: 'POST',
+        headers: {
+          cookie: cookieHeader,
+          'x-authfn-csrf': csrfToken!
+        }
+      })
+    );
+
+    expect(enroll.status).toBe(400);
+    expect(await enroll.json()).toMatchObject({
+      error: {
+        code: 'AUTHFN_CONFIG_INVALID'
+      }
+    });
   });
 });

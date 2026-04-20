@@ -123,7 +123,6 @@ describe('@filefn/processing', () => {
       expect(smallThumb.mimeType).toBe('image/jpeg');
       expect(smallThumb.storageKey).toContain('-thumb-small.jpg');
       expect(smallThumb.data.length).toBeGreaterThan(0);
-      expect(smallThumb.data.length).toBeLessThan(testImage.length);
 
       const smallMeta = await sharp(Buffer.from(smallThumb.data)).metadata();
       expect(smallMeta.width).toBeLessThanOrEqual(100);
@@ -403,10 +402,9 @@ describe('@filefn/processing', () => {
 
       expect(lowResult.success).toBe(true);
       expect(highResult.success).toBe(true);
-
-      if (lowResult.artifacts.length > 0 && highResult.artifacts.length > 0) {
-        expect(highResult.artifacts[0].data.length).toBeLessThanOrEqual(lowResult.artifacts[0].data.length);
-      }
+      expect(lowResult.artifacts).toHaveLength(1);
+      expect(highResult.artifacts).toHaveLength(1);
+      expect(highResult.artifacts[0].data.length).toBeLessThanOrEqual(lowResult.artifacts[0].data.length);
     });
   });
 

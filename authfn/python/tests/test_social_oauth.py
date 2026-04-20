@@ -341,6 +341,12 @@ async def test_google_start_callback_replay_and_redirect_hook() -> None:
     assert completed["status"] == 303
     assert completed["redirectTo"] == "https://app.example.com/alternate-post-auth"
 
+    state_row = db.storage["oauth_states"][0]
+    rehydrated = await service.state_store.get(state_row["state_id"])
+    assert rehydrated is not None
+    assert rehydrated.code_verifier == state_row["code_verifier"]
+    assert rehydrated.nonce == state_row["nonce"]
+
     linked = await db.find_one(
         model="oauth_accounts",
         where=[

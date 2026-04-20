@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRateLimiter, createInMemoryKVStore, type KVStoreAdapter } from './rate-limit.js';
 
+interface KVSetInput {
+  key: string;
+  value: string;
+  ttlSeconds?: number;
+}
+
 describe('rate-limit', () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -88,6 +94,50 @@ describe('rate-limit', () => {
       expect(fixedAtHalfWindow.allowed).toBe(false);
     });
 
+    it('returns a clean denial for zero-limit token buckets instead of crashing', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-12T00:00:00.000Z'));
+
+      const limiter = createRateLimiter({
+        windowMs: 1000,
+        maxRequests: 0,
+        algorithm: 'token-bucket',
+      });
+
+      await expect(limiter.check({ key: 'tb-zero' })).resolves.toMatchObject({
+        allowed: false,
+        remaining: 0,
+        total: 0,
+      });
+    });
+
+    it('rejects non-positive effective windows before computing bucket math', async () => {
+      const limiter = createRateLimiter({
+        windowMs: 1000,
+        maxRequests: 1,
+        algorithm: 'token-bucket',
+      });
+
+      await expect(limiter.check({ key: 'tb-invalid-window', windowSeconds: 0 })).rejects.toThrow(
+        'RATE_LIMIT_WINDOW_INVALID'
+      );
+    });
+
+    it('rejects non-finite or negative effective limits before rate-limit calculations', async () => {
+      const limiter = createRateLimiter({
+        windowMs: 1000,
+        maxRequests: 1,
+        algorithm: 'token-bucket',
+      });
+
+      await expect(
+        limiter.check({ key: 'tb-invalid-limit', limit: Number.NaN as number })
+      ).rejects.toThrow('RATE_LIMIT_LIMIT_INVALID');
+      await expect(limiter.check({ key: 'tb-negative-limit', limit: -1 })).rejects.toThrow(
+        'RATE_LIMIT_LIMIT_INVALID'
+      );
+    });
+
     it('tracks different keys separately', async () => {
       const limiter = createRateLimiter({
         windowMs: 60000,
@@ -156,7 +206,7 @@ describe('rate-limit', () => {
         async get(key: string) {
           return internalStore.get(key) ?? null;
         },
-        async set(input) {
+        async set(input: KVSetInput) {
           internalStore.set(input.key, input.value);
         },
         async delete(key: string) {

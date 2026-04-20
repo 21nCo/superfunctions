@@ -1,4 +1,5 @@
-import type { AuthFnErrorEnvelope, AuthFnSuccessEnvelope } from '../types.js';
+import { randomBytes } from 'node:crypto';
+import type { AuthFnError, AuthFnErrorEnvelope, AuthFnSuccessEnvelope } from '../types.js';
 import { toAuthFnError } from '../core/errors.js';
 
 const requestIds = new WeakMap<Request, string>();
@@ -21,8 +22,7 @@ export function resolveRequestId(request: Request): string {
 }
 
 export function createRequestId(): string {
-  const random = Math.random().toString(36).slice(2, 12);
-  return `req_${random}`;
+  return `req_${randomBytes(8).toString('hex')}`;
 }
 
 export function successEnvelope<TData>(
@@ -38,9 +38,9 @@ export function successEnvelope<TData>(
 
 export function errorEnvelope(
   requestId: string,
-  error: unknown
+  error: AuthFnError | unknown
 ): AuthFnErrorEnvelope {
-  const authError = toAuthFnError(error);
+  const authError = normalizeEnvelopeError(error);
 
   return {
     ok: false,
@@ -68,10 +68,55 @@ export function jsonError(
   error: unknown
 ): Response {
   const requestId = resolveRequestId(request);
-  const authError = toAuthFnError(error);
+  const authError = normalizeEnvelopeError(error);
   return jsonWithHeaders(errorEnvelope(requestId, authError), requestId, {
     status: authError.status
   });
+}
+
+function normalizeEnvelopeError(
+  error: AuthFnError | unknown
+): Pick<AuthFnError, 'code' | 'message' | 'retryable' | 'details' | 'status'> {
+  if (isAuthFnErrorLike(error)) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      details: isRecord(error.details) ? error.details : undefined,
+      status: normalizeHttpStatus(error.status)
+    };
+  }
+
+  return toAuthFnError(error);
+}
+
+function isAuthFnErrorLike(
+  error: unknown
+): error is Pick<AuthFnError, 'code' | 'message' | 'retryable' | 'details' | 'status'> {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  return typeof candidate.code === 'string'
+    && candidate.code.startsWith('AUTHFN_')
+    && typeof candidate.message === 'string'
+    && typeof candidate.retryable === 'boolean'
+    && (candidate.details === undefined || isRecord(candidate.details))
+    && (candidate.status === undefined || typeof candidate.status === 'number');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeHttpStatus(status: unknown): number {
+  return typeof status === 'number'
+    && Number.isInteger(status)
+    && status >= 400
+    && status <= 599
+    ? status
+    : 500;
 }
 
 function jsonWithHeaders(

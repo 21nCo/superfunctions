@@ -236,6 +236,22 @@ describe('@authfn/core otp plugin', () => {
     expect((await expired.json()).error.code).toBe('AUTHFN_OTP_EXPIRED');
   });
 
+  it('rejects malformed JSON bodies with a validation error instead of a 500', async () => {
+    const config = createConfig();
+    const auth = createAuthFn(config);
+
+    const response = await auth.router.handle(
+      new Request('https://account.example.com/auth/otp/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"purpose":'
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe('AUTHFN_VALIDATION_ERROR');
+  });
+
   it('supports otp sign-in and reset-password completion', async () => {
     const config = createConfig() as AuthFnConfig & {
       __delivery: ReturnType<typeof createDeliveryRecorder>;

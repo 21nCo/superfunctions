@@ -62,6 +62,10 @@ export interface AuthFnOtpEnvelope extends AuthFnSuccessEnvelope<{
   sent: boolean;
 }> {}
 
+export interface AuthFnVerifyOtpEnvelope extends AuthFnSuccessEnvelope<{
+  verified: true;
+}> {}
+
 export interface AuthFnApiKeyRecord {
   id: string;
   userId?: string | null;
@@ -133,7 +137,7 @@ export interface AuthFnClient {
     purpose: 'verify-email' | 'sign-in' | 'reset-password';
     email: string;
     code: string;
-  }): Promise<AuthFnSessionEnvelope | AuthFnSuccessEnvelope | AuthFnErrorEnvelope>;
+  }): Promise<AuthFnSessionEnvelope | AuthFnVerifyOtpEnvelope | AuthFnErrorEnvelope>;
   completePasswordReset(input: {
     email: string;
     code: string;
@@ -142,7 +146,7 @@ export interface AuthFnClient {
   startSocialSignIn(input: {
     provider: AuthFnSocialProviderId;
     returnTo?: string;
-    callbackMode?: 'redirect' | 'json';
+    callbackMode?: 'json';
   }): Promise<AuthFnSuccessEnvelope<{
     provider: AuthFnSocialProviderId;
     redirectTo: string;

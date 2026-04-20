@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, Optional
 
 from ..config import resolve_runtime
 from ..observability import emit_auth_event, event_request_id
 from ..types import (
-    AuthFnError,
     AuthFnConfig,
+    AuthFnError,
     AuthFnHookContext,
     AuthFnPlugin,
     DeliveryFailedError,
@@ -29,7 +30,7 @@ def _default_code_generator() -> str:
 
 
 def _default_now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def _normalize_email(email: str) -> str:
@@ -40,7 +41,32 @@ def _normalize_email(email: str) -> str:
 
 
 def _hash_code(code: str) -> str:
-    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        code.encode("utf-8"),
+        salt.encode("utf-8"),
+        200_000,
+        dklen=32,
+    )
+    return "$".join(["pbkdf2-sha256", "200000", salt, digest.hex()])
+
+
+def _verify_code_hash(stored_hash: str, code: str) -> bool:
+    parts = stored_hash.split("$")
+    if len(parts) == 4 and parts[0] == "pbkdf2-sha256":
+        iterations = int(parts[1])
+        salt = parts[2]
+        expected = parts[3]
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            code.encode("utf-8"),
+            salt.encode("utf-8"),
+            iterations,
+            dklen=32,
+        ).hex()
+        return hmac.compare_digest(digest, expected)
+    return hmac.compare_digest(stored_hash, hashlib.sha256(code.encode("utf-8")).hexdigest())
 
 
 def _hash_password(password: str) -> str:
@@ -192,11 +218,11 @@ class EmailOtpService:
             raise OtpExpiredError("OTP code has expired")
 
         next_attempt_count = challenge["attemptCount"] + 1
-        if next_attempt_count > self.plugin_config.max_attempts:
+        if next_attempt_count >= self.plugin_config.max_attempts:
             await self._touch_attempt(challenge["id"], next_attempt_count, now)
             raise OtpInvalidError("OTP code is invalid")
 
-        if challenge["codeHash"] != _hash_code(code):
+        if not _verify_code_hash(challenge["codeHash"], code):
             await self._touch_attempt(challenge["id"], next_attempt_count, now)
             raise OtpInvalidError("OTP code is invalid")
 
@@ -492,7 +518,7 @@ def authfn_email_otp_plugin(config: Optional[EmailOtpPluginConfig] = None) -> Au
         hooks=None,
         validate_config=None,
     )
-    setattr(plugin, "_authfn_config", resolved)
+    plugin._authfn_config = resolved
     return plugin
 
 

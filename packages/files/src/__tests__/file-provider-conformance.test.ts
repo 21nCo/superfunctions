@@ -122,7 +122,7 @@ describe('PHASE_06 BUILD-001 FileProvider conformance suite', () => {
       { principalId: 'user_123', tenantId: 'org_123', requestId: 'req_complete_part' },
     ) as any;
 
-    expect(completePartResult?.recorded ?? true).toBe(true);
+    expect(completePartResult?.recorded).toBe(true);
   });
 
   it('requires canonical listFiles and completeUploadSession shapes', async () => {

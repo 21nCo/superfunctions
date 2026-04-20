@@ -11,16 +11,30 @@ export type {
   PdfPreviewConfig,
   CompressionConfig,
   OCRConfig,
+  OCRProcessorProvider,
+  OCRProviderRequest,
+  OCRProviderResult,
   ImageTransformOperation,
   ImageTransformConfig,
   ResizeOptions,
   CropOptions,
   RotateOptions,
   VideoConfig,
+  VideoMetadataRequest,
   VideoTranscodeOptions,
+  VideoTranscodeRequest,
+  VideoTranscodeResult,
   VideoPosterOptions,
+  VideoPosterRequest,
+  VideoProcessorProvider,
   AudioConfig,
+  AudioMetadataRequest,
+  AudioProcessorProvider,
   AudioTranscodeOptions,
+  AudioTranscodeRequest,
+  AudioTranscodeResult,
+  AudioWaveformRequest,
+  AudioWaveformResult,
 } from './types.js';
 
 export {
@@ -42,6 +56,7 @@ export {
   createOCRProcessor,
   OCR_SUPPORTED_MIME_TYPES,
 } from './processors/ocr.js';
+export { createTesseractJsOCRProvider } from './providers/tesseract-ocr.js';
 
 export {
   createImageTransformProcessor,
@@ -52,11 +67,13 @@ export {
   createVideoProcessor,
   VIDEO_SUPPORTED_MIME_TYPES,
 } from './processors/video.js';
+export { createCommandVideoProvider } from './providers/video-command.js';
 
 export {
   createAudioProcessor,
   AUDIO_SUPPORTED_MIME_TYPES,
 } from './processors/audio.js';
+export { createCommandAudioProvider } from './providers/audio-command.js';
 
 export interface ProcessingPipeline {
   name: string;

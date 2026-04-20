@@ -6,26 +6,37 @@ export interface QueueAdapter<TPayload> {
   size(queueName: string): number;
 }
 
+function normalizeQueueName(queueName: string): string {
+  const normalized = queueName.trim();
+  if (!normalized || normalized.includes('/') || normalized.includes('\\') || normalized.includes('..')) {
+    throw new Error('FLOWFN_QUEUE_NAME_INVALID');
+  }
+  return normalized;
+}
+
 export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly queues = new Map<string, TPayload[]>();
 
   async enqueue(queueName: string, payload: TPayload): Promise<void> {
-    const queue = this.queues.get(queueName) ?? [];
+    const normalizedQueueName = normalizeQueueName(queueName);
+    const queue = this.queues.get(normalizedQueueName) ?? [];
     queue.push(payload);
-    this.queues.set(queueName, queue);
+    this.queues.set(normalizedQueueName, queue);
   }
 
   async dequeue(queueName: string): Promise<TPayload | null> {
-    const queue = this.queues.get(queueName);
+    const normalizedQueueName = normalizeQueueName(queueName);
+    const queue = this.queues.get(normalizedQueueName);
     if (!queue || queue.length === 0) {
       return null;
     }
 
-    return queue.shift() ?? null;
+    return queue.shift() as TPayload;
   }
 
   async dequeueMatching(queueName: string, matcher: (payload: TPayload) => boolean): Promise<TPayload | null> {
-    const queue = this.queues.get(queueName);
+    const normalizedQueueName = normalizeQueueName(queueName);
+    const queue = this.queues.get(normalizedQueueName);
     if (!queue || queue.length === 0) {
       return null;
     }
@@ -36,15 +47,17 @@ export class MemoryQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
     }
 
     const [payload] = queue.splice(index, 1);
-    return payload ?? null;
+    return payload as TPayload;
   }
 
   peek(queueName: string): TPayload[] {
-    return [...(this.queues.get(queueName) ?? [])];
+    const normalizedQueueName = normalizeQueueName(queueName);
+    return [...(this.queues.get(normalizedQueueName) ?? [])];
   }
 
   size(queueName: string): number {
-    return this.queues.get(queueName)?.length ?? 0;
+    const normalizedQueueName = normalizeQueueName(queueName);
+    return this.queues.get(normalizedQueueName)?.length ?? 0;
   }
 }
 
@@ -52,17 +65,45 @@ export interface FlowFnQueueAdapterConfig {
   baseUrl: string;
   apiKey: string;
   fetch?: typeof globalThis.fetch;
+  timeoutMs?: number;
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  let normalized = baseUrl;
+  while (normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function encodeQueueName(queueName: string): string {
+  return encodeURIComponent(normalizeQueueName(queueName));
+}
+
+function normalizeTimeoutMs(value: number | undefined): number {
+  if (value === undefined) {
+    return 15_000;
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error('FLOWFN_QUEUE_TIMEOUT_INVALID');
+  }
+  return Math.max(0, value);
 }
 
 export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   private readonly fetcher: typeof globalThis.fetch;
+  private readonly timeoutMs: number;
+  private readonly baseUrl: string;
 
   constructor(private readonly config: FlowFnQueueAdapterConfig) {
     this.fetcher = config.fetch ?? globalThis.fetch;
+    this.timeoutMs = normalizeTimeoutMs(config.timeoutMs);
+    this.baseUrl = normalizeBaseUrl(config.baseUrl);
   }
 
   async enqueue(queueName: string, payload: TPayload): Promise<void> {
-    const response = await this.fetcher(`${this.config.baseUrl}/queues/${queueName}/enqueue`, {
+    const encodedQueueName = encodeQueueName(queueName);
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/queues/${encodedQueueName}/enqueue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -77,7 +118,8 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
   }
 
   async dequeue(queueName: string): Promise<TPayload | null> {
-    const response = await this.fetcher(`${this.config.baseUrl}/queues/${queueName}/dequeue`, {
+    const encodedQueueName = encodeQueueName(queueName);
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/queues/${encodedQueueName}/dequeue`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.config.apiKey}`,
@@ -93,28 +135,39 @@ export class FlowFnQueueAdapter<TPayload> implements QueueAdapter<TPayload> {
     }
 
     const data = (await response.json()) as { payload?: TPayload };
-    return data.payload ?? null;
+    return 'payload' in data ? (data.payload as TPayload) : null;
   }
 
   async dequeueMatching(queueName: string, matcher: (payload: TPayload) => boolean): Promise<TPayload | null> {
-    const queued = this.peek(queueName);
-    for (const payload of queued) {
-      if (matcher(payload)) {
-        const claimed = await this.dequeue(queueName);
-        if (claimed) {
-          return claimed;
-        }
+    void matcher;
+    encodeQueueName(queueName);
+    throw new Error('FLOWFN_QUEUE_MATCHING_UNSUPPORTED');
+  }
+
+  peek(queueName: string): TPayload[] {
+    encodeQueueName(queueName);
+    throw new Error('FLOWFN_QUEUE_PEEK_UNSUPPORTED');
+  }
+
+  size(queueName: string): number {
+    encodeQueueName(queueName);
+    throw new Error('FLOWFN_QUEUE_SIZE_UNSUPPORTED');
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    const controller = typeof AbortController === 'function' ? new AbortController() : undefined;
+    const timeoutId =
+      controller && this.timeoutMs > 0 ? setTimeout(() => controller.abort(), this.timeoutMs) : undefined;
+
+    try {
+      return await this.fetcher(url, {
+        ...init,
+        signal: controller?.signal,
+      });
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     }
-
-    return null;
-  }
-
-  peek(_queueName: string): TPayload[] {
-    return [];
-  }
-
-  size(_queueName: string): number {
-    return 0;
   }
 }

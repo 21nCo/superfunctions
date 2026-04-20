@@ -50,11 +50,16 @@ export interface ViewerResolver {
 
 export interface ViewerSource {
   fileId: string;
+  versionId: string;
   intent: RenderIntent;
   state: RenderState;
   mimeType: string;
+  name: string;
+  size: number;
   url?: string;
+  headers?: Record<string, string>;
   placeholderKind?: RenderPlaceholderKind;
+  warnings?: string[];
   revoke?: () => void;
 }
 
@@ -95,19 +100,28 @@ export async function resolveViewerSource(input: {
   if (descriptor.source.mode === 'placeholder') {
     return {
       fileId: descriptor.fileId,
+      versionId: descriptor.versionId,
       intent: descriptor.intent,
       state: descriptor.state,
       mimeType: descriptor.mimeType,
+      name: descriptor.name,
+      size: descriptor.size,
       placeholderKind: descriptor.source.placeholderKind,
+      warnings: descriptor.warnings,
     };
   }
 
   return {
     fileId: descriptor.fileId,
+    versionId: descriptor.versionId,
     intent: descriptor.intent,
     state: descriptor.state,
     mimeType: descriptor.mimeType,
+    name: descriptor.name,
+    size: descriptor.size,
     url: descriptor.source.url,
+    headers: descriptor.source.headers,
+    warnings: descriptor.warnings,
     revoke: createBlobRevoke(descriptor.source.url),
   };
 }

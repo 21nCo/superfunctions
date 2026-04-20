@@ -115,6 +115,7 @@ export interface AuthFnTwoFactorEnrollmentRecord {
   id: string;
   userId: string;
   secretEncrypted: string;
+  lastUsedCounter?: number | null;
   confirmedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;

@@ -1,8 +1,16 @@
 import io
 import struct
 import zlib
-from typing import Any, List, Optional, Tuple
-from ..types import Processor, ProcessorInput, ProcessorResult, ProcessorOutputArtifact, ThumbnailConfig, ThumbnailSize
+from typing import Any, Dict, Optional, Tuple
+
+from ..types import (
+    Processor,
+    ProcessorInput,
+    ProcessorOutputArtifact,
+    ProcessorResult,
+    ThumbnailConfig,
+    ThumbnailSize,
+)
 
 DEFAULT_SIZES = [
     ThumbnailSize(name='small', width=150, height=150),
@@ -10,7 +18,7 @@ DEFAULT_SIZES = [
     ThumbnailSize(name='large', width=600, height=600),
 ]
 
-SUPPORTED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'image/tiff']
+SUPPORTED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/tiff']
 UNSUPPORTED_MIME_TYPE_ERROR = 'FILEFN_PROCESSING_UNSUPPORTED_MIME_TYPE'
 THUMBNAIL_FAILED_ERROR = 'FILEFN_PROCESSING_THUMBNAIL_FAILED'
 
@@ -33,16 +41,18 @@ class ThumbnailProcessor:
 
             for size in self.sizes:
                 thumbnail_data, render_mode = self._generate_thumbnail(image_data, size)
-                
-                output_mime_type = 'image/jpeg'
-                extension = 'jpg'
-                if self.format == 'png':
-                    output_mime_type = 'image/png'
-                    extension = 'png'
-                elif self.format == 'webp':
-                    output_mime_type = 'image/webp'
-                    extension = 'webp'
-                
+                if render_mode == 'placeholder':
+                    thumbnail_data, output_mime_type, extension = self._placeholder_format_output(thumbnail_data)
+                else:
+                    output_mime_type = 'image/jpeg'
+                    extension = 'jpg'
+                    if self.format == 'png':
+                        output_mime_type = 'image/png'
+                        extension = 'png'
+                    elif self.format == 'webp':
+                        output_mime_type = 'image/webp'
+                        extension = 'webp'
+
                 base_key = input.storageKey.rsplit('.', 1)[0]
                 storage_key = f"{base_key}-thumb-{size.name}.{extension}"
 
@@ -74,8 +84,8 @@ class ThumbnailProcessor:
             from PIL import Image
 
             with io.BytesIO(image_data) as f:
-                with Image.open(f) as img:
-                    img = img.copy()
+                with Image.open(f) as opened_image:
+                    img = opened_image.copy()
 
                     if self.format == 'jpeg' and img.mode in ('RGBA', 'P'):
                         img = img.convert('RGB')
@@ -87,7 +97,7 @@ class ThumbnailProcessor:
                     if fmt == 'JPG':
                         fmt = 'JPEG'
 
-                    save_args = {'format': fmt, 'quality': self.quality}
+                    save_args: Dict[str, Any] = {'format': fmt, 'quality': self.quality}
                     if fmt == 'PNG':
                         save_args['optimize'] = True
                         del save_args['quality']
@@ -118,6 +128,28 @@ class ThumbnailProcessor:
             self._png_chunk(b'IDAT', compressed),
             self._png_chunk(b'IEND', b''),
         ])
+
+    def _placeholder_format_output(self, placeholder_png: bytes) -> Tuple[bytes, str, str]:
+        if self.format == 'png':
+            return placeholder_png, 'image/png', 'png'
+
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(placeholder_png)) as opened_image:
+                img = opened_image.copy()
+                out_buffer = io.BytesIO()
+                fmt = self.format.upper()
+                if fmt == 'JPG':
+                    fmt = 'JPEG'
+                if fmt == 'JPEG' and img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                img.save(out_buffer, format=fmt, quality=self.quality)
+                mime_type = 'image/webp' if fmt == 'WEBP' else 'image/jpeg'
+                extension = 'webp' if fmt == 'WEBP' else 'jpg'
+                return out_buffer.getvalue(), mime_type, extension
+        except Exception:
+            return placeholder_png, 'image/png', 'png'
 
     def _png_chunk(self, chunk_type: bytes, data: bytes) -> bytes:
         checksum = zlib.crc32(chunk_type)

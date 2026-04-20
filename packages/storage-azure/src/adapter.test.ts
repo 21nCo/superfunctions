@@ -103,7 +103,46 @@ describe('storage-azure adapter', () => {
         contentType: 'application/octet-stream',
       });
 
-      expect(result.uploadId).toBe(Buffer.from(key).toString('base64'));
+      const decoded = JSON.parse(Buffer.from(result.uploadId, 'base64').toString('utf8')) as {
+        key: string;
+        sessionId: string;
+      };
+
+      expect(decoded.key).toBe(key);
+      expect(decoded.sessionId).toEqual(expect.any(String));
+    });
+
+    it('should generate unique uploadIds per multipart session for the same key', async () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        accountKey: 'dGVzdGtleQ==',
+      });
+
+      const first = await adapter.createMultipartUpload!({ key: 'test-file.bin' });
+      const second = await adapter.createMultipartUpload!({ key: 'test-file.bin' });
+
+      expect(first.uploadId).not.toBe(second.uploadId);
+    });
+
+    it('still accepts legacy base64(key) uploadIds even when the key is valid JSON', async () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        accountKey: 'dGVzdGtleQ==',
+      });
+
+      const key = 'null';
+      const legacyUploadId = Buffer.from(key).toString('base64');
+
+      const part = await adapter.signMultipartUploadPartUrl!({
+        key,
+        uploadId: legacyUploadId,
+        partNumber: 1,
+        expiresInSeconds: 900,
+      });
+
+      expect(part.url).toContain('blockid=');
     });
   });
 
@@ -132,6 +171,37 @@ describe('storage-azure adapter', () => {
           expiresInSeconds: 900,
         });
       }).rejects.toThrow('SAS URL generation requires accountName and credential (accountKey)');
+    });
+
+    it('returns the required blob type header for signed uploads', async () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        accountKey: 'dGVzdGtleQ==',
+      });
+
+      const result = await adapter.signUploadUrl!({
+        key: 'test.txt',
+        expiresInSeconds: 900,
+      });
+
+      expect(result.headers).toMatchObject({
+        'x-ms-blob-type': 'BlockBlob',
+      });
+    });
+
+    it('disables signed-url capabilities when only a SAS token is configured', () => {
+      const adapter = createAzureStorageAdapter({
+        containerName: 'test-container',
+        accountName: 'testaccount',
+        sasToken: '?existing-token',
+      });
+
+      expect(adapter.capabilities).toMatchObject({
+        signedUploadUrls: false,
+        signedDownloadUrls: false,
+        multipart: false,
+      });
     });
   });
 
@@ -200,18 +270,7 @@ describe('storage-azure adapter', () => {
       });
 
       expect(part.url).toBeDefined();
-      // Ensure we didn't throw "Invalid uploadId" locally
-      
-      // We expect complete to also attempt commit (though it fails network in test)
-      try {
-        await adapterB.completeMultipartUpload!({
-          key,
-          uploadId,
-          parts: [{ partNumber: 1, etag: 'block-000001' }],
-        });
-      } catch (err: any) {
-        expect(err.message).not.toContain('Invalid uploadId');
-      }
+      expect(part.url).toContain('blockid=');
     });
 
     it('should reject invalid uploadId', async () => {

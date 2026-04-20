@@ -33,9 +33,6 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-03-22T14:44:32Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-rlq9ylgs-full-audit.md
 2026-03-22T14:57:30Z,gpt-5-codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-22-rlq9ylgs-full-audit.md
 2026-03-22T16:24:39Z,gpt-5-codex,Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-03-22-x4k2m9p7-completion.md
-2026-03-26T23:19:49+05:30,unknown,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-26-pvk2m8q1-full-audit.md
-2026-03-26T23:35:56+05:30,unknown,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-03-26-y7m3q2k8-full-audit.md
-2026-03-27T01:33:22Z,unknown,Codex Desktop,spec,unknown-agent,,packages/.conduct/specs/2026-03-27-audit-fix-q9m4k2r7-spec
 2026-03-26T18:02:15Z,unknown,Codex Desktop,audit,audit,,.conduct/audits/2026-03-26-srwfzazr-full-audit.md
 2026-03-27T02:45:32Z,unknown,Codex Desktop,audit-update,audit,,drawfn/.conduct/audits/2026-03-26-srwfzazr-full-audit.md
 2026-03-27T02:48:03Z,unknown,Codex Desktop,spec,spec,,drawfn/.conduct/specs/2026-03-27-audit-fix-ph067aw9-spec

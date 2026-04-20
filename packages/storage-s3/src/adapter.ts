@@ -13,15 +13,27 @@ export interface S3StorageConfig {
 
 export function createS3StorageAdapter(config: S3StorageConfig): StorageAdapter {
   const { bucket, region, accessKeyId, secretAccessKey, endpoint, forcePathStyle } = config;
+  const hasAccessKeyId = accessKeyId !== undefined;
+  const hasSecretAccessKey = secretAccessKey !== undefined;
+  let credentials: { accessKeyId: string; secretAccessKey: string } | undefined;
+
+  if (hasAccessKeyId !== hasSecretAccessKey) {
+    throw new Error('S3 storage config requires both accessKeyId and secretAccessKey when using static credentials');
+  }
+
+  if (hasAccessKeyId && hasSecretAccessKey) {
+    if (accessKeyId === '' || secretAccessKey === '') {
+      throw new Error('S3 storage config requires non-empty accessKeyId and secretAccessKey when using static credentials');
+    }
+
+    credentials = { accessKeyId, secretAccessKey };
+  }
 
   const client = new S3Client({
     region,
     endpoint,
     forcePathStyle,
-    credentials:
-      accessKeyId && secretAccessKey
-        ? { accessKeyId, secretAccessKey }
-        : undefined,
+    credentials,
   });
 
   return createS3CompatibleStorageAdapter({

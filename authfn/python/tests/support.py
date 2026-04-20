@@ -5,9 +5,6 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-from superfunctions.http import RouteContext
-
-
 TESTS_DIR = os.path.dirname(__file__)
 AUTHFN_PYTHON_ROOT = os.path.abspath(os.path.join(TESTS_DIR, ".."))
 PYTHON_CORE_ROOT = os.path.abspath(
@@ -23,6 +20,8 @@ PYTHON_FLASK_ROOT = os.path.abspath(
 for path in (AUTHFN_PYTHON_ROOT, PYTHON_CORE_ROOT, PYTHON_FASTAPI_ROOT, PYTHON_FLASK_ROOT):
     if path not in sys.path:
         sys.path.insert(0, path)
+
+from superfunctions.http import RouteContext
 
 
 class InMemoryDatabaseAdapter:
@@ -100,7 +99,7 @@ class TestRequest:
         self.path = url.split("://", 1)[-1].split("/", 1)[-1]
         self.path = "/" + self.path.split("?", 1)[0] if self.path else "/"
         self._body = body
-        self._headers = {k: v for k, v in (headers or {}).items()}
+        self._headers = dict((headers or {}).items())
 
     @property
     def headers(self) -> Dict[str, str]:

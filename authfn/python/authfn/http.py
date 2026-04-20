@@ -6,8 +6,8 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional
-from urllib.parse import parse_qs, urlencode, urlparse
+from typing import Any, Awaitable, Callable, Dict, List, Optional, cast
+from urllib.parse import parse_qs, urlparse
 
 from superfunctions.http import HttpMethod, Response, Route, RouteContext, SetCookie
 
@@ -16,14 +16,14 @@ from .errors import to_authfn_error
 from .observability import (
     emit_auth_event,
     event_request_id,
+)
+from .observability import (
     resolve_request_id as resolve_observability_request_id,
 )
 from .plugins.api_keys import ApiKeyPluginConfig, ApiKeyService
 from .plugins.email_otp import EmailOtpPluginConfig, EmailOtpService
 from .plugins.multi_region import MultiRegionPluginConfig, MultiRegionService
-from .plugins.social_oauth import SocialOAuthPluginConfig, SocialOAuthService
 from .plugins.two_factor import TwoFactorPluginConfig, TwoFactorService
-from .schema import get_schema
 from .types import (
     AuthFnConfig,
     AuthFnError,
@@ -40,6 +40,16 @@ from .types import (
     UnauthorizedError,
     ValidationError,
 )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _coerce_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 DEFAULT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7
 DEFAULT_CSRF_MAX_AGE_SECONDS = DEFAULT_SESSION_MAX_AGE_SECONDS
@@ -204,7 +214,7 @@ async def get_cookie_session_state(config: AuthFnConfig, request: Any) -> Sessio
         state.failure_reason = "revoked"
         return state
     expires_at = record.get("expiresAt")
-    if expires_at is not None and expires_at <= datetime.utcnow():
+    if expires_at is not None and _coerce_utc(expires_at) <= _utcnow():
         state.session_record = record
         state.failure_reason = "expired"
         return state
@@ -218,7 +228,7 @@ async def get_cookie_session_state(config: AuthFnConfig, request: Any) -> Sessio
         state.failure_reason = "missing"
         return state
 
-    now = datetime.utcnow()
+    now = _utcnow()
     updated = await config.database.update(
         model="sessions",
         where=[{"field": "id", "operator": "eq", "value": record["id"]}],
@@ -345,7 +355,7 @@ async def issue_session(
 ) -> Dict[str, Any]:
     runtime = resolve_runtime(config, request)
     cookie_policy = resolve_cookie_policy(config, request, runtime)
-    now = datetime.utcnow()
+    now = _utcnow()
     payload = {
         "userId": user["id"],
         "primaryEmail": user.get("primaryEmail"),
@@ -680,7 +690,7 @@ async def _handle_list_sessions(config: AuthFnConfig, request: Any, _context: Ro
     active = [
         _build_user_session(row, state.user, getattr(state.runtime, "region_id", None) or getattr(state.runtime, "regionId", None))
         for row in rows
-        if row.get("revokedAt") is None and row.get("expiresAt") and row["expiresAt"] > datetime.utcnow()
+        if row.get("revokedAt") is None and row.get("expiresAt") and _coerce_utc(row["expiresAt"]) > _utcnow()
     ]
     return json_success(
         request,
@@ -709,14 +719,14 @@ async def _handle_sign_out(config: AuthFnConfig, request: Any, _context: RouteCo
                 await config.database.update(
                     model="sessions",
                     where=[{"field": "id", "operator": "eq", "value": row["id"]}],
-                    data={"revokedAt": datetime.utcnow(), "updatedAt": datetime.utcnow()},
+                    data={"revokedAt": _utcnow(), "updatedAt": _utcnow()},
                     namespace=config.namespace,
                 )
     else:
         await config.database.update(
             model="sessions",
             where=[{"field": "id", "operator": "eq", "value": state.session.id}],
-            data={"revokedAt": datetime.utcnow(), "updatedAt": datetime.utcnow()},
+            data={"revokedAt": _utcnow(), "updatedAt": _utcnow()},
             namespace=config.namespace,
         )
     return json_success(request, {"revoked": True, "allSessions": all_sessions}, cookies=cookies)
@@ -735,7 +745,7 @@ async def _handle_revoke_session(config: AuthFnConfig, request: Any, context: Ro
     await config.database.update(
         model="sessions",
         where=[{"field": "id", "operator": "eq", "value": context.params["sessionId"]}],
-        data={"revokedAt": datetime.utcnow(), "updatedAt": datetime.utcnow()},
+        data={"revokedAt": _utcnow(), "updatedAt": _utcnow()},
         namespace=config.namespace,
     )
     cookies = clear_session_cookies(state.cookie_policy) if context.params["sessionId"] == state.session.id else []
@@ -830,6 +840,8 @@ async def _handle_verify_otp(config: AuthFnConfig, request: Any, _context: Route
 
 
 async def _handle_social_start(config: AuthFnConfig, request: Any, _context: RouteContext) -> Response:
+    from .plugins.social_oauth import SocialOAuthPluginConfig, SocialOAuthService
+
     body = await _read_json(request)
     plugin_config = get_plugin_config(config, "socialOAuth", SocialOAuthPluginConfig())
     service = SocialOAuthService(config, plugin_config)
@@ -843,6 +855,8 @@ async def _handle_social_start(config: AuthFnConfig, request: Any, _context: Rou
 
 
 async def _handle_social_callback(config: AuthFnConfig, request: Any, context: RouteContext) -> Response:
+    from .plugins.social_oauth import SocialOAuthPluginConfig, SocialOAuthService
+
     parsed = urlparse(_best_effort_url(request))
     query = parse_qs(parsed.query)
     provider = context.params["provider"]
@@ -886,6 +900,8 @@ async def _handle_social_callback(config: AuthFnConfig, request: Any, context: R
 
 
 async def _handle_social_disconnect(config: AuthFnConfig, request: Any, context: RouteContext) -> Response:
+    from .plugins.social_oauth import SocialOAuthPluginConfig, SocialOAuthService
+
     state = await require_cookie_session(config, request)
     _assert_valid_csrf(request, state)
     plugin_config = get_plugin_config(config, "socialOAuth", SocialOAuthPluginConfig())
@@ -976,7 +992,7 @@ async def _handle_two_factor_confirm(config: AuthFnConfig, request: Any, _contex
     await config.database.update(
         model="sessions",
         where=[{"field": "id", "operator": "eq", "value": state.session.id}],
-        data={"methods": updated, "updatedAt": datetime.utcnow()},
+        data={"methods": updated, "updatedAt": _utcnow()},
         namespace=config.namespace,
     )
     return json_success(request, {"enabled": True, "sessionMethods": updated})
@@ -1092,7 +1108,7 @@ async def _sign_up_with_password(
     if existing is not None:
         raise ConflictError("A user with this email already exists", {"primaryEmail": resolved_email})
 
-    now = datetime.utcnow()
+    now = _utcnow()
     user = {
         "id": _create_id("user"),
         "primaryEmail": resolved_email,
@@ -1187,7 +1203,17 @@ async def _run_after_user_create_hook(
     if hook is None:
         return
     try:
-        await _maybe_await(hook(AuthFnHookContext(config=config, request=request, runtime=runtime, actorId=user["id"]), user))
+        await _maybe_await(
+            hook(
+                AuthFnHookContext(
+                    config=config,
+                    request=request,
+                    runtime=runtime,
+                    actor_id=user["id"],
+                ),
+                user,
+            )
+        )
     except Exception:  # noqa: BLE001
         await emit_auth_event(
             config,
@@ -1221,7 +1247,7 @@ async def _run_before_session_issue_hook(
                     config=config,
                     request=request,
                     runtime=runtime,
-                    actorId=payload["userId"],
+                    actor_id=payload["userId"],
                 ),
                 payload,
             )
@@ -1265,7 +1291,7 @@ async def _run_after_session_issue_hook(
                     config=config,
                     request=request,
                     runtime=runtime,
-                    actorId=session.actor_id,
+                    actor_id=session.actor_id,
                     session=session,
                 ),
                 session,
@@ -1345,10 +1371,11 @@ def _assert_valid_csrf(request: Any, state: SessionState) -> None:
     header_token = _headers_dict(request).get("x-authfn-csrf")
     if not header_token or not state.csrf_token or not state.session_record:
         raise CsrfInvalidError("CSRF token invalid")
-    if header_token != state.csrf_token:
+    if not secrets.compare_digest(header_token, state.csrf_token):
         raise CsrfInvalidError("CSRF token invalid")
     expected = state.session_record.get("csrfHash")
-    if not expected or _hash_secret(header_token) != expected:
+    actual = _hash_secret(header_token)
+    if not expected or not secrets.compare_digest(actual, expected):
         raise CsrfInvalidError("CSRF token invalid")
 
 
@@ -1395,11 +1422,11 @@ def _parse_cookies(header: str) -> Dict[str, str]:
 async def _read_json(request: Any) -> Dict[str, Any]:
     try:
         payload = await request.json()
-    except Exception:  # noqa: BLE001
+    except Exception as err:  # noqa: BLE001
         raw = await request.text()
         if not raw:
             return {}
-        raise ValidationError("Request body must be valid JSON")
+        raise ValidationError("Request body must be valid JSON") from err
     if payload is None:
         return {}
     if not isinstance(payload, dict):
@@ -1547,16 +1574,16 @@ def _with_url(request: Any, url: str) -> Any:
             self.url = resolved_url
 
         @property
-        def method(self) -> str:
-            return getattr(self._base, "method")
+        def method(self) -> Optional[str]:
+            return getattr(self._base, "method", None)
 
         @property
-        def path(self) -> str:
-            return getattr(self._base, "path")
+        def path(self) -> Optional[str]:
+            return getattr(self._base, "path", None)
 
         @property
         def headers(self) -> Dict[str, str]:
-            return getattr(self._base, "headers")
+            return cast(Dict[str, str], getattr(self._base, "headers", {}))
 
         @property
         def query_params(self) -> Dict[str, Any]:

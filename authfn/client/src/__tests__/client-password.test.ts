@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
-import { authFnPasswordPlugin, createAuthFn, type AuthFnConfig } from '../../../core/src/index.js';
+import { authFnPasswordPlugin, createAuthFn, type AuthFnConfig } from '@authfn/core';
 import { createAuthFnClient } from '../index.js';
 
 function createConfig(): AuthFnConfig {
@@ -235,5 +235,27 @@ describe('@authfn/client password flows', () => {
     }
     expect(response.error.code).toBe('AUTHFN_INVALID_CREDENTIALS');
     expect(response.error.message).toBe('Invalid email or password');
+  });
+
+  it('maps non-json backend failures into a canonical authfn error envelope', async () => {
+    const client = createAuthFnClient({
+      baseUrl: 'https://account.example.com/auth',
+      fetch: async () =>
+        new Response('upstream exploded', {
+          status: 502,
+          headers: {
+            'content-type': 'text/plain',
+            'x-request-id': 'req_non_json'
+          }
+        })
+    });
+
+    const response = await client.getSession();
+    expect(response.ok).toBe(false);
+    if (response.ok) {
+      throw new Error('non-json failure should produce an authfn error envelope');
+    }
+    expect(response.error.code).toBe('AUTHFN_INTERNAL_ERROR');
+    expect(response.requestId).toBe('req_non_json');
   });
 });

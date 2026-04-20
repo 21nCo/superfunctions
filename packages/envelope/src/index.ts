@@ -67,16 +67,9 @@ export function err(
       ok: false,
       error: {
         code: 'INVALID_ENVELOPE_ERROR_SHAPE',
-        message: 'Envelope error shape is invalid; status and retryable are required.',
+        message: 'Canonical error envelopes require numeric status and boolean retryable',
         status: 500,
         retryable: false,
-        details: {
-          received: {
-            code: input.code,
-            hasStatus: typeof input.status === 'number',
-            hasRetryable: typeof input.retryable === 'boolean',
-          },
-        },
       },
       meta: {
         timestamp: options?.timestamp ?? new Date().toISOString(),
@@ -103,12 +96,42 @@ export function normalizeLegacyEnvelope<T>(
   envelope: LegacySuccessEnvelope<T> | LegacyErrorEnvelope,
   options?: { timestamp?: string; defaultStatus?: number; defaultRetryable?: boolean }
 ): Envelope<T> {
-  if (envelope.ok) {
-    if ('data' in envelope) {
-      return ok(envelope.data, options);
+  if ('meta' in envelope && typeof envelope.meta?.timestamp === 'string') {
+    if (envelope.ok === true && 'data' in envelope) {
+      return envelope;
     }
+    if (envelope.ok === false && 'error' in envelope && isValidErrorShape(envelope.error)) {
+      return envelope;
+    }
+  }
 
+  if (envelope.ok === true && 'data' in envelope) {
+    return ok(envelope.data, options);
+  }
+  if (envelope.ok === true && 'result' in envelope) {
     return ok(envelope.result, options);
+  }
+  if (!('error' in envelope) || !envelope.error) {
+    return err(
+      {
+        code: 'INVALID_ENVELOPE_ERROR_SHAPE',
+        message: 'Legacy error envelopes require an error payload',
+        status: options?.defaultStatus ?? 500,
+        retryable: options?.defaultRetryable ?? false,
+      },
+      options
+    );
+  }
+  if (!isLegacyErrorInput(envelope.error)) {
+    return err(
+      {
+        code: 'INVALID_ENVELOPE_ERROR_SHAPE',
+        message: 'Legacy error envelopes require string code and message fields',
+        status: options?.defaultStatus ?? 500,
+        retryable: options?.defaultRetryable ?? false,
+      },
+      options
+    );
   }
 
   return err(
@@ -126,35 +149,35 @@ export function normalizeLegacyEnvelope<T>(
 export function toLegacyDataEnvelope<T>(envelope: Envelope<T>):
   | { ok: true; data: T }
   | { ok: false; error: { code: string; message: string; details?: Record<string, unknown> } } {
-  if (envelope.ok) {
-    return { ok: true, data: envelope.data };
+  if ('error' in envelope) {
+    return {
+      ok: false,
+      error: {
+        code: envelope.error.code,
+        message: envelope.error.message,
+        ...(envelope.error.details ? { details: envelope.error.details } : {}),
+      },
+    };
   }
 
-  return {
-    ok: false,
-    error: {
-      code: envelope.error.code,
-      message: envelope.error.message,
-      ...(envelope.error.details ? { details: envelope.error.details } : {}),
-    },
-  };
+  return { ok: true, data: envelope.data };
 }
 
 export function toLegacyResultEnvelope<T>(envelope: Envelope<T>):
   | { ok: true; result: T }
   | { ok: false; error: { code: string; message: string; details?: Record<string, unknown> } } {
-  if (envelope.ok) {
-    return { ok: true, result: envelope.data };
+  if ('error' in envelope) {
+    return {
+      ok: false,
+      error: {
+        code: envelope.error.code,
+        message: envelope.error.message,
+        ...(envelope.error.details ? { details: envelope.error.details } : {}),
+      },
+    };
   }
 
-  return {
-    ok: false,
-    error: {
-      code: envelope.error.code,
-      message: envelope.error.message,
-      ...(envelope.error.details ? { details: envelope.error.details } : {}),
-    },
-  };
+  return { ok: true, result: envelope.data };
 }
 
 function isValidErrorShape(input: {
@@ -171,4 +194,19 @@ function isValidErrorShape(input: {
   details?: Record<string, unknown>;
 } {
   return typeof input.status === 'number' && Number.isFinite(input.status) && typeof input.retryable === 'boolean';
+}
+
+function isLegacyErrorInput(input: unknown): input is {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+  status?: number;
+  retryable?: boolean;
+} {
+  return (
+    typeof input === 'object' &&
+    input !== null &&
+    typeof (input as { code?: unknown }).code === 'string' &&
+    typeof (input as { message?: unknown }).message === 'string'
+  );
 }

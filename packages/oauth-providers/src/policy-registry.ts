@@ -190,6 +190,15 @@ export class ProviderPolicyRegistry {
       });
     }
 
+    const restrictedScope = input.requestedScopes.find((scope) => featurePolicy.restrictedScopes?.includes(scope));
+    if (restrictedScope) {
+      throw new ProviderPolicyError("OAUTH_SCOPE_DISALLOWED", "requested scope requires additional approval", {
+        providerId: input.providerId,
+        feature: input.feature,
+        scope: restrictedScope
+      });
+    }
+
     const consentRecord: ConsentRecord = {
       consentId: this.idGenerator("consent"),
       tenantId: input.tenantId,
@@ -304,7 +313,7 @@ function defaultProviderPolicyIdGenerator(kind: ProviderPolicyIdKind): string {
   return `${kind}_${randomUUID()}`;
 }
 
-function clonePolicy(policy: ProviderPolicyDefinition): ProviderPolicyDefinition {
+export function clonePolicy(policy: ProviderPolicyDefinition): ProviderPolicyDefinition {
   return {
     providerId: policy.providerId,
     policyVersion: policy.policyVersion,

@@ -8,7 +8,6 @@ const serverBaseUrl = 'http://127.0.0.1:4313';
 const email = 'ada@example.com';
 const password = 'Sup3rSecurePassphrase!';
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-const TEST_NOW = new Date('2026-03-25T00:00:00.000Z');
 
 test.beforeEach(async () => {
   const reset = await resetDemoScenario(serverBaseUrl, 'baseline');
@@ -101,7 +100,7 @@ function decodeBase32(secret: string): Buffer {
   return Buffer.from(bytes);
 }
 
-function generateTotp(secret: string, now: Date = TEST_NOW, digits = 6, periodSeconds = 30): string {
+function generateTotp(secret: string, now: Date = new Date(), digits = 6, periodSeconds = 30): string {
   const counter = Math.floor(now.getTime() / 1000 / periodSeconds);
   const key = decodeBase32(secret);
   const buffer = Buffer.alloc(8);

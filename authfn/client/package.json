@@ -3,11 +3,17 @@
   "version": "0.0.1",
   "description": "Typed browser client for authfn",
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -19,7 +25,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@authfn/core": "*"
+    "@authfn/core": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -1,6 +1,7 @@
 import { createRouter, type Route, type Router } from '@superfunctions/http';
 import type { AuthFnConfig, AuthFnHooks } from '../types.js';
 import { AuthFnNotImplementedError } from '../core/errors.js';
+import { AuthFnValidationError } from '../core/errors.js';
 import { clearSessionCookies, issueSessionCookies } from '../core/cookies.js';
 import {
   assertValidCsrf,
@@ -218,7 +219,7 @@ export function createAuthFnRouteMeta(
   };
 }
 
-async function readOptionalJson<T extends Record<string, unknown>>(
+export async function readOptionalJson<T extends Record<string, unknown>>(
   request: Request
 ): Promise<T> {
   const raw = await request.text();
@@ -226,5 +227,11 @@ async function readOptionalJson<T extends Record<string, unknown>>(
     return {} as T;
   }
 
-  return JSON.parse(raw) as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    throw new AuthFnValidationError('Request body must be valid JSON', {
+      cause: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
