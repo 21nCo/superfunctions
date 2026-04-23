@@ -97,11 +97,6 @@ export function createConnectionManagerOAuthDependencies(
     identityHooks: {
       onDisconnected: async ({ connectionId }) => {
         await runtimeStorage.deleteConnection(connectionId);
-        return {
-          attempted: true,
-          deleted: true,
-          reason: 'deleted',
-        };
       },
     },
   });

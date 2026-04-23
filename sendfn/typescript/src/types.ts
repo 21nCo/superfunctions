@@ -25,6 +25,7 @@ export interface EmailConfig {
   fromName?: string;
   replyTo?: string;
   awsSes?: AwsSesConfig;
+  resend?: ResendConfig;
   // removed internal provider config since it's passed via adapter
 }
 
@@ -33,6 +34,11 @@ export interface AwsSesConfig {
   secretAccessKey: string;
   region: string;
   configurationSetName?: string;
+}
+
+export interface ResendConfig {
+  apiKey: string;
+  endpoint?: string;
 }
 
 export interface PushConfig {

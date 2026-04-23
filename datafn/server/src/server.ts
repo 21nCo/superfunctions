@@ -3,7 +3,8 @@
  * Creates a Router with datafn endpoints
  */
 
-import type { DatafnSchema, DatafnPlugin, RetentionConfig, RateLimitConfig, ObservabilityConfig } from "./core-types.js";
+import type { RetentionConfig, RateLimitConfig, ObservabilityConfig } from "./core-types.js";
+import type { DatafnPlugin, DatafnResourceSchema, DatafnSchema } from "@datafn/core/types";
 import type { SearchProvider } from "./search-provider.js";
 import { validateSchema, ensureBuiltinKv, isNamespaced } from "@datafn/core";
 import { createRouter, type Router, type Route, type RouteHandler } from "@superfunctions/http";
@@ -80,6 +81,9 @@ export interface DatafnServerConfig<TContext = any> {
     payload: unknown,
   ) => Promise<boolean> | boolean;
 
+  /** Optional request context factory passed through to namespace, actor, auth, and route handlers. */
+  context?: TContext | ((request: Request) => Promise<TContext> | TContext);
+
   /** Optional limits configuration */
   limits?: {
     maxLimit?: number;
@@ -146,7 +150,7 @@ export interface DatafnServerConfig<TContext = any> {
   namespaceProvider?: {
     getNamespace: (ctx: TContext) => string | Promise<string>;
     /** Optional actor ID for audit attribution (separate from isolation). */
-    getActorId?: (ctx: TContext) => string | Promise<string>;
+    getActorId?: (ctx: TContext) => string | undefined | Promise<string | undefined>;
   };
 
   /**
@@ -619,7 +623,7 @@ export async function createDatafnServer<TContext = any>(
   // Initialize search provider if configured
   if (config.searchProvider?.initialize) {
     const resources = validatedSchema.resources
-      .map((r: import("./core-types.js").DatafnResourceSchema) => ({
+      .map((r: DatafnResourceSchema) => ({
         name: r.name,
         searchFields: Array.isArray(r.indices) ? [] : (r.indices?.search ?? []),
       }))
@@ -852,6 +856,7 @@ export async function createDatafnServer<TContext = any>(
   const router = createRouter<TContext>({
     routes,
     basePath: "/",
+    context: config.context,
   });
 
   // REL-009: Graceful shutdown implementation

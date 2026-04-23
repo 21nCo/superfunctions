@@ -26,20 +26,7 @@ import type {
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
 import { createDrizzleInternalCrud } from './internal.js';
-
-// Import Drizzle helpers loosely to avoid strict peer typing
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-// These are type-unsafe on purpose to avoid hard binding to a specific driver.
-// Drizzle exports these from 'drizzle-orm'.
-// We fall back to minimal shims if not present at runtime.
-let drizzleOps: any = {};
-try {
-  // dynamic import to keep peer dep optional
-  // @ts-ignore
-  drizzleOps = await import('drizzle-orm');
-} catch {
-  // no-op: will throw if used without drizzle installed
-}
+import * as drizzleOps from 'drizzle-orm';
 
 export type DrizzleDialect = 'postgres' | 'mysql' | 'sqlite';
 

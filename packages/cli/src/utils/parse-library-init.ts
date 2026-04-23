@@ -78,6 +78,10 @@ export function parseLibraryInitializations(
 }
 
 function extractConfigObject(node: ts.Node, sourceFile: ts.SourceFile): any {
+  if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isTypeAssertionExpression(node)) {
+    return extractConfigObject(node.expression, sourceFile);
+  }
+
   // Handle direct object literals
   if (ts.isObjectLiteralExpression(node)) {
     return parseObjectLiteral(node, sourceFile);

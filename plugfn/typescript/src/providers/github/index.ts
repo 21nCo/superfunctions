@@ -321,6 +321,50 @@ export const githubProvider: Provider = {
   },
 
   triggers: {
+    'issues': {
+      name: 'issues',
+      displayName: 'Issue Event',
+      description: 'Triggered when a GitHub issue is created or updated',
+      type: TriggerType.Webhook,
+
+      webhookConfig: {
+        path: '/webhooks/github/issues',
+        method: 'POST',
+        verifySignature: async (payload, signature, secret, context) => {
+          return verifyGitHubSignatureRaw(payload, signature, secret, context);
+        },
+      },
+
+      schema: z.object({
+        action: z.string(),
+        issue: z.object({
+          id: z.number(),
+          number: z.number(),
+          title: z.string(),
+          body: z.string().nullable(),
+          html_url: z.string(),
+          state: z.string(),
+          labels: z.array(z.object({ name: z.string(), color: z.string().optional() })).optional(),
+          assignees: z.array(z.object({ login: z.string(), avatar_url: z.string().optional() })).optional(),
+          milestone: z.object({ title: z.string(), due_on: z.string().nullable() }).nullable().optional(),
+        }),
+        repository: z.object({
+          id: z.number().optional(),
+          name: z.string(),
+          full_name: z.string(),
+          owner: z.object({
+            login: z.string(),
+          }),
+        }),
+      }),
+
+      handler: async (payload) => {
+        return {
+          event: 'issues',
+          data: payload,
+        };
+      },
+    },
     'issues.opened': {
       name: 'issues.opened',
       displayName: 'Issue Opened',

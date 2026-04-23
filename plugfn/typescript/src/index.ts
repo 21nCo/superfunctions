@@ -1,6 +1,8 @@
 // Main exports
 export { plugFn } from './core/plug-fn.js';
 export type { PlugFn } from './core/plug-fn.js';
+export { getSchema, PLUGFN_SCHEMA_VERSION } from './schema.js';
+export type { PlugFnSchemaOptions } from './schema.js';
 
 // Type exports
 export * from './types/index.js';

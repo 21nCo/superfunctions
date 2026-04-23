@@ -101,12 +101,11 @@ export function generateDrizzleSchemaFile(
       const fieldName = field.fieldName || fieldKey;
       const drizzleType = mapTypeToDrizzle(field.type);
 
-      // For timestamp fields, add mode: 'string' to handle ISO string dates
+      // Drizzle's default timestamp mode accepts Date objects, which is what
+      // Superfunctions runtime packages persist through the shared DB adapter.
       // For bigint fields, add mode: 'bigint' for full precision
       let typeConfig = '';
-      if (field.type === 'date') {
-        typeConfig = "{ mode: 'string' }";
-      } else if (field.type === 'bigint') {
+      if (field.type === 'bigint') {
         typeConfig = "{ mode: 'bigint' }";
       }
       let fieldDef = `  ${fieldKey}: ${drizzleType}('${fieldName}'${typeConfig ? `, ${typeConfig}` : ''})`;

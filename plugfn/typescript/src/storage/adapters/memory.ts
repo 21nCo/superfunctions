@@ -1,5 +1,5 @@
-import { memoryAdapter } from '@superfunctions/db/testing';
 import type { Adapter as DbAdapter, HealthStatus, TableSchema, TransactionAdapter, ValidationResult } from '@superfunctions/db';
+import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import type { Connection } from '../../types/connection.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
 import type { WebhookRecord } from '../webhook-storage.js';
