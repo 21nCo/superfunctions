@@ -42,7 +42,10 @@ export interface PointLike {
 
 function withEdges(rect: RectLike): Required<RectLike> {
   return {
-    ...rect,
+    top: rect.top,
+    left: rect.left,
+    width: rect.width,
+    height: rect.height,
     right: rect.right ?? rect.left + rect.width,
     bottom: rect.bottom ?? rect.top + rect.height,
   };

@@ -50,7 +50,7 @@
       data-state={ctx.open ? 'open' : 'closed'}
       data-side={side}
       data-align={align}
-      style="z-index: 50; background-color: white; border: 1px solid #eee; border-radius: 4px; padding: 10px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);"
+      style="z-index: var(--uifn-floating-layer-z-index, 100); background-color: white; border: 1px solid #eee; border-radius: 4px; padding: 10px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);"
       {...rest}
       onmouseenter={handleMouseEnter}
       onmouseleave={handleMouseLeave}

@@ -1,0 +1,17 @@
+---
+title: CLI Reference
+description: Commands exported by @secfn/cli.
+---
+
+```bash
+secfn scan [--path <dir>]
+secfn scan --staged
+secfn scan --git-history --commits <n>
+secfn scan --format table|json|sarif
+secfn scan --fail-on low|medium|high|critical
+secfn scan --baseline <file>
+secfn env pull --endpoint <url> --api-key <key> --set <name>
+secfn env run --endpoint <url> --api-key <key> --set <name> -- <command>
+```
+
+`scan` supports table, JSON, and SARIF reporters. `env pull` prints `.env` text unless `--output` is passed. `env run` injects the resolved set into a child process environment.

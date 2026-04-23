@@ -1,8 +1,8 @@
 <script lang="ts">
   import { isOutsideEventTarget } from './internal/dismissible';
   import { getRequiredContext } from './internal/context';
-  import { portal } from './internal/portal';
-  import { position, type Side, type Align } from './internal/position';
+  import { portal as portalAction } from './internal/portal';
+  import { position as positionAction, type Side, type Align } from './internal/position';
 
   interface ComboboxContext {
     open: boolean;
@@ -18,6 +18,7 @@
     align?: Align;
     sideOffset?: number;
     alignOffset?: number;
+    class?: string;
     [key: string]: any;
   }
 
@@ -27,6 +28,7 @@
     align = 'start', 
     sideOffset = 0, 
     alignOffset = 0,
+    class: className,
     ...rest 
   }: Props = $props();
 
@@ -64,23 +66,23 @@
 </script>
 
 {#if ctx.open && anchor}
-  <div use:portal>
-    <div
-      bind:this={contentEl}
-      role="listbox"
-      id={ctx.contentId}
-      data-state={ctx.open ? 'open' : 'closed'}
-      use:position={{
-        trigger: anchor,
-        side,
-        align,
-        sideOffset,
-        alignOffset
-      }}
-      style="z-index: 50; background-color: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 100px; max-height: 300px; overflow-y: auto;"
-      {...rest}
-    >
-      {@render children?.()}
-    </div>
+  <div
+    bind:this={contentEl}
+    role="listbox"
+    id={ctx.contentId}
+    data-state="open"
+    use:portalAction={'body'}
+    use:positionAction={{
+      trigger: anchor,
+      side,
+      align,
+      sideOffset,
+      alignOffset
+    }}
+    class={className}
+    style="z-index: var(--uifn-floating-layer-z-index, 100); background-color: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 100px; max-height: 300px; overflow-y: auto;"
+    {...rest}
+  >
+    {@render children?.()}
   </div>
 {/if}

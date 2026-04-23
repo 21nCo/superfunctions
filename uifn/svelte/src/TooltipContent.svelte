@@ -24,13 +24,14 @@
   }: Props = $props();
 
   const context = getContext<any>('tooltip');
+  let anchor = $derived(context.triggerElement);
 </script>
 
-{#if context.open}
+{#if context.open && anchor}
   <div 
     use:portalAction={'body'}
     use:positionAction={{
-        trigger: context.triggerElement,
+        trigger: anchor,
         side,
         align,
         sideOffset,

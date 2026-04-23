@@ -1,5 +1,6 @@
 // Main exports
-export { Sendfn, sendfn } from './sendfn';
+export { Sendfn, createSendFn, sendFn, sendfn } from './sendfn';
+export { SENDFN_SCHEMA_VERSION, getSchema, getSendFnSchema } from './schema';
 
 // Types
 export * from './types';

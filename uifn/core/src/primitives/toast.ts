@@ -50,6 +50,11 @@ export function createToast(props: ToastProps) {
       startTimer();
   };
 
+  const syncOpen = (nextOpen: boolean) => {
+    open = nextOpen;
+    listeners.forEach(l => l(getState()));
+  };
+
   if (open) {
       startTimer();
   }
@@ -58,6 +63,7 @@ export function createToast(props: ToastProps) {
     state: getState(),
     actions: {
       setOpen,
+      syncOpen,
       startTimer,
       pauseTimer,
       resumeTimer

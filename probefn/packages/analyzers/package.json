@@ -11,12 +11,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@probefn/contracts": "workspace:*"
+    "@probefn/contracts": "*"
   },
   "devDependencies": {
-    "@probefn/browser-runner": "workspace:*",
-    "@probefn/core": "workspace:*",
-    "@probefn/dev-server": "workspace:*",
-    "@probefn/storage": "workspace:*"
+    "@probefn/browser-runner": "*",
+    "@probefn/core": "*",
+    "@probefn/dev-server": "*",
+    "@probefn/storage": "*"
   }
 }
