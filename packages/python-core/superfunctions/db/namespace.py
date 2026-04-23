@@ -32,8 +32,10 @@ class NamespaceManager:
             return self.config.default_namespace, table_name
         else:
             if self.config.separator in table_name:
-                parts = table_name.split(self.config.separator, 1)
-                return parts[0], parts[1]
+                candidate_namespace, model = table_name.split(self.config.separator, 1)
+                known_namespaces = self.config.known_namespaces
+                if known_namespaces and candidate_namespace in known_namespaces:
+                    return candidate_namespace, model
             return self.config.default_namespace, table_name
 
     def get_schema(self, namespace: Optional[str] = None) -> Optional[str]:
@@ -47,11 +49,13 @@ def create_namespace_manager(
     separator: str = "_",
     use_schema: bool = False,
     default_namespace: str = "default",
+    known_namespaces: Optional[set[str]] = None,
 ) -> NamespaceManager:
     """Create a namespace manager with the given configuration."""
     config = NamespaceConfig(
         separator=separator,
         use_schema=use_schema,
         default_namespace=default_namespace,
+        known_namespaces=known_namespaces,
     )
     return NamespaceManager(config)

@@ -32,34 +32,41 @@ export function discoverSuperfunctionsPackages(
   cwd: string = process.cwd()
 ): SuperfunctionsPackageMetadata[] {
   const discovered: SuperfunctionsPackageMetadata[] = [];
-  const nodeModulesPath = findNearestNodeModulesPath(cwd);
+  const nodeModulesPaths = findNodeModulesPaths(cwd);
+  const seenPackageNames = new Set<string>();
 
-  if (!nodeModulesPath || !fs.existsSync(nodeModulesPath)) {
+  if (nodeModulesPaths.length === 0) {
     return discovered;
   }
 
-  // Scan node_modules
-  scanDirectory(nodeModulesPath, discovered);
+  for (const nodeModulesPath of nodeModulesPaths) {
+    scanDirectory(nodeModulesPath, discovered, seenPackageNames);
+  }
 
   return discovered;
 }
 
-export function findNearestNodeModulesPath(startDir: string): string | null {
+export function findNodeModulesPaths(startDir: string): string[] {
+  const paths: string[] = [];
   let currentDir = path.resolve(startDir);
 
   while (true) {
     const nodeModulesPath = path.join(currentDir, "node_modules");
     if (fs.existsSync(nodeModulesPath)) {
-      return nodeModulesPath;
+      paths.push(nodeModulesPath);
     }
 
     const parentDir = path.dirname(currentDir);
     if (parentDir === currentDir) {
-      return null;
+      return paths;
     }
 
     currentDir = parentDir;
   }
+}
+
+export function findNearestNodeModulesPath(startDir: string): string | null {
+  return findNodeModulesPaths(startDir)[0] ?? null;
 }
 
 /**
@@ -82,7 +89,8 @@ export function buildRegistry(
 
 function scanDirectory(
   dir: string,
-  discovered: SuperfunctionsPackageMetadata[]
+  discovered: SuperfunctionsPackageMetadata[],
+  seenPackageNames: Set<string> = new Set()
 ): void {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
@@ -105,7 +113,7 @@ function scanDirectory(
 
     // Handle scoped packages (@superfunctions/authfn, etc.)
     if (entry.name.startsWith("@")) {
-      scanDirectory(entryPath, discovered);
+      scanDirectory(entryPath, discovered, seenPackageNames);
       continue;
     }
 
@@ -123,6 +131,11 @@ function scanDirectory(
           packageJson.superfunctions.initFunction
         ) {
           const packageName = String(packageJson.name ?? entry.name);
+          if (seenPackageNames.has(packageName)) {
+            continue;
+          }
+          seenPackageNames.add(packageName);
+
           discovered.push({
             packageName,
             initFunction: packageJson.superfunctions.initFunction,

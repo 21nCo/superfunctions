@@ -48,7 +48,7 @@ export function createFakeDbAdapter(): Adapter {
           if (value === clause.value) return false;
           break;
         default:
-          break;
+          throw new Error(`Unsupported where operator: ${clause.operator}`);
       }
     }
     return true;
@@ -123,11 +123,23 @@ export function createFakeDbAdapter(): Adapter {
         }
       }
     },
-    async createMany(params: any) {
-      return [];
+    async createMany(this: any, params: any) {
+      const created = [];
+      for (const data of params.data) {
+        created.push(await this.create({ ...params, data }));
+      }
+      return created;
     },
     async updateMany(params: any) {
-      return 0;
+      const table = getTable(params.model);
+      let count = 0;
+      for (const [id, record] of table.entries()) {
+        if (matchesWhere(record, params.where)) {
+          table.set(id, { ...record, ...params.data });
+          count++;
+        }
+      }
+      return count;
     },
     async deleteMany(params: any) {
       const table = getTable(params.model);
@@ -161,7 +173,14 @@ export function createFakeDbAdapter(): Adapter {
       });
     },
     async count(params: any) {
-      return 0;
+      const table = getTable(params.model);
+      let count = 0;
+      for (const record of table.values()) {
+        if (matchesWhere(record, params.where)) {
+          count++;
+        }
+      }
+      return count;
     },
     async transaction(callback: any) {
       return callback(this as any);

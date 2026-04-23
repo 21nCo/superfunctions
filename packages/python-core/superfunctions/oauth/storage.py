@@ -361,7 +361,13 @@ def get_oauth_subject_key(subject: OAuthStoredSubject) -> str:
 
     if subject.kind == "browser-auth":
         return f"browser-auth:{subject.intent_id}"
-    return "browser"
+    if subject.intent_id:
+        return f"browser:{subject.intent_id}"
+    if subject.connection_id:
+        return f"browser:{subject.connection_id}"
+    raise OAuthStateStoreError(
+        "VALIDATION_ERROR", "browser subjects require a stable intentId or connectionId"
+    )
 
 
 def apply_subject_to_state_record(record: OAuthStateRecord) -> OAuthStateRecord:

@@ -180,7 +180,7 @@ def secret_resolution_failed_error(
             "operation": context.operation,
             "grantType": context.grant_type,
             "hasResolver": True,
-            "causeMessage": str(cause) if cause is not None else None,
+            "causeType": type(cause).__name__ if cause is not None else None,
         },
     )
 

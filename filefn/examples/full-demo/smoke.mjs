@@ -2,6 +2,8 @@
 
 const apiBase = process.env.FILEFN_DEMO_BASE_URL || "http://localhost:3001/filefn";
 const clientBase = process.env.FILEFN_DEMO_CLIENT_BASE || "http://localhost:5173";
+const apiOrigin = new URL(apiBase).origin;
+const apiBasePath = new URL(apiBase).pathname.replace(/\/$/, "");
 
 function assert(condition, message) {
   if (!condition) {
@@ -18,13 +20,21 @@ async function parseEnvelope(response, label) {
 }
 
 function resolveDownloadUrl(rawUrl) {
-  if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
-    return rawUrl;
-  }
-  if (rawUrl.startsWith("/proxy/")) {
-    return `${apiBase}${rawUrl}`;
-  }
-  return new URL(rawUrl, `${apiBase}/`).toString();
+  const url = rawUrl.startsWith("/proxy/")
+    ? new URL(`${apiBase.replace(/\/$/, "")}${rawUrl}`)
+    : new URL(rawUrl, `${apiBase.replace(/\/$/, "")}/`);
+  assert(url.origin === apiOrigin, `Download URL origin is not allowed: ${url.origin}`);
+  assert(
+    url.pathname === apiBasePath || url.pathname.startsWith(`${apiBasePath}/`),
+    `Download URL path is outside API base: ${url.pathname}`,
+  );
+  return url.toString();
+}
+
+function safePathSegment(value, label) {
+  assert(typeof value === "string" && value.length > 0, `${label} is missing`);
+  assert(/^[A-Za-z0-9._:-]+$/.test(value), `${label} contains unsafe characters`);
+  return encodeURIComponent(value);
 }
 
 async function main() {
@@ -44,10 +54,11 @@ async function main() {
     "upload init",
   );
 
-  assert(initData.uploadMode === "proxy", `Expected proxy mode, got ${initData.uploadMode}`);
+  assert(typeof initData.uploadMode === "string", "upload init did not return an upload mode");
+  const uploadSessionId = safePathSegment(initData.uploadSessionId, "uploadSessionId");
 
   await parseEnvelope(
-    await fetch(`${apiBase}/upload/${initData.uploadSessionId}/parts/1`, {
+    await fetch(`${apiBase}/upload/${uploadSessionId}/parts/1`, {
       method: "PUT",
       headers: {
         "content-type": "application/octet-stream",
@@ -59,9 +70,10 @@ async function main() {
   );
 
   const completeData = await parseEnvelope(
-    await fetch(`${apiBase}/upload/${initData.uploadSessionId}/complete`, { method: "POST" }),
+    await fetch(`${apiBase}/upload/${uploadSessionId}/complete`, { method: "POST" }),
     "upload complete",
   );
+  const fileId = safePathSegment(completeData.fileId, "fileId");
 
   const listBeforeDelete = await parseEnvelope(
     await fetch(`${apiBase}/?limit=50`),
@@ -72,7 +84,7 @@ async function main() {
   assert(Boolean(createdFile), "Uploaded file was not returned by list");
 
   const downloadData = await parseEnvelope(
-    await fetch(`${apiBase}/${completeData.fileId}/download`),
+    await fetch(`${apiBase}/${fileId}/download`),
     "download descriptor",
   );
   const downloadUrl = resolveDownloadUrl(downloadData.url);
@@ -82,7 +94,7 @@ async function main() {
   assert(downloadedBytes.equals(bytes), "downloaded bytes do not match uploaded bytes");
 
   await parseEnvelope(
-    await fetch(`${apiBase}/${completeData.fileId}`, { method: "DELETE" }),
+    await fetch(`${apiBase}/${fileId}`, { method: "DELETE" }),
     "delete file",
   );
 

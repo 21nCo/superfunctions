@@ -146,12 +146,13 @@ export function extractBearerTokenFromHeader(header: string | null | undefined):
     return null;
   }
 
-  const match = header.trim().match(/^Bearer\s+(.+)$/i);
-  if (!match) {
+  const trimmedHeader = header.trim();
+  const bearerPrefix = 'bearer ';
+  if (trimmedHeader.slice(0, bearerPrefix.length).toLowerCase() !== bearerPrefix) {
     return null;
   }
 
-  const token = match[1].trim();
+  const token = trimmedHeader.slice(bearerPrefix.length).trim();
   return token.length > 0 ? token : null;
 }
 

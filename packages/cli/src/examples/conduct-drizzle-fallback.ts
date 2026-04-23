@@ -14,7 +14,7 @@ export const CONDUCT_PHASE_STATUS_CHECK = 'conduct_specs_status_check';
 export const conductSpecsTable = pgTable(
   'conduct_specs',
   {
-    id: text('id').notNull(),
+    id: text('id').primaryKey(),
     specId: text('spec_id').notNull(),
     phaseNumber: integer('phase_number').notNull(),
     status: text('status').$type<PhaseStatus>().notNull(),

@@ -25,7 +25,7 @@ function buildWhereClause(
   }
 
   assertInternalWhereClauses(where);
-  const sql = getDrizzleSql();
+  const sql = drizzleSql;
 
   function buildCondition(clause: InternalWhereClause): any {
     const fieldSql = sql.raw(quoteInternalIdentifier(clause.field, dialect));
@@ -49,18 +49,9 @@ function buildWhereClause(
   return { fragment: combined, empty: false };
 }
 
-function getDrizzleSql(): any {
-  if (!drizzleSql) {
-    throw new Error(
-      "drizzle-orm is required as a peerDependency to use Drizzle internal CRUD helpers",
-    );
-  }
-  return drizzleSql;
-}
-
 export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): InternalCrud {
   const ensurePromises = new Map<string, Promise<void>>();
-  const sql = getDrizzleSql();
+  const sql = drizzleSql;
 
   // Dialect-aware execution helpers
   const isSQLite = dialect === 'sqlite';

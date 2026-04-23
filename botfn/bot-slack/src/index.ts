@@ -22,13 +22,11 @@ app.post('/slack/events', async (c) => {
 
   // URL verification challenge
   if (body.type === 'url_verification') {
-    return c.json({ challenge: body.challenge });
+    return c.text(body.challenge);
   }
 
-  // Handle events
   if (body.event) {
-    console.log('Received event:', body.event.type);
-    // Dispatch to handler (TODO)
+    return c.json({ error: 'Slack event handling is not implemented' }, 501);
   }
 
   return c.text('OK');

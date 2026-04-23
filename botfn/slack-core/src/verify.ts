@@ -1,4 +1,19 @@
-import { createHmac } from 'crypto';
+function timingSafeEqual(left: string, right: string): boolean {
+  const encoder = new TextEncoder();
+  const leftBytes = encoder.encode(left);
+  const rightBytes = encoder.encode(right);
+
+  if (leftBytes.length !== rightBytes.length) {
+    return false;
+  }
+
+  let diff = 0;
+  for (let i = 0; i < leftBytes.length; i += 1) {
+    diff |= leftBytes[i] ^ rightBytes[i];
+  }
+
+  return diff === 0;
+}
 
 export async function verifySlackRequest(
   req: Request,
@@ -44,5 +59,5 @@ export async function verifySlackRequest(
     .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 
-  return signature === hash;
+  return timingSafeEqual(signature, hash);
 }

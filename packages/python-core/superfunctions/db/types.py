@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Protocol, TypeVar
+from typing import Any, Dict, List, Literal, Optional, Protocol, Set, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -355,6 +355,7 @@ class NamespaceConfig(BaseModel):
     separator: str = "_"
     use_schema: bool = Field(False, alias="useSchema")
     default_namespace: str = Field("default", alias="defaultNamespace")
+    known_namespaces: Optional[Set[str]] = Field(None, alias="knownNamespaces")
 
     class Config:
         populate_by_name = True

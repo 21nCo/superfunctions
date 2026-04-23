@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { createFileFnClient } from '@filefn/client';
 
-  const SERVER_URL = 'http://localhost:3001';
+  const SERVER_URL = import.meta.env.VITE_FILEFN_SERVER_URL || 'http://localhost:3001';
   const API_BASE = `${SERVER_URL}/filefn`;
 
   const client = createFileFnClient({
@@ -50,6 +50,7 @@
     uploadParts = { completed: 0, total: 0 }; error = ''; abortedFile = null;
     try {
       const handle = client.uploadFile({ file, policy: selectedPolicy });
+      currentUploadSessionId = handle.uploadSessionId || '';
       handle.onProgress((p) => {
         uploadProgress = Math.round((p.bytesUploaded / p.bytesTotal) * 100);
         uploadParts = { completed: p.partsCompleted, total: p.totalParts };

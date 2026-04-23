@@ -664,7 +664,9 @@ export async function createDatafnServer<TContext = any>(
     ) => Promise<Response> | Response,
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
-      const enrichedCtx = ctx as TContext & { parsedBody?: unknown };
+      const enrichedCtx = (
+        ctx && typeof ctx === "object" ? { ...(ctx as object) } : ctx
+      ) as TContext & { parsedBody?: unknown };
       // REL-009: Reject new requests immediately when shutting down
       if (shuttingDown) {
         return new Response(
@@ -678,7 +680,7 @@ export async function createDatafnServer<TContext = any>(
       try {
         // Rate limiting — applied BEFORE JSON parsing and authorization (RATE-001)
         if (rateLimitMiddleware) {
-          const rateLimitResponse = await rateLimitMiddleware(action, ctx);
+          const rateLimitResponse = await rateLimitMiddleware(action, enrichedCtx);
           if (rateLimitResponse) return rateLimitResponse;
         }
 

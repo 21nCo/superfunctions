@@ -8,6 +8,10 @@ echo "Building @superfunctions/db..."
 npm run build --prefix "$ROOT_DIR/packages/db"
 echo "----------------------------------------"
 
+echo "Building @superfunctions/http..."
+npm run build --prefix "$ROOT_DIR/packages/http"
+echo "----------------------------------------"
+
 packages=("core" "client" "svelte" "server" "cli")
 
 for pkg in "${packages[@]}"; do

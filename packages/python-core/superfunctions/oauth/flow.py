@@ -236,21 +236,21 @@ class OAuthFlowResolveBrowserAuthIdentityHook(Protocol):
     async def __call__(
         self, input: OAuthFlowResolveBrowserAuthIdentityInput
     ) -> Optional[OAuthFlowResolvedIdentity]:
-        ...
+        pass
 
 
 class OAuthFlowOnConnectedHook(Protocol):
     """Post-connect hook protocol."""
 
     async def __call__(self, result: OAuthFlowCallbackResult) -> None:
-        ...
+        pass
 
 
 class OAuthFlowOnDisconnectedHook(Protocol):
     """Post-disconnect hook protocol."""
 
     async def __call__(self, input: OAuthFlowDisconnectInput) -> None:
-        ...
+        pass
 
 
 class OAuthFlowIdentityHooks(BaseModel):
@@ -296,20 +296,20 @@ class OAuthFlowService(Protocol):
     """Shared flow service protocol."""
 
     async def start(self, input: OAuthFlowStartInput) -> OAuthFlowStartResult:
-        ...
+        pass
 
     async def handle_callback(
         self, input: OAuthFlowCallbackInput
     ) -> OAuthFlowCallbackResult:
-        ...
+        pass
 
     async def refresh(self, input: OAuthFlowRefreshInput) -> OAuthTokenSet:
-        ...
+        pass
 
     async def disconnect(
         self, input: OAuthFlowDisconnectInput
     ) -> OAuthFlowDisconnectResult:
-        ...
+        pass
 
 
 class OAuthFlowError(Exception):
@@ -559,6 +559,12 @@ class DefaultOAuthFlowService:
         self, input: OAuthFlowDisconnectInput | Dict[str, Any]
     ) -> OAuthFlowDisconnectResult:
         payload = input if isinstance(input, OAuthFlowDisconnectInput) else OAuthFlowDisconnectInput.model_validate(input)
+        if payload.revoke_remote:
+            raise OAuthFlowError(
+                "NOT_IMPLEMENTED",
+                "Remote OAuth token revocation is not implemented",
+                status=501,
+            )
         await self.config.token_vault.delete_by_connection(payload.connection_id)
         await self._run_on_disconnected(payload)
         result = OAuthFlowDisconnectResult.model_validate(
@@ -628,7 +634,23 @@ class DefaultOAuthFlowService:
             params["prompt"] = input.prompt
         if input.login_hint:
             params["login_hint"] = input.login_hint
-        params.update(provider.extra_auth_params or {})
+        reserved_extra_params = {
+            "state",
+            "redirect_uri",
+            "client_id",
+            "response_type",
+            "scope",
+        }
+        extra_auth_params = provider.extra_auth_params or {}
+        overlapping_params = reserved_extra_params.intersection(extra_auth_params)
+        if overlapping_params:
+            raise OAuthFlowError(
+                "VALIDATION_ERROR",
+                "OAuth provider extra_auth_params cannot override reserved authorization fields",
+                status=400,
+                details={"reservedParams": sorted(overlapping_params)},
+            )
+        params.update(extra_auth_params)
         return f"{provider.authorization_url}?{urlencode(params)}"
 
     async def _exchange_token(

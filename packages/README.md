@@ -123,8 +123,6 @@ from superfunctions_fastapi import create_router
 ## Documentation
 
 - [Python Packages Guide](python-core/README.md)
-- [Python Adapters](PYTHON_ADAPTERS.md)
-- [Quick Start](QUICK_START.md)
 
 ## License
 

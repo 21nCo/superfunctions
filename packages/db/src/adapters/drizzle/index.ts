@@ -113,7 +113,6 @@ function buildOrder(tbl: any, orderBy: OrderBy[] | undefined) {
 
 export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
   if (!config?.db) throw new Error('drizzleAdapter: config.db is required');
-  if (!drizzleOps?.eq) throw new Error('drizzle-orm is required as a peerDependency to use drizzleAdapter');
 
   const createImpl = (ctx: any): AdapterImplementation => {
     const { db, dialect, schemaVersionsTable } = config;
