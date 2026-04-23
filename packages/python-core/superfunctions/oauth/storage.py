@@ -148,35 +148,35 @@ class OAuthStateStore(Protocol):
     """Shared OAuth state persistence protocol."""
 
     async def put(self, record: OAuthStateRecord) -> None:
-        ...
+        pass
 
     async def get(self, state_id: str) -> Optional[OAuthStateRecord]:
-        ...
+        pass
 
     async def consume(self, state_id: str, consumed_at: str) -> Optional[OAuthStateRecord]:
-        ...
+        pass
 
     async def delete_expired(self, before: str) -> int:
-        ...
+        pass
 
 
 class TokenVault(Protocol):
     """Shared token vault protocol."""
 
     async def put(self, record: TokenRecord) -> None:
-        ...
+        pass
 
     async def get(self, token_id: str) -> Optional[TokenRecord]:
-        ...
+        pass
 
     async def get_by_connection(self, connection_id: str) -> Optional[TokenRecord]:
-        ...
+        pass
 
     async def rotate_key(self, token_id: str, new_key_ref: str) -> None:
-        ...
+        pass
 
     async def delete_by_connection(self, connection_id: str) -> None:
-        ...
+        pass
 
 
 class EncryptedTokenVault(TokenVault, Protocol):
@@ -187,36 +187,36 @@ class OAuthConsentStore(Protocol):
     """Consent persistence protocol."""
 
     async def put(self, record: OAuthConsentRecord) -> None:
-        ...
+        pass
 
     async def get(self, consent_id: str) -> Optional[OAuthConsentRecord]:
-        ...
+        pass
 
     async def list_by_subject(
         self, provider_id: str, subject: OAuthStoredSubject
     ) -> List[OAuthConsentRecord]:
-        ...
+        pass
 
     async def delete(self, consent_id: str) -> None:
-        ...
+        pass
 
 
 class OAuthRevocationFailureStore(Protocol):
     """Revocation failure persistence protocol."""
 
     async def put(self, record: OAuthRevocationFailureRecord) -> None:
-        ...
+        pass
 
     async def get(self, failure_id: str) -> Optional[OAuthRevocationFailureRecord]:
-        ...
+        pass
 
     async def list_by_subject(
         self, provider_id: str, subject: OAuthStoredSubject
     ) -> List[OAuthRevocationFailureRecord]:
-        ...
+        pass
 
     async def delete(self, failure_id: str) -> None:
-        ...
+        pass
 
 
 class OAuthStateStoreError(Exception):
@@ -363,8 +363,9 @@ def get_oauth_subject_key(subject: OAuthStoredSubject) -> str:
         return f"browser-auth:{subject.intent_id}"
     if subject.intent_id:
         return f"browser:{subject.intent_id}"
-    if subject.connection_id:
-        return f"browser:{subject.connection_id}"
+    connection_id = getattr(subject, "connection_id", None)
+    if connection_id:
+        return f"browser:{connection_id}"
     raise OAuthStateStoreError(
         "VALIDATION_ERROR", "browser subjects require a stable intentId or connectionId"
     )

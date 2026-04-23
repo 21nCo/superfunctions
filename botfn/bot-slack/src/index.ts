@@ -26,7 +26,8 @@ app.post('/slack/events', async (c) => {
   }
 
   if (body.event) {
-    return c.json({ error: 'Slack event handling is not implemented' }, 501);
+    console.log('Received event:', body.event.type);
+    return c.text('OK');
   }
 
   return c.text('OK');

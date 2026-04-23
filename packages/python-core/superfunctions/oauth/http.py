@@ -54,7 +54,7 @@ class OAuthClientSecretResolver(Protocol):
     async def __call__(
         self, input: OAuthSecretResolverContext
     ) -> OAuthResolvedClientSecret:
-        ...
+        pass
 
 
 class OAuthTokenEndpointRequest(BaseModel):
@@ -114,10 +114,10 @@ class OAuthTokenHttpClient(Protocol):
     async def exchange_token(
         self, input: OAuthTokenEndpointRequest
     ) -> OAuthTokenEndpointResponse:
-        ...
+        pass
 
     async def revoke_token(self, input: OAuthRevocationRequest) -> None:
-        ...
+        pass
 
 
 class OAuthHttpError(Exception):

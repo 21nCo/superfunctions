@@ -3,7 +3,6 @@
   "version": "0.0.1",
   "description": "Slack bot integration",
   "private": true,
-  "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev src/index.ts",

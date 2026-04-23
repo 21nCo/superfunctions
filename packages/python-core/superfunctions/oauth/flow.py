@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -559,12 +560,6 @@ class DefaultOAuthFlowService:
         self, input: OAuthFlowDisconnectInput | Dict[str, Any]
     ) -> OAuthFlowDisconnectResult:
         payload = input if isinstance(input, OAuthFlowDisconnectInput) else OAuthFlowDisconnectInput.model_validate(input)
-        if payload.revoke_remote:
-            raise OAuthFlowError(
-                "NOT_IMPLEMENTED",
-                "Remote OAuth token revocation is not implemented",
-                status=501,
-            )
         await self.config.token_vault.delete_by_connection(payload.connection_id)
         await self._run_on_disconnected(payload)
         result = OAuthFlowDisconnectResult.model_validate(
@@ -709,7 +704,7 @@ class DefaultOAuthFlowService:
                     }
                 )
             )
-            if hasattr(result, "__await__"):
+            if inspect.isawaitable(result):
                 result = await result
         except OAuthFlowError:
             raise
@@ -754,7 +749,7 @@ class DefaultOAuthFlowService:
         if hook is None:
             return
         maybe = hook(result)
-        if hasattr(maybe, "__await__"):
+        if inspect.isawaitable(maybe):
             await maybe
 
     async def _run_on_disconnected(self, input: OAuthFlowDisconnectInput) -> None:
@@ -762,7 +757,7 @@ class DefaultOAuthFlowService:
         if hook is None:
             return
         maybe = hook(input)
-        if hasattr(maybe, "__await__"):
+        if inspect.isawaitable(maybe):
             await maybe
 
     async def _emit_event(self, event: OAuthFlowEvent | Dict[str, Any]) -> None:
@@ -785,7 +780,7 @@ class DefaultOAuthFlowService:
                 payload = OAuthFlowEvent.model_validate(raw_event)
         try:
             maybe = emitter(payload)
-            if hasattr(maybe, "__await__"):
+            if inspect.isawaitable(maybe):
                 await maybe
         except Exception:  # noqa: BLE001
             return

@@ -240,7 +240,9 @@ When `namespaceProvider` is configured, every database operation is scoped to a 
 const server = await createDatafnServer({
   schema,
   db,
-  namespaceProvider: (ctx) => ctx.session.tenantId,
+  namespaceProvider: {
+    getNamespace: (ctx) => ctx.session.tenantId,
+  },
 });
 ```
 
@@ -373,7 +375,9 @@ const server = await createDatafnServer({
   },
 
   // Layer 7: Namespace isolation
-  namespaceProvider: (ctx) => ctx.session.tenantId,
+  namespaceProvider: {
+    getNamespace: (ctx) => ctx.session.tenantId,
+  },
 
   // Error disclosure control
   debug: process.env.NODE_ENV !== "production",

@@ -63,7 +63,7 @@ const fileFn = createFileFn({
   ],
   auth: {
     required: !demoMode,
-    resolveSession: async (request: Request) => {
+    resolveSession: async (_request: Request) => {
       if (demoMode) {
         return {
           principalId: "demo-user",
@@ -71,15 +71,7 @@ const fileFn = createFileFn({
         };
       }
 
-      const principalId = request.headers.get("x-filefn-principal-id");
-      if (!principalId) {
-        return null;
-      }
-
-      return {
-        principalId,
-        tenantId: request.headers.get("x-filefn-tenant-id") || undefined,
-      };
+      return null;
     },
   },
   processing: {
