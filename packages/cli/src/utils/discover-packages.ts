@@ -190,7 +190,7 @@ function deriveLibraryNames(
         return [scopeName];
       }
 
-      return [...new Set([scopeName, name])];
+      return [name];
     }
   }
 

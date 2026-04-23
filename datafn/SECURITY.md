@@ -8,7 +8,7 @@ This document describes the security architecture of DataFn, covering all layers
 
 DataFn enforces security through multiple independent layers that run in sequence. A request must pass **every** layer to reach the database. If any layer rejects, the request is terminated immediately with the appropriate error code.
 
-```
+```text
 Request → Rate Limiting → Payload Limits → JSON Parsing → Request Authorization → Schema Validation → Field-Level Authorization → Execution
 ```
 

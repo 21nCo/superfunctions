@@ -54,6 +54,45 @@ export function createFakeDbAdapter(): Adapter {
     return true;
   }
 
+  const internal = {
+    async ensureTable() {},
+    async create(table: string, data: Record<string, unknown>) {
+      const record = { ...data };
+      const id = String(record.id ?? `internal_${idCounter++}`);
+      getTable(table).set(id, record);
+      return record;
+    },
+    async findOne(table: string, where: any[]) {
+      for (const record of getTable(table).values()) {
+        if (matchesWhere(record, where)) return record;
+      }
+      return null;
+    },
+    async findMany(table: string, where: any[]) {
+      return Array.from(getTable(table).values()).filter((record) => matchesWhere(record, where));
+    },
+    async update(table: string, where: any[], data: Record<string, unknown>) {
+      let count = 0;
+      for (const [id, record] of getTable(table).entries()) {
+        if (matchesWhere(record, where)) {
+          getTable(table).set(id, { ...record, ...data });
+          count++;
+        }
+      }
+      return count;
+    },
+    async delete(table: string, where: any[]) {
+      let count = 0;
+      for (const [id, record] of getTable(table).entries()) {
+        if (matchesWhere(record, where)) {
+          getTable(table).delete(id);
+          count++;
+        }
+      }
+      return count;
+    },
+  };
+
   return {
     id: "fake",
     name: "fake",
@@ -197,5 +236,6 @@ export function createFakeDbAdapter(): Adapter {
     async validateSchema() {
       return { valid: true };
     },
-  } as unknown as Adapter;
+    internal,
+  };
 }

@@ -6,8 +6,9 @@
 export { memoryAdapter } from './memory/index.js';
 export type { MemoryAdapterConfig } from './memory/index.js';
 
-// Drizzle adapter
-export { drizzleAdapter } from './drizzle/index.js';
+// Drizzle adapter is exported from @superfunctions/db/adapters/drizzle.
+// Keep it out of this barrel so memory/prisma/kysely consumers do not eagerly
+// resolve the drizzle-orm peer dependency.
 export type { DrizzleAdapterConfig, DrizzleDialect } from './drizzle/index.js';
 
 // Prisma adapter

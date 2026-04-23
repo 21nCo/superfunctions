@@ -387,31 +387,31 @@ class TransactionAdapter(Protocol):
 
     async def commit(self) -> None:
         """Commit the transaction."""
-        ...
+        pass
 
     async def rollback(self) -> None:
         """Rollback the transaction."""
-        ...
+        pass
 
-    async def create(self, params: CreateParams) -> Dict[str, Any]:
+    async def create(self, params: Optional[CreateParams] = None, **kwargs: Any) -> Dict[str, Any]:
         """Create a record within transaction."""
-        ...
+        pass
 
-    async def find_one(self, params: FindOneParams) -> Optional[Dict[str, Any]]:
+    async def find_one(self, params: Optional[FindOneParams] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """Find one record within transaction."""
-        ...
+        pass
 
-    async def find_many(self, params: FindManyParams) -> List[Dict[str, Any]]:
+    async def find_many(self, params: Optional[FindManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
         """Find many records within transaction."""
-        ...
+        pass
 
-    async def update(self, params: UpdateParams) -> Dict[str, Any]:
+    async def update(self, params: Optional[UpdateParams] = None, **kwargs: Any) -> Dict[str, Any]:
         """Update a record within transaction."""
-        ...
+        pass
 
-    async def delete(self, params: DeleteParams) -> None:
+    async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
         """Delete a record within transaction."""
-        ...
+        pass
 
 
 class Adapter(Protocol):
@@ -424,79 +424,79 @@ class Adapter(Protocol):
     capabilities: AdapterCapabilities
 
     # Core CRUD operations
-    async def create(self, params: CreateParams) -> Dict[str, Any]:
+    async def create(self, params: Optional[CreateParams] = None, **kwargs: Any) -> Dict[str, Any]:
         """Create a single record."""
-        ...
+        pass
 
-    async def find_one(self, params: FindOneParams) -> Optional[Dict[str, Any]]:
+    async def find_one(self, params: Optional[FindOneParams] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """Find a single record."""
-        ...
+        pass
 
-    async def find_many(self, params: FindManyParams) -> List[Dict[str, Any]]:
+    async def find_many(self, params: Optional[FindManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
         """Find multiple records."""
-        ...
+        pass
 
-    async def update(self, params: UpdateParams) -> Dict[str, Any]:
+    async def update(self, params: Optional[UpdateParams] = None, **kwargs: Any) -> Dict[str, Any]:
         """Update a single record."""
-        ...
+        pass
 
-    async def delete(self, params: DeleteParams) -> None:
+    async def delete(self, params: Optional[DeleteParams] = None, **kwargs: Any) -> None:
         """Delete a single record."""
-        ...
+        pass
 
     # Batch operations
-    async def create_many(self, params: CreateManyParams) -> List[Dict[str, Any]]:
+    async def create_many(self, params: Optional[CreateManyParams] = None, **kwargs: Any) -> List[Dict[str, Any]]:
         """Create multiple records."""
-        ...
+        pass
 
-    async def update_many(self, params: UpdateManyParams) -> int:
+    async def update_many(self, params: Optional[UpdateManyParams] = None, **kwargs: Any) -> int:
         """Update multiple records, returns count."""
-        ...
+        pass
 
-    async def delete_many(self, params: DeleteManyParams) -> int:
+    async def delete_many(self, params: Optional[DeleteManyParams] = None, **kwargs: Any) -> int:
         """Delete multiple records, returns count."""
-        ...
+        pass
 
     # Advanced operations
-    async def upsert(self, params: UpsertParams) -> Dict[str, Any]:
+    async def upsert(self, params: Optional[UpsertParams] = None, **kwargs: Any) -> Dict[str, Any]:
         """Upsert a record."""
-        ...
+        pass
 
-    async def count(self, params: CountParams) -> int:
+    async def count(self, params: Optional[CountParams] = None, **kwargs: Any) -> int:
         """Count records."""
-        ...
+        pass
 
     # Transaction support
     async def transaction(self, callback: Any) -> Any:
         """Execute operations within a transaction."""
-        ...
+        pass
 
     # Lifecycle management
     async def initialize(self) -> None:
         """Initialize the adapter."""
-        ...
+        pass
 
     async def is_healthy(self) -> HealthStatus:
         """Check adapter health."""
-        ...
+        pass
 
     async def close(self) -> None:
         """Close the adapter."""
-        ...
+        pass
 
     # Schema management
     async def get_schema_version(self, namespace: str) -> int:
         """Get the current schema version."""
-        ...
+        pass
 
     async def set_schema_version(self, namespace: str, version: int) -> None:
         """Set the schema version."""
-        ...
+        pass
 
     async def validate_schema(self, schema: TableSchema) -> ValidationResult:
         """Validate a schema."""
-        ...
+        pass
 
     async def create_schema(self, params: CreateSchemaParams) -> SchemaCreation:
         """Create database schema."""
-        ...
+        pass

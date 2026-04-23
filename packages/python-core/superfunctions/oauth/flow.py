@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import inspect
 import json
 import secrets
@@ -366,6 +368,26 @@ class DefaultOAuthFlowService:
         scopes = list(payload.scopes or provider.default_scopes)
         subject = self._resolve_subject(payload)
         now = self._now()
+        if not payload.redirect_uri:
+            error = OAuthHttpError(
+                "redirectUri is required",
+                code="VALIDATION_ERROR",
+                status=400,
+                details={"redirectUri": payload.redirect_uri},
+            )
+            await self._emit_event(
+                {
+                    "name": "oauth.flow.start.failed",
+                    "requestId": payload.request_id or _create_request_id(),
+                    "providerId": payload.provider_id,
+                    "ok": False,
+                    "subjectKind": subject.kind,
+                    "errorCode": error.code,
+                    "details": error.details,
+                }
+            )
+            raise error
+
         try:
             assert_redirect_uri_allowed(payload.redirect_uri, runtime.allowlisted_redirect_uris or [])
         except Exception as error:  # noqa: BLE001
@@ -392,6 +414,7 @@ class DefaultOAuthFlowService:
                 details=details,
             ) from error
         expires_at = now + timedelta(seconds=self.config.state_ttl_seconds)
+        code_verifier = secrets.token_urlsafe(64) if provider.supports_pkce else None
         record = apply_subject_to_state_record(
             OAuthStateRecord.model_validate(
                 {
@@ -401,6 +424,7 @@ class DefaultOAuthFlowService:
                     "requestedScopes": scopes,
                     "subject": subject.model_dump(by_alias=True),
                     "metadata": payload.metadata,
+                    "codeVerifier": code_verifier,
                     "createdAt": _isoformat(now),
                     "expiresAt": _isoformat(expires_at),
                 }
@@ -533,7 +557,7 @@ class DefaultOAuthFlowService:
             )
             raise wrapped from error
         except Exception as error:  # noqa: BLE001
-            wrapped = error if isinstance(error, OAuthFlowError) else OAuthFlowError(
+            wrapped = OAuthFlowError(
                 getattr(error, "code", "INTERNAL_ERROR"),
                 str(error),
                 status=getattr(error, "status", 500),
@@ -551,10 +575,24 @@ class DefaultOAuthFlowService:
                     "details": wrapped.details,
                 }
             )
-            raise wrapped
+            raise wrapped from error
 
     async def refresh(self, input: OAuthFlowRefreshInput | Dict[str, Any]) -> OAuthTokenSet:
-        raise OAuthFlowError("NOT_IMPLEMENTED", "OAuth token refresh is not implemented")
+        payload = input if isinstance(input, OAuthFlowRefreshInput) else OAuthFlowRefreshInput.model_validate(input)
+        error = OAuthFlowError("NOT_IMPLEMENTED", "OAuth token refresh is not implemented")
+        await self._emit_event(
+            {
+                "name": "oauth.flow.refresh.failed",
+                "requestId": payload.request_id or _create_request_id(),
+                "providerId": payload.provider_id,
+                "at": _isoformat(self._now()),
+                "ok": False,
+                "connectionId": payload.connection_id,
+                "errorCode": error.code,
+                "details": error.details,
+            }
+        )
+        raise error
 
     async def disconnect(
         self, input: OAuthFlowDisconnectInput | Dict[str, Any]
@@ -635,6 +673,8 @@ class DefaultOAuthFlowService:
             "client_id",
             "response_type",
             "scope",
+            "code_challenge",
+            "code_challenge_method",
         }
         extra_auth_params = provider.extra_auth_params or {}
         overlapping_params = reserved_extra_params.intersection(extra_auth_params)
@@ -645,6 +685,15 @@ class DefaultOAuthFlowService:
                 status=400,
                 details={"reservedParams": sorted(overlapping_params)},
             )
+        if provider.supports_pkce:
+            if not record.code_verifier:
+                raise OAuthFlowError(
+                    "INTERNAL_ERROR",
+                    "OAuth PKCE verifier was not generated",
+                    status=500,
+                )
+            params["code_challenge"] = _pkce_s256_challenge(record.code_verifier)
+            params["code_challenge_method"] = "S256"
         params.update(extra_auth_params)
         return f"{provider.authorization_url}?{urlencode(params)}"
 
@@ -819,6 +868,11 @@ def _create_request_id() -> str:
 
 def _isoformat(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _pkce_s256_challenge(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 __all__ = [

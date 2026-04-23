@@ -1,6 +1,6 @@
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { drizzleAdapter } from "@superfunctions/db/adapters";
+import { drizzleAdapter } from "@superfunctions/db/adapters/drizzle";
 import { schema, __superfunctions_schema_versions } from "./schema.js";
 import { config } from "dotenv";
 

@@ -16,7 +16,6 @@ class NamespaceManager:
     def get_table_name(self, model: str, namespace: Optional[str] = None) -> str:
         """Get the namespaced table name."""
         ns = namespace or self.config.default_namespace
-        self._known_namespaces.add(ns)
 
         if self.config.use_schema:
             return f"{ns}.{model}"
@@ -34,9 +33,10 @@ class NamespaceManager:
             return self.config.default_namespace, table_name
         else:
             if self.config.separator in table_name:
-                candidate_namespace, model = table_name.split(self.config.separator, 1)
-                if candidate_namespace in self._known_namespaces:
-                    return candidate_namespace, model
+                for namespace in sorted(self._known_namespaces, key=len, reverse=True):
+                    prefix = f"{namespace}{self.config.separator}"
+                    if namespace != self.config.default_namespace and table_name.startswith(prefix):
+                        return namespace, table_name[len(prefix):]
             return self.config.default_namespace, table_name
 
     def get_schema(self, namespace: Optional[str] = None) -> Optional[str]:

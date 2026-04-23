@@ -5,9 +5,11 @@
   const SERVER_URL = import.meta.env.VITE_FILEFN_SERVER_URL || 'http://localhost:3001';
   const API_BASE = `${SERVER_URL}/filefn`;
 
+  const getAuthHeaders = async () => ({ Authorization: 'Bearer demo-token' });
+
   const client = createFileFnClient({
     baseUrl: API_BASE,
-    getAuthHeaders: async () => ({ Authorization: 'Bearer demo-token' }),
+    getAuthHeaders,
     retryOptions: { maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 15000 },
   });
 
@@ -36,9 +38,17 @@
     activityLog = [`[${new Date().toLocaleTimeString()}] ${msg}`, ...activityLog.slice(0, 49)];
   }
 
+  async function apiFetch(input: string, init: RequestInit = {}) {
+    const headers = new Headers(init.headers);
+    for (const [key, value] of Object.entries(await getAuthHeaders())) {
+      headers.set(key, value);
+    }
+    return fetch(input, { ...init, headers });
+  }
+
   async function loadFiles() {
     try {
-      const res = await fetch(`${API_BASE}/?limit=50`);
+      const res = await apiFetch(`${API_BASE}/?limit=50`);
       const body = await res.json();
       if (body.ok) files = body.data.files;
       else error = body.error?.message || 'Failed to list files';
@@ -116,7 +126,7 @@
   async function showVersions(fileId: string, fileName: string) {
     versionsFileId = fileId; versionsFileName = fileName;
     try {
-      const res = await fetch(`${API_BASE}/${fileId}/versions`);
+      const res = await apiFetch(`${API_BASE}/${fileId}/versions`);
       const body = await res.json();
       versions = body.ok ? body.data.versions : [];
     } catch { versions = []; }
@@ -126,7 +136,7 @@
     shareModalFileId = fileId; shareModalFileName = fileName;
     shareExpiry = ''; shareMaxDownloads = null; createdShareUrl = '';
     try {
-      const res = await fetch(`${API_BASE}/${fileId}/share-links`);
+      const res = await apiFetch(`${API_BASE}/${fileId}/share-links`);
       const body = await res.json();
       shareLinks = body.ok ? body.data.shareLinks : [];
     } catch { shareLinks = []; }
@@ -137,7 +147,7 @@
       const payload: any = {};
       if (shareExpiry) payload.expiresAt = new Date(shareExpiry).toISOString();
       if (shareMaxDownloads && shareMaxDownloads > 0) payload.maxDownloads = shareMaxDownloads;
-      const res = await fetch(`${API_BASE}/${shareModalFileId}/share-links`, {
+      const res = await apiFetch(`${API_BASE}/${shareModalFileId}/share-links`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -145,7 +155,7 @@
       if (body.ok) {
         createdShareUrl = `${API_BASE}/share-links/${body.data.token}/download`;
         log(`Created share link for ${shareModalFileName}`);
-        const res2 = await fetch(`${API_BASE}/${shareModalFileId}/share-links`);
+        const res2 = await apiFetch(`${API_BASE}/${shareModalFileId}/share-links`);
         const body2 = await res2.json();
         shareLinks = body2.ok ? body2.data.shareLinks : [];
       } else { alert('Failed: ' + (body.error?.message || 'Unknown')); }
@@ -154,9 +164,9 @@
 
   async function revokeShareLink(token: string) {
     try {
-      await fetch(`${API_BASE}/${shareModalFileId}/share-links/${token}`, { method: 'DELETE' });
+      await apiFetch(`${API_BASE}/${shareModalFileId}/share-links/${token}`, { method: 'DELETE' });
       log('Revoked share link');
-      const res = await fetch(`${API_BASE}/${shareModalFileId}/share-links`);
+      const res = await apiFetch(`${API_BASE}/${shareModalFileId}/share-links`);
       const body = await res.json();
       shareLinks = body.ok ? body.data.shareLinks : [];
     } catch (e: any) { alert('Revoke failed: ' + e.message); }
@@ -164,12 +174,12 @@
 
   async function getThumbnailUrl(fileId: string): Promise<string | null> {
     try {
-      const res = await fetch(`${API_BASE}/${fileId}/artifacts`);
+      const res = await apiFetch(`${API_BASE}/${fileId}/artifacts`);
       const body = await res.json();
       if (!body.ok || !body.data.artifacts?.length) return null;
       const thumb = body.data.artifacts.find((a: any) => a.kind.startsWith('thumbnail-'));
       if (!thumb) return null;
-      const dlRes = await fetch(`${API_BASE}/${fileId}/artifacts/${thumb.artifactId}/download`);
+      const dlRes = await apiFetch(`${API_BASE}/${fileId}/artifacts/${thumb.artifactId}/download`);
       const dlBody = await dlRes.json();
       return dlBody.ok ? dlBody.data.url : null;
     } catch { return null; }

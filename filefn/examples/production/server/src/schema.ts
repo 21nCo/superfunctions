@@ -1,4 +1,7 @@
 import {
+  sql,
+} from "drizzle-orm";
+import {
   pgTable,
   text,
   integer,
@@ -6,6 +9,7 @@ import {
   jsonb,
   index,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // ---------------------------------------------------------------------------
@@ -80,7 +84,9 @@ export const uploadSessions = pgTable(
     createdAt: text("created_at").notNull(),
   },
   (t) => ({
-    idempotencyIdx: index("filefn_sessions_idem_idx").on(t.ownerId, t.tenantId, t.idempotencyKey),
+    idempotencyIdx: uniqueIndex("filefn_sessions_idem_idx")
+      .on(t.ownerId, sql`COALESCE(${t.tenantId}, '')`, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
     expiresIdx: index("filefn_sessions_expires_idx").on(t.expiresAt),
   }),
 );

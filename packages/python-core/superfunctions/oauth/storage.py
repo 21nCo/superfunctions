@@ -341,9 +341,9 @@ def validate_oauth_stored_subject(subject: OAuthStoredSubject) -> None:
             )
         return
 
-    if subject.kind == "browser-auth" and not subject.intent_id:
+    if subject.kind in ("browser-auth", "browser") and not subject.intent_id:
         raise OAuthStateStoreError(
-            "VALIDATION_ERROR", "browser-auth subjects require intentId"
+            "VALIDATION_ERROR", "browser subjects require intentId"
         )
     if subject.metadata is not None and not _is_record(subject.metadata):
         raise OAuthStateStoreError(
@@ -359,15 +359,15 @@ def get_oauth_subject_key(subject: OAuthStoredSubject) -> str:
             return f"connection:{subject.connection_id}"
         return f"connection:{subject.tenant_id}:{subject.user_id}"
 
-    if subject.kind == "browser-auth":
-        return f"browser-auth:{subject.intent_id}"
-    if subject.intent_id:
-        return f"browser:{subject.intent_id}"
-    connection_id = getattr(subject, "connection_id", None)
-    if connection_id:
-        return f"browser:{connection_id}"
+    if subject.kind in ("browser-auth", "browser"):
+        if not subject.intent_id:
+            raise OAuthStateStoreError(
+                "VALIDATION_ERROR", "browser subjects require a stable intentId"
+            )
+        prefix = "browser-auth" if subject.kind == "browser-auth" else "browser"
+        return f"{prefix}:{subject.intent_id}"
     raise OAuthStateStoreError(
-        "VALIDATION_ERROR", "browser subjects require a stable intentId or connectionId"
+        "VALIDATION_ERROR", "unsupported OAuth subject kind"
     )
 
 

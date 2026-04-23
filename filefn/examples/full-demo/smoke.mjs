@@ -4,6 +4,7 @@ const apiBase = process.env.FILEFN_DEMO_BASE_URL || "http://localhost:3001/filef
 const clientBase = process.env.FILEFN_DEMO_CLIENT_BASE || "http://localhost:5173";
 const apiOrigin = new URL(apiBase).origin;
 const apiBasePath = new URL(apiBase).pathname.replace(/\/$/, "");
+const redirectStatuses = new Set([301, 302, 303, 307, 308]);
 
 function assert(condition, message) {
   if (!condition) {
@@ -31,9 +32,27 @@ function resolveDownloadUrl(rawUrl) {
   return url.toString();
 }
 
+async function fetchResolvedDownload(rawUrl) {
+  let currentUrl = resolveDownloadUrl(rawUrl);
+
+  for (let redirects = 0; redirects < 5; redirects += 1) {
+    const response = await fetch(currentUrl, { redirect: "manual" });
+    if (!redirectStatuses.has(response.status)) {
+      return response;
+    }
+
+    const location = response.headers.get("location");
+    assert(location, `download redirect missing Location header from ${currentUrl}`);
+    currentUrl = resolveDownloadUrl(new URL(location, currentUrl).toString());
+  }
+
+  throw new Error("download failed: too many redirects");
+}
+
 function safePathSegment(value, label) {
   assert(typeof value === "string" && value.length > 0, `${label} is missing`);
   assert(/^[A-Za-z0-9._:-]+$/.test(value), `${label} contains unsafe characters`);
+  assert(value !== "." && value !== "..", `${label} contains an unsafe dot segment`);
   return encodeURIComponent(value);
 }
 
@@ -74,29 +93,36 @@ async function main() {
     "upload complete",
   );
   const fileId = safePathSegment(completeData.fileId, "fileId");
+  let deleted = false;
 
-  const listBeforeDelete = await parseEnvelope(
-    await fetch(`${apiBase}/?limit=50`),
-    "list files",
-  );
+  try {
+    const listBeforeDelete = await parseEnvelope(
+      await fetch(`${apiBase}/?limit=50`),
+      "list files",
+    );
 
-  const createdFile = listBeforeDelete.files.find((f) => f.fileId === completeData.fileId);
-  assert(Boolean(createdFile), "Uploaded file was not returned by list");
+    const createdFile = listBeforeDelete.files.find((f) => f.fileId === completeData.fileId);
+    assert(Boolean(createdFile), "Uploaded file was not returned by list");
 
-  const downloadData = await parseEnvelope(
-    await fetch(`${apiBase}/${fileId}/download`),
-    "download descriptor",
-  );
-  const downloadUrl = resolveDownloadUrl(downloadData.url);
-  const downloadResponse = await fetch(downloadUrl);
-  assert(downloadResponse.ok, `download failed with HTTP ${downloadResponse.status}`);
-  const downloadedBytes = Buffer.from(await downloadResponse.arrayBuffer());
-  assert(downloadedBytes.equals(bytes), "downloaded bytes do not match uploaded bytes");
+    const downloadData = await parseEnvelope(
+      await fetch(`${apiBase}/${fileId}/download`),
+      "download descriptor",
+    );
+    const downloadResponse = await fetchResolvedDownload(downloadData.url);
+    assert(downloadResponse.ok, `download failed with HTTP ${downloadResponse.status}`);
+    const downloadedBytes = Buffer.from(await downloadResponse.arrayBuffer());
+    assert(downloadedBytes.equals(bytes), "downloaded bytes do not match uploaded bytes");
 
-  await parseEnvelope(
-    await fetch(`${apiBase}/${fileId}`, { method: "DELETE" }),
-    "delete file",
-  );
+    await parseEnvelope(
+      await fetch(`${apiBase}/${fileId}`, { method: "DELETE" }),
+      "delete file",
+    );
+    deleted = true;
+  } finally {
+    if (!deleted) {
+      await fetch(`${apiBase}/${fileId}`, { method: "DELETE" }).catch(() => {});
+    }
+  }
 
   const listAfterDelete = await parseEnvelope(
     await fetch(`${apiBase}/?limit=50`),
