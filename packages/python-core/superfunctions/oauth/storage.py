@@ -385,7 +385,11 @@ def apply_subject_to_state_record(record: OAuthStateRecord) -> OAuthStateRecord:
     payload["intentId"] = subject.intent_id if isinstance(subject, OAuthBrowserAuthSubject) else None
     payload["regionId"] = subject.region_id if isinstance(subject, OAuthBrowserAuthSubject) else None
     payload["returnTo"] = subject.return_to if isinstance(subject, OAuthBrowserAuthSubject) else None
-    payload["metadata"] = _clone_unknown_record(subject.metadata)
+    payload["metadata"] = (
+        _clone_unknown_record(subject.metadata)
+        if isinstance(subject, OAuthBrowserAuthSubject)
+        else _clone_unknown_record(record.metadata)
+    )
     return OAuthStateRecord.model_validate(payload)
 
 

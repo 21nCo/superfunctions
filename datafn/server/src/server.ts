@@ -655,6 +655,14 @@ export async function createDatafnServer<TContext = any>(
     | "reconcile"
     | "search";
 
+  const isPlainObjectContext = (value: unknown): value is Record<string, unknown> => {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  };
+
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
   const withAuth = (
     action: DatafnAction,
@@ -665,7 +673,7 @@ export async function createDatafnServer<TContext = any>(
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
       const enrichedCtx = (
-        ctx && typeof ctx === "object" ? { ...(ctx as object) } : ctx
+        isPlainObjectContext(ctx) ? { ...ctx } : ctx
       ) as TContext & { parsedBody?: unknown };
       // REL-009: Reject new requests immediately when shutting down
       if (shuttingDown) {

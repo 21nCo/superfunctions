@@ -8,7 +8,7 @@ import inspect
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional, Protocol, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Protocol
 from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -22,9 +22,8 @@ from .core import (
     assert_redirect_uri_allowed,
     consume_state_or_throw,
 )
-from .http import OAuthHttpError, OAuthTokenEndpointRequest, OAuthTokenHttpClient
+from .http import OAuthHttpError, OAuthTokenEndpointRequest
 from .storage import (
-    EncryptedTokenVault,
     OAuthStateRecord,
     OAuthStateStore,
     TokenRecord,
@@ -121,6 +120,17 @@ class OAuthFlowStartInput(BaseModel):
     def validate_subject_fields(self) -> "OAuthFlowStartInput":
         if self.subject is None and not (self.tenant_id and self.user_id):
             raise ValueError("subject or tenantId/userId is required")
+        if self.subject is None:
+            return self
+
+        if self.subject.kind in ("browser-auth", "browser") and not self.subject.intent_id:
+            raise ValueError("browser subjects require intentId")
+
+        if self.subject.kind == "connection" and not (
+            self.subject.tenant_id and self.subject.user_id
+        ):
+            raise ValueError("connection subjects require tenantId and userId")
+
         return self
 
 
@@ -799,7 +809,7 @@ class DefaultOAuthFlowService:
             return
         maybe = hook(result)
         if inspect.isawaitable(maybe):
-            await maybe
+            _ = await maybe
 
     async def _run_on_disconnected(self, input: OAuthFlowDisconnectInput) -> None:
         hook = self.config.identity_hooks.on_disconnected if self.config.identity_hooks is not None else None
@@ -807,7 +817,7 @@ class DefaultOAuthFlowService:
             return
         maybe = hook(input)
         if inspect.isawaitable(maybe):
-            await maybe
+            _ = await maybe
 
     async def _emit_event(self, event: OAuthFlowEvent | Dict[str, Any]) -> None:
         emitter = self.config.emit_event

@@ -43,7 +43,7 @@ export function createAuthMiddleware<TSession extends AuthSession>(
   ): Promise<Response> => {
     // Check if path should skip authentication
     const url = new URL(request.url);
-    if (skipPaths.some(path => url.pathname === path || url.pathname.endsWith(path))) {
+    if (skipPaths.some(path => url.pathname === path)) {
       return next();
     }
 
@@ -98,7 +98,7 @@ export function createResourceAuthMiddleware<TSession extends AuthSession>(
   ): Promise<Response> => {
     // Check if path should skip resource authorization
     const url = new URL(request.url);
-    if (skipPaths.some(path => url.pathname === path || url.pathname.endsWith(path))) {
+    if (skipPaths.some(path => url.pathname === path)) {
       return next();
     }
 
@@ -192,7 +192,7 @@ export function createBearerAuthMiddleware<TSession>(
     next: () => Promise<Response>
   ): Promise<Response> => {
     const url = new URL(request.url);
-    if (skipPaths.some((path) => url.pathname === path || url.pathname.endsWith(path))) {
+    if (skipPaths.some((path) => url.pathname === path)) {
       return next();
     }
 

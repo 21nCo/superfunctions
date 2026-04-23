@@ -40,7 +40,8 @@ export function createFakeDbAdapter(): Adapter {
     if (!where) return true;
     for (const clause of where) {
       const value = record[clause.field];
-      switch (clause.operator) {
+      const operator = clause.operator ?? clause.op;
+      switch (operator) {
         case "eq":
           if (value !== clause.value) return false;
           break;
@@ -48,7 +49,7 @@ export function createFakeDbAdapter(): Adapter {
           if (value === clause.value) return false;
           break;
         default:
-          throw new Error(`Unsupported where operator: ${clause.operator}`);
+          throw new Error(`Unsupported where operator: ${operator}`);
       }
     }
     return true;
@@ -68,16 +69,25 @@ export function createFakeDbAdapter(): Adapter {
       }
       return null;
     },
-    async findMany(table: string, where: any[]) {
-      return Array.from(getTable(table).values()).filter((record) => matchesWhere(record, where));
+    async findMany(table: string, where: any[], options?: { limit?: number; offset?: number }) {
+      const results = Array.from(getTable(table).values()).filter((record) =>
+        matchesWhere(record, where)
+      );
+      const offset = options?.offset ?? 0;
+      const end = typeof options?.limit === "number" ? offset + options.limit : undefined;
+      return results.slice(offset, end);
     },
     async update(table: string, where: any[], data: Record<string, unknown>) {
+      const tableRecords = getTable(table);
       let count = 0;
-      for (const [id, record] of getTable(table).entries()) {
+      for (const [id, record] of tableRecords.entries()) {
         if (matchesWhere(record, where)) {
-          getTable(table).set(id, { ...record, ...data });
+          tableRecords.set(id, { ...record, ...data });
           count++;
         }
+      }
+      if (count === 0) {
+        throw new Error(`Record not found in ${table}`);
       }
       return count;
     },
@@ -140,7 +150,10 @@ export function createFakeDbAdapter(): Adapter {
           return db - da;
         });
       }
-      return results.slice(0, params.limit || results.length);
+      const offset = params.offset ?? 0;
+      const end =
+        typeof params.limit === "number" ? offset + params.limit : results.length;
+      return results.slice(offset, end);
     },
     async update(params: any) {
       const table = getTable(params.model);
@@ -151,7 +164,7 @@ export function createFakeDbAdapter(): Adapter {
           return updated;
         }
       }
-      return null;
+      throw new Error(`Record not found for model ${params.model}`);
     },
     async delete(params: any) {
       const table = getTable(params.model);

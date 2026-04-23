@@ -1,6 +1,5 @@
 """Core type definitions for the database adapter system."""
 
-from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Protocol, Set, TypeVar
 
