@@ -12,17 +12,9 @@ import {
   parseInternalOrderBy,
   quoteInternalIdentifier,
 } from '../internal-utils.js';
+import { sql as drizzleSql } from 'drizzle-orm';
 
 export type DrizzleDialect = 'postgres' | 'mysql' | 'sqlite';
-
-let drizzleSql: any;
-let drizzleImportError: unknown;
-try {
-  const mod = await import('drizzle-orm');
-  drizzleSql = mod.sql;
-} catch (error) {
-  drizzleImportError = error;
-}
 
 function buildWhereClause(
   where: InternalWhereClause[],
@@ -60,7 +52,7 @@ function buildWhereClause(
 function getDrizzleSql(): any {
   if (!drizzleSql) {
     throw new Error(
-      `drizzle-orm is required as a peerDependency to use Drizzle internal CRUD helpers${drizzleImportError ? `: ${String(drizzleImportError)}` : ''}`,
+      "drizzle-orm is required as a peerDependency to use Drizzle internal CRUD helpers",
     );
   }
   return drizzleSql;
