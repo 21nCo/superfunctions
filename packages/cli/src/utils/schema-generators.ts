@@ -3,6 +3,7 @@
  */
 
 import type { TableSchema, FieldSchema } from '@superfunctions/db';
+import { resolvePhysicalTableName } from './schema-diff.js';
 
 interface AbstractSchema {
   version: number;
@@ -91,7 +92,7 @@ export function generateDrizzleSchemaFile(
 
   for (const table of normalizedSchema.schemas) {
     const tableName = table.modelName;
-    const tableNameSnakeCase = toSnakeCase(namespace + '_' + tableName);
+    const tableNameSnakeCase = resolvePhysicalTableName(namespace, tableName);
 
     const fields: string[] = [];
 
@@ -224,7 +225,7 @@ export function generatePrismaSchemaFile(
 model ${modelName} {
 ${fields.join('\n')}
   
-  @@map("${namespace}_${toSnakeCase(table.modelName)}")
+  @@map("${resolvePhysicalTableName(namespace, table.modelName)}")
 }`;
 
     models.push(modelCode);
@@ -350,13 +351,6 @@ function normalizeFieldSchema(field: FieldSchema): FieldSchema {
 // ============================================================================
 // Utilities
 // ============================================================================
-
-function toSnakeCase(str: string): string {
-  return str
-    .replace(/([A-Z])/g, '_$1')
-    .toLowerCase()
-    .replace(/^_/, '');
-}
 
 function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);

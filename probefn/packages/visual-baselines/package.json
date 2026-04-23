@@ -11,15 +11,15 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@probefn/analyzers": "workspace:*",
-    "@probefn/contracts": "workspace:*",
+    "@probefn/analyzers": "*",
+    "@probefn/contracts": "*",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@types/pngjs": "^6.0.5",
-    "@probefn/browser-runner": "workspace:*",
-    "@probefn/core": "workspace:*",
-    "@probefn/dev-server": "workspace:*",
-    "@probefn/storage": "workspace:*"
+    "@probefn/browser-runner": "*",
+    "@probefn/core": "*",
+    "@probefn/dev-server": "*",
+    "@probefn/storage": "*"
   }
 }

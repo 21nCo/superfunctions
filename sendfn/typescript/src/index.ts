@@ -1,7 +1,7 @@
 // Main exports
-export { Sendfn, sendfn } from './sendfn';
-export { getSchema, SENDFN_SCHEMA_VERSION } from './schema';
-export type { SendfnSchemaOptions } from './schema';
+export { Sendfn, createSendFn, sendFn, sendfn } from './sendfn';
+export { SENDFN_SCHEMA_VERSION, getSchema, getSendFnSchema } from './schema';
+export type { SendFnSchemaDefinition, SendfnSchemaOptions } from './schema';
 
 // Types
 export * from './types';

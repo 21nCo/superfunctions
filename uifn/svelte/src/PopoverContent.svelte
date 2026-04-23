@@ -38,6 +38,7 @@
     'Popover components must be used within a Popover'
   );
   let contentEl: HTMLDivElement;
+  let anchor = $derived(context.triggerElement);
 
   $effect(() => {
     if (!context.open) {
@@ -86,12 +87,12 @@
   }
 </script>
 
-{#if context.open}
+{#if context.open && anchor}
   <div 
     bind:this={contentEl}
     use:portalAction={'body'}
     use:positionAction={{
-        trigger: context.triggerElement,
+        trigger: anchor,
         side,
         align,
         sideOffset,
@@ -104,7 +105,7 @@
     tabindex="-1"
     onkeydown={handleKeyDown}
     class={className}
-    style="z-index: 50; background-color: white; border: 1px solid #ccc; border-radius: 4px; padding: 10px;"
+    style="z-index: var(--uifn-floating-layer-z-index, 100); background-color: white; border: 1px solid #ccc; border-radius: 4px; padding: 10px;"
     {...rest}
   >
     {@render children?.()}

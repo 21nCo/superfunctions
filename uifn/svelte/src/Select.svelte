@@ -27,6 +27,7 @@
   interface Props {
     value?: string;
     defaultValue?: string;
+    items?: SelectOption[];
     onValueChange?: (value: string) => void;
     open?: boolean;
     defaultOpen?: boolean;
@@ -40,6 +41,7 @@
   let { 
     value: valueProp, 
     defaultValue, 
+    items = [],
     onValueChange, 
     open: openProp, 
     defaultOpen, 
@@ -51,6 +53,7 @@
   }: Props = $props();
   const initialValue = (() => valueProp)();
   const initialDefaultValue = (() => defaultValue)();
+  const initialItems = (() => items)();
   const initialOpen = (() => openProp)();
   const initialDefaultOpen = (() => defaultOpen)();
   const initialDisabled = (() => disabled)();
@@ -65,6 +68,7 @@
   const machine = createSelect({
     value: initialValue,
     defaultValue: initialDefaultValue,
+    items: initialItems,
     onValueChange: notifyValueChange,
     open: initialOpen,
     defaultOpen: initialDefaultOpen,
@@ -75,7 +79,7 @@
 
   let state = $state(machine.state);
   let triggerElement = $state<HTMLElement | null>(null);
-  let options = $state<SelectOption[]>([]);
+  let options = $state<SelectOption[]>(initialItems);
   const optionElements = new Map<string, HTMLElement>();
   const optionIds = new Map<string, string>();
   let previousOpen = initialOpen ?? initialDefaultOpen ?? false;
@@ -84,6 +88,11 @@
     return machine.subscribe((newState) => {
       state = newState;
     });
+  });
+
+  $effect(() => {
+    machine.actions.setOptions(items);
+    options = items;
   });
 
   $effect(() => {

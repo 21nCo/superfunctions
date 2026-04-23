@@ -16,11 +16,14 @@ interface PositionOptions {
 
 export function position(node: HTMLElement, options: PositionOptions) {
   let { trigger, side = 'bottom', align = 'center', sideOffset = 0, alignOffset = 0, collisionDetection = true } = options;
+  let frame = 0;
 
   function updatePosition() {
     if (!trigger || !node) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const contentRect = node.getBoundingClientRect();
 
-    const result = computePosition(trigger.getBoundingClientRect(), node.getBoundingClientRect(), {
+    const result = computePosition(triggerRect, contentRect, {
       side,
       align,
       sideOffset,
@@ -28,19 +31,31 @@ export function position(node: HTMLElement, options: PositionOptions) {
       collisionDetection,
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
-      scrollX: window.scrollX,
-      scrollY: window.scrollY,
+      scrollX: 0,
+      scrollY: 0,
     });
 
-    node.style.position = 'absolute';
+    node.style.position = 'fixed';
     node.style.top = `${result.top}px`;
     node.style.left = `${result.left}px`;
     applyPositionDataAttributes(node, result);
   }
 
+  function schedulePositionUpdate() {
+    if (frame) {
+      cancelAnimationFrame(frame);
+    }
+
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      updatePosition();
+    });
+  }
+
   updatePosition();
-  window.addEventListener('resize', updatePosition);
-  window.addEventListener('scroll', updatePosition, true);
+  schedulePositionUpdate();
+  window.addEventListener('resize', schedulePositionUpdate);
+  window.addEventListener('scroll', schedulePositionUpdate, true);
 
   return {
     update(newOptions: PositionOptions) {
@@ -50,11 +65,14 @@ export function position(node: HTMLElement, options: PositionOptions) {
       sideOffset = newOptions.sideOffset || 0;
       alignOffset = newOptions.alignOffset || 0;
       collisionDetection = newOptions.collisionDetection ?? true;
-      updatePosition();
+      schedulePositionUpdate();
     },
     destroy() {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
+      if (frame) {
+        cancelAnimationFrame(frame);
+      }
+      window.removeEventListener('resize', schedulePositionUpdate);
+      window.removeEventListener('scroll', schedulePositionUpdate, true);
     }
   };
 }

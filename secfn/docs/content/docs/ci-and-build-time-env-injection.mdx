@@ -1,0 +1,35 @@
+---
+title: CI And Build-Time Env Injection
+description: Pull a secret set once for build or CI workflows without reading every secret on each request.
+---
+
+Some workloads should materialize a secret set once at process start, build time, or CI job time.
+
+```bash
+secfn env pull \
+  --endpoint https://nucleus.example.com/secfn \
+  --api-key "$SECFN_RUNTIME_TOKEN" \
+  --set nucleus-production
+```
+
+By default the command prints `.env` text to stdout. It writes plaintext to disk only when `--output` is explicitly provided:
+
+```bash
+secfn env pull \
+  --endpoint https://nucleus.example.com/secfn \
+  --api-key "$SECFN_RUNTIME_TOKEN" \
+  --set nucleus-production \
+  --output .env.production.local
+```
+
+For child commands, prefer `env run` so plaintext is kept in the child process environment:
+
+```bash
+secfn env run \
+  --endpoint https://nucleus.example.com/secfn \
+  --api-key "$SECFN_RUNTIME_TOKEN" \
+  --set nucleus-production \
+  -- npm run build
+```
+
+Programmatic build tooling can use `toDotEnv`, `toEnv`, or `injectEnv` from `@secfn/runtime`.

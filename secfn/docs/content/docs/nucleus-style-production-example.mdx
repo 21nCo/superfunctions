@@ -1,0 +1,79 @@
+---
+title: Nucleus-Style Production Example
+description: Combine SecFn, LogFn, and DataFn in a built app while keeping scopes separate.
+---
+
+This pattern fits an app like Nucleus where the application hosts SecFn as an internal control plane, DataFn as the data layer, and LogFn as the operational log provider.
+
+```ts
+import { createSecFnServer } from "@secfn/server";
+import { createSecFnRuntime } from "@secfn/runtime";
+import { createDataFnServer } from "datafn/server";
+import { createLogger } from "logfn";
+
+const logger = createLogger({
+  service: "nucleus",
+  redact: ["authorization", "cookie", "value", "ciphertext"],
+});
+
+export const secfn = createSecFnServer({
+  db,
+  encryption: {
+    masterKey: process.env.SECFN_MASTER_KEY!,
+    keyId: "env:primary",
+  },
+  logger,
+  namespaceProvider: (ctx) => ctx.workspaceId,
+  authorize: async (ctx, action) => {
+    return secfn.access.check({
+      principalId: ctx.userId,
+      action: `secfn:${action}`,
+      tenantId: ctx.tenantId,
+      namespace: ctx.workspaceId,
+    });
+  },
+});
+
+export const datafn = createDataFnServer({
+  db,
+  logger,
+  authorize: async (ctx, op) => {
+    if (op.type === "seed") {
+      return secfn.access.check({
+        principalId: ctx.userId,
+        action: "datafn:seed",
+        tenantId: ctx.tenantId,
+        namespace: ctx.workspaceId,
+      });
+    }
+
+    return datafnSharing.authorize(ctx, op);
+  },
+});
+```
+
+Runtime workers read only the set they need:
+
+```ts
+const runtimeSecrets = createSecFnRuntime({
+  endpoint: process.env.SECFN_ENDPOINT!,
+  apiKey: process.env.SECFN_RUNTIME_TOKEN!,
+  tenantId: "nucleus",
+  environment: "production",
+});
+
+export async function runBillingWorker() {
+  const env = await runtimeSecrets.toEnv("billing-worker");
+  logger.info("billing worker configured", { hasStripe: Boolean(env.STRIPE_SECRET_KEY) });
+}
+```
+
+Security review queries SecFn, not LogFn:
+
+```ts
+const unresolved = await secfn.audit.getUnresolvedEvents();
+const critical = await secfn.audit.getCriticalEvents();
+const metrics = await secfn.audit.getMetrics();
+```
+
+Operational troubleshooting still uses LogFn for request IDs, traces, sink health, and application logs.

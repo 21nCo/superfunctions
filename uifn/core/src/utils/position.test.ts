@@ -32,6 +32,41 @@ describe('position utilities', () => {
     expect(result.left).toBe(80);
   });
 
+  it('normalizes DOMRect-like values with non-enumerable geometry fields', () => {
+    const domTriggerRect = Object.create({});
+    Object.defineProperties(domTriggerRect, {
+      top: { value: 35 },
+      left: { value: 1014 },
+      width: { value: 150 },
+      height: { value: 38 },
+      right: { value: 1164 },
+      bottom: { value: 73 },
+    });
+
+    const domContentRect = Object.create({});
+    Object.defineProperties(domContentRect, {
+      top: { value: 900 },
+      left: { value: 0 },
+      width: { value: 226 },
+      height: { value: 117 },
+      right: { value: 226 },
+      bottom: { value: 1017 },
+    });
+
+    const result = computePosition(domTriggerRect, domContentRect, {
+      viewportWidth: 1280,
+      viewportHeight: 900,
+      side: 'bottom',
+      align: 'start',
+      sideOffset: 6,
+    });
+
+    expect(result.top).toBe(79);
+    expect(result.left).toBe(1014);
+    expect(Number.isNaN(result.top)).toBe(false);
+    expect(Number.isNaN(result.left)).toBe(false);
+  });
+
   it('flips from bottom to top on overflow', () => {
     const result = computePosition(triggerRect, contentRect, {
       viewportWidth: 1024,

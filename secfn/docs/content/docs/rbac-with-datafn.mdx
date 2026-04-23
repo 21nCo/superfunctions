@@ -1,0 +1,60 @@
+---
+title: RBAC With DataFn
+description: Use SecFn for control-plane authorization while DataFn remains the source of truth for data sharing.
+---
+
+SecFn RBAC is for app, admin, and security operations:
+
+- `secfn:secrets:create`
+- `secfn:secrets:read`
+- `secfn:secrets:rotate`
+- `secfn:service-tokens:revoke`
+- `datafn:seed`
+- `workspace:admin`
+
+Role bindings include the principal, tenant or namespace, optional resource id, and optional expiry.
+
+DataFn remains the owner of:
+
+- row checks
+- field checks
+- resource checks
+- sharing rules
+- namespace isolation
+
+## Example Boundary
+
+Use SecFn inside DataFn's server authorization callback when the operation is a control-plane capability:
+
+```ts
+const datafn = createDataFnServer({
+  db,
+  authorize: async (ctx, operation) => {
+    if (operation.type === "seed") {
+      return secfn.access.check({
+        principalId: ctx.userId,
+        action: "datafn:seed",
+        tenantId: ctx.tenantId,
+        namespace: ctx.namespace,
+      });
+    }
+
+    return datafnSharingEngine.authorize(ctx, operation);
+  },
+});
+```
+
+Every denied path should emit `permission_denied` or `unauthorized_access` when the host wants durable security review:
+
+```ts
+await secfn.audit.write({
+  type: "permission_denied",
+  severity: "medium",
+  tenantId: ctx.tenantId,
+  namespace: ctx.namespace,
+  actorId: ctx.userId,
+  resource: "datafn:seed",
+  action: "datafn:seed",
+  metadata: { operationId: operation.id },
+});
+```

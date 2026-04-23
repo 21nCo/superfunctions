@@ -40,7 +40,10 @@
   "superfunctions": {
     "initFunction": "sendFn",
     "schemaVersion": 1,
-    "namespace": "sendfn"
+    "namespace": "sendfn",
+    "libraryNames": [
+      "sendfn"
+    ]
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.400.0",

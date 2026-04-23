@@ -5,6 +5,7 @@
   "description": "Building blocks for software development",
   "workspaces": [
     "searchfn/*",
+    "secfn/*",
     "botfn/*",
     "hostfn/*",
     "authfn/*",

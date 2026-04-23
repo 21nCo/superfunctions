@@ -93,7 +93,7 @@
     onkeydown={handleKeyDown}
     tabindex="-1"
     class={className}
-    style="z-index: 50; position: fixed; left: {context.point.x}px; top: {context.point.y}px; background-color: white; border: 1px solid #ccc; border-radius: 4px; padding: 5px 0; min-width: 150px;"
+    style="z-index: var(--uifn-floating-layer-z-index, 100); position: fixed; left: {context.point.x}px; top: {context.point.y}px; background-color: white; border: 1px solid #ccc; border-radius: 4px; padding: 5px 0; min-width: 150px;"
     {...rest}
   >
     {@render children?.()}

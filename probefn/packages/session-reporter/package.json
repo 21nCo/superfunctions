@@ -11,11 +11,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@probefn/analyzers": "workspace:*",
-    "@probefn/contracts": "workspace:*"
+    "@probefn/analyzers": "*",
+    "@probefn/contracts": "*"
   },
   "devDependencies": {
-    "@probefn/core": "workspace:*",
-    "@probefn/storage": "workspace:*"
+    "@probefn/core": "*",
+    "@probefn/storage": "*"
   }
 }

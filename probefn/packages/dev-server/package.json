@@ -11,11 +11,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@probefn/analyzers": "workspace:*",
-    "@probefn/browser-runner": "workspace:*",
-    "@probefn/contracts": "workspace:*",
-    "@probefn/core": "workspace:*",
-    "@probefn/storage": "workspace:*",
-    "@probefn/visual-baselines": "workspace:*"
+    "@probefn/analyzers": "*",
+    "@probefn/browser-runner": "*",
+    "@probefn/contracts": "*",
+    "@probefn/core": "*",
+    "@probefn/storage": "*",
+    "@probefn/visual-baselines": "*"
   }
 }
