@@ -1,0 +1,82 @@
+---
+title: Server Setup
+description: Configure the admin and runtime SecFn server with shared DB, HTTP, authorization, logging, and audit sinks.
+---
+
+`createSecFnServer(config)` returns the HTTP router and all service objects:
+
+```ts
+const secfn = createSecFnServer({
+  db,
+  basePath: "/secfn",
+  encryption: {
+    masterKey: process.env.SECFN_MASTER_KEY!,
+    keyId: "env:main",
+  },
+  authorize: async (ctx, action, payload) => {
+    return ctx.actorId === "admin" && action.startsWith("secrets:");
+  },
+  namespaceProvider: (ctx) => ctx.namespace,
+  logger,
+  auditSink: async (event) => {
+    await securityQueue.publish(event);
+  },
+  rateLimit: {
+    enabled: true,
+    windowMs: 60_000,
+    algorithm: "token-bucket",
+    limits: {
+      perIP: 120,
+      perUser: 300,
+      perEndpoint: 60,
+    },
+  },
+});
+
+secfn.router;
+secfn.vault;
+secfn.access;
+secfn.rateLimit;
+secfn.audit;
+secfn.scanner;
+secfn.getSchema();
+```
+
+## Admin Routes
+
+Admin routes require the host `authorize(ctx, action, payload)` callback when configured. Admin list and detail routes never return plaintext secret values.
+
+| Method | Route |
+| --- | --- |
+| `GET` | `/admin/secrets` |
+| `POST` | `/admin/secrets` |
+| `GET` | `/admin/secrets/:id` |
+| `POST` | `/admin/secrets/:id/rotate` |
+| `POST` | `/admin/secrets/:id/revoke` |
+| `DELETE` | `/admin/secrets/:id` |
+| `GET` | `/admin/secret-sets` |
+| `POST` | `/admin/secret-sets` |
+| `POST` | `/admin/service-tokens` |
+| `POST` | `/admin/service-tokens/:id/revoke` |
+| `GET` | `/admin/audit-events` |
+| `GET` | `/admin/scan-runs` |
+
+## Runtime Routes
+
+Runtime routes use bearer service tokens created by the admin API.
+
+| Method | Route |
+| --- | --- |
+| `GET` | `/runtime/secrets/:key?environment=production` |
+| `POST` | `/runtime/secret-sets/:name/resolve` |
+| `GET` | `/runtime/health` |
+
+Responses use a stable envelope:
+
+```json
+{ "ok": true, "data": { "key": "STRIPE_SECRET_KEY", "value": "..." } }
+```
+
+```json
+{ "ok": false, "error": { "code": "SECFN_FORBIDDEN", "message": "Authorization denied" } }
+```

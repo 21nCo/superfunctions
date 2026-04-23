@@ -1,0 +1,20 @@
+{
+  "title": "SecFn",
+  "pages": [
+    "index",
+    "getting-started",
+    "architecture",
+    "server-setup",
+    "runtime-secrets",
+    "secret-storage-and-encryption",
+    "secret-sets",
+    "cli-scanning",
+    "ci-and-build-time-env-injection",
+    "rbac-with-datafn",
+    "rate-limiting",
+    "security-monitoring-with-logfn",
+    "nucleus-style-production-example",
+    "reference",
+    "operations"
+  ]
+}

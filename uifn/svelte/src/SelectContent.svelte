@@ -1,8 +1,8 @@
 <script lang="ts">
   import { isOutsideEventTarget } from './internal/dismissible';
   import { getRequiredContext } from './internal/context';
-  import { portal } from './internal/portal';
-  import { position, type Side, type Align } from './internal/position';
+  import { portal as portalAction } from './internal/portal';
+  import { position as positionAction, type Side, type Align } from './internal/position';
   import { focusTrap } from './internal/focus-trap';
 
   interface SelectContext {
@@ -22,6 +22,7 @@
     sideOffset?: number;
     alignOffset?: number;
     position?: 'item-aligned' | 'popper';
+    class?: string;
     [key: string]: any;
   }
 
@@ -32,6 +33,7 @@
     sideOffset = 0, 
     alignOffset = 0,
     position: positionMode = 'item-aligned',
+    class: className,
     ...rest 
   }: Props = $props();
 
@@ -41,6 +43,7 @@
     'Select components must be used within a Select'
   );
   let contentEl: HTMLDivElement;
+  let anchor = $derived(ctx.trigger);
 
   function handleKeyDown(e: KeyboardEvent) {
     e.preventDefault();
@@ -79,26 +82,27 @@
   });
 </script>
 
-<div use:portal>
+{#if ctx.open && anchor}
   <div
     bind:this={contentEl}
     role="listbox"
     id={ctx.contentId}
-    data-state={ctx.open ? 'open' : 'closed'}
-    hidden={!ctx.open}
-    use:position={{
-      trigger: ctx.trigger,
+    data-state="open"
+    use:portalAction={'body'}
+    use:positionAction={{
+      trigger: anchor,
       side,
       align,
       sideOffset,
       alignOffset
     }}
     use:focusTrap={{ active: ctx.open, returnFocus: true }}
-    style="z-index: 50; background-color: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 100px; display: {ctx.open ? 'block' : 'none'};"
+    class={className}
+    style="z-index: var(--uifn-floating-layer-z-index, 100); background-color: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); min-width: 100px;"
     {...rest}
     onkeydown={handleKeyDown}
     tabindex="-1"
   >
     {@render children?.()}
   </div>
-</div>
+{/if}

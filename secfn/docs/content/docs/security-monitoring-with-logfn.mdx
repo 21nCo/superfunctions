@@ -1,0 +1,44 @@
+---
+title: Security Monitoring With LogFn
+description: Keep operational logging and typed security audit events separate but connected.
+---
+
+`logfn` and `secfn` have different jobs:
+
+| System | Owns |
+| --- | --- |
+| `logfn` | Operational logs, redaction, request IDs, sinks, and transport. |
+| `secfn` | Typed security events, incident state, policy decisions, and security metrics. |
+
+SecFn accepts a generic logger provider instead of depending on LogFn:
+
+```ts
+const secfn = createSecFnServer({
+  db,
+  encryption: { masterKey: process.env.SECFN_MASTER_KEY! },
+  logger: logfn.logger,
+  auditSink: async (event) => {
+    await incidentStream.publish(event);
+  },
+});
+```
+
+`secfn.audit.write(event)` persists durable DB events and mirrors sanitized summaries to the logger. Sensitive metadata is not sent to the logger summary.
+
+## Monitoring APIs
+
+```ts
+await secfn.audit.logEvent(event);
+await secfn.audit.queryEvents({ severity: "high" });
+await secfn.audit.getRecentEvents();
+await secfn.audit.getCriticalEvents();
+await secfn.audit.getUnresolvedEvents();
+await secfn.audit.resolveEvent(eventId, { resolvedBy: "secops" });
+await secfn.audit.getMetrics();
+```
+
+## Scope Separation
+
+Use LogFn to answer operational questions such as request latency, response status, sink delivery, and structured app traces.
+
+Use SecFn to answer security questions such as who accessed a secret, which token was denied, which rate limit fired, which incident is unresolved, and whether a tenant had suspicious access.

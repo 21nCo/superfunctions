@@ -1,0 +1,38 @@
+---
+title: Server Reference
+description: Services and config exported by @secfn/server.
+---
+
+```ts
+import { createSecFnServer } from "@secfn/server";
+
+const secfn = createSecFnServer({
+  db,
+  basePath: "/secfn",
+  encryption: { masterKey: process.env.SECFN_MASTER_KEY! },
+});
+```
+
+Return value:
+
+| Property | Purpose |
+| --- | --- |
+| `router` | `@superfunctions/http` router. |
+| `vault` | Secret, version, set, and service-token operations. |
+| `access` | RBAC role and permission checks. |
+| `rateLimit` | SecFn semantic wrapper around shared middleware. |
+| `audit` | Durable security audit event APIs. |
+| `scanner` | Default scanner service from core. |
+| `getSchema()` | SecFn table schemas. |
+
+Config accepts:
+
+- `db`
+- `basePath`
+- `keyProvider`
+- `encryption.masterKey`
+- `authorize(ctx, action, payload)`
+- `namespaceProvider(ctx)`
+- `logger`
+- `auditSink`
+- `rateLimit`

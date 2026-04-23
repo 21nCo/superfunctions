@@ -1,0 +1,26 @@
+---
+title: Runtime Reference
+description: Methods exported by @secfn/runtime.
+---
+
+```ts
+const runtime = createSecFnRuntime({
+  endpoint: "https://app.example.com/secfn",
+  apiKey: process.env.SECFN_RUNTIME_TOKEN!,
+  tenantId: "acme",
+  environment: "production",
+  cache: { ttlMs: 60_000 },
+});
+```
+
+| Method | Returns |
+| --- | --- |
+| `get(key, options?)` | One plaintext secret value. |
+| `getSet(name, options?)` | Secret set response. |
+| `preload(keysOrSetNames)` | Promise that warms cache entries. |
+| `toEnv(secretSetName)` | `Record<string, string>`. |
+| `toDotEnv(secretSetName)` | `.env` text. |
+| `injectEnv(secretSetName)` | Populates `process.env`. |
+| `clearCache()` | Clears in-memory cache. |
+
+Runtime responses are cached only in memory and only when configured.

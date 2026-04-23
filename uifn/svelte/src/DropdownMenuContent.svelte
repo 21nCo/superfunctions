@@ -39,6 +39,7 @@
     'DropdownMenu components must be used within a DropdownMenu'
   );
   let contentEl: HTMLDivElement;
+  let anchor = $derived(context.triggerElement);
   const itemSelector = '[role="menuitem"]:not([aria-disabled="true"])';
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -113,13 +114,13 @@
   });
 </script>
 
-{#if context.open}
+{#if context.open && anchor}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div 
     bind:this={contentEl}
     use:portalAction={'body'}
     use:positionAction={{
-        trigger: context.triggerElement,
+        trigger: anchor,
         side,
         align,
         sideOffset,
@@ -131,7 +132,7 @@
     onkeydown={handleKeyDown}
     tabindex="-1"
     class={className}
-    style="z-index: 50; background-color: white; border: 1px solid #ccc; border-radius: 4px; padding: 5px 0; min-width: 150px;"
+    style="z-index: var(--uifn-floating-layer-z-index, 100); background-color: white; border: 1px solid #ccc; border-radius: 4px; padding: 5px 0; min-width: 150px;"
     {...rest}
   >
     {@render children?.()}

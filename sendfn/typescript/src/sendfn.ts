@@ -561,6 +561,14 @@ export class Sendfn implements SendfnClient {
   }
 }
 
-export function sendfn(config: SendfnConfig): Sendfn {
+export function createSendFn(config: SendfnConfig): Sendfn {
   return new Sendfn(config);
+}
+
+export function sendFn(config: SendfnConfig): Sendfn {
+  return createSendFn(config);
+}
+
+export function sendfn(config: SendfnConfig): Sendfn {
+  return createSendFn(config);
 }

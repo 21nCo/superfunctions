@@ -11,14 +11,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@probefn/contracts": "workspace:*",
-    "@probefn/dev-server": "workspace:*",
-    "@probefn/mcp-server": "workspace:*",
+    "@probefn/contracts": "*",
+    "@probefn/dev-server": "*",
+    "@probefn/mcp-server": "*",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@probefn/core": "workspace:*",
-    "@probefn/storage": "workspace:*",
+    "@probefn/core": "*",
+    "@probefn/storage": "*",
     "vitest": "^3.1.4"
   }
 }

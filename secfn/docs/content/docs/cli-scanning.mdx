@@ -1,0 +1,58 @@
+---
+title: CLI Scanning
+description: Scan files, staged changes, and git history with table, JSON, and SARIF output.
+---
+
+`@secfn/cli` installs the `secfn` binary.
+
+```bash
+npm install -D @secfn/cli
+```
+
+## Commands
+
+```bash
+secfn scan
+secfn scan --path .
+secfn scan --staged
+secfn scan --git-history --commits 100
+secfn scan --format table
+secfn scan --format json
+secfn scan --format sarif --output secfn.sarif
+secfn scan --fail-on high
+secfn scan --baseline secfn-baseline.json
+```
+
+The first V1 rule pack ships common secret detectors such as cloud keys, API tokens, private keys, JWTs, database URLs, and generic assignment patterns. The scanner is built around extension interfaces:
+
+```ts
+import type { RulePack, SecurityRule } from "@secfn/core";
+
+const rule: SecurityRule = {
+  id: "internal-dangerous-code",
+  name: "Internal dangerous code",
+  description: "Detects an internal code pattern.",
+  severity: "high",
+  evaluate({ content, target }) {
+    return [];
+  },
+};
+
+export const internalPack: RulePack = {
+  id: "internal",
+  name: "Internal Security Rules",
+  rules: [rule],
+};
+```
+
+Supply-chain and bad-code scanning should be added as future rule packs using the same `SecurityRule`, `ScanTarget`, `SecurityFinding`, `RulePack`, and reporter contracts.
+
+## GitHub Code Scanning
+
+SARIF output can be uploaded to GitHub code scanning:
+
+```bash
+secfn scan --format sarif --output secfn.sarif
+```
+
+Use `--fail-on low|medium|high|critical` in CI to fail builds at the desired severity threshold.

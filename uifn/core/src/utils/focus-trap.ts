@@ -154,7 +154,7 @@ export function createFocusTrap(
     previousFocus = ownerDocument.activeElement as HTMLElement | null;
     const focusable = getFocusableElements(container, focusableSelector);
     const target = focusable[0] ?? container;
-    target.focus();
+    target.focus({ preventScroll: true });
     ownerDocument.addEventListener('keydown', handleKeyDown);
   };
 
@@ -167,7 +167,7 @@ export function createFocusTrap(
     ownerDocument.removeEventListener('keydown', handleKeyDown);
 
     if (returnFocus && previousFocus) {
-      previousFocus.focus();
+      previousFocus.focus({ preventScroll: true });
     }
   };
 

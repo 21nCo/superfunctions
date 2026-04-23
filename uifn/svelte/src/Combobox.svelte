@@ -34,6 +34,7 @@
     defaultValue?: string;
     inputValue?: string;
     defaultInputValue?: string;
+    items?: ComboboxItem[];
     onValueChange?: (value: string) => void;
     onInputValueChange?: (inputValue: string) => void;
     open?: boolean;
@@ -49,6 +50,7 @@
     defaultValue, 
     inputValue: inputValueProp,
     defaultInputValue,
+    items = [],
     onValueChange, 
     onInputValueChange,
     open: openProp, 
@@ -62,6 +64,7 @@
   const initialDefaultValue = (() => defaultValue)();
   const initialInputValue = (() => inputValueProp)();
   const initialDefaultInputValue = (() => defaultInputValue)();
+  const initialItems = (() => items)();
   const initialOpen = (() => openProp)();
   const initialDefaultOpen = (() => defaultOpen)();
   const initialDisabled = (() => disabled)();
@@ -78,6 +81,7 @@
     defaultValue: initialDefaultValue,
     inputValue: initialInputValue,
     defaultInputValue: initialDefaultInputValue,
+    items: initialItems,
     onValueChange: notifyValueChange,
     onInputValueChange: notifyInputValueChange,
     open: initialOpen,
@@ -89,7 +93,7 @@
   let state = $state(machine.state);
   let triggerElement = $state<HTMLElement | null>(null);
   let inputElement = $state<HTMLInputElement | null>(null);
-  let items = $state<ComboboxItem[]>([]);
+  let registeredItems = $state<ComboboxItem[]>(initialItems);
   const itemElements = new Map<string, HTMLElement>();
   const itemIds = new Map<string, string>();
 
@@ -115,6 +119,11 @@
     if (openProp !== undefined && state.open !== openProp) {
       machine.actions.syncOpen(openProp);
     }
+  });
+
+  $effect(() => {
+    machine.actions.setItems(items);
+    registeredItems = items;
   });
 
   // Derived state
@@ -162,11 +171,11 @@
   }
 
   function registerItem(item: ComboboxItem) {
-    const existingIndex = items.findIndex((entry) => entry.value === item.value);
+    const existingIndex = registeredItems.findIndex((entry) => entry.value === item.value);
     if (existingIndex === -1) {
-      items = [...items, item];
+      registeredItems = [...registeredItems, item];
     } else {
-      items = items.map((entry, index) => (index === existingIndex ? item : entry));
+      registeredItems = registeredItems.map((entry, index) => (index === existingIndex ? item : entry));
     }
     if (!itemIds.has(item.value)) {
       itemIds.set(
@@ -177,13 +186,13 @@
         })
       );
     }
-    machine.actions.setItems(items);
+    machine.actions.setItems(registeredItems);
   }
 
   function unregisterItem(value: string) {
-    items = items.filter((entry) => entry.value !== value);
+    registeredItems = registeredItems.filter((entry) => entry.value !== value);
     itemIds.delete(value);
-    machine.actions.setItems(items);
+    machine.actions.setItems(registeredItems);
   }
 
   function registerItemElement(value: string, element: HTMLElement) {

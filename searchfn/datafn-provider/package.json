@@ -49,7 +49,7 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "@searchfn/adapter-contracts": "^0.1.0"
+    "@searchfn/adapter-contracts": "file:../adapter-contracts"
   },
   "peerDependencies": {
     "@datafn/core": "*"
