@@ -139,11 +139,10 @@ export async function generateSchemas(
 
         const packageRoot = path.join(nearestNodeModulesPath, init.packageName);
         const pkgJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf-8'));
-        const mainExport = resolveLibraryPackageEntryPoint(pkgJson);
-        if (!mainExport) {
-          throw new Error(`Unable to resolve entry point for ${init.packageName}`);
-        }
-        resolvedPath = path.join(packageRoot, mainExport);
+        resolvedPath = path.join(
+          packageRoot,
+          resolveLibraryPackageEntryPoint(pkgJson)
+        );
       }
       const libraryPackage = await import(resolvedPath);
 
@@ -233,7 +232,7 @@ export async function generateSchemas(
 
 export function resolveLibraryPackageEntryPoint(
   packageJson: Record<string, any>
-): string | null {
+): string {
   const exportRoot = packageJson.exports?.['.'];
   const resolvedExport = resolvePackageExportTarget(exportRoot);
 

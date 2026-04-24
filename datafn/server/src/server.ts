@@ -672,31 +672,45 @@ export async function createDatafnServer<TContext = any>(
 
     if (ctx && typeof ctx === "object") {
       let parsedBody: unknown;
+      let hasParsedBody = false;
       const target = ctx as Record<PropertyKey, unknown>;
       return new Proxy(target, {
         get(currentTarget, prop) {
           if (prop === "parsedBody") {
-            return parsedBody;
+            if (hasParsedBody) {
+              return parsedBody;
+            }
+            return Reflect.get(currentTarget, prop, currentTarget);
           }
           const value = Reflect.get(currentTarget, prop, currentTarget);
           return typeof value === "function" ? value.bind(currentTarget) : value;
         },
         set(currentTarget, prop, value) {
           if (prop === "parsedBody") {
+            hasParsedBody = true;
             parsedBody = value;
             return true;
           }
           return Reflect.set(currentTarget, prop, value, currentTarget);
         },
         has(currentTarget, prop) {
-          return prop === "parsedBody" || Reflect.has(currentTarget, prop);
+          if (prop === "parsedBody") {
+            return hasParsedBody || Reflect.has(currentTarget, prop);
+          }
+          return Reflect.has(currentTarget, prop);
         },
         ownKeys(currentTarget) {
           const keys = Reflect.ownKeys(currentTarget);
-          return keys.includes("parsedBody") ? keys : [...keys, "parsedBody"];
+          if (hasParsedBody && !keys.includes("parsedBody")) {
+            return [...keys, "parsedBody"];
+          }
+          return keys;
         },
         getOwnPropertyDescriptor(currentTarget, prop) {
           if (prop === "parsedBody") {
+            if (!hasParsedBody) {
+              return Reflect.getOwnPropertyDescriptor(currentTarget, prop);
+            }
             return {
               configurable: true,
               enumerable: true,
