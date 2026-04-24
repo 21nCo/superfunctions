@@ -11,6 +11,11 @@ import { config } from "dotenv";
 config();
 
 const port = Number(process.env.PORT) || 3001;
+const demoMode = process.env.FILEFN_DEMO_MODE === "true";
+const allowedOrigins = (process.env.FILEFN_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // ---------------------------------------------------------------------------
 // Storage — S3 (or MinIO/LocalStack via S3_ENDPOINT)
@@ -57,11 +62,17 @@ const fileFn = createFileFn({
     },
   ],
   auth: {
-    required: false,
-    resolveSession: async () => ({
-      principalId: "demo-user",
-      tenantId: "demo-org",
-    }),
+    required: !demoMode,
+    resolveSession: async (_request: Request) => {
+      if (demoMode) {
+        return {
+          principalId: "demo-user",
+          tenantId: "demo-org",
+        };
+      }
+
+      return null;
+    },
   },
   processing: {
     enabled: true,
@@ -73,25 +84,25 @@ const fileFn = createFileFn({
 // Events — log activity to console
 // ---------------------------------------------------------------------------
 
-fileFn.events.on("file:uploaded", (e) => {
+fileFn.events.on("file:uploaded", (e: any) => {
   console.log(`[event] file:uploaded — ${e.fileName} (${e.fileId})`);
 });
 
-fileFn.events.on("file:deleted", (e) => {
+fileFn.events.on("file:deleted", (e: any) => {
   console.log(`[event] file:deleted — ${e.fileId}`);
 });
 
-fileFn.events.on("processing.started", (e) => {
+fileFn.events.on("processing.started", (e: any) => {
   console.log(`[event] processing.started — ${e.fileId}`);
 });
 
-fileFn.events.on("processing.completed", (e) => {
+fileFn.events.on("processing.completed", (e: any) => {
   console.log(
     `[event] processing.completed — ${e.fileId} (${e.artifactsCreated} artifacts)`,
   );
 });
 
-fileFn.events.on("processing.failed", (e) => {
+fileFn.events.on("processing.failed", (e: any) => {
   console.log(`[event] processing.failed — ${e.fileId}: ${e.error}`);
 });
 
@@ -104,7 +115,9 @@ const app = new Hono();
 app.use(
   "*",
   cors({
-    origin: "*",
+    origin: demoMode
+      ? "*"
+      : (origin) => (allowedOrigins.includes(origin) ? origin : ""),
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowHeaders: [
       "Content-Type",
@@ -281,7 +294,7 @@ async function bootstrap() {
     sql`CREATE INDEX IF NOT EXISTS filefn_versions_checksum_idx ON filefn_file_versions(checksum_sha256_base64, tenant_id)`,
   );
   await db.execute(
-    sql`CREATE UNIQUE INDEX IF NOT EXISTS filefn_sessions_idem_idx ON filefn_upload_sessions(idempotency_key)`,
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS filefn_sessions_idem_idx ON filefn_upload_sessions(owner_id, COALESCE(tenant_id, ''), idempotency_key) WHERE idempotency_key IS NOT NULL`,
   );
   await db.execute(
     sql`CREATE INDEX IF NOT EXISTS filefn_sessions_expires_idx ON filefn_upload_sessions(expires_at)`,

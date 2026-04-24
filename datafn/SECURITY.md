@@ -8,7 +8,7 @@ This document describes the security architecture of DataFn, covering all layers
 
 DataFn enforces security through multiple independent layers that run in sequence. A request must pass **every** layer to reach the database. If any layer rejects, the request is terminated immediately with the appropriate error code.
 
-```
+```text
 Request → Rate Limiting → Payload Limits → JSON Parsing → Request Authorization → Schema Validation → Field-Level Authorization → Execution
 ```
 
@@ -234,17 +234,14 @@ DataFn supports multi-tenant data isolation via row-level namespace scoping.
 
 ### How It Works
 
-When `authContextProvider` is configured, every database operation is scoped to a namespace derived from the auth context (e.g., `"tenant:456"` or `"user:123"`):
+When `namespaceProvider` is configured, every database operation is scoped to a namespace derived from the request context (e.g., `"tenant:456"` or `"user:123"`):
 
 ```typescript
 const server = await createDatafnServer({
   schema,
   db,
-  authContextProvider: {
-    getContext: (ctx) => ({
-      userId: ctx.session.userId,
-      tenantId: ctx.session.tenantId,
-    }),
+  namespaceProvider: {
+    getNamespace: (ctx) => ctx.session.tenantId,
   },
 });
 ```
@@ -378,11 +375,8 @@ const server = await createDatafnServer({
   },
 
   // Layer 7: Namespace isolation
-  authContextProvider: {
-    getContext: (ctx) => ({
-      userId: ctx.session.userId,
-      tenantId: ctx.session.tenantId,
-    }),
+  namespaceProvider: {
+    getNamespace: (ctx) => ctx.session.tenantId,
   },
 
   // Error disclosure control
@@ -406,7 +400,7 @@ const server = await createDatafnServer({
   },
 
   // Graceful shutdown
-  drainTimeoutMs: 10_000,
+  shutdownTimeoutMs: 10_000,
 });
 ```
 
@@ -417,7 +411,7 @@ const server = await createDatafnServer({
 - [ ] Set `authorize` callback to verify authentication on every request
 - [ ] Define `permissions` on every resource in your schema (deny-by-default enforced)
 - [ ] Set `allowUnknownResources: false` (the default — do not override in production)
-- [ ] Configure `authContextProvider` for namespace isolation in multi-tenant deployments
+- [ ] Configure `namespaceProvider` for namespace isolation in multi-tenant deployments
 - [ ] Set `debug: false` or rely on `NODE_ENV=production` to suppress field-level error details
 - [ ] Set `limits.maxPayloadBytes` to prevent oversized request bodies
 - [ ] Enable rate limiting with appropriate per-endpoint limits

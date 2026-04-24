@@ -3,7 +3,6 @@ opencollection: 1.0.0
 info:
   name: bruno-datafn-server-test
 
-request: {}
 bundled: false
 extensions:
   ignore:

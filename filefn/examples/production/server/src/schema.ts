@@ -1,12 +1,15 @@
 import {
+  sql,
+} from "drizzle-orm";
+import {
   pgTable,
   text,
   integer,
   boolean,
   jsonb,
-  uniqueIndex,
   index,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // ---------------------------------------------------------------------------
@@ -31,10 +34,10 @@ export const files = pgTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (t) => [
-    index("filefn_files_owner_idx").on(t.ownerId),
-    index("filefn_files_tenant_idx").on(t.tenantId),
-  ],
+  (t) => ({
+    ownerIdx: index("filefn_files_owner_idx").on(t.ownerId),
+    tenantIdx: index("filefn_files_tenant_idx").on(t.tenantId),
+  }),
 );
 
 export const fileVersions = pgTable(
@@ -49,13 +52,13 @@ export const fileVersions = pgTable(
     tenantId: text("tenant_id"),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [
-    index("filefn_versions_file_idx").on(t.fileId),
-    index("filefn_versions_checksum_idx").on(
+  (t) => ({
+    fileIdx: index("filefn_versions_file_idx").on(t.fileId),
+    checksumIdx: index("filefn_versions_checksum_idx").on(
       t.checksumSha256Base64,
       t.tenantId,
     ),
-  ],
+  }),
 );
 
 export const uploadSessions = pgTable(
@@ -80,10 +83,12 @@ export const uploadSessions = pgTable(
     expiresAt: text("expires_at").notNull(),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [
-    uniqueIndex("filefn_sessions_idem_idx").on(t.idempotencyKey),
-    index("filefn_sessions_expires_idx").on(t.expiresAt),
-  ],
+  (t) => ({
+    idempotencyIdx: uniqueIndex("filefn_sessions_idem_idx")
+      .on(t.ownerId, sql`COALESCE(${t.tenantId}, '')`, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
+    expiresIdx: index("filefn_sessions_expires_idx").on(t.expiresAt),
+  }),
 );
 
 export const uploadParts = pgTable(
@@ -95,10 +100,10 @@ export const uploadParts = pgTable(
     size: integer("size").notNull(),
     checksumSha256Base64: text("checksum_sha256_base64"),
   },
-  (t) => [
-    index("filefn_parts_session_idx").on(t.uploadSessionId),
-    unique("filefn_parts_unique").on(t.uploadSessionId, t.partNumber),
-  ],
+  (t) => ({
+    sessionIdx: index("filefn_parts_session_idx").on(t.uploadSessionId),
+    partUnique: unique("filefn_parts_unique").on(t.uploadSessionId, t.partNumber),
+  }),
 );
 
 export const filePermissions = pgTable(
@@ -116,10 +121,10 @@ export const filePermissions = pgTable(
     expiresAt: text("expires_at"),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [
-    index("filefn_perms_file_idx").on(t.fileId),
-    index("filefn_perms_user_idx").on(t.userId),
-  ],
+  (t) => ({
+    fileIdx: index("filefn_perms_file_idx").on(t.fileId),
+    userIdx: index("filefn_perms_user_idx").on(t.userId),
+  }),
 );
 
 export const fileShares = pgTable(
@@ -135,7 +140,9 @@ export const fileShares = pgTable(
     createdAt: text("created_at").notNull(),
     revokedAt: text("revoked_at"),
   },
-  (t) => [index("filefn_shares_file_idx").on(t.fileId)],
+  (t) => ({
+    fileIdx: index("filefn_shares_file_idx").on(t.fileId),
+  }),
 );
 
 export const fileArtifacts = pgTable(
@@ -151,10 +158,10 @@ export const fileArtifacts = pgTable(
     metadata: jsonb("metadata"),
     createdAt: text("created_at").notNull(),
   },
-  (t) => [
-    index("filefn_artifacts_file_idx").on(t.fileId),
-    index("filefn_artifacts_version_idx").on(t.versionId),
-  ],
+  (t) => ({
+    fileIdx: index("filefn_artifacts_file_idx").on(t.fileId),
+    versionIdx: index("filefn_artifacts_version_idx").on(t.versionId),
+  }),
 );
 
 // Schema version tracking (used by @superfunctions/db)

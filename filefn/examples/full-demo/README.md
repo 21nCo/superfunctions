@@ -3,7 +3,7 @@
 This project demonstrates the full capabilities of FileFn including:
 
 - Client-side file uploading with `@filefn/client`
-- Server-side file handling with `@filefn/server` (Hono adapter)
+- Server-side file handling with `@filefn/server`
 - Custom storage adapter (in-memory for demo)
 - Processing integration (configured but using defaults)
 - File listing and downloading
@@ -51,7 +51,7 @@ This project demonstrates the full capabilities of FileFn including:
 
 ## Automated Smoke Check (Optional)
 
-With the server running, execute:
+With the server running, execute from the repository root:
 
 ```bash
 node filefn/examples/full-demo/smoke.mjs

@@ -48,9 +48,6 @@
     "mongodb": ">=6.0.0"
   },
   "peerDependenciesMeta": {
-    "drizzle-orm": {
-      "optional": true
-    },
     "kysely": {
       "optional": true
     },

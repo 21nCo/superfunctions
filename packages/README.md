@@ -4,7 +4,7 @@ Shared packages for the superfunctions ecosystem - both TypeScript and Python.
 
 ## Structure
 
-```
+```text
 packages/
 ├── TypeScript Packages (npm)
 │   ├── http/                    # @superfunctions/http
@@ -33,14 +33,14 @@ packages/
 - ✅ Consistent: Mirrors TypeScript package layout
 
 ### TypeScript Packages
-```
+```text
 packages/http/           → @superfunctions/http
 packages/http-express/   → @superfunctions/http-express
 packages/db/             → @superfunctions/db
 ```
 
 ### Python Packages
-```
+```text
 packages/python-core/        → superfunctions (imports: superfunctions.db, superfunctions.http)
 packages/python-sqlalchemy/  → superfunctions-sqlalchemy
 packages/python-fastapi/     → superfunctions-fastapi
@@ -123,8 +123,6 @@ from superfunctions_fastapi import create_router
 ## Documentation
 
 - [Python Packages Guide](python-core/README.md)
-- [Python Adapters](PYTHON_ADAPTERS.md)
-- [Quick Start](QUICK_START.md)
 
 ## License
 

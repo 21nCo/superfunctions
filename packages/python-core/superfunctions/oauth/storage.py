@@ -23,8 +23,8 @@ class OAuthConnectionSubject(BaseModel):
 class OAuthBrowserAuthSubject(BaseModel):
     """Stored subject for browser-based sign-in intents."""
 
-    kind: Literal["browser-auth"] = "browser-auth"
-    intent_id: str = Field(alias="intentId")
+    kind: Literal["browser-auth", "browser"] = "browser-auth"
+    intent_id: Optional[str] = Field(None, alias="intentId")
     tenant_id: Optional[str] = Field(None, alias="tenantId")
     region_id: Optional[str] = Field(None, alias="regionId")
     return_to: Optional[str] = Field(None, alias="returnTo")
@@ -148,35 +148,35 @@ class OAuthStateStore(Protocol):
     """Shared OAuth state persistence protocol."""
 
     async def put(self, record: OAuthStateRecord) -> None:
-        ...
+        pass
 
     async def get(self, state_id: str) -> Optional[OAuthStateRecord]:
-        ...
+        pass
 
     async def consume(self, state_id: str, consumed_at: str) -> Optional[OAuthStateRecord]:
-        ...
+        pass
 
     async def delete_expired(self, before: str) -> int:
-        ...
+        pass
 
 
 class TokenVault(Protocol):
     """Shared token vault protocol."""
 
     async def put(self, record: TokenRecord) -> None:
-        ...
+        pass
 
     async def get(self, token_id: str) -> Optional[TokenRecord]:
-        ...
+        pass
 
     async def get_by_connection(self, connection_id: str) -> Optional[TokenRecord]:
-        ...
+        pass
 
     async def rotate_key(self, token_id: str, new_key_ref: str) -> None:
-        ...
+        pass
 
     async def delete_by_connection(self, connection_id: str) -> None:
-        ...
+        pass
 
 
 class EncryptedTokenVault(TokenVault, Protocol):
@@ -187,36 +187,36 @@ class OAuthConsentStore(Protocol):
     """Consent persistence protocol."""
 
     async def put(self, record: OAuthConsentRecord) -> None:
-        ...
+        pass
 
     async def get(self, consent_id: str) -> Optional[OAuthConsentRecord]:
-        ...
+        pass
 
     async def list_by_subject(
         self, provider_id: str, subject: OAuthStoredSubject
     ) -> List[OAuthConsentRecord]:
-        ...
+        pass
 
     async def delete(self, consent_id: str) -> None:
-        ...
+        pass
 
 
 class OAuthRevocationFailureStore(Protocol):
     """Revocation failure persistence protocol."""
 
     async def put(self, record: OAuthRevocationFailureRecord) -> None:
-        ...
+        pass
 
     async def get(self, failure_id: str) -> Optional[OAuthRevocationFailureRecord]:
-        ...
+        pass
 
     async def list_by_subject(
         self, provider_id: str, subject: OAuthStoredSubject
     ) -> List[OAuthRevocationFailureRecord]:
-        ...
+        pass
 
     async def delete(self, failure_id: str) -> None:
-        ...
+        pass
 
 
 class OAuthStateStoreError(Exception):
@@ -341,9 +341,9 @@ def validate_oauth_stored_subject(subject: OAuthStoredSubject) -> None:
             )
         return
 
-    if not subject.intent_id:
+    if subject.kind in ("browser-auth", "browser") and not subject.intent_id:
         raise OAuthStateStoreError(
-            "VALIDATION_ERROR", "browser-auth subjects require intentId"
+            "VALIDATION_ERROR", "browser subjects require intentId"
         )
     if subject.metadata is not None and not _is_record(subject.metadata):
         raise OAuthStateStoreError(
@@ -359,7 +359,16 @@ def get_oauth_subject_key(subject: OAuthStoredSubject) -> str:
             return f"connection:{subject.connection_id}"
         return f"connection:{subject.tenant_id}:{subject.user_id}"
 
-    return f"browser-auth:{subject.intent_id}"
+    if subject.kind in ("browser-auth", "browser"):
+        if not subject.intent_id:
+            raise OAuthStateStoreError(
+                "VALIDATION_ERROR", "browser subjects require a stable intentId"
+            )
+        prefix = "browser-auth" if subject.kind == "browser-auth" else "browser"
+        return f"{prefix}:{subject.intent_id}"
+    raise OAuthStateStoreError(
+        "VALIDATION_ERROR", "unsupported OAuth subject kind"
+    )
 
 
 def apply_subject_to_state_record(record: OAuthStateRecord) -> OAuthStateRecord:
@@ -376,7 +385,11 @@ def apply_subject_to_state_record(record: OAuthStateRecord) -> OAuthStateRecord:
     payload["intentId"] = subject.intent_id if isinstance(subject, OAuthBrowserAuthSubject) else None
     payload["regionId"] = subject.region_id if isinstance(subject, OAuthBrowserAuthSubject) else None
     payload["returnTo"] = subject.return_to if isinstance(subject, OAuthBrowserAuthSubject) else None
-    payload["metadata"] = _clone_unknown_record(subject.metadata)
+    payload["metadata"] = (
+        _clone_unknown_record(subject.metadata)
+        if isinstance(subject, OAuthBrowserAuthSubject)
+        else _clone_unknown_record(record.metadata)
+    )
     return OAuthStateRecord.model_validate(payload)
 
 
@@ -433,9 +446,9 @@ def _model_validate_subject(value: Any) -> OAuthStoredSubject:
     payload = dict(value)
     if payload.get("kind") == "connection":
         return OAuthConnectionSubject.model_validate(payload)
-    if payload.get("kind") == "browser-auth":
+    if payload.get("kind") in ("browser-auth", "browser"):
         return OAuthBrowserAuthSubject.model_validate(payload)
-    raise OAuthStateStoreError("VALIDATION_ERROR", "subject kind must be connection or browser-auth")
+    raise OAuthStateStoreError("VALIDATION_ERROR", "subject kind must be connection, browser-auth, or browser")
 
 
 def _assert_iso_timestamp(field_name: str, value: str) -> None:

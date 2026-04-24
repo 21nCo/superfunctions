@@ -43,7 +43,7 @@ export function createAuthMiddleware<TSession extends AuthSession>(
   ): Promise<Response> => {
     // Check if path should skip authentication
     const url = new URL(request.url);
-    if (skipPaths.some(path => url.pathname === path || url.pathname.endsWith(path))) {
+    if (skipPaths.some(path => url.pathname === path)) {
       return next();
     }
 
@@ -98,7 +98,7 @@ export function createResourceAuthMiddleware<TSession extends AuthSession>(
   ): Promise<Response> => {
     // Check if path should skip resource authorization
     const url = new URL(request.url);
-    if (skipPaths.some(path => url.pathname === path || url.pathname.endsWith(path))) {
+    if (skipPaths.some(path => url.pathname === path)) {
       return next();
     }
 
@@ -146,12 +146,13 @@ export function extractBearerTokenFromHeader(header: string | null | undefined):
     return null;
   }
 
-  const match = header.trim().match(/^Bearer\s+(.+)$/i);
-  if (!match) {
+  const trimmedHeader = header.trim();
+  const bearerPrefix = 'bearer ';
+  if (trimmedHeader.slice(0, bearerPrefix.length).toLowerCase() !== bearerPrefix) {
     return null;
   }
 
-  const token = match[1].trim();
+  const token = trimmedHeader.slice(bearerPrefix.length).trim();
   return token.length > 0 ? token : null;
 }
 
@@ -191,7 +192,7 @@ export function createBearerAuthMiddleware<TSession>(
     next: () => Promise<Response>
   ): Promise<Response> => {
     const url = new URL(request.url);
-    if (skipPaths.some((path) => url.pathname === path || url.pathname.endsWith(path))) {
+    if (skipPaths.some((path) => url.pathname === path)) {
       return next();
     }
 

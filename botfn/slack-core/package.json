@@ -2,7 +2,8 @@
   "name": "@botfn/slack-core",
   "version": "0.0.1",
   "description": "Slack integration core utilities",
-  "main": "dist/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
   "scripts": {
