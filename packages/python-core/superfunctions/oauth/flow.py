@@ -25,9 +25,7 @@ from .core import (
 from .http import OAuthHttpError, OAuthTokenEndpointRequest
 from .storage import (
     OAuthStateRecord,
-    OAuthStateStore,
     TokenRecord,
-    TokenVault,
     apply_subject_to_state_record,
     resolve_oauth_stored_subject,
 )
@@ -544,7 +542,18 @@ class DefaultOAuthFlowService:
                 }
             )
             return result
-        except OAuthFlowError:
+        except OAuthFlowError as error:
+            await self._emit_event(
+                {
+                    "name": "oauth.flow.callback.failed",
+                    "requestId": payload.request_id or _create_request_id(),
+                    "providerId": payload.provider_id or "",
+                    "at": _isoformat(now),
+                    "ok": False,
+                    "errorCode": error.code,
+                    "details": error.details,
+                }
+            )
             raise
         except OAuthHttpError as error:
             wrapped = OAuthFlowError(

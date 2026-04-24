@@ -142,7 +142,8 @@ function scanDirectory(
             schemaVersion: packageJson.superfunctions.schemaVersion,
             libraryNames: deriveLibraryNames(
               packageName,
-              packageJson.superfunctions.libraryNames
+              packageJson.superfunctions.libraryNames,
+              packageJson.superfunctions.namespace,
             ),
           });
         }
@@ -167,7 +168,8 @@ export function getSuperfunctionsRegistry(
 
 function deriveLibraryNames(
   packageName: string,
-  explicitLibraryNames?: unknown
+  explicitLibraryNames?: unknown,
+  explicitNamespace?: unknown,
 ): string[] {
   if (Array.isArray(explicitLibraryNames)) {
     const normalized = explicitLibraryNames
@@ -176,6 +178,10 @@ function deriveLibraryNames(
     if (normalized.length > 0) {
       return [...new Set(normalized)];
     }
+  }
+
+  if (typeof explicitNamespace === "string" && explicitNamespace.trim().length > 0) {
+    return [explicitNamespace.trim()];
   }
 
   if (packageName.startsWith("@superfunctions/")) {

@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import type {
   InternalCrud,
   InternalColumnDef,
@@ -12,9 +13,20 @@ import {
   parseInternalOrderBy,
   quoteInternalIdentifier,
 } from '../internal-utils.js';
-import { sql as drizzleSql } from 'drizzle-orm';
 
 export type DrizzleDialect = 'postgres' | 'mysql' | 'sqlite';
+
+const require = createRequire(import.meta.url);
+
+function loadDrizzleSql() {
+  try {
+    return (require('drizzle-orm') as typeof import('drizzle-orm')).sql;
+  } catch {
+    throw new Error(
+      'drizzleAdapter requires the optional peer dependency "drizzle-orm". Install drizzle-orm to use this adapter.'
+    );
+  }
+}
 
 function buildWhereClause(
   where: InternalWhereClause[],
@@ -25,7 +37,7 @@ function buildWhereClause(
   }
 
   assertInternalWhereClauses(where);
-  const sql = drizzleSql;
+  const sql = loadDrizzleSql();
 
   function buildCondition(clause: InternalWhereClause): any {
     const fieldSql = sql.raw(quoteInternalIdentifier(clause.field, dialect));
@@ -49,9 +61,13 @@ function buildWhereClause(
   return { fragment: combined, empty: false };
 }
 
-export function createDrizzleInternalCrud(db: any, dialect: DrizzleDialect): InternalCrud {
+export function createDrizzleInternalCrud(
+  db: any,
+  dialect: DrizzleDialect,
+  drizzleSqlImpl: ReturnType<typeof loadDrizzleSql> = loadDrizzleSql(),
+): InternalCrud {
   const ensurePromises = new Map<string, Promise<void>>();
-  const sql = drizzleSql;
+  const sql = drizzleSqlImpl;
 
   // Dialect-aware execution helpers
   const isSQLite = dialect === 'sqlite';
