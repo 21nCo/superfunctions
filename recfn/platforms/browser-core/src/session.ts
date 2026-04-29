@@ -69,7 +69,7 @@ export async function createBrowserSession(
   config: BrowserSessionFactoryConfig,
   meetingUrl: string,
 ): Promise<BrowserSession> {
-  const { browser, userDataDir, joinTimeout = 30_000 } = config;
+  const { browser, joinTimeout = 30_000 } = config;
   const context = await browser.newContext({
     permissions: ['microphone', 'camera'],
   });
