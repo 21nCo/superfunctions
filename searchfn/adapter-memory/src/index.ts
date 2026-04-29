@@ -206,15 +206,17 @@ export class MemoryAdapter implements SearchAdapter {
     distance: number
   ): string[] {
     const cacheKey = `${term}:${distance}`;
-    let expansion = engine.fuzzyCache.get(cacheKey);
-    if (!expansion) {
-      expansion = fuzzyExpand(term, distance, engine.vocabulary);
-      engine.fuzzyCache.set(cacheKey, expansion);
-      if (engine.fuzzyCache.size > 1000) {
-        const firstKey = engine.fuzzyCache.keys().next().value;
-        if (firstKey !== undefined) {
-          engine.fuzzyCache.delete(firstKey);
-        }
+    const cachedExpansion = engine.fuzzyCache.get(cacheKey);
+    if (cachedExpansion) {
+      return cachedExpansion;
+    }
+
+    const expansion = fuzzyExpand(term, distance, engine.vocabulary);
+    engine.fuzzyCache.set(cacheKey, expansion);
+    if (engine.fuzzyCache.size > 1000) {
+      const firstKey = engine.fuzzyCache.keys().next().value;
+      if (firstKey !== undefined) {
+        engine.fuzzyCache.delete(firstKey);
       }
     }
     return expansion;
