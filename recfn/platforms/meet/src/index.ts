@@ -99,8 +99,9 @@ export class MeetAdapter extends BrowserAutomationAdapter<
           joinTimeout,
           readySelector: '[aria-label*="Leave call"], [aria-label*="Leave"]',
           settleDelayMs: 1_000,
-          clickJoin: async (joinPage) =>
-            joinPage.evaluate((displayName) => {
+          clickJoin: async (joinPage) => {
+            const displayName = botConfig.displayName ?? 'Recording Bot';
+            await joinPage.evaluate((name) => {
               const nameInput = Array.from(
                 document.querySelectorAll('input, textarea'),
               ).find((input) => {
@@ -122,11 +123,24 @@ export class MeetAdapter extends BrowserAutomationAdapter<
                   Object.getPrototypeOf(nameInput),
                   'value',
                 )?.set;
-                valueSetter?.call(nameInput, displayName);
+                valueSetter?.call(nameInput, name);
                 nameInput.dispatchEvent(new Event('input', { bubbles: true }));
                 nameInput.dispatchEvent(new Event('change', { bubbles: true }));
               }
+            }, displayName);
 
+            await joinPage.waitForTimeout(300);
+
+            const askToJoin = joinPage
+              .locator('button, [role="button"]')
+              .filter({ hasText: /^(Ask to join|Join now)$/i })
+              .first();
+            if ((await askToJoin.count()) > 0) {
+              await askToJoin.click({ timeout: 5_000, force: true });
+              return true;
+            }
+
+            return joinPage.evaluate(() => {
               const buttons = Array.from(
                 document.querySelectorAll('button, [role="button"]'),
               ) as HTMLElement[];
@@ -154,7 +168,8 @@ export class MeetAdapter extends BrowserAutomationAdapter<
                 return true;
               }
               return false;
-            }, botConfig.displayName ?? 'Recording Bot'),
+            });
+          },
         });
 
         try {
