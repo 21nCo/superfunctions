@@ -50,7 +50,8 @@ export class MeetAdapter extends BrowserAutomationAdapter<
       joinMeeting: async (page, joinTimeout) => {
         await joinBrowserMeeting(page, {
           joinTimeout,
-          readySelector: '[data-meet-id], .zWGUib, [aria-label*="Meeting"]',
+          readySelector: '[aria-label*="Leave call"], [aria-label*="Leave"]',
+          settleDelayMs: 1_000,
           clickJoin: async (joinPage) =>
             joinPage.evaluate(() => {
               const buttons = Array.from(
@@ -73,6 +74,26 @@ export class MeetAdapter extends BrowserAutomationAdapter<
               return false;
             }),
         });
+
+        await page.waitForFunction(
+          () => {
+            const bodyText = document.body?.innerText ?? '';
+            if (/you can'?t join|not allowed to join|meeting is full/i.test(bodyText)) {
+              throw new Error(bodyText.slice(0, 500));
+            }
+
+            const controls = Array.from(
+              document.querySelectorAll('button, [role="button"]'),
+            );
+            return controls.some((control) => {
+              const el = control as HTMLElement;
+              const label = `${el.innerText ?? ''} ${el.getAttribute('aria-label') ?? ''}`;
+              return /leave call|leave/i.test(label);
+            });
+          },
+          undefined,
+          { timeout: joinTimeout },
+        );
       },
       leaveMeeting: async (page) => {
         await leaveBrowserMeeting(page, async (leavePage) => {
