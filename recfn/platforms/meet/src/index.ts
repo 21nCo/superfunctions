@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import type { Browser, Page } from 'playwright';
 import {
   BrowserAutomationAdapter,
-  joinBrowserMeeting,
   leaveBrowserMeeting,
 } from 'recfn-browser-core';
 import { createMeetBrowserSession } from './browser.js';
@@ -95,52 +94,36 @@ export class MeetAdapter extends BrowserAutomationAdapter<
       defaultTitle: 'Google Meet',
       createSession: createMeetBrowserSession,
       joinMeeting: async (page, joinTimeout, botConfig) => {
-        await joinBrowserMeeting(page, {
-          joinTimeout,
-          readySelector: '[aria-label*="Leave call"], [aria-label*="Leave"]',
-          settleDelayMs: 1_000,
-          clickJoin: async (joinPage) => {
-            const displayName = botConfig.displayName ?? 'Recording Bot';
-            await joinPage.evaluate((name) => {
-              const nameInput = Array.from(
-                document.querySelectorAll('input, textarea'),
-              ).find((input) => {
-                const el = input as HTMLInputElement | HTMLTextAreaElement;
-                const label = [
-                  el.getAttribute('aria-label'),
-                  el.getAttribute('placeholder'),
-                  el.closest('label')?.textContent,
-                  el.parentElement?.textContent,
-                ]
-                  .filter(Boolean)
-                  .join(' ');
-                return /name/i.test(label);
-              }) as HTMLInputElement | HTMLTextAreaElement | undefined;
+        try {
+          const displayName = botConfig.displayName ?? 'Recording Bot';
+          const clickTarget = await page.evaluate((name) => {
+            const nameInput = Array.from(
+              document.querySelectorAll('input, textarea'),
+            ).find((input) => {
+              const el = input as HTMLInputElement | HTMLTextAreaElement;
+              const label = [
+                el.getAttribute('aria-label'),
+                el.getAttribute('placeholder'),
+                el.closest('label')?.textContent,
+                el.parentElement?.textContent,
+              ]
+                .filter(Boolean)
+                .join(' ');
+              return /name/i.test(label);
+            }) as HTMLInputElement | HTMLTextAreaElement | undefined;
 
-              if (nameInput && !nameInput.value.trim()) {
-                nameInput.focus();
-                const valueSetter = Object.getOwnPropertyDescriptor(
-                  Object.getPrototypeOf(nameInput),
-                  'value',
-                )?.set;
-                valueSetter?.call(nameInput, name);
-                nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-                nameInput.dispatchEvent(new Event('change', { bubbles: true }));
-              }
-            }, displayName);
-
-            await joinPage.waitForTimeout(300);
-
-            const askToJoin = joinPage
-              .locator('button, [role="button"]')
-              .filter({ hasText: /^(Ask to join|Join now)$/i })
-              .first();
-            if ((await askToJoin.count()) > 0) {
-              await askToJoin.click({ timeout: 5_000, force: true });
-              return true;
+            if (nameInput && !nameInput.value.trim()) {
+              nameInput.focus();
+              const valueSetter = Object.getOwnPropertyDescriptor(
+                Object.getPrototypeOf(nameInput),
+                'value',
+              )?.set;
+              valueSetter?.call(nameInput, name);
+              nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+              nameInput.dispatchEvent(new Event('change', { bubbles: true }));
             }
 
-            return joinPage.evaluate(() => {
+            const findJoinButton = () => {
               const buttons = Array.from(
                 document.querySelectorAll('button, [role="button"]'),
               ) as HTMLElement[];
@@ -163,16 +146,38 @@ export class MeetAdapter extends BrowserAutomationAdapter<
                     !/other ways/i.test(label)
                   );
                 });
-              if (joinButton) {
-                joinButton.click();
-                return true;
-              }
-              return false;
-            });
-          },
-        });
+              return joinButton;
+            };
 
-        try {
+            const joinButton = findJoinButton();
+            if (!joinButton) {
+              return { ok: false as const, reason: 'Join button not found.' };
+            }
+
+            const rect = joinButton.getBoundingClientRect();
+            return {
+              ok: true as const,
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              label: `${joinButton.innerText ?? ''} ${joinButton.getAttribute('aria-label') ?? ''}`.trim(),
+            };
+          }, displayName);
+
+          if (!clickTarget.ok) {
+            throw new Error(clickTarget.reason);
+          }
+
+          await page.mouse.click(clickTarget.x, clickTarget.y);
+          await page.waitForTimeout(1_000);
+
+          const clicked = await page.evaluate(() => {
+            const bodyText = document.body?.innerText ?? '';
+            return !/ask to join/i.test(bodyText) || /asking to join|waiting|you'll join when/i.test(bodyText);
+          });
+          if (!clicked) {
+            throw new Error(`Meet join button did not activate after click.`);
+          }
+
           await page.waitForFunction(
             () => {
               const bodyText = document.body?.innerText ?? '';
@@ -180,10 +185,9 @@ export class MeetAdapter extends BrowserAutomationAdapter<
                 throw new Error(bodyText.slice(0, 500));
               }
 
-              const controls = Array.from(
+              return Array.from(
                 document.querySelectorAll('button, [role="button"]'),
-              );
-              return controls.some((control) => {
+              ).some((control) => {
                 const el = control as HTMLElement;
                 const label = `${el.innerText ?? ''} ${el.getAttribute('aria-label') ?? ''}`;
                 return /leave call|leave/i.test(label);
