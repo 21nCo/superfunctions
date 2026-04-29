@@ -1,0 +1,12 @@
+{
+  "reason": "Google Meet rejected the bot join attempt for this meeting.",
+  "timestamp": "2026-04-25T08:34:20.005Z",
+  "activeURL": "https://meet.google.com/uaw-wcwu-eut",
+  "activeTitle": "Meet",
+  "pages": [
+    {
+      "url": "https://meet.google.com/uaw-wcwu-eut",
+      "isActive": true
+    }
+  ]
+}

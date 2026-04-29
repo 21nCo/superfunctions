@@ -1,0 +1,12 @@
+{
+  "reason": "Timed out waiting for the Google Meet join flow. If the bot is still on a permission or sign-in screen, check the diagnostics folder.",
+  "timestamp": "2026-04-25T11:20:58.211Z",
+  "activeURL": "https://meet.google.com/nxv-gzmo-qgf",
+  "activeTitle": "Meet – nxv-gzmo-qgf",
+  "pages": [
+    {
+      "url": "https://meet.google.com/nxv-gzmo-qgf",
+      "isActive": true
+    }
+  ]
+}

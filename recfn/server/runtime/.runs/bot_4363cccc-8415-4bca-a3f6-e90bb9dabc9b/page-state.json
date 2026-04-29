@@ -1,0 +1,12 @@
+{
+  "reason": "Timed out waiting for the Google Meet join flow. If the bot is still on a permission or sign-in screen, check the diagnostics folder.",
+  "timestamp": "2026-04-25T08:51:20.651Z",
+  "activeURL": "https://meet.google.com/uaw-wcwu-eut?pli=1",
+  "activeTitle": "Meet – uaw-wcwu-eut",
+  "pages": [
+    {
+      "url": "https://meet.google.com/uaw-wcwu-eut?pli=1",
+      "isActive": true
+    }
+  ]
+}
