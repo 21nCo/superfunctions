@@ -29,18 +29,3 @@ export {
 } from './transcriber.js';
 
 export { uploadRecording, type UploadOptions } from './uploader.js';
-
-export {
-  MeetingDetector,
-  classifyMeetingSignals,
-  createStaticMeetingSignalProvider,
-  type MeetingDetection,
-  type MeetingDetectionEvent,
-  type MeetingDetectionEventType,
-  type MeetingDetectionState,
-  type MeetingDetectorOptions,
-  type MeetingPlatform,
-  type MeetingSignal,
-  type MeetingSignalProvider,
-  type MeetingSignalSource,
-} from './meeting-detection.js';
