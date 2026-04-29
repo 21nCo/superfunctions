@@ -329,6 +329,18 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     await transitionBot(lifecycleDeps, botId, namespace, 'recording');
     await persistMetadataSnapshot(bot, adapter, 'recording');
     const capturePromise = startCaptureSession(bot, adapter);
+    void capturePromise.catch(async (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Could not start audio capture.';
+      logger.error('recording.capture.failed', {
+        botId,
+        namespace,
+        error: errorMessage,
+      });
+      await transitionBot(lifecycleDeps, botId, namespace, 'error', errorMessage);
+      await adapter.leave().catch(() => {});
+      activeSessions.delete(botId);
+    });
     activeSessions.set(botId, {
       botId,
       namespace,
