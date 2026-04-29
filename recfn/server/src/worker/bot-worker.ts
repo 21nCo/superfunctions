@@ -22,11 +22,14 @@ import {
 } from '../recording/capture.js';
 import { uploadRecording } from '../recording/storage.js';
 
+export type PlatformAdapterFactory = () => PlatformAdapter;
+
 export interface BotWorkerConfig {
   store: RecFnStore;
   queue: QueueAdapter;
   logger: Logger;
-  platformAdapters: Map<string, PlatformAdapter>;
+  platformAdapters?: Map<string, PlatformAdapter>;
+  platformAdapterFactories?: Map<string, PlatformAdapterFactory>;
   storage?: StorageAdapter;
   realtimePipeline?: RealtimeTranscriptionPipeline;
   streamManager?: TranscriptStreamManager;
@@ -69,6 +72,15 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
   };
   const autoLeaveTimer = createAutoLeaveTimer(lifecycleDeps);
   const activeSessions = new Map<string, ActiveBotSession>();
+
+  function resolvePlatformAdapter(platform: string): PlatformAdapter | undefined {
+    const factory = config.platformAdapterFactories?.get(platform);
+    if (factory) {
+      return factory();
+    }
+
+    return config.platformAdapters?.get(platform);
+  }
 
   async function persistMetadataSnapshot(
     bot: Bot,
@@ -261,8 +273,8 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     // Transition to joining
     await transitionBot(lifecycleDeps, botId, namespace, 'joining');
 
-    // Get platform adapter
-    const adapter = config.platformAdapters.get(bot.platform);
+    // Create or resolve a platform adapter for this specific bot session.
+    const adapter = resolvePlatformAdapter(bot.platform);
     if (!adapter) {
       await transitionBot(
         lifecycleDeps,

@@ -27,7 +27,10 @@
     "probefn/apps/*",
     "probefn/packages/*",
     "packages/*",
-    "filefn/examples/full-demo/*"
+    "filefn/examples/full-demo/*",
+    "recfn/*",
+    "recfn/platforms/*",
+    "recfn/adapters/*"
   ],
   "scripts": {
     "build": "turbo run build",

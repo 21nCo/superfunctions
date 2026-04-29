@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "poc:hosted-bot": "node dist/hosted-bot-poc.js",
     "test": "vitest",
     "test:watch": "vitest --watch",
     "lint": "echo 'lint not configured'",
@@ -57,9 +58,11 @@
     "recfn-deepgram": "*",
     "recfn-assemblyai": "*",
     "recfn-google-stt": "*",
+    "recfn-meet": "*",
     "@superfunctions/envelope": "*",
     "@superfunctions/errors": "*",
-    "@superfunctions/queue": "*"
+    "@superfunctions/queue": "*",
+    "playwright-core": "^1.49.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

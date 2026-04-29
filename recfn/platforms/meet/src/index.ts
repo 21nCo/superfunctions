@@ -25,6 +25,9 @@ export interface MeetAdapterConfig {
   testPage?: Page;
   userDataDir?: string;
   joinTimeout?: number;
+  headless?: boolean;
+  executablePath?: string;
+  browserArgs?: string[];
 }
 
 /**

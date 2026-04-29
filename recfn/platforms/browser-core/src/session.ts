@@ -17,6 +17,9 @@ export interface BrowserAdapterConfig {
   testPage?: Page;
   userDataDir?: string;
   joinTimeout?: number;
+  headless?: boolean;
+  executablePath?: string;
+  browserArgs?: string[];
 }
 
 export interface BrowserSession {
@@ -68,7 +71,6 @@ export async function createBrowserSession(
 ): Promise<BrowserSession> {
   const { browser, userDataDir, joinTimeout = 30_000 } = config;
   const context = await browser.newContext({
-    ...(userDataDir ? { userDataDir } : {}),
     permissions: ['microphone', 'camera'],
   });
   const page = await context.newPage();
@@ -134,14 +136,41 @@ async function createManagedBrowserSession(
     };
   }
 
+  const launchArgs = [
+    '--use-fake-ui-for-media-stream',
+    '--autoplay-policy=no-user-gesture-required',
+    ...(config.browserArgs ?? []),
+  ];
+
+  if (!config.browser && config.userDataDir) {
+    const context = await chromium.launchPersistentContext(config.userDataDir, {
+      headless: config.headless ?? true,
+      executablePath: config.executablePath,
+      args: launchArgs,
+      permissions: ['microphone', 'camera'],
+    });
+    const page = context.pages()[0] ?? await context.newPage();
+
+    await page.goto(meetingUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: joinTimeout,
+    });
+
+    return {
+      page,
+      context,
+      async close() {
+        await context.close();
+      },
+    };
+  }
+
   const browser =
     config.browser ??
     (await chromium.launch({
-      headless: true,
-      args: [
-        '--use-fake-ui-for-media-stream',
-        '--autoplay-policy=no-user-gesture-required',
-      ],
+      headless: config.headless ?? true,
+      executablePath: config.executablePath,
+      args: launchArgs,
     }));
 
   return createSession(

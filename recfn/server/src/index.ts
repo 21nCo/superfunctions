@@ -227,7 +227,7 @@ export { createAutoLeaveTimer } from './worker/auto-leave.js';
 export type { AutoLeaveTimer } from './worker/auto-leave.js';
 export { MemoryQueueAdapter, QUEUE_NAMES } from './integrations/flowfn.js';
 export type { QueueAdapter, JobPayload } from './integrations/flowfn.js';
-export { MemoryLogger, createNoopLogger } from './integrations/logfn.js';
+export { MemoryLogger, createConsoleLogger, createNoopLogger } from './integrations/logfn.js';
 export type { Logger, LogEntry } from './integrations/logfn.js';
 export {
   MemoryStorageAdapter,
