@@ -320,6 +320,23 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     await transitionBot(lifecycleDeps, botId, namespace, 'joined');
     await persistMetadataSnapshot(bot, adapter, 'joined');
 
+    if (process.env.RECFN_POC_JOIN_ONLY === '1') {
+      logger.info('bot.join_only.active', { botId, namespace });
+      activeSessions.set(botId, {
+        botId,
+        namespace,
+        adapter,
+        capturePromise: Promise.resolve({
+          data: new Uint8Array(),
+          format: 'wav',
+          duration: 0,
+          size: 0,
+        }),
+      });
+      setupParticipantMonitoring(bot, adapter);
+      return;
+    }
+
     // Send consent message before recording (BOT-008, SEC-006)
     const consentMsg =
       bot.config.consentMessage ?? 'This meeting is being recorded';
