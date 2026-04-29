@@ -151,12 +151,17 @@ export class MeetAdapter extends BrowserAutomationAdapter<
 
             const joinButton = findJoinButton();
             if (!joinButton) {
+              const bodyText = document.body?.innerText ?? '';
+              if (/you'?ll be able to join|you will be able to join|asking to join|waiting/i.test(bodyText)) {
+                return { ok: true as const, waiting: true as const };
+              }
               return { ok: false as const, reason: 'Join button not found.' };
             }
 
             const rect = joinButton.getBoundingClientRect();
             return {
               ok: true as const,
+              waiting: false as const,
               x: rect.left + rect.width / 2,
               y: rect.top + rect.height / 2,
               label: `${joinButton.innerText ?? ''} ${joinButton.getAttribute('aria-label') ?? ''}`.trim(),
@@ -167,15 +172,17 @@ export class MeetAdapter extends BrowserAutomationAdapter<
             throw new Error(clickTarget.reason);
           }
 
-          await page.mouse.click(clickTarget.x, clickTarget.y);
-          await page.waitForTimeout(1_000);
+          if (!clickTarget.waiting) {
+            await page.mouse.click(clickTarget.x, clickTarget.y);
+            await page.waitForTimeout(1_000);
 
-          const clicked = await page.evaluate(() => {
-            const bodyText = document.body?.innerText ?? '';
-            return !/ask to join/i.test(bodyText) || /asking to join|waiting|you'll join when/i.test(bodyText);
-          });
-          if (!clicked) {
-            throw new Error(`Meet join button did not activate after click.`);
+            const clicked = await page.evaluate(() => {
+              const bodyText = document.body?.innerText ?? '';
+              return !/ask to join/i.test(bodyText) || /asking to join|waiting|you'?ll be able to join|you will be able to join/i.test(bodyText);
+            });
+            if (!clicked) {
+              throw new Error(`Meet join button did not activate after click.`);
+            }
           }
 
           await page.waitForFunction(
