@@ -173,12 +173,26 @@ export class MeetAdapter extends BrowserAutomationAdapter<
           }
 
           if (!clickTarget.waiting) {
-            await page.mouse.click(clickTarget.x, clickTarget.y);
+            await page.evaluate(() => {
+              const buttons = Array.from(
+                document.querySelectorAll('button, [role="button"]'),
+              ) as HTMLElement[];
+              const joinButton = buttons.find((button) => {
+                const label = `${button.innerText ?? ''} ${button.getAttribute('aria-label') ?? ''}`.trim();
+                return /^(join now|ask to join)$/i.test(label);
+              });
+              joinButton?.scrollIntoView({ block: 'center', inline: 'center' });
+              joinButton?.focus();
+            });
+            await page.mouse.move(clickTarget.x, clickTarget.y);
+            await page.mouse.down();
+            await page.waitForTimeout(100);
+            await page.mouse.up();
             await page.waitForTimeout(1_000);
 
             const clicked = await page.evaluate(() => {
               const bodyText = document.body?.innerText ?? '';
-              return !/ask to join/i.test(bodyText) || /asking to join|waiting|you'?ll be able to join|you will be able to join/i.test(bodyText);
+              return !/ask to join/i.test(bodyText) || /asking to join|you'?ll be able to join|you will be able to join|waiting for.*host/i.test(bodyText);
             });
             if (!clicked) {
               throw new Error(`Meet join button did not activate after click.`);
