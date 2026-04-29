@@ -54,7 +54,7 @@ export interface BrowserPlatformHooks<
   metadataId: string;
   defaultTitle: string;
   createSession: BrowserSessionFactory;
-  joinMeeting(page: Page, joinTimeout: number): Promise<void>;
+  joinMeeting(page: Page, joinTimeout: number, botConfig: BotConfig): Promise<void>;
   leaveMeeting(page: Page): Promise<void>;
   createParticipantTracker(page: Page, botId: string): P;
   createChatTracker(page: Page): C;
@@ -221,7 +221,7 @@ export class BrowserAutomationAdapter<
       this.hooks.createSession,
     );
 
-    await this.hooks.joinMeeting(this.session.page, joinTimeout);
+    await this.hooks.joinMeeting(this.session.page, joinTimeout, botConfig);
 
     this.connected = true;
     this.participantTracker = this.hooks.createParticipantTracker(

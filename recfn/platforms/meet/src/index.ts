@@ -94,13 +94,35 @@ export class MeetAdapter extends BrowserAutomationAdapter<
       metadataId: 'meet',
       defaultTitle: 'Google Meet',
       createSession: createMeetBrowserSession,
-      joinMeeting: async (page, joinTimeout) => {
+      joinMeeting: async (page, joinTimeout, botConfig) => {
         await joinBrowserMeeting(page, {
           joinTimeout,
           readySelector: '[aria-label*="Leave call"], [aria-label*="Leave"]',
           settleDelayMs: 1_000,
           clickJoin: async (joinPage) =>
-            joinPage.evaluate(() => {
+            joinPage.evaluate((displayName) => {
+              const nameInput = Array.from(
+                document.querySelectorAll('input, textarea'),
+              ).find((input) => {
+                const el = input as HTMLInputElement | HTMLTextAreaElement;
+                const label = [
+                  el.getAttribute('aria-label'),
+                  el.getAttribute('placeholder'),
+                  el.closest('label')?.textContent,
+                  el.parentElement?.textContent,
+                ]
+                  .filter(Boolean)
+                  .join(' ');
+                return /name/i.test(label);
+              }) as HTMLInputElement | HTMLTextAreaElement | undefined;
+
+              if (nameInput && !nameInput.value.trim()) {
+                nameInput.focus();
+                nameInput.value = displayName;
+                nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+
               const buttons = Array.from(
                 document.querySelectorAll('button, [role="button"]'),
               );
@@ -119,7 +141,7 @@ export class MeetAdapter extends BrowserAutomationAdapter<
                 return true;
               }
               return false;
-            }),
+            }, botConfig.displayName ?? 'Recording Bot'),
         });
 
         try {
