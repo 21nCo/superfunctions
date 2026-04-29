@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Browser, Page } from 'playwright';
 import {
   BrowserAutomationAdapter,
@@ -28,6 +30,51 @@ export interface MeetAdapterConfig {
   headless?: boolean;
   executablePath?: string;
   browserArgs?: string[];
+}
+
+async function writeMeetJoinDebugArtifacts(
+  page: Page,
+  error: unknown,
+): Promise<Error> {
+  const dir = process.env.RECFN_MEET_DEBUG_DIR ?? '/tmp/recfn-meet-debug';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  await mkdir(dir, { recursive: true }).catch(() => {});
+
+  const screenshotPath = join(dir, `meet-join-${stamp}.png`);
+  const htmlPath = join(dir, `meet-join-${stamp}.html`);
+  const statePath = join(dir, `meet-join-${stamp}.txt`);
+
+  const [title, url, bodyText, html] = await Promise.all([
+    page.title().catch(() => ''),
+    Promise.resolve(page.url()).catch(() => ''),
+    page.locator('body').innerText({ timeout: 1_000 }).catch(() => ''),
+    page.content().catch(() => ''),
+  ]);
+
+  await Promise.all([
+    page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {}),
+    writeFile(htmlPath, html).catch(() => {}),
+    writeFile(
+      statePath,
+      [
+        `url=${url}`,
+        `title=${title}`,
+        `error=${error instanceof Error ? error.message : String(error)}`,
+        '',
+        bodyText.slice(0, 2_000),
+      ].join('\n'),
+    ).catch(() => {}),
+  ]);
+
+  return new Error(
+    [
+      error instanceof Error ? error.message : 'Join timeout exceeded',
+      `Meet debug artifacts: ${screenshotPath}, ${htmlPath}, ${statePath}`,
+      bodyText ? `Visible text: ${bodyText.slice(0, 500)}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  );
 }
 
 /**
@@ -75,25 +122,29 @@ export class MeetAdapter extends BrowserAutomationAdapter<
             }),
         });
 
-        await page.waitForFunction(
-          () => {
-            const bodyText = document.body?.innerText ?? '';
-            if (/you can'?t join|not allowed to join|meeting is full/i.test(bodyText)) {
-              throw new Error(bodyText.slice(0, 500));
-            }
+        try {
+          await page.waitForFunction(
+            () => {
+              const bodyText = document.body?.innerText ?? '';
+              if (/you can'?t join|not allowed to join|meeting is full/i.test(bodyText)) {
+                throw new Error(bodyText.slice(0, 500));
+              }
 
-            const controls = Array.from(
-              document.querySelectorAll('button, [role="button"]'),
-            );
-            return controls.some((control) => {
-              const el = control as HTMLElement;
-              const label = `${el.innerText ?? ''} ${el.getAttribute('aria-label') ?? ''}`;
-              return /leave call|leave/i.test(label);
-            });
-          },
-          undefined,
-          { timeout: joinTimeout },
-        );
+              const controls = Array.from(
+                document.querySelectorAll('button, [role="button"]'),
+              );
+              return controls.some((control) => {
+                const el = control as HTMLElement;
+                const label = `${el.innerText ?? ''} ${el.getAttribute('aria-label') ?? ''}`;
+                return /leave call|leave/i.test(label);
+              });
+            },
+            undefined,
+            { timeout: joinTimeout },
+          );
+        } catch (error) {
+          throw await writeMeetJoinDebugArtifacts(page, error);
+        }
       },
       leaveMeeting: async (page) => {
         await leaveBrowserMeeting(page, async (leavePage) => {
