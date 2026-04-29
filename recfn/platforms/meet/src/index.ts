@@ -118,24 +118,37 @@ export class MeetAdapter extends BrowserAutomationAdapter<
 
               if (nameInput && !nameInput.value.trim()) {
                 nameInput.focus();
-                nameInput.value = displayName;
+                const valueSetter = Object.getOwnPropertyDescriptor(
+                  Object.getPrototypeOf(nameInput),
+                  'value',
+                )?.set;
+                valueSetter?.call(nameInput, displayName);
                 nameInput.dispatchEvent(new Event('input', { bubbles: true }));
                 nameInput.dispatchEvent(new Event('change', { bubbles: true }));
               }
 
               const buttons = Array.from(
                 document.querySelectorAll('button, [role="button"]'),
-              );
-              const joinButton = buttons.find(
-                (button) =>
-                  /join now|ask to join/i.test(
-                    (button as HTMLElement).innerText ?? '',
-                  ) ||
-                  (button as HTMLElement)
-                    .getAttribute?.('aria-label')
-                    ?.toLowerCase()
-                    .includes('join'),
-              ) as HTMLButtonElement | undefined;
+              ) as HTMLElement[];
+              const isEnabled = (button: HTMLElement) =>
+                !button.hasAttribute('disabled') &&
+                button.getAttribute('aria-disabled') !== 'true';
+              const labelFor = (button: HTMLElement) =>
+                `${button.innerText ?? ''} ${button.getAttribute('aria-label') ?? ''}`.trim();
+              const joinButton =
+                buttons.find(
+                  (button) =>
+                    isEnabled(button) &&
+                    /^(join now|ask to join)$/i.test(labelFor(button)),
+                ) ??
+                buttons.find((button) => {
+                  const label = labelFor(button);
+                  return (
+                    isEnabled(button) &&
+                    /join now|ask to join/i.test(label) &&
+                    !/other ways/i.test(label)
+                  );
+                });
               if (joinButton) {
                 joinButton.click();
                 return true;
