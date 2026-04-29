@@ -87,7 +87,6 @@ public final class RecFnMeetingBotController: ObservableObject {
         if !displayName.isEmpty { args += ["--name=\(displayName)"] }
         if resolvedPlatform != "auto" { args += ["--platform=\(resolvedPlatform)"] }
         if !recordingDir.isEmpty { args += ["--recording-dir=\(recordingDir)"] }
-        args += ["--headless"]
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: nodePath)
@@ -398,7 +397,7 @@ public final class RecFnMeetingBotController: ObservableObject {
 
     private func closeBotLoginProfileIfRunning() {
         if let process = setupLoginProcess, process.isRunning {
-            appendLog("Closing bot login Chrome window before starting headless bot...")
+            appendLog("Closing bot login Chrome window before starting bot...")
             process.terminate()
             process.waitUntilExit()
         }
