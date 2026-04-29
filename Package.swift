@@ -9,6 +9,10 @@ let package = Package(
     ],
     products: [
         .library(
+            name: "RecFnBotSDK",
+            targets: ["RecFnBotSDK"]
+        ),
+        .library(
             name: "RecFnDesktopSDK",
             targets: ["RecFnDesktopSDK"]
         )
@@ -37,7 +41,14 @@ let package = Package(
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("UniformTypeIdentifiers")
             ]
+        ),
+        .target(
+            name: "RecFnBotSDK",
+            path: "recfn/bot/macos/Sources/RecFnBotSDK",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("Foundation")
+            ]
         )
     ]
 )
-
