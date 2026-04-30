@@ -46,6 +46,7 @@ interface ActiveBotSession {
   namespace: string;
   adapter: PlatformAdapter;
   capturePromise: Promise<CaptureResult>;
+  recordingRequired: boolean;
 }
 
 export function createBotWorker(config: BotWorkerConfig): BotWorker {
@@ -173,6 +174,33 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
         'error',
         `${ErrorCode.RECORDING_FINALIZATION_FAILED}: no active capture session found.`,
       );
+      return;
+    }
+
+    if (!session.recordingRequired) {
+      logger.info('bot.join_only.finalization.start', { botId, namespace });
+      try {
+        await persistMetadataSnapshot(bot, session.adapter, 'leaving');
+        await session.adapter.leave();
+        await persistMetadataSnapshot(bot, session.adapter, 'done');
+        await transitionBot(lifecycleDeps, botId, namespace, 'left');
+        logger.info('bot.join_only.finalization.complete', { botId, namespace });
+      } catch (error) {
+        logger.error('bot.join_only.finalization.failed', {
+          botId,
+          namespace,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await transitionBot(
+          lifecycleDeps,
+          botId,
+          namespace,
+          'error',
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        activeSessions.delete(botId);
+      }
       return;
     }
 
@@ -332,6 +360,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
           duration: 0,
           size: 0,
         }),
+        recordingRequired: false,
       });
       setupParticipantMonitoring(bot, adapter);
       return;
@@ -363,6 +392,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       namespace,
       adapter,
       capturePromise,
+      recordingRequired: true,
     });
 
     // Set up participant monitoring for auto-leave

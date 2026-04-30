@@ -76,6 +76,43 @@ async function writeMeetJoinDebugArtifacts(
   );
 }
 
+async function disablePreJoinMedia(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const controls = Array.from(
+      document.querySelectorAll('button, [role="button"]'),
+    ) as HTMLElement[];
+
+    const labelFor = (control: HTMLElement) =>
+      [
+        control.innerText,
+        control.getAttribute('aria-label'),
+        control.getAttribute('data-tooltip'),
+        control.getAttribute('title'),
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+    const clickIfOn = (patterns: RegExp[]) => {
+      const control = controls.find((candidate) => {
+        const label = labelFor(candidate);
+        return patterns.some((pattern) => pattern.test(label));
+      });
+      control?.click();
+    };
+
+    clickIfOn([
+      /turn off.*microphone/i,
+      /mute.*microphone/i,
+      /microphone.*on/i,
+    ]);
+    clickIfOn([
+      /turn off.*camera/i,
+      /turn off.*video/i,
+      /camera.*on/i,
+    ]);
+  });
+}
+
 /**
  * Google Meet platform adapter using headless browser (Playwright).
  *
@@ -106,6 +143,8 @@ export class MeetAdapter extends BrowserAutomationAdapter<
             .getByRole('button', { name: /^got it$/i })
             .click({ timeout: 5_000 })
             .catch(() => {});
+
+          await disablePreJoinMedia(page).catch(() => {});
 
           const clickTarget = await page.evaluate((name) => {
             const isEnabled = (button: HTMLElement) =>

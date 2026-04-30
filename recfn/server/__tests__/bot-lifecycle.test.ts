@@ -209,6 +209,66 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     expect(logger.findByEvent('recording.finalization.complete')).toHaveLength(1);
   });
 
+  it('leaves a join-only bot without requiring a recording upload', async () => {
+    const previousJoinOnly = process.env.RECFN_POC_JOIN_ONLY;
+    process.env.RECFN_POC_JOIN_ONLY = '1';
+
+    try {
+      const storage = new MemoryStorageAdapter();
+      const bot = await store.createBot({
+        meetingUrl: 'https://zoom.us/j/123',
+        platform: 'zoom',
+        config: {
+          displayName: 'RecFn Bot',
+          joinTimeout: 30000,
+          autoLeaveOnEmpty: true,
+          autoLeaveEmptyTimeout: 30000,
+          consentMessage: 'This meeting is being recorded',
+          enableRealTimeTranscript: false,
+          asrProvider: 'whisper',
+          recordingFormat: 'mp4',
+          language: 'en-US',
+        },
+        namespace: 'ns_test',
+      });
+
+      await queue.enqueue(QUEUE_NAMES.BOT_JOIN, {
+        type: 'bot.join',
+        data: { botId: bot.id, namespace: 'ns_test' },
+        createdAt: new Date().toISOString(),
+      });
+
+      const worker = createBotWorker({
+        store,
+        queue,
+        logger,
+        storage,
+        platformAdapters: new Map([['zoom', createMockPlatformAdapter()]]),
+      });
+
+      expect(await worker.processNext()).toBe(true);
+
+      const joined = await store.getBot(bot.id, 'ns_test');
+      expect(joined!.status).toBe('joined');
+
+      await transitionBot({ store, logger, queue }, bot.id, 'ns_test', 'leaving');
+      expect(queue.size(QUEUE_NAMES.RECORDING_UPLOAD)).toBe(1);
+      expect(await worker.processNext()).toBe(true);
+
+      const updated = await store.getBot(bot.id, 'ns_test');
+      const recordings = await store.getRecordings(bot.id, 'ns_test');
+      expect(updated!.status).toBe('left');
+      expect(recordings).toHaveLength(0);
+      expect(logger.findByEvent('bot.join_only.finalization.complete')).toHaveLength(1);
+    } finally {
+      if (previousJoinOnly === undefined) {
+        delete process.env.RECFN_POC_JOIN_ONLY;
+      } else {
+        process.env.RECFN_POC_JOIN_ONLY = previousJoinOnly;
+      }
+    }
+  });
+
   it('transitions through leaving → left → done (TV-BOT-003 terminal)', async () => {
     const bot = await store.createBot({
       meetingUrl: 'https://zoom.us/j/123',

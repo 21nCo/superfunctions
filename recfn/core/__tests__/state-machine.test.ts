@@ -13,6 +13,7 @@ describe('canTransition', () => {
     expect(canTransition('creating', 'joining')).toBe(true);
     expect(canTransition('joining', 'joined')).toBe(true);
     expect(canTransition('joined', 'recording')).toBe(true);
+    expect(canTransition('joined', 'leaving')).toBe(true);
     expect(canTransition('recording', 'leaving')).toBe(true);
     expect(canTransition('leaving', 'left')).toBe(true);
     expect(canTransition('left', 'done')).toBe(true);
@@ -86,6 +87,7 @@ describe('isTerminalState', () => {
 describe('getValidTransitions', () => {
   it('returns valid next states', () => {
     expect(getValidTransitions('creating')).toEqual(['joining', 'error']);
+    expect(getValidTransitions('joined')).toEqual(['recording', 'leaving', 'error']);
     expect(getValidTransitions('recording')).toEqual(['leaving', 'error']);
     expect(getValidTransitions('done')).toEqual([]);
     expect(getValidTransitions('error')).toEqual([]);

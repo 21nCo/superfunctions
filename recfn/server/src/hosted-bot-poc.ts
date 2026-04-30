@@ -55,6 +55,7 @@ async function main(): Promise<void> {
   );
   const chromeExecutablePath = process.env.RECFN_CHROME_EXECUTABLE_PATH;
   const headless = envBool('RECFN_BOT_HEADLESS', false);
+  const useFakeMediaDevices = envBool('RECFN_USE_FAKE_MEDIA_DEVICES', false);
 
   await mkdir(profileDir, { recursive: true });
 
@@ -90,7 +91,7 @@ async function main(): Promise<void> {
             browserArgs: [
               '--disable-blink-features=AutomationControlled',
               '--disable-infobars',
-              '--use-fake-device-for-media-stream',
+              ...(useFakeMediaDevices ? ['--use-fake-device-for-media-stream'] : []),
               '--window-size=1280,800',
             ],
           }),
