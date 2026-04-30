@@ -290,27 +290,69 @@ public final class RecFnHostedBotController: ObservableObject {
     private func applyTranscriptMessages(_ messages: [HostedChatMessage]) {
         guard !messages.isEmpty else { return }
 
-        let existingIDs = Set(transcriptLines.map(\.id))
-        let newLines = messages.compactMap { message -> RecFnBotTranscriptLine? in
+        var existingIDs = Set(transcriptLines.map(\.id))
+        for message in messages {
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
+            guard !text.isEmpty else { continue }
+            guard !isCaptionControlNoise(speaker: message.participantId, text: text) else {
+                continue
+            }
 
             let id = "\(message.timestamp)|\(message.participantId)|\(text)"
-            guard !existingIDs.contains(id) else { return nil }
+            guard !existingIDs.contains(id) else { continue }
 
             let speaker = normalizedSpeaker(message.participantId)
             let timestamp = ISO8601DateFormatter().date(from: message.timestamp) ?? Date()
-            return RecFnBotTranscriptLine(
+            let line = RecFnBotTranscriptLine(
                 id: id,
                 speaker: speaker,
                 text: text,
                 timestamp: timestamp
             )
+            appendOrReplaceTranscriptLine(line)
+            existingIDs.insert(id)
+        }
+    }
+
+    private func appendOrReplaceTranscriptLine(_ line: RecFnBotTranscriptLine) {
+        if let lastIndex = transcriptLines.lastIndex(where: { $0.speaker == line.speaker }) {
+            let previous = transcriptLines[lastIndex].text
+            if line.text == previous || previous.hasPrefix(line.text) {
+                return
+            }
+            if line.text.hasPrefix(previous) {
+                transcriptLines[lastIndex] = line
+                return
+            }
+        }
+        transcriptLines.append(line)
+    }
+
+    private func isCaptionControlNoise(speaker: String, text: String) -> Bool {
+        let normalizedSpeaker = speaker.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedText = text
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if normalizedSpeaker == "language" {
+            return true
+        }
+        if normalizedSpeaker == "captions" && normalizedText.contains("jump to bottom") {
+            return true
         }
 
-        if !newLines.isEmpty {
-            transcriptLines.append(contentsOf: newLines)
-        }
+        let blockedPhrases = [
+            "arrow downward",
+            "jump to bottom",
+            "font size",
+            "font color",
+            "caption settings",
+            "open caption settings",
+            "format size"
+        ]
+        return blockedPhrases.contains { normalizedText.contains($0) }
     }
 
     private func normalizedSpeaker(_ participantId: String) -> String {
