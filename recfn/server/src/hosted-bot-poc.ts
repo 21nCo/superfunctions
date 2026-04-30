@@ -88,6 +88,7 @@ async function main(): Promise<void> {
             browserArgs: [
               '--disable-blink-features=AutomationControlled',
               '--disable-infobars',
+              '--use-fake-device-for-media-stream',
               '--window-size=1280,800',
             ],
           }),
