@@ -96,19 +96,23 @@ export class MeetAdapter extends BrowserAutomationAdapter<
       joinMeeting: async (page, joinTimeout, botConfig) => {
         try {
           const displayName = botConfig.displayName ?? 'Recording Bot';
+          await page.waitForFunction(
+            () => /join now|ask to join|what'?s your name/i.test(document.body?.innerText ?? ''),
+            undefined,
+            { timeout: Math.min(joinTimeout, 15_000) },
+          );
+
+          await page
+            .getByRole('button', { name: /^got it$/i })
+            .click({ timeout: 5_000 })
+            .catch(() => {});
+
           const clickTarget = await page.evaluate((name) => {
-            const buttons = Array.from(
-              document.querySelectorAll('button, [role="button"]'),
-            ) as HTMLElement[];
             const isEnabled = (button: HTMLElement) =>
               !button.hasAttribute('disabled') &&
               button.getAttribute('aria-disabled') !== 'true';
             const labelFor = (button: HTMLElement) =>
               `${button.innerText ?? ''} ${button.getAttribute('aria-label') ?? ''}`.trim();
-            const dismissButton = buttons.find(
-              (button) => isEnabled(button) && /^got it$/i.test(labelFor(button)),
-            );
-            dismissButton?.click();
 
             const nameInput = Array.from(
               document.querySelectorAll('input, textarea'),
@@ -181,25 +185,12 @@ export class MeetAdapter extends BrowserAutomationAdapter<
           }
 
           if (!clickTarget.waiting) {
-            await page.evaluate(() => {
-              const buttons = Array.from(
-                document.querySelectorAll('button, [role="button"]'),
-              ) as HTMLElement[];
-              const joinButton = buttons.find((button) => {
-                const label = `${button.innerText ?? ''} ${button.getAttribute('aria-label') ?? ''}`.trim();
-                return /^(join now|ask to join)$/i.test(label);
-              });
-              joinButton?.scrollIntoView({ block: 'center', inline: 'center' });
-              joinButton?.focus();
-              joinButton?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-              joinButton?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-              joinButton?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-              joinButton?.click();
-            });
-            await page.mouse.move(clickTarget.x, clickTarget.y);
-            await page.mouse.down();
-            await page.waitForTimeout(100);
-            await page.mouse.up();
+            const joinButton = page
+              .locator('button, [role="button"]')
+              .filter({ hasText: /^(join now|ask to join)$/i })
+              .first();
+            await joinButton.scrollIntoViewIfNeeded({ timeout: 5_000 });
+            await joinButton.click({ timeout: 10_000 });
             await page.waitForTimeout(1_000);
 
             const clicked = await page.evaluate(() => {
