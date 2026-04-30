@@ -151,6 +151,22 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     });
   }
 
+  function setupChatMessagePersistence(
+    bot: Bot,
+    adapter: PlatformAdapter,
+    metadataStage: 'joined' | 'recording' = 'recording',
+  ): void {
+    adapter.onChatMessage(async (message) => {
+      const persistedMessage = {
+        participantId: message.participantId,
+        text: message.text,
+        timestamp: message.timestamp || new Date().toISOString(),
+      };
+      await store.addChatMessage(bot.id, persistedMessage, bot.namespace);
+      await persistMetadataSnapshot(bot, adapter, metadataStage);
+    });
+  }
+
   async function processFinalizeRecordingJob(payload: JobPayload): Promise<void> {
     const { botId, namespace } = payload.data as unknown as RecordingUploadJobData;
     const bot = await store.getBot(botId, namespace);
@@ -363,6 +379,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
         recordingRequired: false,
       });
       setupParticipantMonitoring(bot, adapter);
+      setupChatMessagePersistence(bot, adapter, 'joined');
       return;
     }
 
@@ -397,6 +414,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
 
     // Set up participant monitoring for auto-leave
     setupParticipantMonitoring(bot, adapter);
+    setupChatMessagePersistence(bot, adapter, 'recording');
 
     // Broadcast participant events to websocket and fire webhooks
     const { buildParticipantJoinedPayload, buildParticipantLeftPayload } = await import('../webhooks/events.js');
@@ -421,15 +439,6 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
         config.streamManager.broadcast(botId, 'participant_left', { participantId });
       }
       webhookDeliverer.deliver(bot.namespace, 'participant.left', buildParticipantLeftPayload(botId, participantId)).catch(() => {});
-    });
-    adapter.onChatMessage(async (message) => {
-      const persistedMessage = {
-        participantId: message.participantId,
-        text: message.text,
-        timestamp: message.timestamp || new Date().toISOString(),
-      };
-      await store.addChatMessage(botId, persistedMessage, bot.namespace);
-      await persistMetadataSnapshot(bot, adapter, 'recording');
     });
   }
 
