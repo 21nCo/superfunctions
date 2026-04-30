@@ -41,6 +41,7 @@ private struct HostedBot: Decodable {
     let status: String
     let errorMessage: String?
     let recordings: [HostedRecording]?
+    let chatMessages: [HostedChatMessage]?
 }
 
 private struct HostedRecording: Decodable {
@@ -49,11 +50,31 @@ private struct HostedRecording: Decodable {
     let storageRef: String
 }
 
+private struct HostedChatMessage: Decodable {
+    let participantId: String
+    let text: String
+    let timestamp: String
+}
+
+public struct RecFnBotTranscriptLine: Identifiable {
+    public let id: String
+    public let speaker: String
+    public let text: String
+    public let timestamp: Date
+
+    public var formattedTime: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: timestamp)
+    }
+}
+
 @MainActor
 public final class RecFnHostedBotController: ObservableObject {
     @Published public var isRunning = false
     @Published public var statusMessage = "Idle"
     @Published public var logs: [RecFnBotLogEntry] = []
+    @Published public var transcriptLines: [RecFnBotTranscriptLine] = []
     @Published public var recordingPath: String?
     @Published public var joinedPlatform: String?
     @Published public var detectedMeetingURL: String?
@@ -84,6 +105,7 @@ public final class RecFnHostedBotController: ObservableObject {
         }
 
         detectedMeetingURL = meetingURL
+        transcriptLines.removeAll()
         statusMessage = "Sending bot..."
         appendLog("Detected meeting URL: \(meetingURL)")
         appendLog("Calling hosted RecFn bot API: \(hosted.serverURL)")
@@ -115,12 +137,15 @@ public final class RecFnHostedBotController: ObservableObject {
         appendLog("Requesting hosted bot leave: \(botId)")
         Task {
             do {
-                _ = try await request(
+                let envelope = try await request(
                     path: "/api/v1/bots/\(botId)/leave",
                     method: "POST",
                     hosted: hosted,
                     body: Optional<Int>.none
                 ) as HostedEnvelope<HostedBot>
+                if let bot = envelope.data {
+                    apply(bot)
+                }
             } catch {
                 appendLog("Leave request failed: \(error.localizedDescription)", isError: true)
             }
@@ -129,6 +154,38 @@ public final class RecFnHostedBotController: ObservableObject {
 
     public func clearLogs() {
         logs.removeAll()
+    }
+
+    public func clearTranscript() {
+        transcriptLines.removeAll()
+    }
+
+    @discardableResult
+    public func saveTranscript(to directory: String) -> URL? {
+        guard !transcriptLines.isEmpty else { return nil }
+
+        do {
+            let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true
+            )
+
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            let fileURL = directoryURL.appendingPathComponent(
+                "hosted-bot-transcript-\(formatter.string(from: Date())).txt"
+            )
+            let body = transcriptLines
+                .map { "[\($0.formattedTime)] \($0.speaker): \($0.text)" }
+                .joined(separator: "\n")
+            try body.write(to: fileURL, atomically: true, encoding: .utf8)
+            appendLog("Saved bot transcript: \(fileURL.path)")
+            return fileURL
+        } catch {
+            appendLog("Save bot transcript failed: \(error.localizedDescription)", isError: true)
+            return nil
+        }
     }
 
     private func createHostedBot(
@@ -215,11 +272,46 @@ public final class RecFnHostedBotController: ObservableObject {
         if let recording = bot.recordings?.last {
             recordingPath = recording.downloadUrl ?? recording.storageRef
         }
+        applyTranscriptMessages(bot.chatMessages ?? [])
         if ["done", "left", "error"].contains(bot.status) {
             isRunning = false
             pollTask?.cancel()
             pollTask = nil
         }
+    }
+
+    private func applyTranscriptMessages(_ messages: [HostedChatMessage]) {
+        guard !messages.isEmpty else { return }
+
+        let existingIDs = Set(transcriptLines.map(\.id))
+        let newLines = messages.compactMap { message -> RecFnBotTranscriptLine? in
+            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+
+            let id = "\(message.timestamp)|\(message.participantId)|\(text)"
+            guard !existingIDs.contains(id) else { return nil }
+
+            let speaker = normalizedSpeaker(message.participantId)
+            let timestamp = ISO8601DateFormatter().date(from: message.timestamp) ?? Date()
+            return RecFnBotTranscriptLine(
+                id: id,
+                speaker: speaker,
+                text: text,
+                timestamp: timestamp
+            )
+        }
+
+        if !newLines.isEmpty {
+            transcriptLines.append(contentsOf: newLines)
+        }
+    }
+
+    private func normalizedSpeaker(_ participantId: String) -> String {
+        let trimmed = participantId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "captions" {
+            return "Captions"
+        }
+        return trimmed
     }
 
     private func request<T: Encodable, U: Decodable>(

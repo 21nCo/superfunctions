@@ -1,6 +1,9 @@
 import type { ChatMessage } from 'recfn';
 import type { Page } from 'playwright';
-import { createBrowserChatTracker } from 'recfn-browser-core';
+import {
+  createBrowserChatTracker,
+  type BrowserChatEntry,
+} from 'recfn-browser-core';
 
 export interface MeetChatTracker {
   getMessages(): ChatMessage[];
@@ -10,34 +13,150 @@ export interface MeetChatTracker {
   stopObserving(): void;
 }
 
+async function enableMeetCaptions(page: Page): Promise<void> {
+  const clickedCaptionControl = await page.evaluate(() => {
+    const controls = Array.from(
+      document.querySelectorAll('button, [role="button"]'),
+    ) as HTMLElement[];
+
+    const labelFor = (control: HTMLElement) =>
+      [
+        control.innerText,
+        control.getAttribute('aria-label'),
+        control.getAttribute('data-tooltip'),
+        control.getAttribute('title'),
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+    const turnOnControl = controls.find((control) => {
+      const label = labelFor(control);
+      return (
+        /turn on captions|show captions|captions off|closed captions/i.test(label) &&
+        !/turn off captions|hide captions|captions on/i.test(label)
+      );
+    });
+
+    if (turnOnControl) {
+      turnOnControl.click();
+      return true;
+    }
+
+    return false;
+  });
+
+  if (!clickedCaptionControl) {
+    await page.keyboard.press('c').catch(() => {});
+  }
+}
+
+function evaluateMeetMessages(): BrowserChatEntry[] {
+  const entries: BrowserChatEntry[] = [];
+  const now = new Date().toISOString();
+  const seen = new Set<string>();
+
+  const push = (participantId: string, text: string, timestamp = now) => {
+    const normalizedText = text.replace(/\s+/g, ' ').trim();
+    const normalizedParticipantId =
+      participantId.replace(/\s+/g, ' ').trim() || 'captions';
+    if (!normalizedText) {
+      return;
+    }
+    const key = `${normalizedParticipantId}\n${normalizedText}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    entries.push({
+      participantId: normalizedParticipantId,
+      text: normalizedText,
+      timestamp,
+    });
+  };
+
+  const chatItems = document.querySelectorAll(
+    '[data-message-id], .zWGUib [data-sender], .chat-message',
+  );
+  chatItems.forEach((el: Element, i: number) => {
+    const participantId =
+      (el as HTMLElement).getAttribute?.('data-sender') ?? `sender_${i}`;
+    const text = (el as HTMLElement).textContent?.trim() ?? '';
+    push(participantId, text);
+  });
+
+  const captionCandidates = Array.from(
+    document.querySelectorAll(
+      [
+        '[aria-live="polite"]',
+        '[aria-live="assertive"]',
+        '.iTTPOb',
+        '.TBMuR',
+        '.a4cQT',
+        '.CNusmb',
+        '.nMcdL',
+      ].join(','),
+    ),
+  ) as HTMLElement[];
+
+  const blockedText =
+    /^(sign in|more options|visual effects|start|join now|ask to join|other ways to join|got it)$/i;
+
+  for (const candidate of captionCandidates) {
+    if (candidate.closest('button, input, textarea, [role="button"]')) {
+      continue;
+    }
+
+    const rect = candidate.getBoundingClientRect();
+    const style = window.getComputedStyle(candidate);
+    if (
+      style.visibility === 'hidden' ||
+      style.display === 'none' ||
+      rect.width < 20 ||
+      rect.height < 8 ||
+      rect.top < window.innerHeight * 0.35
+    ) {
+      continue;
+    }
+
+    const rawText = candidate.innerText?.trim() || candidate.textContent?.trim() || '';
+    if (!rawText || rawText.length > 500) {
+      continue;
+    }
+
+    const lines = rawText
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !blockedText.test(line));
+
+    if (lines.length === 0) {
+      continue;
+    }
+
+    let participantId = 'captions';
+    let text = lines.join(' ');
+    if (lines.length > 1 && lines[0].length <= 80) {
+      participantId = lines[0];
+      text = lines.slice(1).join(' ');
+    }
+
+    push(participantId, text);
+  }
+
+  return entries;
+}
+
 /**
  * DOM-based chat capture and send for Google Meet.
- * Observes the chat panel for new messages.
+ * Observes the chat panel and live captions for new messages.
  * Sends messages by typing into the chat input.
  */
 export function createMeetChatTracker(
   page: Page,
 ): MeetChatTracker {
-  return createBrowserChatTracker({
+  const tracker = createBrowserChatTracker({
     page,
-    evaluateMessages: () => {
-      const items = document.querySelectorAll(
-        '[data-message-id], .zWGUib [data-sender], .chat-message',
-      );
-      const entries: Array<{
-        participantId: string;
-        text: string;
-        timestamp: string;
-      }> = [];
-      items.forEach((el: Element, i: number) => {
-        const participantId =
-          (el as HTMLElement).getAttribute?.('data-sender') ?? `sender_${i}`;
-        const text = (el as HTMLElement).textContent?.trim() ?? '';
-        const timestamp = new Date().toISOString();
-        entries.push({ participantId, text, timestamp });
-      });
-      return entries;
-    },
+    evaluateMessages: evaluateMeetMessages,
     sendMessage: async (currentPage, text) => {
       const input = await currentPage.$(
         '[data-idom-class*="chat"], [aria-label*="chat"] input, [placeholder*="message"]',
@@ -48,4 +167,15 @@ export function createMeetChatTracker(
       }
     },
   });
+
+  return {
+    getMessages: () => tracker.getMessages(),
+    onMessage: (cb) => tracker.onMessage(cb),
+    send: (text) => tracker.send(text),
+    startObserving: async () => {
+      await enableMeetCaptions(page).catch(() => {});
+      await tracker.startObserving();
+    },
+    stopObserving: () => tracker.stopObserving(),
+  };
 }
