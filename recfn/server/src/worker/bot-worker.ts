@@ -298,7 +298,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('Join timeout exceeded')),
-          joinTimeout,
+          joinTimeout + 5_000,
         ),
       );
 
