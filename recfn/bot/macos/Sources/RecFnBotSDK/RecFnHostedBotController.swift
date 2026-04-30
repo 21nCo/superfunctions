@@ -44,6 +44,11 @@ private struct HostedBot: Decodable {
     let chatMessages: [HostedChatMessage]?
 }
 
+private struct HostedLeaveBotResponse: Decodable {
+    let botId: String
+    let status: String
+}
+
 private struct HostedRecording: Decodable {
     let id: String
     let downloadUrl: String?
@@ -142,10 +147,12 @@ public final class RecFnHostedBotController: ObservableObject {
                     method: "POST",
                     hosted: hosted,
                     body: Optional<Int>.none
-                ) as HostedEnvelope<HostedBot>
-                if let bot = envelope.data {
-                    apply(bot)
+                ) as HostedEnvelope<HostedLeaveBotResponse>
+                if let leave = envelope.data {
+                    appendLog("Hosted bot \(leave.botId) status: \(leave.status)")
                 }
+                let bot = try await pollHostedBot(hosted: hosted, botId: botId)
+                apply(bot)
             } catch {
                 appendLog("Leave request failed: \(error.localizedDescription)", isError: true)
             }
