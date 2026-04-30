@@ -54,6 +54,12 @@ function evaluateMeetMessages(): BrowserChatEntry[] {
   const entries: BrowserChatEntry[] = [];
   const now = new Date().toISOString();
   const seen = new Set<string>();
+  const w = window as typeof window & {
+    __REC_FN_MEET_CAPTION_LAST_BY_SPEAKER__?: Record<string, string>;
+  };
+  const lastCaptionBySpeaker =
+    w.__REC_FN_MEET_CAPTION_LAST_BY_SPEAKER__ ??
+    (w.__REC_FN_MEET_CAPTION_LAST_BY_SPEAKER__ = {});
 
   const push = (participantId: string, text: string, timestamp = now) => {
     const normalizedText = text.replace(/\s+/g, ' ').trim();
@@ -100,6 +106,8 @@ function evaluateMeetMessages(): BrowserChatEntry[] {
 
   const blockedText =
     /^(sign in|more options|visual effects|start|join now|ask to join|other ways to join|got it)$/i;
+  const captionSettingsText =
+    /(?:arrow_downward|jump to bottom|format_size|font size|font color|open caption settings|caption settings|^language$|^english$)/i;
 
   for (const candidate of captionCandidates) {
     if (candidate.closest('button, input, textarea, [role="button"]')) {
@@ -122,12 +130,16 @@ function evaluateMeetMessages(): BrowserChatEntry[] {
     if (!rawText || rawText.length > 500) {
       continue;
     }
+    if (captionSettingsText.test(rawText)) {
+      continue;
+    }
 
     const lines = rawText
       .split(/\n+/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .filter((line) => !blockedText.test(line));
+      .filter((line) => !blockedText.test(line))
+      .filter((line) => !captionSettingsText.test(line));
 
     if (lines.length === 0) {
       continue;
@@ -139,6 +151,25 @@ function evaluateMeetMessages(): BrowserChatEntry[] {
       participantId = lines[0];
       text = lines.slice(1).join(' ');
     }
+
+    const previousCaption = lastCaptionBySpeaker[participantId];
+    if (previousCaption) {
+      if (
+        text === previousCaption ||
+        previousCaption.startsWith(text)
+      ) {
+        continue;
+      }
+      if (text.startsWith(previousCaption)) {
+        text = text
+          .slice(previousCaption.length)
+          .replace(/^[\s,.;:!?-]+/, '')
+          .trim();
+      }
+    }
+    lastCaptionBySpeaker[participantId] = lines.length > 1
+      ? lines.slice(1).join(' ')
+      : lines.join(' ');
 
     push(participantId, text);
   }
