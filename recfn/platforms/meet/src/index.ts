@@ -97,6 +97,19 @@ export class MeetAdapter extends BrowserAutomationAdapter<
         try {
           const displayName = botConfig.displayName ?? 'Recording Bot';
           const clickTarget = await page.evaluate((name) => {
+            const buttons = Array.from(
+              document.querySelectorAll('button, [role="button"]'),
+            ) as HTMLElement[];
+            const isEnabled = (button: HTMLElement) =>
+              !button.hasAttribute('disabled') &&
+              button.getAttribute('aria-disabled') !== 'true';
+            const labelFor = (button: HTMLElement) =>
+              `${button.innerText ?? ''} ${button.getAttribute('aria-label') ?? ''}`.trim();
+            const dismissButton = buttons.find(
+              (button) => isEnabled(button) && /^got it$/i.test(labelFor(button)),
+            );
+            dismissButton?.click();
+
             const nameInput = Array.from(
               document.querySelectorAll('input, textarea'),
             ).find((input) => {
@@ -124,21 +137,16 @@ export class MeetAdapter extends BrowserAutomationAdapter<
             }
 
             const findJoinButton = () => {
-              const buttons = Array.from(
+              const joinButtons = Array.from(
                 document.querySelectorAll('button, [role="button"]'),
               ) as HTMLElement[];
-              const isEnabled = (button: HTMLElement) =>
-                !button.hasAttribute('disabled') &&
-                button.getAttribute('aria-disabled') !== 'true';
-              const labelFor = (button: HTMLElement) =>
-                `${button.innerText ?? ''} ${button.getAttribute('aria-label') ?? ''}`.trim();
               const joinButton =
-                buttons.find(
+                joinButtons.find(
                   (button) =>
                     isEnabled(button) &&
                     /^(join now|ask to join)$/i.test(labelFor(button)),
                 ) ??
-                buttons.find((button) => {
+                joinButtons.find((button) => {
                   const label = labelFor(button);
                   return (
                     isEnabled(button) &&
@@ -183,6 +191,10 @@ export class MeetAdapter extends BrowserAutomationAdapter<
               });
               joinButton?.scrollIntoView({ block: 'center', inline: 'center' });
               joinButton?.focus();
+              joinButton?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+              joinButton?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              joinButton?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+              joinButton?.click();
             });
             await page.mouse.move(clickTarget.x, clickTarget.y);
             await page.mouse.down();
@@ -192,7 +204,17 @@ export class MeetAdapter extends BrowserAutomationAdapter<
 
             const clicked = await page.evaluate(() => {
               const bodyText = document.body?.innerText ?? '';
-              return !/ask to join/i.test(bodyText) || /asking to join|you'?ll be able to join|you will be able to join|waiting for.*host/i.test(bodyText);
+              const joinButtonStillPresent = Array.from(
+                document.querySelectorAll('button, [role="button"]'),
+              ).some((button) => {
+                const el = button as HTMLElement;
+                const label = `${el.innerText ?? ''} ${el.getAttribute('aria-label') ?? ''}`.trim();
+                return /^(join now|ask to join)$/i.test(label);
+              });
+              return (
+                !joinButtonStillPresent ||
+                /asking to join|you'?ll be able to join|you will be able to join|waiting for.*host/i.test(bodyText)
+              );
             });
             if (!clicked) {
               throw new Error(`Meet join button did not activate after click.`);
