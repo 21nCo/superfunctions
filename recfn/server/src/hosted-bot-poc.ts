@@ -53,6 +53,7 @@ async function main(): Promise<void> {
     'RECFN_MEET_PROFILE_DIR',
     join(homedir(), '.recfn', 'profiles', 'google-meet-bot'),
   );
+  const chromeExecutablePath = process.env.RECFN_CHROME_EXECUTABLE_PATH;
   const headless = envBool('RECFN_BOT_HEADLESS', false);
 
   await mkdir(profileDir, { recursive: true });
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
           new MeetAdapter({
             userDataDir: profileDir,
             headless,
+            executablePath: chromeExecutablePath,
             browserArgs: [
               '--disable-blink-features=AutomationControlled',
               '--disable-infobars',
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
       namespace,
       profileDir,
       headless,
+      chromeExecutablePath,
     });
   });
 
