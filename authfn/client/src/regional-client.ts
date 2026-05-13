@@ -49,15 +49,12 @@ export function createAuthFnRegionalClient(
 
     const lookup = await clientFor(currentRegionId).lookupRegion({ identifier });
     if (!lookup.ok) {
-      if (lookup.error.code === 'AUTHFN_REGION_NOT_FOUND') {
-        await storage.delete(identifier);
-        return null;
-      }
-      const mismatch = regionFromMismatch(identifier, lookup);
+      const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
       if (mismatch) {
         await saveRegion(storage, cacheTtlMs, options, mismatch);
         return mismatch;
       }
+      await storage.delete(identifier);
       return null;
     }
 
@@ -82,13 +79,11 @@ export function createAuthFnRegionalClient(
     const identifier = normalizeIdentifier(identifierInput);
     const lookup = await clientFor(currentRegionId).lookupRegion({ identifier });
     if (!lookup.ok) {
-      if (lookup.error.code === 'AUTHFN_REGION_NOT_FOUND') {
-        await storage.delete(identifier);
-        return lookup;
-      }
-      const mismatch = regionFromMismatch(identifier, lookup);
+      const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
       if (mismatch) {
         await saveRegion(storage, cacheTtlMs, options, mismatch, currentRegionId);
+      } else {
+        await storage.delete(identifier);
       }
       return lookup;
     }
@@ -117,16 +112,6 @@ export function createAuthFnRegionalClient(
     const identifier = normalizeIdentifier(input.email);
     const lookup = await lookupCurrentRegion(identifier);
     if (!lookup.ok) {
-      if (lookup.error.code === 'AUTHFN_REGION_NOT_FOUND') {
-        return successEmailPreparation({
-          identifier,
-          flow: input.flow,
-          selectedRegionId,
-          regionId: selectedRegionId,
-          existingAccount: false,
-          continueLocally: true
-        });
-      }
       return lookup;
     }
 
@@ -167,7 +152,7 @@ export function createAuthFnRegionalClient(
   ): Promise<T> => {
     let regionId = await regionIdForIdentifier(identifier);
     let response = await operation(clientFor(regionId));
-    const nextRegion = regionFromMismatch(normalizeIdentifier(identifier), response);
+    const nextRegion = regionFromMismatch(normalizeIdentifier(identifier), response, cacheTtlMs);
     if (!nextRegion || response.ok) {
       currentRegionId = regionId;
       return response;
@@ -189,7 +174,7 @@ export function createAuthFnRegionalClient(
         return signUpError;
       }
       const response = await clientFor(currentRegionId).signUpWithPassword(input);
-      const mismatch = regionFromMismatch(normalizeIdentifier(input.email), response);
+      const mismatch = regionFromMismatch(normalizeIdentifier(input.email), response, cacheTtlMs);
       if (mismatch) {
         await saveRegion(storage, cacheTtlMs, options, mismatch, currentRegionId);
       }
@@ -223,7 +208,7 @@ export function createAuthFnRegionalClient(
         return signUpError;
       }
       const response = await clientFor(currentRegionId).verifyOtp(input);
-      const mismatch = regionFromMismatch(normalizeIdentifier(input.email), response);
+      const mismatch = regionFromMismatch(normalizeIdentifier(input.email), response, cacheTtlMs);
       if (mismatch) {
         await saveRegion(storage, cacheTtlMs, options, mismatch, currentRegionId);
       }
@@ -326,7 +311,8 @@ async function saveRegion(
 
 function regionFromMismatch(
   identifier: string,
-  response: unknown
+  response: unknown,
+  cacheTtlMs: number
 ): AuthFnCachedRegion | null {
   if (!response || typeof response !== 'object') {
     return null;
@@ -354,7 +340,7 @@ function regionFromMismatch(
     authority,
     domain: typeof details.domain === 'string' ? details.domain : undefined,
     cachedAt: Date.now(),
-    expiresAt: Date.now() + DEFAULT_CACHE_TTL_MS
+    expiresAt: Date.now() + cacheTtlMs
   };
 }
 

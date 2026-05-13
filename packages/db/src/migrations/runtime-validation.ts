@@ -31,20 +31,30 @@ function validateField(fieldKey: string, field: any, value: unknown): string | n
 function validateDateField(fieldKey: string, field: any, value: unknown): string | null {
   switch (field.dateValueType ?? 'date') {
     case 'date':
-      return value instanceof Date || typeof value === 'string' || typeof value === 'number'
+      return isValidDateInput(value)
         ? null
         : `Field ${fieldKey} must be a Date, ISO string, or epoch milliseconds`;
     case 'iso-string':
-      return typeof value === 'string'
+      return typeof value === 'string' && isValidDateInput(value)
         ? null
         : `Field ${fieldKey} must be an ISO date string`;
     case 'epoch-ms':
-      return typeof value === 'number'
+      return typeof value === 'number' && Number.isFinite(value)
         ? null
         : `Field ${fieldKey} must be epoch milliseconds`;
     default:
       return null;
   }
+}
+
+function isValidDateInput(value: unknown): boolean {
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime());
+  }
+  if (typeof value === 'string' || typeof value === 'number') {
+    return Number.isFinite(new Date(value).getTime());
+  }
+  return false;
 }
 
 export function validateRecordAgainstSchema(schema: TableSchema, record: Record<string, unknown>): ValidationResult {

@@ -73,7 +73,10 @@ public struct AuthFnKeychainCredentialStore: AuthFnCredentialStore {
     }
 
     public func clearCredential() async throws {
-        SecItemDelete(baseQuery() as CFDictionary)
+        let status = SecItemDelete(baseQuery() as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw AuthFnError.unauthenticated
+        }
     }
 
     private func baseQuery() -> [String: Any] {

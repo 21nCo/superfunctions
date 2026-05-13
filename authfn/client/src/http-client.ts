@@ -54,24 +54,24 @@ export function createAuthFnHttpClient(options: AuthFnClientOptions = {}) {
         headers.set('content-type', 'application/json');
       }
 
-      const bearerToken = await resolveBearerToken();
-      if (bearerToken) {
-        headers.set('authorization', `Bearer ${bearerToken}`);
-      }
-
-      if (request.csrf) {
-        const cookieHeader = cookieAccessor();
-        const csrfToken = readCookieValue(
-          cookieHeader,
-          `${cookiePrefix || readCookiePrefix(cookieHeader)}.csrf`
-        );
-        if (csrfToken) {
-          headers.set('x-authfn-csrf', csrfToken);
-        }
-      }
-
       let response: Response;
       try {
+        const bearerToken = await resolveBearerToken();
+        if (bearerToken) {
+          headers.set('authorization', `Bearer ${bearerToken}`);
+        }
+
+        if (request.csrf) {
+          const cookieHeader = cookieAccessor();
+          const csrfToken = readCookieValue(
+            cookieHeader,
+            `${cookiePrefix || readCookiePrefix(cookieHeader)}.csrf`
+          );
+          if (csrfToken) {
+            headers.set('x-authfn-csrf', csrfToken);
+          }
+        }
+
         response = await fetchImpl(url, {
           method: request.method,
           headers,

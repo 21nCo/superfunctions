@@ -109,9 +109,9 @@ function normalizeFieldSchema(field: TableSchema['fields'][string]): TableSchema
   }
 
   return {
-    dateValueType: 'date',
-    dateStorageType: 'timestamptz',
-    ...field
+    ...field,
+    dateValueType: field.dateValueType ?? 'date',
+    dateStorageType: field.dateStorageType ?? 'timestamptz'
   };
 }
 

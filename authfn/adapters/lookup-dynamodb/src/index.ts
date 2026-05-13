@@ -177,7 +177,7 @@ function fromItem(item: Record<string, unknown>): AuthFnRegionLookupRecord {
   return {
     identifier: readString(item.identifier ?? item.PK, 'identifier'),
     userId: readOptionalString(item.userId),
-    regionId: readString(item.regionId ?? item.SK, 'regionId'),
+    regionId: readString(item.regionId, 'regionId'),
     authority: readString(item.authority, 'authority'),
     domain: readOptionalString(item.domain),
     createdAt: readString(item.createdAt, 'createdAt'),

@@ -42,7 +42,7 @@ describe('@authfn/client regional client', () => {
               status: 404
             });
           }
-          if (url.startsWith('https://us-east-1.account.example.com')) {
+          if (new URL(url).origin === 'https://us-east-1.account.example.com') {
             return Response.json({
               ok: false,
               error: {

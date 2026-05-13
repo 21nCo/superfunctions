@@ -91,9 +91,9 @@ export async function emitAccountLinkedEvent(
     provider: input.provider,
     outcome: 'linked',
     metadata: {
+      ...(input.metadata ?? {}),
       method: input.method,
-      primaryEmail: input.user.primaryEmail,
-      ...(input.metadata ?? {})
+      primaryEmail: input.user.primaryEmail
     }
   });
 }

@@ -25,6 +25,7 @@ import {
   allowsPasswordForAuthenticatedUser,
   emitAccountLinkingConflictEvent
 } from './account-linking.js';
+import { emitAuthEvent, eventRequestId } from './observability.js';
 
 const PASSWORD_HASH_ALGO = 'scrypt';
 const PASSWORD_HASH_N = 16384;
@@ -509,35 +510,54 @@ async function runUserCredentialTransaction<T>(
 }
 
 async function rollbackPasswordSignUp(
-  config: Pick<AuthFnConfig, 'database' | 'namespace'>,
+  config: Pick<AuthFnConfig, 'database' | 'namespace' | 'observability'>,
   userId: string,
   credentialId?: string
 ): Promise<void> {
+  const failures: string[] = [];
   if (credentialId) {
     await config.database.delete({
       model: 'password_credentials',
       where: [{ field: 'id', operator: 'eq', value: credentialId }],
       namespace: namespace(config)
-    }).catch(() => undefined);
+    }).catch((error) => failures.push(readRollbackFailure('password_credentials.delete', error)));
   }
 
   await config.database.deleteMany({
     model: 'password_credentials',
     where: [{ field: 'userId', operator: 'eq', value: userId }],
     namespace: namespace(config)
-  }).catch(() => undefined);
+  }).catch((error) => failures.push(readRollbackFailure('password_credentials.deleteMany', error)));
 
   await config.database.deleteMany({
     model: 'region_profiles',
     where: [{ field: 'userId', operator: 'eq', value: userId }],
     namespace: namespace(config)
-  }).catch(() => undefined);
+  }).catch((error) => failures.push(readRollbackFailure('region_profiles.deleteMany', error)));
 
   await config.database.delete({
     model: 'users',
     where: [{ field: 'id', operator: 'eq', value: userId }],
     namespace: namespace(config)
-  }).catch(() => undefined);
+  }).catch((error) => failures.push(readRollbackFailure('users.delete', error)));
+
+  if (failures.length > 0) {
+    await emitAuthEvent(config, {
+      type: 'authfn.password.signup.rollback_failed',
+      requestId: eventRequestId(),
+      actorId: userId,
+      userId,
+      outcome: 'error',
+      metadata: {
+        failures
+      }
+    });
+  }
+}
+
+function readRollbackFailure(operation: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${operation}: ${message}`;
 }
 
 async function runBeforeUserCreateHook(

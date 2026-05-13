@@ -838,7 +838,8 @@ async function handleAppleFormPostIdentityCallback(
 
   const subject = toOAuthFlowSubject(consumedState);
   const providerSettings = resolveProviderSettings(config, pluginConfig, runtime, 'apple', callbackUri);
-  const profile = resolveAppleFormPostProfile(idToken, userPayload, consumedState.nonce);
+  const claims = await verifyAppleIdentityToken(idToken, providerSettings.clientId);
+  const profile = resolveAppleFormPostProfile(claims, userPayload, consumedState.nonce);
   const resolved = await resolveLocalIdentityFromProfile(
     config,
     hooks,
@@ -1208,11 +1209,11 @@ function resolveAppleProfile(tokenSet: SocialTokenSet): AuthFnSocialProfile {
 }
 
 function resolveAppleFormPostProfile(
-  idToken: string,
+  verifiedClaims: JWTPayload,
   userPayload: string | undefined,
   expectedNonce: string | undefined
 ): AuthFnSocialProfile {
-  const claims = parseIdTokenClaims(idToken);
+  const claims = readIdTokenClaims(verifiedClaims as Record<string, unknown>);
   if (!claims.sub) {
     throw new AuthFnOAuthCallbackInvalidError('Apple OAuth form_post callback missing subject claim', {
       provider: 'apple'
@@ -1906,20 +1907,30 @@ function parseIdTokenClaims(idToken: string | undefined): {
 
   try {
     const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
-    const fallbackName = [
-      readOptionalString(payload.given_name),
-      readOptionalString(payload.family_name)
-    ].filter(Boolean).join(' ').trim();
-    return {
-      sub: readOptionalString(payload.sub),
-      email: readOptionalString(payload.email),
-      emailVerified: readBooleanClaim(payload.email_verified),
-      name: readOptionalString(payload.name) ?? (fallbackName || undefined),
-      nonce: readOptionalString(payload.nonce)
-    };
+    return readIdTokenClaims(payload);
   } catch {
     return {};
   }
+}
+
+function readIdTokenClaims(payload: Record<string, unknown>): {
+  sub?: string;
+  email?: string;
+  emailVerified?: boolean;
+  name?: string;
+  nonce?: string;
+} {
+  const fallbackName = [
+    readOptionalString(payload.given_name),
+    readOptionalString(payload.family_name)
+  ].filter(Boolean).join(' ').trim();
+  return {
+    sub: readOptionalString(payload.sub),
+    email: readOptionalString(payload.email),
+    emailVerified: readBooleanClaim(payload.email_verified),
+    name: readOptionalString(payload.name) ?? (fallbackName || undefined),
+    nonce: readOptionalString(payload.nonce)
+  };
 }
 
 function createConnectionId(providerId: AuthFnSocialProviderId, userId: string): string {

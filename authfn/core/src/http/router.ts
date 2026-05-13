@@ -26,16 +26,20 @@ export function createAuthFnRouter(
     basePath: config.basePath ?? '/auth',
     routes: [...createBaseRoutes(config, _hooks), ...pluginRoutes],
     onError: async (error, request) => {
-      const metadata = describeRouteError(error, request);
+      const metadata = sanitizeErrorMetadata(describeRouteError(error, request));
       if (isDebugErrorLoggingEnabled()) {
         console.error('[authfn route error]', JSON.stringify(metadata));
       }
-      await emitAuthEvent(config, {
-        type: 'authfn.request.failed',
-        requestId: eventRequestId(request),
-        outcome: 'error',
-        metadata
-      });
+      try {
+        await emitAuthEvent(config, {
+          type: 'authfn.request.failed',
+          requestId: eventRequestId(request),
+          outcome: 'error',
+          metadata
+        });
+      } catch {
+        // Error handling must still return the original auth response.
+      }
 
       return jsonError(request, error);
     }
@@ -356,4 +360,28 @@ export async function readOptionalJson<T extends Record<string, unknown>>(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+const SENSITIVE_ERROR_METADATA_KEY = /(authorization|cookie|password|secret|token|code|hash|access|refresh|idtoken|clientsecret)/i;
+
+function sanitizeErrorMetadata(value: unknown, key?: string): Record<string, unknown> {
+  return sanitizeErrorMetadataValue(value, key) as Record<string, unknown>;
+}
+
+function sanitizeErrorMetadataValue(value: unknown, key?: string): unknown {
+  if (key && SENSITIVE_ERROR_METADATA_KEY.test(key)) {
+    return '[redacted]';
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeErrorMetadataValue(entry));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeErrorMetadataValue(entryValue, entryKey)
+      ])
+    );
+  }
+  return value;
 }

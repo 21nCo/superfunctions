@@ -116,4 +116,31 @@ describe('@authfn/lookup-dynamodb', () => {
       retryable: true
     } satisfies Partial<AuthFnDynamoDbLookupStoreError>);
   });
+
+  it('rejects corrupt records that are missing the authoritative regionId field', async () => {
+    const store = createDynamoDbRegionLookupStore({
+      tableName: 'authfn-region-lookup',
+      documentClient: {
+        async send() {
+          return {
+            Items: [
+              {
+                PK: 'ada@example.com',
+                SK: 'us-east-1',
+                identifier: 'ada@example.com',
+                authority: 'https://us.account.example.com',
+                createdAt: '2026-04-24T00:00:00.000Z',
+                updatedAt: '2026-04-24T00:00:00.000Z'
+              }
+            ]
+          };
+        }
+      } as any
+    });
+
+    await expect(store.getByIdentifier('ada@example.com')).rejects.toMatchObject({
+      name: 'AuthFnDynamoDbLookupStoreError',
+      operation: 'getByIdentifier'
+    });
+  });
 });

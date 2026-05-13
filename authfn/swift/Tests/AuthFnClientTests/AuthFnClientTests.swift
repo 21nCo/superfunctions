@@ -18,6 +18,10 @@ final class AuthFnClientTests: XCTestCase {
 
         let entry = await cache.get(identifier: "ada@example.com")
         XCTAssertEqual(entry?.regionId, "eu-west-1")
+
+        await cache.set(identifier: "expired@example.com", regionId: "us-east-1", authority: "https://us.example.com", ttl: -1)
+        let expired = await cache.get(identifier: "expired@example.com")
+        XCTAssertNil(expired)
     }
 
     func testInMemoryCredentialStoreRoundTrip() async throws {

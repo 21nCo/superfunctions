@@ -2,13 +2,13 @@ import type { Route } from '@superfunctions/http';
 import type { EmailOtpPluginConfig } from '../plugin-types.js';
 import type { AuthFnPlugin, AuthFnPluginRuntimeContext, AuthFnSchemaDefinition } from '../types.js';
 import { createAuthFnRouteMeta, readOptionalJson } from '../http/router.js';
-import { issueSession, type IssuedSession } from '../core/sessions.js';
-import { issueSessionCookies } from '../core/cookies.js';
+import { issueSession } from '../core/sessions.js';
 import { jsonSuccess } from '../http/envelopes.js';
 import { emitAuthEvent, eventRequestId } from '../core/observability.js';
 import { sendOtpChallenge, verifyOtpChallenge } from '../core/verifications.js';
 import { resolveRuntime } from '../core/runtime.js';
 import { emitAccountLinkedEvent } from '../core/account-linking.js';
+import { buildSessionResponse, type AuthFnSessionResponseMode } from '../core/session-responses.js';
 import {
   beginTwoFactorChallenge,
   createPendingTwoFactorResponse,
@@ -173,30 +173,4 @@ function createOtpRoutes(
       }
     }
   ];
-}
-
-type AuthFnSessionResponseMode = 'cookie' | 'bearer' | 'hybrid';
-
-function buildSessionResponse(
-  issued: IssuedSession,
-  modeInput: AuthFnSessionResponseMode | undefined
-): {
-  data: {
-    session: IssuedSession['session'];
-    token?: string;
-  };
-  setCookies: string[];
-} {
-  const mode = modeInput === 'bearer' || modeInput === 'hybrid' ? modeInput : 'cookie';
-  const setCookies = mode === 'bearer'
-    ? []
-    : Object.values(issueSessionCookies(issued.cookiePolicy!, issued.sessionToken, issued.csrfToken));
-
-  return {
-    data: {
-      session: issued.session,
-      ...(mode === 'bearer' || mode === 'hybrid' ? { token: issued.sessionToken } : {})
-    },
-    setCookies
-  };
 }

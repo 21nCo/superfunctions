@@ -108,15 +108,6 @@ export async function lookupRegionByIdentifier(
       });
       return lookup;
     }
-
-    await setCachedJson(config.cacheStore, {
-      key: cacheKey,
-      value: {
-        found: false
-      } satisfies CachedRegionLookup,
-      ttlSeconds: AUTHFN_CACHE_TTL_SECONDS.regionMiss
-    });
-    return null;
   }
 
   if (pluginConfig.directory) {
@@ -336,26 +327,7 @@ export async function registerUserRegion(
     updatedAt: now
   };
 
-  if (existing) {
-    await config.database.update<AuthFnRegionProfileRecord>({
-      model: 'region_profiles',
-      where: [{ field: 'id', operator: 'eq', value: existing.id }],
-      data: {
-        regionId: record.regionId,
-        authority: record.authority,
-        domain: record.domain,
-        updatedAt: now
-      },
-      namespace: namespace(config)
-    });
-  } else {
-    await config.database.create<AuthFnRegionProfileRecord>({
-      model: 'region_profiles',
-      data: record,
-      namespace: namespace(config)
-    });
-  }
-
+  let insertedLookup = false;
   if (input.user.primaryEmail) {
     const identifier = normalizeIdentifier(input.user.primaryEmail);
     const cacheKey = createAuthFnCacheKey(config, 'region', identifier);
@@ -371,7 +343,8 @@ export async function registerUserRegion(
 
     if (pluginConfig.lookupStore) {
       const result = await pluginConfig.lookupStore.putIfAbsent(lookupRecord);
-      if (!result.inserted && result.existing) {
+      insertedLookup = result.inserted;
+      if (!result.inserted && result.existing && !recordsReferToSameRegionUser(result.existing, lookupRecord)) {
         const existing = lookupFromRecord(result.existing);
         await setCachedJson(config.cacheStore, {
           key: cacheKey,
@@ -404,7 +377,54 @@ export async function registerUserRegion(
           continueLocally: false
         });
       }
+      if (!result.inserted && result.existing && shouldRefreshExistingLookup(result.existing, lookupRecord)) {
+        await pluginConfig.lookupStore.update(lookupRecord);
+      }
+    }
+  }
+
+  try {
+    if (existing) {
+      await config.database.update<AuthFnRegionProfileRecord>({
+        model: 'region_profiles',
+        where: [{ field: 'id', operator: 'eq', value: existing.id }],
+        data: {
+          regionId: record.regionId,
+          authority: record.authority,
+          domain: record.domain,
+          updatedAt: now
+        },
+        namespace: namespace(config)
+      });
     } else {
+      await config.database.create<AuthFnRegionProfileRecord>({
+        model: 'region_profiles',
+        data: record,
+        namespace: namespace(config)
+      });
+    }
+  } catch (error) {
+    if (insertedLookup && input.user.primaryEmail) {
+      const identifier = normalizeIdentifier(input.user.primaryEmail);
+      await pluginConfig.lookupStore?.deleteByIdentifier(identifier);
+      await config.cacheStore?.delete(createAuthFnCacheKey(config, 'region', identifier));
+    }
+    throw error;
+  }
+
+  if (input.user.primaryEmail) {
+    const identifier = normalizeIdentifier(input.user.primaryEmail);
+    const cacheKey = createAuthFnCacheKey(config, 'region', identifier);
+    const lookupRecord: AuthFnRegionLookupRecord = {
+      identifier,
+      userId: input.user.id,
+      regionId: record.regionId,
+      authority: record.authority,
+      domain: record.domain ?? undefined,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt
+    };
+    if (!pluginConfig.lookupStore) {
       await pluginConfig.directory?.registerUser?.({
         userId: input.user.id,
         primaryEmail: input.user.primaryEmail,
@@ -415,7 +435,6 @@ export async function registerUserRegion(
         runtime: input.runtime
       });
     }
-
     await setCachedJson(config.cacheStore, {
       key: cacheKey,
       value: {
@@ -427,6 +446,23 @@ export async function registerUserRegion(
   }
 
   return record;
+}
+
+function recordsReferToSameRegionUser(
+  existing: AuthFnRegionLookupRecord,
+  expected: AuthFnRegionLookupRecord
+): boolean {
+  return normalizeIdentifier(existing.identifier) === expected.identifier
+    && existing.regionId === expected.regionId
+    && normalizeAuthority(existing.authority) === normalizeAuthority(expected.authority)
+    && (!existing.userId || existing.userId === expected.userId);
+}
+
+function shouldRefreshExistingLookup(
+  existing: AuthFnRegionLookupRecord,
+  expected: AuthFnRegionLookupRecord
+): boolean {
+  return !existing.userId && Boolean(expected.userId);
 }
 
 export async function unregisterRegionLookupForIdentifier(

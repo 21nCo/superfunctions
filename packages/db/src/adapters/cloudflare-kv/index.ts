@@ -29,7 +29,7 @@ export function cloudflareKVStore(
       await namespace.put(
         toKey(prefix, input.key),
         input.value,
-        ttlSeconds && ttlSeconds > 0
+        isFinitePositiveTtl(ttlSeconds)
           ? { expirationTtl: Math.max(minimumTtlSeconds, Math.floor(ttlSeconds)) }
           : undefined,
       );
@@ -45,4 +45,8 @@ export const createCloudflareKVStore = cloudflareKVStore;
 
 function toKey(prefix: string, key: string): string {
   return `${prefix}${key}`;
+}
+
+function isFinitePositiveTtl(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }

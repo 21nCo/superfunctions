@@ -31,22 +31,36 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
         guard let name = MessageName(rawValue: message.name) else {
             return
         }
+        guard message.frameInfo.isMainFrame else {
+            return
+        }
 
         Task { @MainActor in
             switch name {
             case .nativeHandoffRequested:
                 if let code = extractCode(from: message.body) {
-                    _ = try? await handoffCoordinator.exchangeWebCreatedNativeCode(code)
-                    notifyWebAuthStateChanged()
+                    do {
+                        _ = try await handoffCoordinator.exchangeWebCreatedNativeCode(code)
+                        notifyWebAuthStateChanged()
+                    } catch {
+                        logBridgeError("native handoff exchange failed", error)
+                    }
                 }
             case .webHandoffRequested:
-                if let url = try? await handoffCoordinator.nativeToWebConsumeURL() {
+                do {
+                    let url = try await handoffCoordinator.nativeToWebConsumeURL()
                     webView?.load(URLRequest(url: url))
+                } catch {
+                    logBridgeError("web handoff start failed", error)
                 }
             case .signOut:
-                try? await client.signOut()
-                await clearCookies()
-                notifyWebAuthStateChanged()
+                do {
+                    try await client.signOut()
+                    await clearCookies()
+                    notifyWebAuthStateChanged()
+                } catch {
+                    logBridgeError("sign out failed", error)
+                }
             }
         }
     }
@@ -70,15 +84,46 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
     }
 
     private func notifyWebAuthStateChanged() {
-        webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('authfn:native-auth-state-changed'))")
+        webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('authfn:native-auth-state-changed'))") { _, error in
+            if let error {
+                self.logBridgeError("web auth state notification failed", error)
+            }
+        }
     }
 
     private func clearCookies() async {
         let store = webView?.configuration.websiteDataStore.httpCookieStore ?? WKWebsiteDataStore.default().httpCookieStore
         let cookies = await store.allCookies()
+        let currentHost = webView?.url?.host
         for cookie in cookies {
+            guard isAuthFnCookie(cookie, currentHost: currentHost) else {
+                continue
+            }
             await store.deleteCookie(cookie)
         }
+    }
+
+    private func isAuthFnCookie(_ cookie: HTTPCookie, currentHost: String?) -> Bool {
+        let authCookieNames: Set<String> = [
+            "authfn.session",
+            "authfn.csrf",
+            "__Secure-authfn.session",
+            "__Secure-authfn.csrf",
+        ]
+        guard authCookieNames.contains(cookie.name) else {
+            return false
+        }
+        guard let currentHost else {
+            return false
+        }
+
+        let cookieDomain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        let host = currentHost.lowercased()
+        return host == cookieDomain || host.hasSuffix(".\(cookieDomain)")
+    }
+
+    private func logBridgeError(_ message: String, _ error: Error) {
+        print("[AuthFnWebViewBridgeHost] \(message): \(error)")
     }
 }
 

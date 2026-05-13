@@ -21,7 +21,7 @@ export async function createUser(
     if (existingUser) {
       throw new AuthFnConflictError('A user with this email already exists', {
         primaryEmail,
-        existingUserId: existingUser.id
+        emailExists: true
       });
     }
   }

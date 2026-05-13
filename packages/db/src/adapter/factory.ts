@@ -165,7 +165,7 @@ function wrapAdapter(
       context.log.debug('findOne', params);
       const result = await implementation.findOne({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
       });
       return result ? context.transformOutput(result, params.model) : null;
     },
@@ -174,7 +174,7 @@ function wrapAdapter(
       context.log.debug('findMany', params);
       const results = await implementation.findMany({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
       });
       return Promise.all(results.map((r) => context.transformOutput(r, params.model)));
     },
@@ -184,7 +184,7 @@ function wrapAdapter(
       const transformed = await context.transformInput(params.data, params.model, 'update');
       const result = await implementation.update({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
         data: transformed,
       });
       return context.transformOutput(result, params.model);
@@ -194,7 +194,7 @@ function wrapAdapter(
       context.log.debug('delete', params);
       return implementation.delete({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
       });
     },
 
@@ -213,7 +213,7 @@ function wrapAdapter(
       const transformed = await context.transformInput(params.data, params.model, 'update');
       return implementation.updateMany({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
         data: transformed,
       });
     },
@@ -222,7 +222,7 @@ function wrapAdapter(
       context.log.debug('deleteMany', params);
       return implementation.deleteMany({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
       });
     },
 
@@ -241,7 +241,7 @@ function wrapAdapter(
       );
       const result = await implementation.upsert({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
         create: transformedCreate,
         update: transformedUpdate,
       });

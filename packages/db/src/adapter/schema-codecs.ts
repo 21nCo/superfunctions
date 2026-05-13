@@ -25,12 +25,12 @@ export function normalizeAdapterSchema(input: AdapterSchemaInput | undefined): T
   }
 
   if (Array.isArray(input)) {
-    return Object.fromEntries(input.map((table) => [table.modelName, table]));
+    return Object.fromEntries(input.map((table) => [readSchemaModelName(table), table]));
   }
 
   const maybeSchemaDefinition = input as { schemas?: unknown };
   if (Array.isArray(maybeSchemaDefinition.schemas)) {
-    return Object.fromEntries(maybeSchemaDefinition.schemas.map((table) => [table.modelName, table]));
+    return Object.fromEntries(maybeSchemaDefinition.schemas.map((table) => [readSchemaModelName(table), table]));
   }
 
   return input as TableSchemaMap;
@@ -71,9 +71,7 @@ export function transformWhereForStorage(
     const convert = (value: unknown) =>
       convertDateForStorage(value, field, `${model}.${clause.field}`);
     const value = clause.operator === 'in' || clause.operator === 'not_in'
-      ? Array.isArray(clause.value)
-        ? clause.value.map(convert)
-        : [convert(clause.value)]
+      ? readWhereArrayValue(clause.value, `${model}.${clause.field}`).map(convert)
       : convert(clause.value);
 
     return {
@@ -105,14 +103,14 @@ export function wrapWithSchema(adapter: Adapter, schemaInput: AdapterSchemaInput
     findOne: async <T = any>(params: FindOneParams): Promise<T | null> => {
       const result = await adapter.findOne<T>({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       });
       return result ? transformRecordForRuntime(schema, params.model, result) : null;
     },
     findMany: async <T = any>(params: FindManyParams): Promise<T[]> =>
       (await adapter.findMany<T>({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       })).map((record) => transformRecordForRuntime(schema, params.model, record)),
     update: async <T = any>(params: UpdateParams): Promise<T> =>
       transformRecordForRuntime(
@@ -120,25 +118,25 @@ export function wrapWithSchema(adapter: Adapter, schemaInput: AdapterSchemaInput
         params.model,
         await adapter.update<T>({
           ...params,
-          where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+          where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
           data: transformRecordForStorage(schema, params.model, params.data),
         })
       ),
     updateMany: (params: UpdateManyParams): Promise<number> =>
       adapter.updateMany({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
         data: transformRecordForStorage(schema, params.model, params.data),
       }),
     delete: (params: DeleteParams): Promise<void> =>
       adapter.delete({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       }),
     deleteMany: (params: DeleteManyParams): Promise<number> =>
       adapter.deleteMany({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       }),
     upsert: async <T = any>(params: UpsertParams): Promise<T> =>
       transformRecordForRuntime(
@@ -146,7 +144,7 @@ export function wrapWithSchema(adapter: Adapter, schemaInput: AdapterSchemaInput
         params.model,
         await adapter.upsert<T>({
           ...params,
-          where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+          where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
           create: transformRecordForStorage(schema, params.model, params.create),
           update: transformRecordForStorage(schema, params.model, params.update),
         })
@@ -159,6 +157,21 @@ export function wrapWithSchema(adapter: Adapter, schemaInput: AdapterSchemaInput
     transaction: <R>(callback: (trx: TransactionAdapter) => Promise<R>): Promise<R> =>
       adapter.transaction((trx) => callback(wrapTransactionWithSchema(trx, schema))),
   };
+}
+
+function readSchemaModelName(table: unknown): string {
+  const modelName = (table as { modelName?: unknown })?.modelName;
+  if (typeof modelName !== 'string' || modelName.trim().length === 0) {
+    throw new TypeError('Adapter schema table is missing a valid modelName');
+  }
+  return modelName;
+}
+
+function readWhereArrayValue(value: unknown, fieldPath: string): unknown[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${fieldPath} where value must be an array for in/not_in operators`);
+  }
+  return value;
 }
 
 function wrapTransactionWithSchema(
@@ -184,14 +197,14 @@ function wrapTransactionWithSchema(
     findOne: async <T = any>(params: FindOneParams): Promise<T | null> => {
       const result = await adapter.findOne<T>({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       });
       return result ? transformRecordForRuntime(schema, params.model, result) : null;
     },
     findMany: async <T = any>(params: FindManyParams): Promise<T[]> =>
       (await adapter.findMany<T>({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       })).map((record) => transformRecordForRuntime(schema, params.model, record)),
     update: async <T = any>(params: UpdateParams): Promise<T> =>
       transformRecordForRuntime(
@@ -199,25 +212,25 @@ function wrapTransactionWithSchema(
         params.model,
         await adapter.update<T>({
           ...params,
-          where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+          where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
           data: transformRecordForStorage(schema, params.model, params.data),
         })
       ),
     updateMany: (params: UpdateManyParams): Promise<number> =>
       adapter.updateMany({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
         data: transformRecordForStorage(schema, params.model, params.data),
       }),
     delete: (params: DeleteParams): Promise<void> =>
       adapter.delete({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       }),
     deleteMany: (params: DeleteManyParams): Promise<number> =>
       adapter.deleteMany({
         ...params,
-        where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+        where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
       }),
     upsert: async <T = any>(params: UpsertParams): Promise<T> =>
       transformRecordForRuntime(
@@ -225,7 +238,7 @@ function wrapTransactionWithSchema(
         params.model,
         await adapter.upsert<T>({
           ...params,
-          where: transformWhereForStorage(schema, params.model, params.where) ?? [],
+          where: transformWhereForStorage(schema, params.model, params.where) ?? params.where,
           create: transformRecordForStorage(schema, params.model, params.create),
           update: transformRecordForStorage(schema, params.model, params.update),
         })

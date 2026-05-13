@@ -272,17 +272,6 @@ export async function verifyOtpChallenge(
     }
   }
 
-  const consumed = await config.database.update<AuthFnOtpChallengeRecord>({
-    model: 'otp_challenges',
-    where: [{ field: 'id', operator: 'eq', value: challenge.id }],
-    data: {
-      attemptCount: nextAttemptCount,
-      consumedAt: now,
-      updatedAt: now
-    },
-    namespace: namespace(config)
-  });
-
   if (input.purpose === 'verify-email') {
     if (user) {
       user = await markUserEmailVerified(config, user.id, now);
@@ -320,6 +309,17 @@ export async function verifyOtpChallenge(
       // Fail-open by public hook contract.
     }
   }
+
+  const consumed = await config.database.update<AuthFnOtpChallengeRecord>({
+    model: 'otp_challenges',
+    where: [{ field: 'id', operator: 'eq', value: challenge.id }],
+    data: {
+      attemptCount: nextAttemptCount,
+      consumedAt: now,
+      updatedAt: now
+    },
+    namespace: namespace(config)
+  });
 
   await emitOtpEvent(runtimeOptions.delivery, {
     type: 'authfn.otp.verified',
@@ -521,20 +521,39 @@ function namespace(config: Pick<AuthFnConfig, 'namespace'>): string {
 }
 
 async function rollbackOtpSignUpUser(
-  config: Pick<AuthFnConfig, 'database' | 'namespace'>,
+  config: Pick<AuthFnConfig, 'database' | 'namespace' | 'observability'>,
   userId: string
 ): Promise<void> {
+  const failures: string[] = [];
   await config.database.deleteMany({
     model: 'region_profiles',
     where: [{ field: 'userId', operator: 'eq', value: userId }],
     namespace: namespace(config)
-  }).catch(() => undefined);
+  }).catch((error) => failures.push(readRollbackFailure('region_profiles.deleteMany', error)));
 
   await config.database.delete({
     model: 'users',
     where: [{ field: 'id', operator: 'eq', value: userId }],
     namespace: namespace(config)
-  }).catch(() => undefined);
+  }).catch((error) => failures.push(readRollbackFailure('users.delete', error)));
+
+  if (failures.length > 0) {
+    await emitAuthEvent(config, {
+      type: 'authfn.otp.signup.rollback_failed',
+      requestId: eventRequestId(),
+      actorId: userId,
+      userId,
+      outcome: 'error',
+      metadata: {
+        failures
+      }
+    });
+  }
+}
+
+function readRollbackFailure(operation: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${operation}: ${message}`;
 }
 
 async function buildChallengeHookContext(

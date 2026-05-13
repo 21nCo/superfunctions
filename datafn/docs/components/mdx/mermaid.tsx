@@ -6,6 +6,7 @@ import { useTheme } from 'next-themes';
 export function Mermaid({ chart }: { chart: string }) {
   const id = useId();
   const containerRef = useRef<HTMLDivElement>(null);
+  const bindFunctionsRef = useRef<((element: Element) => void) | undefined>(undefined);
   const { resolvedTheme } = useTheme();
   const [svg, setSvg] = useState<string | null>(null);
 
@@ -26,10 +27,8 @@ export function Mermaid({ chart }: { chart: string }) {
       const renderId = id.replace(/:/g, '-');
       mermaid.render(renderId, chart.replaceAll('\\n', '\n')).then((result) => {
         if (cancelled) return;
+        bindFunctionsRef.current = result.bindFunctions;
         setSvg(result.svg);
-        if (containerRef.current) {
-          result.bindFunctions?.(containerRef.current);
-        }
       });
     });
 
@@ -37,6 +36,12 @@ export function Mermaid({ chart }: { chart: string }) {
       cancelled = true;
     };
   }, [id, chart, resolvedTheme]);
+
+  useEffect(() => {
+    if (svg && containerRef.current) {
+      bindFunctionsRef.current?.(containerRef.current);
+    }
+  }, [svg]);
 
   if (!svg) return null;
 

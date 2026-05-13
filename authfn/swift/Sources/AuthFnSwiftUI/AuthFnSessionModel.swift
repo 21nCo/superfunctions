@@ -31,8 +31,11 @@ public final class AuthFnSessionModel: ObservableObject {
             try await client.signOut()
             credential = nil
             isAuthenticated = false
+            error = nil
         } catch {
-            self.error = error
+            let signOutError = error
+            await refresh()
+            self.error = signOutError
         }
     }
 }

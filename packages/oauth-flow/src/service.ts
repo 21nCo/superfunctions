@@ -1224,8 +1224,9 @@ function readOAuthLibraryError(error: unknown): {
   details?: Record<string, unknown>;
 } | null {
   if (error instanceof OAuthCoreError || error instanceof OAuthHttpError) {
+    const code = readOAuthFlowErrorCode(error.code);
     return {
-      code: error.code as OAuthFlowErrorCode,
+      code: code ?? "INTERNAL_ERROR",
       message: error.message,
       status: error.status ?? 400,
       retryable: error.retryable ?? false,
@@ -1255,12 +1256,36 @@ function readOAuthLibraryError(error: unknown): {
   }
 
   return {
-    code: raw.code as OAuthFlowErrorCode,
+    code: readOAuthFlowErrorCode(raw.code) ?? "INTERNAL_ERROR",
     message: raw.message,
     status: raw.status,
     retryable: raw.retryable,
     details: isRecord(raw.details) ? raw.details : undefined
   };
+}
+
+const OAUTH_FLOW_ERROR_CODES = new Set<OAuthFlowErrorCode>([
+  "OAUTH_HOOK_FAILED",
+  "NOT_IMPLEMENTED",
+  "OAUTH_STATE_INVALID",
+  "OAUTH_STATE_REPLAYED",
+  "OAUTH_CALLBACK_MISMATCH",
+  "OAUTH_REDIRECT_DISALLOWED",
+  "OAUTH_PROVIDER_UNSUPPORTED",
+  "OAUTH_RUNTIME_CONFIG_INVALID",
+  "OAUTH_SECRET_RESOLUTION_FAILED",
+  "OAUTH_TOKEN_STORAGE_UNSAFE",
+  "OAUTH_TOKEN_REFRESH_FAILED",
+  "OAUTH_TOKEN_EXCHANGE_FAILED",
+  "VALIDATION_ERROR",
+  "INTERNAL_ERROR",
+  "PROVIDER_RATE_LIMITED"
+]);
+
+function readOAuthFlowErrorCode(value: unknown): OAuthFlowErrorCode | undefined {
+  return typeof value === "string" && OAUTH_FLOW_ERROR_CODES.has(value as OAuthFlowErrorCode)
+    ? value as OAuthFlowErrorCode
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

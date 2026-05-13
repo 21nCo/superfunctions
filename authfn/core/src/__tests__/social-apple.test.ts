@@ -215,6 +215,8 @@ describe('@authfn/core apple social oauth', () => {
           code: 'apple_code',
           state: startBody.data.stateId,
           id_token: createIdToken({
+            iss: 'https://appleid.apple.com',
+            aud: 'apple-client-id',
             sub: 'apple-user-03',
             email: 'formpost.apple@example.com',
             email_verified: 'true',

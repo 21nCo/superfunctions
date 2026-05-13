@@ -76,7 +76,7 @@ function dateFieldToSQL(field: FieldSchema, dialect: Dialect): string {
     case 'iso-text':
       return 'TEXT';
     case 'epoch-ms-integer':
-      return dialect === 'mysql' ? 'INT' : 'INTEGER';
+      return 'BIGINT';
     case 'epoch-ms-bigint':
       return 'BIGINT';
   }

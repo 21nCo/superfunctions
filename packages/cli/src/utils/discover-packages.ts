@@ -32,18 +32,14 @@ export function discoverSuperfunctionsPackages(
   cwd: string = process.cwd()
 ): SuperfunctionsPackageMetadata[] {
   const nodeModulesPaths = findNodeModulesPaths(cwd);
+  const discovered: SuperfunctionsPackageMetadata[] = [];
+  const seenPackageNames = new Set<string>();
 
   for (const nodeModulesPath of nodeModulesPaths) {
-    const discovered: SuperfunctionsPackageMetadata[] = [];
-    const seenPackageNames = new Set<string>();
     scanDirectory(nodeModulesPath, discovered, seenPackageNames);
-
-    if (discovered.length > 0) {
-      return discovered;
-    }
   }
 
-  return [];
+  return discovered;
 }
 
 export function findNodeModulesPaths(startDir: string): string[] {

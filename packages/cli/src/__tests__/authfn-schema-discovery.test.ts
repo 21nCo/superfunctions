@@ -92,7 +92,7 @@ describe('authfn scoped schema discovery', () => {
     );
 
     const registry = getSuperfunctionsRegistry(testDir);
-    expect(registry).toEqual({
+    expect(registry).toMatchObject({
       createAuthFn: {
         packageName: '@authfn/core',
         libraryName: 'authfn'
