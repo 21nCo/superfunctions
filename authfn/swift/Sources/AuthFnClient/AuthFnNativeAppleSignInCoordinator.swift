@@ -26,6 +26,7 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
     private var completion: Completion?
     private var presentationAnchorProvider: PresentationAnchorProvider?
     private var controller: ASAuthorizationController?
+    private var isInProgress = false
 
     public override init() {}
 
@@ -39,6 +40,11 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
         completion: @escaping Completion
     ) {
         Task { @MainActor in
+            guard !self.isInProgress else {
+                completion(.failure(.init(code: "already_in_progress")))
+                return
+            }
+            self.isInProgress = true
             self.client = client
             self.accountBaseURL = accountBaseURL
             self.device = device
@@ -71,6 +77,11 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
         }
 
         Task { @MainActor in
+            guard !self.isInProgress else {
+                completion(.failure(.init(code: "already_in_progress")))
+                return
+            }
+            self.isInProgress = true
             self.client = client
             self.accountBaseURL = context.accountBaseURL ?? fallbackAccountBaseURL
             self.device = device
@@ -114,6 +125,7 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
         self.completion = nil
         presentationAnchorProvider = nil
         controller = nil
+        isInProgress = false
     }
 }
 
@@ -122,7 +134,18 @@ extension AuthFnNativeAppleSignInCoordinator: ASAuthorizationControllerDelegate,
 {
     @MainActor
     public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        presentationAnchorProvider?() ?? ASPresentationAnchor()
+        if let anchor = presentationAnchorProvider?() {
+            return anchor
+        }
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }
+            ?? UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .first
+            ?? ASPresentationAnchor()
     }
 
     @MainActor

@@ -44,27 +44,10 @@ public struct AuthFnOAuthCoordinator: Sendable {
         else {
             return nil
         }
-        let redirectUri = components.queryItems?.first(where: { $0.name == "redirect_uri" })?.value
         return AuthFnAppleAuthorizeContext(
             stateId: stateId,
             nonce: nonce,
-            accountBaseURL: accountBaseURL(fromRedirectURI: redirectUri)
+            accountBaseURL: nil
         )
-    }
-
-    public func accountBaseURL(fromRedirectURI redirectUri: String?) -> URL? {
-        guard
-            let redirectUri,
-            let url = URL(string: redirectUri),
-            let scheme = url.scheme,
-            let host = url.host
-        else {
-            return nil
-        }
-        var components = URLComponents()
-        components.scheme = scheme
-        components.host = host
-        components.port = url.port
-        return components.url
     }
 }

@@ -11,6 +11,10 @@ import { getPasswordCredentialByUserId } from './passwords.js';
 import { hasConfirmedTwoFactorEnrollment } from './two-factor.js';
 import { listOAuthAccountsForUser, type AuthFnOAuthAccountRecord } from './oauth-accounts.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
+import {
+  getMultiRegionPluginConfig,
+  unregisterRegionLookupForIdentifier
+} from './regions.js';
 
 export interface AuthFnAccountOAuthAccount {
   id: string;
@@ -134,7 +138,11 @@ export async function deleteAccountForUser(
   if (hasPlugin(config, 'emailOtp') && user.primaryEmail) {
     counts.otpChallenges = await deleteMany(config, 'otp_challenges', 'email', user.primaryEmail.trim().toLowerCase());
   }
-  if (hasPlugin(config, 'multiRegion')) {
+  const multiRegion = getMultiRegionPluginConfig(config);
+  if (multiRegion && user.primaryEmail) {
+    await unregisterRegionLookupForIdentifier(config, multiRegion, user.primaryEmail);
+  }
+  if (multiRegion) {
     counts.regionProfiles = await deleteMany(config, 'region_profiles', 'userId', user.id);
   }
 

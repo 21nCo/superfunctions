@@ -21,7 +21,7 @@ final class AuthFnClientTests: XCTestCase {
         XCTAssertEqual(coordinator.callbackValue(url, name: "regionId"), "insouth")
     }
 
-    func testAppleAuthorizeContextExtractsStateNonceAndAccountBaseURL() {
+    func testAppleAuthorizeContextExtractsStateAndNonceWithoutTrustingRedirectUri() {
         let coordinator = AuthFnOAuthCoordinator()
         let url = URL(string: "https://appleid.apple.com/auth/authorize?state=st_1&nonce=nonce_1&redirect_uri=https%3A%2F%2Faccount-insouth-dev.nucleum.app%2Fauth%2Fsocial%2Fcallback%2Fapple")!
 
@@ -29,7 +29,7 @@ final class AuthFnClientTests: XCTestCase {
 
         XCTAssertEqual(context?.stateId, "st_1")
         XCTAssertEqual(context?.nonce, "nonce_1")
-        XCTAssertEqual(context?.accountBaseURL?.absoluteString, "https://account-insouth-dev.nucleum.app")
+        XCTAssertNil(context?.accountBaseURL)
     }
 
     func testRegionCacheNormalizesAndExpiresEntries() async {

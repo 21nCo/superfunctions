@@ -521,7 +521,7 @@ async function rollbackPasswordSignUp(
 ): Promise<void> {
   const failures: string[] = [];
   const multiRegion = getMultiRegionPluginConfig(config);
-  if (primaryEmail && multiRegion?.lookupStore) {
+  if (primaryEmail && multiRegion) {
     await unregisterRegionLookupForIdentifier(config, multiRegion, primaryEmail)
       .catch((error) => failures.push(readRollbackFailure('region_lookup.delete', error)));
   }

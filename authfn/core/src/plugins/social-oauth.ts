@@ -1058,7 +1058,7 @@ async function rollbackSocialUser(
   primaryEmail?: string | null
 ): Promise<void> {
   const multiRegion = getMultiRegionPluginConfig(config);
-  if (primaryEmail && multiRegion?.lookupStore) {
+  if (primaryEmail && multiRegion) {
     await unregisterRegionLookupForIdentifier(config, multiRegion, primaryEmail).catch(() => undefined);
   }
 

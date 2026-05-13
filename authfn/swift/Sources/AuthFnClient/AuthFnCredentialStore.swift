@@ -102,13 +102,19 @@ public struct AuthFnKeychainBearerTokenStore: Sendable {
             throw AuthFnError.invalidResponse
         }
 
-        try deleteToken(ignoringMissing: true)
-
         var query = baseQuery()
-        query[kSecValueData as String] = data
+        let attributes = [kSecValueData as String: data]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        if updateStatus != errSecItemNotFound {
+            throw AuthFnError.unauthenticated
+        }
 
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
+        query[kSecValueData as String] = data
+        let addStatus = SecItemAdd(query as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
             throw AuthFnError.unauthenticated
         }
     }
@@ -127,7 +133,7 @@ public struct AuthFnKeychainBearerTokenStore: Sendable {
             throw AuthFnError.unauthenticated
         }
         guard let token = String(data: data, encoding: .utf8) else {
-            throw AuthFnError.invalidResponse
+            throw AuthFnError.unauthenticated
         }
         return token
     }
