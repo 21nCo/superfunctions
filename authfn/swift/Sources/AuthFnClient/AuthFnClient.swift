@@ -114,6 +114,73 @@ public final class AuthFnClient: Sendable {
         return credential
     }
 
+    public func exchangeNativeHandoff(
+        code: String,
+        accountBaseURL: URL,
+        device: [String: String] = [:]
+    ) async throws -> AuthFnSessionCredential {
+        let credential: AuthFnSessionCredential = try await post(
+            url: authURL(accountBaseURL: accountBaseURL, path: "/handoff/native/exchange"),
+            body: [
+                "code": code,
+                "device": device,
+            ]
+        )
+        try await credentialStore.saveCredential(credential)
+        return credential
+    }
+
+    public func requestWidgetToken(
+        sessionToken: String,
+        accountBaseURL: URL
+    ) async throws -> AuthFnWidgetToken {
+        try await post(
+            url: authURL(accountBaseURL: accountBaseURL, path: "/widget-token"),
+            body: [:],
+            bearerToken: sessionToken
+        )
+    }
+
+    public func startNativeAppleSignIn(
+        accountBaseURL: URL,
+        returnTo: String,
+        handoffMode: String = "session-token"
+    ) async throws -> AuthFnNativeAppleSignInStart {
+        try await post(
+            url: authURL(accountBaseURL: accountBaseURL, path: "/social/native/apple/start"),
+            body: [
+                "returnTo": returnTo,
+                "handoffMode": handoffMode,
+            ]
+        )
+    }
+
+    public func completeNativeAppleSignIn(
+        accountBaseURL: URL,
+        stateId: String,
+        identityToken: String,
+        authorizationCode: String?,
+        user: AuthFnNativeAppleUser? = nil,
+        device: [String: String] = [:]
+    ) async throws -> AuthFnNativeAppleSignInResult {
+        var body: [String: Any] = [
+            "stateId": stateId,
+            "identityToken": identityToken,
+            "device": device,
+        ]
+        if let authorizationCode {
+            body["authorizationCode"] = authorizationCode
+        }
+        if let user {
+            let userData = try encoder.encode(user)
+            body["user"] = try JSONSerialization.jsonObject(with: userData)
+        }
+        return try await post(
+            url: authURL(accountBaseURL: accountBaseURL, path: "/social/native/apple/complete"),
+            body: body
+        )
+    }
+
     public func signOut() async throws {
         try await credentialStore.clearCredential()
     }
@@ -175,6 +242,18 @@ public final class AuthFnClient: Sendable {
         return try await send(request)
     }
 
+    private func post<T: Decodable>(url: URL, body: [String: Any], bearerToken: String? = nil) async throws -> T {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("application/json", forHTTPHeaderField: "accept")
+        if let bearerToken {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "authorization")
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await send(request)
+    }
+
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
         let (data, _) = try await configuration.urlSession.data(for: request)
         let envelope = try decoder.decode(AuthFnEnvelope<T>.self, from: data)
@@ -189,6 +268,13 @@ public final class AuthFnClient: Sendable {
 
     private func normalize(_ identifier: String) -> String {
         identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func authURL(accountBaseURL: URL, path: String) -> URL {
+        var url = accountBaseURL
+        url.appendPathComponent("auth")
+        url.appendPathComponent(path.hasPrefix("/") ? String(path.dropFirst()) : path)
+        return url
     }
 }
 

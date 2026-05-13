@@ -60,10 +60,53 @@ public struct AuthFnHandoffStart: Codable, Equatable, Sendable {
     public var consumeUrl: String?
 }
 
+public struct AuthFnWidgetToken: Codable, Equatable, Sendable {
+    public var token: String
+    public var expiresAt: String?
+}
+
+public struct AuthFnNativeAppleSignInStart: Codable, Equatable, Sendable {
+    public var stateId: String
+    public var nonce: String
+}
+
+public struct AuthFnNativeAppleUserName: Codable, Equatable, Sendable {
+    public var firstName: String?
+    public var lastName: String?
+
+    public init(firstName: String? = nil, lastName: String? = nil) {
+        self.firstName = firstName
+        self.lastName = lastName
+    }
+}
+
+public struct AuthFnNativeAppleUser: Codable, Equatable, Sendable {
+    public var email: String?
+    public var name: AuthFnNativeAppleUserName?
+
+    public init(email: String? = nil, name: AuthFnNativeAppleUserName? = nil) {
+        self.email = email
+        self.name = name
+    }
+}
+
+public struct AuthFnNativeAppleSignInResult: Codable, Equatable, Sendable {
+    public var token: String
+    public var userId: String?
+    public var regionId: String?
+    public var isNewUser: Bool?
+}
+
 public struct AuthFnOAuthCallback: Equatable, Sendable {
     public var code: String?
     public var state: String?
     public var error: String?
+}
+
+public struct AuthFnAppleAuthorizeContext: Equatable, Sendable {
+    public var stateId: String
+    public var nonce: String
+    public var accountBaseURL: URL?
 }
 
 public enum AuthFnError: Error, Equatable, Sendable {

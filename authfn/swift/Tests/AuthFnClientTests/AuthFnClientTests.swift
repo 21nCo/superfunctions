@@ -12,6 +12,26 @@ final class AuthFnClientTests: XCTestCase {
         XCTAssertEqual(callback.state, "st_1")
     }
 
+    func testOAuthCallbackParsingReadsFragmentValues() {
+        let coordinator = AuthFnOAuthCoordinator()
+        let url = URL(string: "nucleum://oauthsignin#token=st_1&signup=true&regionId=insouth")!
+
+        XCTAssertEqual(coordinator.callbackValue(url, name: "token"), "st_1")
+        XCTAssertEqual(coordinator.callbackValue(url, name: "signup"), "true")
+        XCTAssertEqual(coordinator.callbackValue(url, name: "regionId"), "insouth")
+    }
+
+    func testAppleAuthorizeContextExtractsStateNonceAndAccountBaseURL() {
+        let coordinator = AuthFnOAuthCoordinator()
+        let url = URL(string: "https://appleid.apple.com/auth/authorize?state=st_1&nonce=nonce_1&redirect_uri=https%3A%2F%2Faccount-insouth-dev.nucleum.app%2Fauth%2Fsocial%2Fcallback%2Fapple")!
+
+        let context = coordinator.appleAuthorizeContext(from: url)
+
+        XCTAssertEqual(context?.stateId, "st_1")
+        XCTAssertEqual(context?.nonce, "nonce_1")
+        XCTAssertEqual(context?.accountBaseURL?.absoluteString, "https://account-insouth-dev.nucleum.app")
+    }
+
     func testRegionCacheNormalizesAndExpiresEntries() async {
         let cache = AuthFnRegionCache()
         await cache.set(identifier: " Ada@Example.COM ", regionId: "eu-west-1", authority: "https://eu.example.com", ttl: 60)

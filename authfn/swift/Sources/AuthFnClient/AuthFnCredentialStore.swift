@@ -87,3 +87,67 @@ public struct AuthFnKeychainCredentialStore: AuthFnCredentialStore {
         ]
     }
 }
+
+public struct AuthFnKeychainBearerTokenStore: Sendable {
+    private let service: String
+    private let account: String
+
+    public init(service: String = "authfn", account: String = "session-token") {
+        self.service = service
+        self.account = account
+    }
+
+    public func saveToken(_ token: String) throws {
+        guard let data = token.data(using: .utf8) else {
+            throw AuthFnError.invalidResponse
+        }
+
+        try deleteToken(ignoringMissing: true)
+
+        var query = baseQuery()
+        query[kSecValueData as String] = data
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw AuthFnError.unauthenticated
+        }
+    }
+
+    public func readToken() throws -> String? {
+        var query = baseQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw AuthFnError.unauthenticated
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    public func deleteToken() throws {
+        try deleteToken(ignoringMissing: true)
+    }
+
+    private func deleteToken(ignoringMissing: Bool) throws {
+        let status = SecItemDelete(baseQuery() as CFDictionary)
+        if status == errSecItemNotFound && ignoringMissing {
+            return
+        }
+        guard status == errSecSuccess else {
+            throw AuthFnError.unauthenticated
+        }
+    }
+
+    private func baseQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+}
