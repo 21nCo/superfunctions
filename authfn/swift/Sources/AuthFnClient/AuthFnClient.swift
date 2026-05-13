@@ -219,11 +219,7 @@ public final class AuthFnClient: Sendable {
         if let cached = await regionCache.get(identifier: identifier) {
             return cached.regionId
         }
-        do {
-            return try await lookupRegion(identifier: identifier).regionId
-        } catch {
-            return configuration.defaultRegionId
-        }
+        return try await lookupRegion(identifier: identifier).regionId
     }
 
     private func requireCredential() async throws -> AuthFnSessionCredential {

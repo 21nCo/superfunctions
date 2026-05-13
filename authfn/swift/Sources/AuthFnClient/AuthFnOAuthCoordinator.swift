@@ -37,7 +37,7 @@ public struct AuthFnOAuthCoordinator: Sendable {
     public func appleAuthorizeContext(from url: URL) -> AuthFnAppleAuthorizeContext? {
         guard
             url.host == "appleid.apple.com",
-            url.path.contains("/auth/authorize"),
+            url.path == "/auth/authorize",
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
             let stateId = components.queryItems?.first(where: { $0.name == "state" })?.value,
             let nonce = components.queryItems?.first(where: { $0.name == "nonce" })?.value

@@ -9,7 +9,13 @@ public struct AuthFnHandoffCoordinator: Sendable {
 
     public func nativeToWebConsumeURL(returnTo: String = "/") async throws -> URL {
         let handoff = try await client.startWebHandoff(returnTo: returnTo)
-        guard let rawURL = handoff.consumeUrl, let url = URL(string: rawURL) else {
+        guard
+            let rawURL = handoff.consumeUrl,
+            let url = URL(string: rawURL),
+            let scheme = url.scheme?.lowercased(),
+            ["http", "https"].contains(scheme),
+            url.host != nil
+        else {
             throw AuthFnError.invalidResponse
         }
         return url

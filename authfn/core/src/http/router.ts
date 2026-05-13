@@ -116,7 +116,7 @@ export function createBaseRoutes(
       }),
       handler: async (request) => {
         const session = await authenticateRequest(config, request);
-        if (!session || session.actorType !== 'user') {
+        if (!session || session.type !== 'session' || session.actorType !== 'user') {
           throw new AuthFnUnauthenticatedError();
         }
 

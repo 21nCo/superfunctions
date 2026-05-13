@@ -495,7 +495,8 @@ function sanitizeReturnTo(value: unknown): string {
   }
   try {
     const url = new URL(value);
-    return `${url.pathname}${url.search}${url.hash}` || '/';
+    const relative = `${url.pathname}${url.search}${url.hash}` || '/';
+    return relative.startsWith('/') && !relative.startsWith('//') ? relative : '/';
   } catch {
     return '/';
   }

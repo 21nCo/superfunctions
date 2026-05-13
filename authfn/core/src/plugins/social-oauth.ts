@@ -680,6 +680,21 @@ function createSocialRoutes(
             isNewUser
           }
         });
+        if (resolved.linkedExistingUser) {
+          await emitAccountLinkedEvent(ctx.config, {
+            request,
+            user,
+            method: SOCIAL_PROVIDER_METHODS.apple,
+            provider: 'apple',
+            regionId: runtime.regionId,
+            metadata: {
+              oauthAccountId: account.id,
+              connectionId: resolved.connectionId,
+              nativeProvider: 'apple',
+              isNewUser
+            }
+          });
+        }
 
         return jsonSuccess(request, {
           provider: 'apple',
@@ -1095,13 +1110,14 @@ function resolveProviderSettings(
 
   const verifiedEmailLinking = allowsOAuthLinkByVerifiedEmail(authConfig, providerId);
   const providerLinkOverride = staticConfig.linkByVerifiedEmail;
+  const hasRuntimeNativeClientIds = Object.prototype.hasOwnProperty.call(runtimeConfig, 'nativeClientIds');
 
   return {
     providerId,
     clientId,
-    nativeClientIds: readStringArray(runtimeConfig.nativeClientIds)
-      ?? readStringArray(staticConfig.nativeClientIds)
-      ?? [],
+    nativeClientIds: hasRuntimeNativeClientIds
+      ? readStringArray(runtimeConfig.nativeClientIds) ?? []
+      : readStringArray(staticConfig.nativeClientIds) ?? [],
     clientSecret: readOptionalString(runtimeConfig.clientSecret) ?? staticConfig.clientSecret,
     clientSecretResolver: readResolver(runtimeConfig.clientSecretResolver) ?? staticConfig.clientSecretResolver,
     allowlistedRedirectUris: readStringArray(runtimeConfig.allowlistedRedirectUris)
@@ -1352,7 +1368,7 @@ function assertAppleTokenAudience(claims: JWTPayload, audience: string | string[
 }
 
 function isUnsignedTestToken(identityToken: string): boolean {
-  if (process.env.NODE_ENV === 'production') {
+  if (!allowUnsignedAppleTokensForTests()) {
     return false;
   }
   try {
@@ -1362,6 +1378,15 @@ function isUnsignedTestToken(identityToken: string): boolean {
   } catch {
     return false;
   }
+}
+
+function allowUnsignedAppleTokensForTests(): boolean {
+  const env = (globalThis as unknown as {
+    process?: {
+      env?: Record<string, string | undefined>;
+    };
+  }).process?.env;
+  return env?.AUTHFN_ALLOW_UNSIGNED_APPLE_TOKENS === 'true' || env?.NODE_ENV === 'test';
 }
 
 function parseRawIdTokenPayload(identityToken: string): JWTPayload {

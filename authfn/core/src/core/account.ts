@@ -156,25 +156,33 @@ export async function deleteAccountForUser(
     counts
   };
 
-  await hooks.afterAccountDelete?.({
-    config,
-    request: input.request,
-    session: input.session,
-    actorId
-  }, result);
+  try {
+    await hooks.afterAccountDelete?.({
+      config,
+      request: input.request,
+      session: input.session,
+      actorId
+    }, result);
+  } catch {
+    // The account is already deleted; post-delete hooks are observational cleanup.
+  }
 
-  await emitAuthEvent(config, {
-    type: 'authfn.account.deleted',
-    requestId: eventRequestId(input.request),
-    actorId,
-    sessionId: input.session?.id,
-    userId: user.id,
-    regionId: input.session?.regionId,
-    outcome: 'deleted',
-    metadata: {
-      counts
-    }
-  });
+  try {
+    await emitAuthEvent(config, {
+      type: 'authfn.account.deleted',
+      requestId: eventRequestId(input.request),
+      actorId,
+      sessionId: input.session?.id,
+      userId: user.id,
+      regionId: input.session?.regionId,
+      outcome: 'deleted',
+      metadata: {
+        counts
+      }
+    });
+  } catch {
+    // Deletion should not be reported as failed if observability is unavailable.
+  }
 
   return result;
 }
