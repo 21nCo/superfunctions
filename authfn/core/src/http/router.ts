@@ -1,17 +1,20 @@
 import { createRouter, type Route, type Router } from '@superfunctions/http';
 import type { AuthFnConfig, AuthFnHooks } from '../types.js';
-import { AuthFnNotImplementedError } from '../core/errors.js';
+import { AuthFnNotImplementedError, AuthFnUnauthenticatedError } from '../core/errors.js';
 import { AuthFnValidationError } from '../core/errors.js';
 import { clearSessionCookies, issueSessionCookies } from '../core/cookies.js';
 import {
   assertValidCsrf,
+  authenticateRequest,
   getCookieSessionState,
   listActiveSessionsForUser,
   requireCookieSession,
   revokeSessionById,
   revokeSessionsForUser
 } from '../core/sessions.js';
+import { deleteAccountForUser, getAccountDetailsForUser } from '../core/account.js';
 import { emitAuthEvent, eventRequestId } from '../core/observability.js';
+import { findUserById } from '../core/users.js';
 import { jsonError, jsonSuccess } from './envelopes.js';
 
 export function createAuthFnRouter(
@@ -22,8 +25,56 @@ export function createAuthFnRouter(
   return createRouter({
     basePath: config.basePath ?? '/auth',
     routes: [...createBaseRoutes(config, _hooks), ...pluginRoutes],
-    onError: async (error, request) => jsonError(request, error)
+    onError: async (error, request) => {
+      const metadata = describeRouteError(error, request);
+      if (isDebugErrorLoggingEnabled()) {
+        console.error('[authfn route error]', JSON.stringify(metadata));
+      }
+      await emitAuthEvent(config, {
+        type: 'authfn.request.failed',
+        requestId: eventRequestId(request),
+        outcome: 'error',
+        metadata
+      });
+
+      return jsonError(request, error);
+    }
   });
+}
+
+function isDebugErrorLoggingEnabled(): boolean {
+  const globalProcess = globalThis as unknown as {
+    process?: {
+      env?: Record<string, string | undefined>;
+    };
+  };
+  return globalProcess.process?.env?.AUTHFN_DEBUG_ERRORS === 'true';
+}
+
+function describeRouteError(error: unknown, request: Request): Record<string, unknown> {
+  const raw = error && typeof error === 'object'
+    ? error as Record<string, unknown>
+    : {};
+  const cause = raw.cause;
+
+  return {
+    method: request.method,
+    path: new URL(request.url).pathname,
+    name: error instanceof Error ? error.name : typeof error,
+    errorKind: typeof raw.code === 'string' ? raw.code : undefined,
+    message: error instanceof Error ? error.message : String(error),
+    status: typeof raw.status === 'number' ? raw.status : undefined,
+    retryable: typeof raw.retryable === 'boolean' ? raw.retryable : undefined,
+    details: isRecord(raw.details) ? raw.details : undefined,
+    cause: cause instanceof Error
+      ? {
+          name: cause.name,
+          message: cause.message
+        }
+      : typeof cause === 'string'
+        ? cause
+        : undefined
+  };
 }
 
 export function createBaseRoutes(
@@ -34,18 +85,85 @@ export function createBaseRoutes(
     {
       method: 'GET',
       path: '/session',
-      meta: createAuthFnRouteMeta('getSession', 'Get the current cookie session', {
-        mode: 'cookie-session'
+      meta: createAuthFnRouteMeta('getSession', 'Get the current session', {
+        mode: 'hybrid'
       }),
       handler: async (request) => {
         const state = await getCookieSessionState(config, request);
         const cookiesToClear = state.failureReason
           ? Object.values(clearSessionCookies(state.cookiePolicy))
           : [];
+        const session = state.session ?? await authenticateRequest(config, request);
 
         return jsonSuccess(request, {
-          session: state.session ?? null
+          session: session?.type === 'session' && session.actorType === 'user'
+            ? session
+            : null
         }, {
+          setCookies: cookiesToClear
+        });
+      }
+    },
+    {
+      method: 'GET',
+      path: '/account',
+      meta: createAuthFnRouteMeta('getAccountDetails', 'Get current user account details', {
+        mode: 'hybrid'
+      }),
+      handler: async (request) => {
+        const session = await authenticateRequest(config, request);
+        if (!session || session.actorType !== 'user') {
+          throw new AuthFnUnauthenticatedError();
+        }
+
+        const user = await findUserById(config, session.actorId);
+        if (!user) {
+          throw new AuthFnUnauthenticatedError('Authenticated user no longer exists');
+        }
+
+        const account = await getAccountDetailsForUser(config, user);
+        return jsonSuccess(request, {
+          ...account,
+          regionId: session.regionId
+        });
+      }
+    },
+    {
+      method: 'DELETE',
+      path: '/account',
+      meta: createAuthFnRouteMeta('deleteAccount', 'Delete the current user account', {
+        mode: 'hybrid',
+        csrf: true
+      }),
+      handler: async (request) => {
+        const cookieState = await getCookieSessionState(config, request);
+        let session = cookieState.session ?? null;
+
+        if (session) {
+          assertValidCsrf(request, cookieState);
+        } else {
+          session = await authenticateRequest(config, request);
+        }
+
+        if (!session || session.type !== 'session' || session.actorType !== 'user') {
+          throw new AuthFnUnauthenticatedError();
+        }
+
+        const user = await findUserById(config, session.actorId);
+        if (!user) {
+          throw new AuthFnUnauthenticatedError('Authenticated user no longer exists');
+        }
+
+        const deletion = await deleteAccountForUser(config, _hooks, {
+          user,
+          session,
+          request
+        });
+        const cookiesToClear = cookieState.session || cookieState.failureReason
+          ? Object.values(clearSessionCookies(cookieState.cookiePolicy))
+          : [];
+
+        return jsonSuccess(request, deletion, {
           setCookies: cookiesToClear
         });
       }
@@ -234,4 +352,8 @@ export async function readOptionalJson<T extends Record<string, unknown>>(
       cause: error instanceof Error ? error.message : String(error)
     });
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

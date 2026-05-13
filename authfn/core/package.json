@@ -47,7 +47,8 @@
     "@superfunctions/oauth-flow": "*",
     "@superfunctions/oauth-http": "*",
     "@superfunctions/oauth-providers": "*",
-    "@superfunctions/oauth-storage": "*"
+    "@superfunctions/oauth-storage": "*",
+    "jose": "^6.2.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

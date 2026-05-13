@@ -31,19 +31,19 @@ export interface PackageRegistry {
 export function discoverSuperfunctionsPackages(
   cwd: string = process.cwd()
 ): SuperfunctionsPackageMetadata[] {
-  const discovered: SuperfunctionsPackageMetadata[] = [];
   const nodeModulesPaths = findNodeModulesPaths(cwd);
-  const seenPackageNames = new Set<string>();
-
-  if (nodeModulesPaths.length === 0) {
-    return discovered;
-  }
 
   for (const nodeModulesPath of nodeModulesPaths) {
+    const discovered: SuperfunctionsPackageMetadata[] = [];
+    const seenPackageNames = new Set<string>();
     scanDirectory(nodeModulesPath, discovered, seenPackageNames);
+
+    if (discovered.length > 0) {
+      return discovered;
+    }
   }
 
-  return discovered;
+  return [];
 }
 
 export function findNodeModulesPaths(startDir: string): string[] {

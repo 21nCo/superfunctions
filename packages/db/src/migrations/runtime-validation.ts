@@ -17,11 +17,31 @@ function validateField(fieldKey: string, field: any, value: unknown): string | n
     case 'boolean':
       return typeof value === 'boolean' ? null : `Field ${fieldKey} must be a boolean`;
     case 'date':
-      return value instanceof Date || typeof value === 'string' ? null : `Field ${fieldKey} must be a date or ISO string`;
+    case 'datetime':
+      return validateDateField(fieldKey, field, value);
     case 'json':
       try { JSON.stringify(value); return null; } catch { return `Field ${fieldKey} must be JSON-serializable`; }
     case 'bigint':
       return typeof value === 'bigint' || typeof value === 'number' ? null : `Field ${fieldKey} must be bigint or number`;
+    default:
+      return null;
+  }
+}
+
+function validateDateField(fieldKey: string, field: any, value: unknown): string | null {
+  switch (field.dateValueType ?? 'date') {
+    case 'date':
+      return value instanceof Date || typeof value === 'string' || typeof value === 'number'
+        ? null
+        : `Field ${fieldKey} must be a Date, ISO string, or epoch milliseconds`;
+    case 'iso-string':
+      return typeof value === 'string'
+        ? null
+        : `Field ${fieldKey} must be an ISO date string`;
+    case 'epoch-ms':
+      return typeof value === 'number'
+        ? null
+        : `Field ${fieldKey} must be epoch milliseconds`;
     default:
       return null;
   }

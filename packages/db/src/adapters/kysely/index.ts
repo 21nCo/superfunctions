@@ -7,6 +7,7 @@
 
 import type {
   Adapter,
+  AdapterSchemaInput,
   AdapterImplementation,
   CreateParams,
   FindOneParams,
@@ -24,6 +25,7 @@ import type {
 import { createAdapterFactory } from '../../adapter/factory.js';
 import { NotFoundError, OperationNotSupportedError } from '../../adapter/errors.js';
 import { createKyselyInternalCrud } from './internal.js';
+import { normalizeAdapterSchema } from '../../adapter/schema-codecs.js';
 
 export type KyselyDialect = 'postgres' | 'mysql' | 'sqlite';
 
@@ -31,6 +33,7 @@ export interface KyselyAdapterConfig {
   db: any; // Kysely instance
   dialect: KyselyDialect;
   schema: Record<string, string>; // model name -> table name
+  adapterSchema?: AdapterSchemaInput;
   schemaVersionsTable?: string; // optional table name for schema versions
   namespace?: any;
   debug?: boolean;
@@ -405,7 +408,9 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
     adapter: createImpl,
   });
 
-  const adapter = factory({});
+  const adapter = factory({
+    schema: normalizeAdapterSchema(config.adapterSchema),
+  });
   const internalCrud = createKyselyInternalCrud(config.db, config.dialect);
   return Object.assign(adapter, { internal: internalCrud });
 }

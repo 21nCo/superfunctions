@@ -10,6 +10,7 @@ import type {
 } from '../types.js';
 import {
   AuthFnError,
+  AuthFnConflictError,
   AuthFnOtpExpiredError,
   AuthFnOtpInvalidError,
   AuthFnOtpReplayedError,
@@ -19,9 +20,13 @@ import {
 import { emitOtpEvent, deliverChallenge } from './delivery.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
 import { hashSecret } from './sessions.js';
-import { findUserByPrimaryEmail, markUserEmailVerified } from './users.js';
+import { createUser, findUserByPrimaryEmail, markUserEmailVerified } from './users.js';
 import { type PasswordPolicyOptions, updatePasswordCredential } from './passwords.js';
 import { resolveRuntime } from './runtime.js';
+import {
+  allowsOtpSignUpExistingUser,
+  emitAccountLinkingConflictEvent
+} from './account-linking.js';
 
 const DEFAULT_OTP_TTL_SECONDS = 60 * 10;
 const DEFAULT_OTP_MAX_ATTEMPTS = 5;
@@ -47,6 +52,7 @@ export interface VerifyOtpInput {
   purpose: AuthFnOtpPurpose;
   email: string;
   code: string;
+  profile?: Record<string, unknown>;
 }
 
 export interface CompleteResetPasswordInput {
@@ -66,6 +72,8 @@ export interface VerifyOtpResult {
   verified: boolean;
   challenge: AuthFnOtpChallengeRecord;
   user?: AuthFnUserRecord;
+  createdUser?: boolean;
+  linkedExistingUser?: boolean;
 }
 
 export async function sendOtpChallenge(
@@ -171,6 +179,7 @@ export async function sendOtpChallenge(
 
 export async function verifyOtpChallenge(
   config: AuthFnConfig,
+  hooks: Partial<AuthFnHooks>,
   runtimeOptions: OtpRuntimeOptions,
   input: VerifyOtpInput
 ): Promise<VerifyOtpResult> {
@@ -222,6 +231,47 @@ export async function verifyOtpChallenge(
     });
   }
 
+  let createdUser = false;
+  let linkedExistingUser = false;
+  let user = await findUserByPrimaryEmail(config, email);
+  let pendingSignUp: OtpSignUpUserInput | undefined;
+
+  if (input.purpose === 'sign-in') {
+    if (!user) {
+      throw new AuthFnOtpInvalidError('OTP sign-in requires an existing user', {
+        email
+      });
+    }
+  } else if (input.purpose === 'sign-up') {
+    pendingSignUp = await resolveOtpSignUpUserInput(config, hooks, input, now);
+    user = await findUserByPrimaryEmail(config, pendingSignUp.primaryEmail);
+    if (user) {
+      if (!allowsOtpSignUpExistingUser(config)) {
+        await emitAccountLinkingConflictEvent(config, {
+          request: input.request,
+          user,
+          regionId: pendingSignUp.runtime?.regionId,
+          method: 'email-otp',
+          reason: 'otp_sign_up_existing_user_disabled'
+        });
+        throw new AuthFnConflictError('A user with this email already exists', {
+          primaryEmail: pendingSignUp.primaryEmail,
+          linking: {
+            method: 'email-otp',
+            reason: 'existing_user'
+          }
+        });
+      }
+      linkedExistingUser = true;
+    }
+  } else if (input.purpose === 'reset-password') {
+    if (!user) {
+      throw new AuthFnOtpInvalidError('Password reset requires an existing user', {
+        email
+      });
+    }
+  }
+
   const consumed = await config.database.update<AuthFnOtpChallengeRecord>({
     model: 'otp_challenges',
     where: [{ field: 'id', operator: 'eq', value: challenge.id }],
@@ -233,17 +283,41 @@ export async function verifyOtpChallenge(
     namespace: namespace(config)
   });
 
-  let user = await findUserByPrimaryEmail(config, email);
-
   if (input.purpose === 'verify-email') {
     if (user) {
       user = await markUserEmailVerified(config, user.id, now);
     }
-  } else if (input.purpose === 'sign-in') {
-    if (!user) {
-      throw new AuthFnOtpInvalidError('OTP sign-in requires an existing user', {
-        email
-      });
+  } else if (input.purpose === 'sign-up' && linkedExistingUser && user) {
+    if (!user.emailVerifiedAt) {
+      user = await markUserEmailVerified(config, user.id, now);
+    }
+  } else if (input.purpose === 'sign-up' && pendingSignUp && !user) {
+    user = await createUser(config, {
+      primaryEmail: pendingSignUp.primaryEmail,
+      emailVerifiedAt: now,
+      metadata: pendingSignUp.metadata
+    });
+    createdUser = true;
+    try {
+      await hooks.afterUserCreate?.(
+        {
+          config,
+          request: input.request,
+          runtime: pendingSignUp.runtime,
+          actorId: user.id
+        },
+        {
+          id: user.id,
+          primaryEmail: user.primaryEmail,
+          metadata: user.metadata ?? {}
+        }
+      );
+    } catch (afterHookError) {
+      if (afterHookError instanceof AuthFnError) {
+        await rollbackOtpSignUpUser(config, user.id);
+        throw afterHookError;
+      }
+      // Fail-open by public hook contract.
     }
   }
 
@@ -271,7 +345,9 @@ export async function verifyOtpChallenge(
   return {
     verified: true,
     challenge: consumed,
-    user: user ?? undefined
+    user: user ?? undefined,
+    createdUser,
+    linkedExistingUser
   };
 }
 
@@ -282,7 +358,7 @@ export async function completeResetPassword(
 ): Promise<{ passwordUpdated: true }> {
   const email = normalizeEmail(input.email);
   const runtime = input.request ? await resolveRuntime(config, input.request) : undefined;
-  const challenge = await verifyOtpChallenge(config, runtimeOptions, {
+  const challenge = await verifyOtpChallenge(config, {}, runtimeOptions, {
     request: input.request,
     purpose: input.purpose,
     email,
@@ -429,7 +505,12 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function readPurpose(value: unknown, fallback: AuthFnOtpPurpose): AuthFnOtpPurpose {
-  if (value === 'verify-email' || value === 'sign-in' || value === 'reset-password') {
+  if (
+    value === 'verify-email'
+    || value === 'sign-in'
+    || value === 'sign-up'
+    || value === 'reset-password'
+  ) {
     return value;
   }
   return fallback;
@@ -437,6 +518,23 @@ function readPurpose(value: unknown, fallback: AuthFnOtpPurpose): AuthFnOtpPurpo
 
 function namespace(config: Pick<AuthFnConfig, 'namespace'>): string {
   return config.namespace ?? 'authfn';
+}
+
+async function rollbackOtpSignUpUser(
+  config: Pick<AuthFnConfig, 'database' | 'namespace'>,
+  userId: string
+): Promise<void> {
+  await config.database.deleteMany({
+    model: 'region_profiles',
+    where: [{ field: 'userId', operator: 'eq', value: userId }],
+    namespace: namespace(config)
+  }).catch(() => undefined);
+
+  await config.database.delete({
+    model: 'users',
+    where: [{ field: 'id', operator: 'eq', value: userId }],
+    namespace: namespace(config)
+  }).catch(() => undefined);
 }
 
 async function buildChallengeHookContext(
@@ -448,4 +546,52 @@ async function buildChallengeHookContext(
     request,
     runtime: request ? await resolveRuntime(config, request) : undefined
   };
+}
+
+interface OtpSignUpUserInput {
+  primaryEmail: string;
+  metadata?: Record<string, unknown>;
+  runtime?: Awaited<ReturnType<typeof resolveRuntime>>;
+}
+
+async function resolveOtpSignUpUserInput(
+  config: AuthFnConfig,
+  hooks: Partial<AuthFnHooks>,
+  input: VerifyOtpInput,
+  verifiedAt: Date
+): Promise<OtpSignUpUserInput> {
+  const hookContext = await buildChallengeHookContext(config, input.request);
+  const beforeUserInput = await runBeforeUserCreateHook(hooks, hookContext, {
+    primaryEmail: normalizeEmail(input.email),
+    emailVerifiedAt: verifiedAt,
+    metadata: input.profile ?? {}
+  });
+
+  return {
+    primaryEmail: normalizeEmail(readString(beforeUserInput.primaryEmail) ?? input.email),
+    metadata: readRecord(beforeUserInput.metadata) ?? input.profile,
+    runtime: hookContext.runtime
+  };
+}
+
+async function runBeforeUserCreateHook(
+  hooks: Partial<AuthFnHooks>,
+  ctx: AuthFnHookContext,
+  input: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  if (!hooks.beforeUserCreate) {
+    return input;
+  }
+
+  try {
+    const transformed = await hooks.beforeUserCreate(ctx, input);
+    return transformed ?? input;
+  } catch (error) {
+    if (error instanceof AuthFnError) {
+      throw error;
+    }
+    throw new AuthFnPluginAbortedError('beforeUserCreate hook aborted OTP sign-up', {
+      cause: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
