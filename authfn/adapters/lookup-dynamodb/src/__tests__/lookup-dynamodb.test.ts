@@ -16,7 +16,7 @@ describe('@authfn/lookup-dynamodb', () => {
             Items: [
               {
                 PK: 'ada@example.com',
-                SK: 'eu-west-1',
+                SK: 'LOOKUP',
                 identifier: 'ada@example.com',
                 userId: 'user_1',
                 regionId: 'eu-west-1',
@@ -61,7 +61,7 @@ describe('@authfn/lookup-dynamodb', () => {
             Items: [
               {
                 PK: 'ada@example.com',
-                SK: 'us-east-1',
+                SK: 'LOOKUP',
                 identifier: 'ada@example.com',
                 regionId: 'us-east-1',
                 authority: 'https://us.account.example.com',

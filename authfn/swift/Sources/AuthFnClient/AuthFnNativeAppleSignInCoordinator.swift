@@ -38,13 +38,13 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
         presentationAnchor: @escaping PresentationAnchorProvider,
         completion: @escaping Completion
     ) {
-        self.client = client
-        self.accountBaseURL = accountBaseURL
-        self.device = device
-        self.completion = completion
-        self.presentationAnchorProvider = presentationAnchor
+        Task { @MainActor in
+            self.client = client
+            self.accountBaseURL = accountBaseURL
+            self.device = device
+            self.completion = completion
+            self.presentationAnchorProvider = presentationAnchor
 
-        Task {
             do {
                 let start = try await client.startNativeAppleSignIn(
                     accountBaseURL: accountBaseURL,
@@ -70,19 +70,24 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
             return false
         }
 
-        self.client = client
-        self.accountBaseURL = context.accountBaseURL ?? fallbackAccountBaseURL
-        self.device = device
-        self.completion = completion
-        self.presentationAnchorProvider = presentationAnchor
-        beginAuthorization(stateId: context.stateId, nonce: context.nonce)
+        Task { @MainActor in
+            self.client = client
+            self.accountBaseURL = context.accountBaseURL ?? fallbackAccountBaseURL
+            self.device = device
+            self.completion = completion
+            self.presentationAnchorProvider = presentationAnchor
+            self.beginAuthorization(stateId: context.stateId, nonce: context.nonce)
+        }
         return true
     }
 
     public func cancel() {
-        finish(.failure(.init(code: "cancelled")))
+        Task { @MainActor in
+            self.finish(.failure(.init(code: "cancelled")))
+        }
     }
 
+    @MainActor
     private func beginAuthorization(stateId: String, nonce: String) {
         self.stateId = stateId
 
@@ -98,11 +103,10 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
         controller.performRequests()
     }
 
+    @MainActor
     private func finish(_ result: Result<AuthFnNativeAppleSignInResult, AuthFnNativeAppleSignInFailure>) {
         let completion = completion
-        DispatchQueue.main.async {
-            completion?(result)
-        }
+        completion?(result)
         client = nil
         stateId = nil
         accountBaseURL = nil
@@ -116,10 +120,12 @@ public final class AuthFnNativeAppleSignInCoordinator: NSObject {
 extension AuthFnNativeAppleSignInCoordinator: ASAuthorizationControllerDelegate,
     ASAuthorizationControllerPresentationContextProviding
 {
+    @MainActor
     public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         presentationAnchorProvider?() ?? ASPresentationAnchor()
     }
 
+    @MainActor
     public func authorizationController(
         controller: ASAuthorizationController,
         didCompleteWithAuthorization authorization: ASAuthorization
@@ -147,7 +153,7 @@ extension AuthFnNativeAppleSignInCoordinator: ASAuthorizationControllerDelegate,
         )
         let hasUserDetails = user.email != nil || user.name?.firstName != nil || user.name?.lastName != nil
 
-        Task {
+        Task { @MainActor in
             do {
                 let result = try await client.completeNativeAppleSignIn(
                     accountBaseURL: accountBaseURL,
@@ -168,7 +174,9 @@ extension AuthFnNativeAppleSignInCoordinator: ASAuthorizationControllerDelegate,
         controller: ASAuthorizationController,
         didCompleteWithError error: Error
     ) {
-        finish(.failure(.init(code: "authorization_failed", message: error.localizedDescription)))
+        Task { @MainActor in
+            self.finish(.failure(.init(code: "authorization_failed", message: error.localizedDescription)))
+        }
     }
 }
 #endif

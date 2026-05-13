@@ -75,6 +75,10 @@ import {
   emitAccountLinkedEvent,
   emitAccountLinkingConflictEvent
 } from '../core/account-linking.js';
+import {
+  getMultiRegionPluginConfig,
+  unregisterRegionLookupForIdentifier
+} from '../core/regions.js';
 
 const SOCIAL_PROVIDER_METHODS = {
   google: 'oauth-google',
@@ -1039,7 +1043,7 @@ async function createSocialUser(
     );
   } catch (afterHookError) {
     if (afterHookError instanceof AuthFnError) {
-      await rollbackSocialUser(config, user.id);
+      await rollbackSocialUser(config, user.id, user.primaryEmail);
       throw afterHookError;
     }
     // Fail-open by hook contract.
@@ -1049,9 +1053,15 @@ async function createSocialUser(
 }
 
 async function rollbackSocialUser(
-  config: Pick<AuthFnConfig, 'database' | 'namespace'>,
-  userId: string
+  config: Pick<AuthFnConfig, 'cacheStore' | 'database' | 'namespace' | 'plugins'>,
+  userId: string,
+  primaryEmail?: string | null
 ): Promise<void> {
+  const multiRegion = getMultiRegionPluginConfig(config);
+  if (primaryEmail && multiRegion?.lookupStore) {
+    await unregisterRegionLookupForIdentifier(config, multiRegion, primaryEmail).catch(() => undefined);
+  }
+
   await config.database.deleteMany({
     model: 'region_profiles',
     where: [{ field: 'userId', operator: 'eq', value: userId }],

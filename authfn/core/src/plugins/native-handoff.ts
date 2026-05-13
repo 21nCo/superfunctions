@@ -104,6 +104,7 @@ function createNativeHandoffRoutes(
 
         return jsonSuccess(request, {
           code: code.code,
+          regionId: code.record.regionId,
           expiresAt: code.record.expiresAt.toISOString()
         });
       }
@@ -489,7 +490,7 @@ function sanitizeReturnTo(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) {
     return '/';
   }
-  if (value.startsWith('/')) {
+  if (value.startsWith('/') && !value.startsWith('//')) {
     return value;
   }
   try {

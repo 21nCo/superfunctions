@@ -252,7 +252,7 @@ function wrapAdapter(
       context.log.debug('count', params);
       return implementation.count({
         ...params,
-        where: transformWhereForStorage(context.schema, params.model, params.where),
+        where: transformWhereForStorage(context.schema, params.model, params.where) ?? params.where,
       });
     },
 

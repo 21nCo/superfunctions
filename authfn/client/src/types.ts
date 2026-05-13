@@ -225,6 +225,7 @@ export interface AuthFnClient {
   }> | AuthFnErrorEnvelope>;
   startNativeHandoff(): Promise<AuthFnSuccessEnvelope<{
     code: string;
+    regionId: string;
     expiresAt: string;
   }> | AuthFnErrorEnvelope>;
   startWebHandoff(input?: {

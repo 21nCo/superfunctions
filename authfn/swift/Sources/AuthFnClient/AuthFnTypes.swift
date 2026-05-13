@@ -4,25 +4,35 @@ public struct AuthFnConfiguration: Sendable {
     public var defaultRegionId: String
     public var resolveBaseURL: @Sendable (String) -> URL
     public var urlSession: URLSession
+    public var cookiePrefix: String
 
     public init(
         defaultRegionId: String,
         baseURL: URL,
+        cookiePrefix: String = "authfn",
         urlSession: URLSession = .shared
     ) {
         self.defaultRegionId = defaultRegionId
         self.resolveBaseURL = { _ in baseURL }
         self.urlSession = urlSession
+        self.cookiePrefix = AuthFnConfiguration.normalizeCookiePrefix(cookiePrefix)
     }
 
     public init(
         defaultRegionId: String,
+        cookiePrefix: String = "authfn",
         urlSession: URLSession = .shared,
         resolveBaseURL: @escaping @Sendable (String) -> URL
     ) {
         self.defaultRegionId = defaultRegionId
         self.resolveBaseURL = resolveBaseURL
         self.urlSession = urlSession
+        self.cookiePrefix = AuthFnConfiguration.normalizeCookiePrefix(cookiePrefix)
+    }
+
+    private static func normalizeCookiePrefix(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "authfn" : trimmed
     }
 }
 
@@ -56,6 +66,7 @@ public struct AuthFnSessionCredential: Codable, Equatable, Sendable {
 
 public struct AuthFnHandoffStart: Codable, Equatable, Sendable {
     public var code: String
+    public var regionId: String?
     public var expiresAt: String
     public var consumeUrl: String?
 }
@@ -92,6 +103,7 @@ public struct AuthFnNativeAppleUser: Codable, Equatable, Sendable {
 
 public struct AuthFnNativeAppleSignInResult: Codable, Equatable, Sendable {
     public var token: String
+    public var session: AuthFnSession?
     public var userId: String?
     public var regionId: String?
     public var isNewUser: Bool?

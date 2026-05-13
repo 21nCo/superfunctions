@@ -11,6 +11,7 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
     }
 
     private weak var webView: WKWebView?
+    private weak var userContentController: WKUserContentController?
     private let client: AuthFnClient
     private let handoffCoordinator: AuthFnHandoffCoordinator
 
@@ -22,9 +23,18 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
     }
 
     public func install(on userContentController: WKUserContentController) {
+        uninstall()
+        self.userContentController = userContentController
         userContentController.add(self, name: MessageName.nativeHandoffRequested.rawValue)
         userContentController.add(self, name: MessageName.webHandoffRequested.rawValue)
         userContentController.add(self, name: MessageName.signOut.rawValue)
+    }
+
+    public func uninstall() {
+        userContentController?.removeScriptMessageHandler(forName: MessageName.nativeHandoffRequested.rawValue)
+        userContentController?.removeScriptMessageHandler(forName: MessageName.webHandoffRequested.rawValue)
+        userContentController?.removeScriptMessageHandler(forName: MessageName.signOut.rawValue)
+        userContentController = nil
     }
 
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -38,9 +48,9 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
         Task { @MainActor in
             switch name {
             case .nativeHandoffRequested:
-                if let code = extractCode(from: message.body) {
+                if let handoff = extractHandoff(from: message.body) {
                     do {
-                        _ = try await handoffCoordinator.exchangeWebCreatedNativeCode(code)
+                        _ = try await handoffCoordinator.exchangeWebCreatedNativeCode(handoff.code, regionId: handoff.regionId)
                         notifyWebAuthStateChanged()
                     } catch {
                         logBridgeError("native handoff exchange failed", error)
@@ -73,12 +83,12 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
         try AuthFnOAuthCoordinator().parseCallbackURL(url)
     }
 
-    private func extractCode(from body: Any) -> String? {
+    private func extractHandoff(from body: Any) -> (code: String, regionId: String?)? {
         if let code = body as? String {
-            return code
+            return (code, nil)
         }
         if let object = body as? [String: Any], let code = object["code"] as? String {
-            return code
+            return (code, object["regionId"] as? String)
         }
         return nil
     }
@@ -104,11 +114,12 @@ public final class AuthFnWebViewBridgeHost: NSObject, WKScriptMessageHandler {
     }
 
     private func isAuthFnCookie(_ cookie: HTTPCookie, currentHost: String?) -> Bool {
+        let prefix = client.cookiePrefix
         let authCookieNames: Set<String> = [
-            "authfn.session",
-            "authfn.csrf",
-            "__Secure-authfn.session",
-            "__Secure-authfn.csrf",
+            "\(prefix).session",
+            "\(prefix).csrf",
+            "__Secure-\(prefix).session",
+            "__Secure-\(prefix).csrf",
         ]
         guard authCookieNames.contains(cookie.name) else {
             return false

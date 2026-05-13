@@ -77,11 +77,24 @@ export function createAuthFnRegionalClient(
 
   const lookupCurrentRegion = async (identifierInput: string) => {
     const identifier = normalizeIdentifier(identifierInput);
-    const lookup = await clientFor(currentRegionId).lookupRegion({ identifier });
+    const lookupRegionId = currentRegionId;
+    const lookup = await clientFor(lookupRegionId).lookupRegion({ identifier });
     if (!lookup.ok) {
       const mismatch = regionFromMismatch(identifier, lookup, cacheTtlMs);
       if (mismatch) {
-        await saveRegion(storage, cacheTtlMs, options, mismatch, currentRegionId);
+        await saveRegion(storage, cacheTtlMs, options, mismatch, lookupRegionId);
+        const retry = await clientFor(mismatch.regionId).lookupRegion({ identifier });
+        if (retry.ok) {
+          await saveRegion(storage, cacheTtlMs, options, {
+            identifier,
+            regionId: retry.data.regionId,
+            authority: retry.data.authority,
+            domain: retry.data.domain,
+            cachedAt: Date.now(),
+            expiresAt: Date.now() + cacheTtlMs
+          }, lookupRegionId);
+        }
+        return retry;
       } else {
         await storage.delete(identifier);
       }
@@ -95,7 +108,7 @@ export function createAuthFnRegionalClient(
       domain: lookup.data.domain,
       cachedAt: Date.now(),
       expiresAt: Date.now() + cacheTtlMs
-    }, currentRegionId);
+    }, lookupRegionId);
     return lookup;
   };
 
@@ -285,7 +298,11 @@ function writeStorageMap(value: Record<string, AuthFnCachedRegion>): void {
     return;
   }
 
-  localStorageLike.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(value));
+  try {
+    localStorageLike.setItem(DEFAULT_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
 }
 
 async function saveRegion(

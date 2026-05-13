@@ -365,23 +365,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const SENSITIVE_ERROR_METADATA_KEY = /(authorization|cookie|password|secret|token|code|hash|access|refresh|idtoken|clientsecret)/i;
 
 function sanitizeErrorMetadata(value: unknown, key?: string): Record<string, unknown> {
-  return sanitizeErrorMetadataValue(value, key) as Record<string, unknown>;
+  const sanitized = sanitizeErrorMetadataValue(value, key, new WeakSet<object>());
+  return isRecord(sanitized) ? sanitized : {};
 }
 
-function sanitizeErrorMetadataValue(value: unknown, key?: string): unknown {
+function sanitizeErrorMetadataValue(
+  value: unknown,
+  key: string | undefined,
+  seen: WeakSet<object>
+): unknown {
   if (key && SENSITIVE_ERROR_METADATA_KEY.test(key)) {
     return '[redacted]';
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeErrorMetadataValue(entry));
+    if (seen.has(value)) {
+      return '[Circular]';
+    }
+    seen.add(value);
+    const sanitized = value.map((entry) => sanitizeErrorMetadataValue(entry, undefined, seen));
+    seen.delete(value);
+    return sanitized;
   }
   if (isRecord(value)) {
-    return Object.fromEntries(
+    if (seen.has(value)) {
+      return '[Circular]';
+    }
+    seen.add(value);
+    const sanitized = Object.fromEntries(
       Object.entries(value).map(([entryKey, entryValue]) => [
         entryKey,
-        sanitizeErrorMetadataValue(entryValue, entryKey)
+        sanitizeErrorMetadataValue(entryValue, entryKey, seen)
       ])
     );
+    seen.delete(value);
+    return sanitized;
   }
   return value;
 }

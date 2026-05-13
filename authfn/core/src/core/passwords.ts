@@ -26,6 +26,10 @@ import {
   emitAccountLinkingConflictEvent
 } from './account-linking.js';
 import { emitAuthEvent, eventRequestId } from './observability.js';
+import {
+  getMultiRegionPluginConfig,
+  unregisterRegionLookupForIdentifier
+} from './regions.js';
 
 const PASSWORD_HASH_ALGO = 'scrypt';
 const PASSWORD_HASH_N = 16384;
@@ -148,7 +152,7 @@ export async function signUpWithPassword(
       }
       return { user, credential };
     } catch (error) {
-      await rollbackPasswordSignUp(config, user.id, credential?.id);
+      await rollbackPasswordSignUp(config, user.id, user.primaryEmail, credential?.id);
       throw error;
     }
   });
@@ -510,11 +514,18 @@ async function runUserCredentialTransaction<T>(
 }
 
 async function rollbackPasswordSignUp(
-  config: Pick<AuthFnConfig, 'database' | 'namespace' | 'observability'>,
+  config: Pick<AuthFnConfig, 'cacheStore' | 'database' | 'namespace' | 'observability' | 'plugins'>,
   userId: string,
+  primaryEmail?: string | null,
   credentialId?: string
 ): Promise<void> {
   const failures: string[] = [];
+  const multiRegion = getMultiRegionPluginConfig(config);
+  if (primaryEmail && multiRegion?.lookupStore) {
+    await unregisterRegionLookupForIdentifier(config, multiRegion, primaryEmail)
+      .catch((error) => failures.push(readRollbackFailure('region_lookup.delete', error)));
+  }
+
   if (credentialId) {
     await config.database.delete({
       model: 'password_credentials',
@@ -556,8 +567,8 @@ async function rollbackPasswordSignUp(
 }
 
 function readRollbackFailure(operation: string, error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return `${operation}: ${message}`;
+  const reason = error instanceof Error ? error.name : 'UnknownError';
+  return `${operation}: ${reason}`;
 }
 
 async function runBeforeUserCreateHook(

@@ -15,7 +15,7 @@ public struct AuthFnHandoffCoordinator: Sendable {
         return url
     }
 
-    public func exchangeWebCreatedNativeCode(_ code: String) async throws -> AuthFnSessionCredential {
-        try await client.exchangeNativeHandoff(code: code)
+    public func exchangeWebCreatedNativeCode(_ code: String, regionId: String? = nil) async throws -> AuthFnSessionCredential {
+        try await client.exchangeNativeHandoff(code: code, regionId: regionId)
     }
 }

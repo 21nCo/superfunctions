@@ -7,6 +7,10 @@ public final class AuthFnClient: Sendable {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
+    public var cookiePrefix: String {
+        configuration.cookiePrefix
+    }
+
     public init(
         configuration: AuthFnConfiguration,
         credentialStore: AuthFnCredentialStore = AuthFnInMemoryCredentialStore(),
@@ -101,10 +105,10 @@ public final class AuthFnClient: Sendable {
         )
     }
 
-    public func exchangeNativeHandoff(code: String, device: [String: String] = [:]) async throws -> AuthFnSessionCredential {
+    public func exchangeNativeHandoff(code: String, regionId: String? = nil, device: [String: String] = [:]) async throws -> AuthFnSessionCredential {
         let credential: AuthFnSessionCredential = try await post(
             path: "/handoff/native/exchange",
-            regionId: configuration.defaultRegionId,
+            regionId: regionId ?? configuration.defaultRegionId,
             body: [
                 "code": code,
                 "device": device,
@@ -175,10 +179,14 @@ public final class AuthFnClient: Sendable {
             let userData = try encoder.encode(user)
             body["user"] = try JSONSerialization.jsonObject(with: userData)
         }
-        return try await post(
+        let result: AuthFnNativeAppleSignInResult = try await post(
             url: authURL(accountBaseURL: accountBaseURL, path: "/social/native/apple/complete"),
             body: body
         )
+        if let session = result.session {
+            try await credentialStore.saveCredential(AuthFnSessionCredential(session: session, token: result.token))
+        }
+        return result
     }
 
     public func signOut() async throws {
@@ -257,8 +265,13 @@ public final class AuthFnClient: Sendable {
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
         let (data, _) = try await configuration.urlSession.data(for: request)
         let envelope = try decoder.decode(AuthFnEnvelope<T>.self, from: data)
-        if envelope.ok, let data = envelope.data {
-            return data
+        if envelope.ok {
+            if let data = envelope.data {
+                return data
+            }
+            if T.self == EmptyData.self {
+                return EmptyData() as! T
+            }
         }
         if let error = envelope.error {
             throw AuthFnError.server(code: error.code, message: error.message)

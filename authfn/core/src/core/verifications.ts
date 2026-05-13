@@ -1,4 +1,5 @@
 import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { NotFoundError } from '@superfunctions/db';
 import type {
   AuthFnConfig,
   AuthFnDeliveryProvider,
@@ -272,6 +273,8 @@ export async function verifyOtpChallenge(
     }
   }
 
+  const consumed = await consumeOtpChallenge(config, challenge, nextAttemptCount, now);
+
   if (input.purpose === 'verify-email') {
     if (user) {
       user = await markUserEmailVerified(config, user.id, now);
@@ -310,17 +313,6 @@ export async function verifyOtpChallenge(
     }
   }
 
-  const consumed = await config.database.update<AuthFnOtpChallengeRecord>({
-    model: 'otp_challenges',
-    where: [{ field: 'id', operator: 'eq', value: challenge.id }],
-    data: {
-      attemptCount: nextAttemptCount,
-      consumedAt: now,
-      updatedAt: now
-    },
-    namespace: namespace(config)
-  });
-
   await emitOtpEvent(runtimeOptions.delivery, {
     type: 'authfn.otp.verified',
     challengeId: challenge.id,
@@ -349,6 +341,36 @@ export async function verifyOtpChallenge(
     createdUser,
     linkedExistingUser
   };
+}
+
+async function consumeOtpChallenge(
+  config: Pick<AuthFnConfig, 'database' | 'namespace'>,
+  challenge: AuthFnOtpChallengeRecord,
+  attemptCount: number,
+  consumedAt: Date
+): Promise<AuthFnOtpChallengeRecord> {
+  try {
+    return await config.database.update<AuthFnOtpChallengeRecord>({
+      model: 'otp_challenges',
+      where: [
+        { field: 'id', operator: 'eq', value: challenge.id },
+        { field: 'consumedAt', operator: 'eq', value: null }
+      ],
+      data: {
+        attemptCount,
+        consumedAt,
+        updatedAt: consumedAt
+      },
+      namespace: namespace(config)
+    });
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      throw new AuthFnOtpReplayedError('OTP code has already been used', {
+        challengeId: challenge.id
+      });
+    }
+    throw error;
+  }
 }
 
 export async function completeResetPassword(
@@ -552,8 +574,17 @@ async function rollbackOtpSignUpUser(
 }
 
 function readRollbackFailure(operation: string, error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return `${operation}: ${message}`;
+  const reason = error instanceof Error ? error.name : 'UnknownError';
+  return `${operation}: ${reason}`;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof NotFoundError
+    || Boolean(
+      error
+        && typeof error === 'object'
+        && (error as { name?: unknown }).name === 'NotFoundError'
+    );
 }
 
 async function buildChallengeHookContext(

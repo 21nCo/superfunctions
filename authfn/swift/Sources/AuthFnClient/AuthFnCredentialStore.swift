@@ -126,7 +126,10 @@ public struct AuthFnKeychainBearerTokenStore: Sendable {
         guard status == errSecSuccess, let data = result as? Data else {
             throw AuthFnError.unauthenticated
         }
-        return String(data: data, encoding: .utf8)
+        guard let token = String(data: data, encoding: .utf8) else {
+            throw AuthFnError.invalidResponse
+        }
+        return token
     }
 
     public func deleteToken() throws {
