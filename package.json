@@ -11,6 +11,7 @@
     "authfn/*",
     "uifn/*",
     "uifn/examples/*",
+    "authfn/adapters/*",
     "authfn/examples/*",
     "authfn/examples/*/*",
     "extfn/*",
