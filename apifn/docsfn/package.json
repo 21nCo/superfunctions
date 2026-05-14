@@ -19,9 +19,9 @@
     "test": "vitest --run"
   },
   "dependencies": {
-    "@apifn/core": "*",
-    "@apifn/react": "*",
-    "@apifn/svelte": "*"
+    "@apifn/core": "0.0.1",
+    "@apifn/react": "0.0.1",
+    "@apifn/svelte": "0.0.1"
   },
   "peerDependencies": {
     "docsfn": "*"

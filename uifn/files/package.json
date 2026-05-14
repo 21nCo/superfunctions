@@ -20,27 +20,37 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
+    "test": "vitest run",
     "lint": "tsc --noEmit -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prepack": "npm run build",
     "clean": "rm -rf dist"
   },
-  "keywords": ["ui", "file", "upload", "filefn", "experimental"],
+  "keywords": [
+    "ui",
+    "file",
+    "upload",
+    "filefn",
+    "experimental"
+  ],
   "author": "21n",
   "license": "MIT",
   "engines": {
     "node": ">=18 <23"
   },
-  "bugs": { "url": "https://github.com/21nCo/super-functions/issues" },
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/21nCo/super-functions.git",
     "directory": "uifn/files"
   },
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@superfunctions/files": "*"
+    "@superfunctions/files": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest",
+    "test": "vitest run",
     "type-check": "tsc --noEmit"
   },
   "keywords": [

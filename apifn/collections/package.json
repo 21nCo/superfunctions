@@ -16,11 +16,11 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest",
+    "test": "vitest run",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@apifn/core": "*",
+    "@apifn/core": "0.0.1",
     "dotenv": "^16.6.1",
     "glob": "^11.0.3",
     "yaml": "^2.8.1"

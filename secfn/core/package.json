@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./id": {
+      "types": "./dist/id.d.ts",
+      "default": "./dist/id.js"
     }
   },
   "files": [
@@ -51,7 +55,7 @@
     "@typescript-eslint/parser": "^8.0.0"
   },
   "peerDependencies": {
-    "@superfunctions/db": "*"
+    "@superfunctions/db": "0.1.4"
   },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"

@@ -13,7 +13,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "author": "21n",
   "license": "MIT",
   "repository": {
@@ -30,8 +32,8 @@
     "namespace": "contentfn"
   },
   "dependencies": {
-    "@superfunctions/db": "*",
-    "@superfunctions/http": "*"
+    "@superfunctions/db": "0.1.4",
+    "@superfunctions/http": "0.1.3"
   },
   "scripts": {
     "build": "tsup",
@@ -42,8 +44,16 @@
     "test:watch": "vitest watch",
     "typecheck": "tsc --noEmit"
   },
-  "engines": { "node": ">=18.18.0" },
-  "keywords": ["contentfn", "schema", "validation", "cfql", "cms"],
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [
+    "contentfn",
+    "schema",
+    "validation",
+    "cfql",
+    "cms"
+  ],
   "sideEffects": false,
   "devDependencies": {
     "@types/node": "^24.9.1",

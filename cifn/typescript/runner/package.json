@@ -28,7 +28,7 @@
     "namespace": "cifn"
   },
   "dependencies": {
-    "@cifn/control-plane": "file:../control-plane",
+    "@cifn/control-plane": "0.0.1",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

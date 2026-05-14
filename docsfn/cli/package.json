@@ -7,8 +7,8 @@
     "docsfn": "./bin/docsfn.js"
   },
   "dependencies": {
-    "@docsfn/core": "*",
-    "@docsfn/provider-fs": "*",
+    "@docsfn/core": "0.0.1",
+    "@docsfn/provider-fs": "0.0.1",
     "cac": "^6.7.0",
     "chokidar": "^3.5.0",
     "picocolors": "^1.0.0"
@@ -20,7 +20,8 @@
   },
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "test": "node -e \"console.log('No tests configured')\""
   },
   "author": "21n",
   "license": "MIT",

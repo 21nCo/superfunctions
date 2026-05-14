@@ -27,7 +27,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cifn/control-plane": "file:../control-plane",
+    "@cifn/control-plane": "0.0.1",
     "commander": "^11.0.0",
     "js-yaml": "^4.1.0"
   },

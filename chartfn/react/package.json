@@ -15,11 +15,11 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest",
+    "test": "vitest run",
     "lint": "echo 'lint not configured'"
   },
   "dependencies": {
-    "chartfn": "file:.."
+    "chartfn": "0.0.1"
   },
   "peerDependencies": {
     "react": ">=16.8.0",
@@ -38,8 +38,15 @@
     "typescript": "^5.0.0",
     "vitest": "^3.2.4"
   },
-  "keywords": ["react", "chart", "chartfn"],
-  "files": ["dist", "README.md"],
+  "keywords": [
+    "react",
+    "chart",
+    "chartfn"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "author": "21n",
   "license": "MIT",
   "bugs": {

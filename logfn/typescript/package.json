@@ -1,6 +1,6 @@
 {
-  "name": "logfn",
-  "version": "0.0.1",
+  "name": "@logfn/core",
+  "version": "0.1.0",
   "description": "Structured logging for browser and server with pluggable pipelines and transports",
   "type": "module",
   "main": "./dist/index.js",
