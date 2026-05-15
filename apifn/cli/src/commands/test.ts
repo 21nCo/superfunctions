@@ -11,17 +11,21 @@
  */
 
 import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import {
     readCollection,
     runCollection,
     createConsoleReporter,
     createJsonReporter,
+    createJUnitReporter,
     createSilentReporter,
+    loadDotEnvFile,
+    reportToJUnitXml,
 } from "@apifn/collections";
 import type { RunReporter } from "@apifn/collections";
 import type { Output } from "../utils/output.js";
 
-export type ReporterName = "console" | "json" | "silent";
+export type ReporterName = "console" | "json" | "junit" | "silent";
 
 export interface TestCommandOptions {
     /** Directory containing the OpenCollection (default: cwd) */
@@ -36,6 +40,22 @@ export interface TestCommandOptions {
     concurrency?: number;
     /** Per-request timeout in ms */
     timeout?: number;
+    /** Only run requests matching these paths/patterns */
+    include?: string[];
+    /** Skip requests matching these paths/patterns */
+    exclude?: string[];
+    /** Retry failed requests */
+    retries?: number;
+    /** Delay between sequential requests in ms */
+    delay?: number;
+    /** Environment variable overrides */
+    envVar?: string[];
+    /** Dotenv file to load as overrides */
+    dotenv?: string;
+    /** Headers to redact */
+    redactHeader?: string[];
+    /** Write machine-readable report to this file */
+    outputPath?: string;
     /** Reporter type */
     reporter?: ReporterName;
     /** Whether color output is enabled */
@@ -65,6 +85,8 @@ export async function runTestCommand(options: TestCommandOptions): Promise<numbe
     let reporter: RunReporter;
     if (reporterName === "json") {
         reporter = createJsonReporter({ write: stdoutWrite });
+    } else if (reporterName === "junit") {
+        reporter = createJUnitReporter({ write: stdoutWrite });
     } else if (reporterName === "silent") {
         reporter = createSilentReporter();
     } else {
@@ -93,12 +115,23 @@ export async function runTestCommand(options: TestCommandOptions): Promise<numbe
 
     let report;
     try {
+        const overrides = {
+            ...loadDotEnv(options.dotenv, cwd),
+            ...parseEnvVars(options.envVar ?? []),
+        };
+
         report = await runCollection(collection, {
             environment: envName,
             bail: options.bail,
             parallel: options.parallel,
             concurrency: options.concurrency,
             timeout: options.timeout,
+            include: options.include,
+            exclude: options.exclude,
+            retries: options.retries,
+            delay: options.delay,
+            overrides,
+            redactHeaders: options.redactHeader,
             reporter,
         });
     } catch (err) {
@@ -107,10 +140,49 @@ export async function runTestCommand(options: TestCommandOptions): Promise<numbe
         return 2;
     }
 
+    if (options.outputPath) {
+        await writeReportFile({
+            outputPath: path.resolve(cwd, options.outputPath),
+            reporterName,
+            report,
+        });
+    }
+
     const { summary } = report;
     if (summary.failed > 0 || summary.errors > 0) {
         return 1;
     }
 
     return 0;
+}
+
+function loadDotEnv(dotenvPath: string | undefined, cwd: string): Record<string, string> {
+    if (!dotenvPath) {
+        return {};
+    }
+    return loadDotEnvFile(path.resolve(cwd, dotenvPath));
+}
+
+function parseEnvVars(values: string[]): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const value of values) {
+        const index = value.indexOf("=");
+        if (index <= 0) {
+            throw new Error(`Invalid --env-var value '${value}'. Expected KEY=value.`);
+        }
+        result[value.slice(0, index)] = value.slice(index + 1);
+    }
+    return result;
+}
+
+async function writeReportFile(input: {
+    outputPath: string;
+    reporterName: ReporterName;
+    report: Awaited<ReturnType<typeof runCollection>>;
+}): Promise<void> {
+    await mkdir(path.dirname(input.outputPath), { recursive: true });
+    const body = input.reporterName === "junit"
+        ? reportToJUnitXml(input.report)
+        : `${JSON.stringify(input.report, null, 2)}\n`;
+    await writeFile(input.outputPath, body, "utf8");
 }

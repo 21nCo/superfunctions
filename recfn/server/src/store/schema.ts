@@ -1,6 +1,6 @@
-import type { TableSchemaMap } from '@superfunctions/db';
+import type { TableSchema, TableSchemaMap } from '@superfunctions/db';
 
-export const REC_FN_STORE_SCHEMA: TableSchemaMap = {
+export const REC_FN_STORE_SCHEMA: TableSchemaMap = withIsoDateDefaults({
   bots: {
     modelName: 'bots',
     fields: {
@@ -139,4 +139,28 @@ export const REC_FN_STORE_SCHEMA: TableSchemaMap = {
       { name: 'calendar_event_bots_lookup_idx', fields: ['namespace', 'calendarId', 'eventId'] },
     ],
   },
-};
+});
+
+function withIsoDateDefaults(schema: TableSchemaMap): TableSchemaMap {
+  return Object.fromEntries(
+    Object.entries(schema).map(([name, table]) => [name, normalizeTable(table)])
+  );
+}
+
+function normalizeTable(table: TableSchema): TableSchema {
+  return {
+    ...table,
+    fields: Object.fromEntries(
+      Object.entries(table.fields).map(([name, field]) => [
+        name,
+        field.type === 'date' || field.type === 'datetime'
+          ? {
+              dateValueType: 'iso-string',
+              dateStorageType: 'timestamptz',
+              ...field,
+            }
+          : field,
+      ])
+    ),
+  };
+}

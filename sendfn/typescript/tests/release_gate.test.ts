@@ -34,7 +34,7 @@ describe('release gate metadata', () => {
     expect(packageJson.scripts).toMatchObject({
       build: 'tsup',
       lint: 'tsc --noEmit',
-      test: 'vitest',
+      test: 'vitest run',
       'release:verify': 'npm run build && npm run lint && npm test -- --run',
     });
     expect(packageJson.devDependencies).toMatchObject({

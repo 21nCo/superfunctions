@@ -11,8 +11,11 @@
     "authfn/*",
     "uifn/*",
     "uifn/examples/*",
+    "authfn/adapters/*",
     "authfn/examples/*",
     "authfn/examples/*/*",
+    "apifn/*",
+    "docsfn/*",
     "extfn/*",
     "extfn/examples/*",
     "datafn/client",
@@ -23,14 +26,25 @@
     "datafn/server",
     "datafn/svelte",
     "filefn/*",
+    "logfn/*",
+    "plugfn/*",
+    "recfn/*",
+    "recfn/adapters/*",
+    "recfn/platforms/*",
+    "sendfn/*",
+    "testfn/*",
     "clifn/*",
     "probefn/apps/*",
     "probefn/packages/*",
     "packages/*",
     "filefn/examples/full-demo/*",
+<<<<<<< HEAD
     "recfn/*",
     "recfn/platforms/*",
     "recfn/adapters/*"
+=======
+    "filefn/examples/production/*"
+>>>>>>> 19774e78fd3afd248c72444e7bd22ec91824c26f
   ],
   "scripts": {
     "build": "turbo run build",

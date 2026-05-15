@@ -85,11 +85,28 @@ function generateThreadUrl(guildId: string, channelId: string): string {
   return `https://discord.com/channels/${guildId}/${channelId}`;
 }
 
+type PersistenceDb = ReturnType<typeof drizzle<typeof schema>>;
+
+const dbByUrl = new Map<string, PersistenceDb>();
+
+function getDatabase(databaseUrl: string): PersistenceDb {
+  let db = dbByUrl.get(databaseUrl);
+  if (!db) {
+    const client = postgres(databaseUrl);
+    db = drizzle(client, { schema });
+    dbByUrl.set(databaseUrl, db);
+  }
+
+  return db;
+}
+
 // Create tRPC context
 const createContext = (env: PersistenceEnv) => {
-  const client = postgres(env.DATABASE_URL);
-  const db = drizzle(client, { schema });
-  return { db };
+  if (!env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required for BotFn persistence');
+  }
+
+  return { db: getDatabase(env.DATABASE_URL) };
 };
 
 type Context = ReturnType<typeof createContext>;
@@ -108,25 +125,25 @@ const appRouter = t.router({
       const threadUrl = generateThreadUrl(input.guildId, input.channelId);
       const now = Math.floor(Date.now() / 1000);
 
-      // Insert issue
-      await ctx.db.insert(issues).values({
-        id: issueId,
-        githubIssueId: input.githubIssueId,
-        linearIssueId: input.linearIssueId,
-        status: input.status,
-        createdAt: now,
-        updatedAt: now,
-        isLiveStatusNotifiedOnDiscord: false
-      });
+      await ctx.db.transaction(async (tx) => {
+        await tx.insert(issues).values({
+          id: issueId,
+          githubIssueId: input.githubIssueId,
+          linearIssueId: input.linearIssueId,
+          status: input.status,
+          createdAt: now,
+          updatedAt: now,
+          isLiveStatusNotifiedOnDiscord: false
+        });
 
-      // Insert discord thread
-      await ctx.db.insert(discordThreads).values({
-        id: threadId,
-        issueId: issueId,
-        guildId: input.guildId,
-        channelId: input.channelId,
-        threadUrl: threadUrl,
-        createdAt: now
+        await tx.insert(discordThreads).values({
+          id: threadId,
+          issueId: issueId,
+          guildId: input.guildId,
+          channelId: input.channelId,
+          threadUrl: threadUrl,
+          createdAt: now
+        });
       });
 
       return {
@@ -155,7 +172,7 @@ const appRouter = t.router({
     .input(UpdateIssueSchema)
     .mutation(async ({ input, ctx }) => {
       const updates: any = {};
-      
+
       if (input.githubIssueId !== undefined) updates.githubIssueId = input.githubIssueId;
       if (input.linearIssueId !== undefined) updates.linearIssueId = input.linearIssueId;
       if (input.status !== undefined) updates.status = input.status;
@@ -207,8 +224,18 @@ const appRouter = t.router({
       const threadUrl = generateThreadUrl(input.guildId, input.channelId);
       const now = Math.floor(Date.now() / 1000);
 
-      // Check if thread already exists
-      const existing = await ctx.db.select().from(discordThreads)
+      await ctx.db.insert(discordThreads).values({
+        id: threadId,
+        issueId: input.issueId,
+        guildId: input.guildId,
+        channelId: input.channelId,
+        threadUrl: threadUrl,
+        createdAt: now
+      }).onConflictDoNothing({
+        target: [discordThreads.issueId, discordThreads.guildId, discordThreads.channelId],
+      });
+
+      const thread = await ctx.db.select().from(discordThreads)
         .where(and(
           eq(discordThreads.issueId, input.issueId),
           eq(discordThreads.guildId, input.guildId),
@@ -217,33 +244,17 @@ const appRouter = t.router({
         .limit(1)
         .then(r => r[0]);
 
-      if (existing) {
-        return {
-          id: existing.id,
-          issueId: existing.issueId,
-          guildId: existing.guildId,
-          channelId: existing.channelId,
-          threadUrl: existing.threadUrl,
-          createdAt: existing.createdAt,
-        };
+      if (!thread) {
+        throw new Error('Failed to create discord thread');
       }
 
-      await ctx.db.insert(discordThreads).values({
-        id: threadId,
-        issueId: input.issueId,
-        guildId: input.guildId,
-        channelId: input.channelId,
-        threadUrl: threadUrl,
-        createdAt: now
-      });
-
       return {
-        id: threadId,
-        issueId: input.issueId,
-        guildId: input.guildId,
-        channelId: input.channelId,
-        threadUrl,
-        createdAt: now,
+        id: thread.id,
+        issueId: thread.issueId,
+        guildId: thread.guildId,
+        channelId: thread.channelId,
+        threadUrl: thread.threadUrl,
+        createdAt: thread.createdAt,
       };
     }),
 

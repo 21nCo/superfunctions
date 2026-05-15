@@ -15,10 +15,10 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@docsfn/core": "*",
+    "@docsfn/core": "0.0.1",
     "fast-glob": "^3.0.0",
     "gray-matter": "^4.0.0"
   },

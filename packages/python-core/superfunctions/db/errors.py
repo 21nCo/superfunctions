@@ -44,7 +44,7 @@ class AdapterError(Exception):
         return " | ".join(parts)
 
 
-class ConnectionError(AdapterError):
+class AdapterConnectionError(AdapterError):
     """Database connection error."""
 
     def __init__(
@@ -160,7 +160,7 @@ class OperationNotSupportedError(AdapterError):
         super().__init__(message, AdapterErrorCode.OPERATION_NOT_SUPPORTED, cause, details)
 
 
-class TimeoutError(AdapterError):
+class AdapterTimeoutError(AdapterError):
     """Operation timeout error."""
 
     def __init__(

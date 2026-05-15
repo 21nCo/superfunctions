@@ -46,8 +46,8 @@
     "@cmsfn/core": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@contentfn/core": "*",
-    "@cmsfn/server": "*"
+    "@contentfn/core": "0.0.1",
+    "@cmsfn/server": "0.0.1"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

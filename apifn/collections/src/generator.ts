@@ -126,7 +126,9 @@ function operationToRequest(
   operationRecord: OperationRecord,
   baseUrlVariable = "{{baseUrl}}"
 ): OpenCollectionRequest {
-  const requestName = operationRecord.operation.summary
+  const requestName = operationRecord.operation.operationId
+    ? operationRecord.operation.operationId
+    : operationRecord.operation.summary
     ? operationRecord.operation.summary
     : toTitle(`${operationRecord.method} ${operationRecord.path}`);
 
@@ -251,6 +253,7 @@ export function openAPIToCollection(
   }
 
   const baseUrl = options.baseUrl ?? document.servers?.[0]?.url ?? "http://localhost:3000";
+  const environmentName = options.environmentName ?? "development";
 
   return {
     info: {
@@ -261,8 +264,8 @@ export function openAPIToCollection(
     },
     rootDir: "",
     environments: {
-      development: {
-        name: "development",
+      [environmentName]: {
+        name: environmentName,
         variables: {
           baseUrl,
         },

@@ -4,6 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      "@secfn/core/id": resolve(__dirname, "../core/src/id.ts"),
       "@secfn/core": resolve(__dirname, "../core/src/index.ts"),
       "@superfunctions/db": resolve(__dirname, "../../packages/db/src/index.ts"),
       "@superfunctions/http": resolve(__dirname, "../../packages/http/src/index.ts"),

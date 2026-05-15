@@ -22,7 +22,7 @@
     "build:watch": "tsup --watch",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "lint": "tsc --noEmit",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest watch"
   },
   "engines": {

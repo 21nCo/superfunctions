@@ -11,16 +11,25 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "lint": "echo 'lint not configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "keywords": ["meeting", "recording", "microsoft-teams", "bot", "recfn", "superfunctions"],
+  "keywords": [
+    "meeting",
+    "recording",
+    "microsoft-teams",
+    "bot",
+    "recfn",
+    "superfunctions"
+  ],
   "author": "21n",
   "license": "MIT",
   "repository": {
@@ -32,8 +41,8 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn-browser-core": "*",
-    "recfn": "*",
+    "recfn-browser-core": "0.1.0",
+    "recfn": "0.1.0",
     "playwright": "^1.49.0"
   },
   "devDependencies": {

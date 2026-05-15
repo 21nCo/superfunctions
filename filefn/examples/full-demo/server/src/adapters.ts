@@ -16,7 +16,7 @@ const FAKE_DB_CAPABILITIES: AdapterCapabilities = {
     fulltext: false,
     returning: false,
   },
-  transactions: { supported: false, nested: false },
+  transactions: { supported: true, nested: false },
   performance: { supportsJoins: false, supportsPreparedStatements: false },
   schema: { migrations: false, constraints: false, indexes: false },
   advanced: {
@@ -31,16 +31,35 @@ export function createFakeDbAdapter(): Adapter {
   const tables = new Map<string, Map<string, any>>();
   let idCounter = 1;
 
+  function cloneTablesSnapshot(): Map<string, Map<string, any>> {
+    return new Map(
+      Array.from(tables.entries(), ([tableName, rows]) => [
+        tableName,
+        new Map(
+          Array.from(rows.entries(), ([id, record]) => [id, { ...record }]),
+        ),
+      ]),
+    );
+  }
+
   function getTable(model: string): Map<string, any> {
     if (!tables.has(model)) tables.set(model, new Map());
     return tables.get(model)!;
+  }
+
+  function requireWhere(where: any[] | undefined, operation: string): any[] {
+    if (!where || where.length === 0) {
+      throw new Error(`fake adapter: ${operation} requires a non-empty where clause`);
+    }
+    return where;
   }
 
   function matchesWhere(record: any, where: any[]): boolean {
     if (!where) return true;
     for (const clause of where) {
       const value = record[clause.field];
-      switch (clause.operator) {
+      const operator = clause.operator ?? clause.op;
+      switch (operator) {
         case "eq":
           if (value !== clause.value) return false;
           break;
@@ -48,11 +67,59 @@ export function createFakeDbAdapter(): Adapter {
           if (value === clause.value) return false;
           break;
         default:
-          break;
+          throw new Error(`Unsupported where operator: ${operator}`);
       }
     }
     return true;
   }
+
+  const internal = {
+    async ensureTable() {},
+    async create(table: string, data: Record<string, unknown>) {
+      const id = String(data.id ?? `internal_${idCounter++}`);
+      const record = { ...data, id };
+      getTable(table).set(id, record);
+      return record;
+    },
+    async findOne(table: string, where: any[]) {
+      for (const record of getTable(table).values()) {
+        if (matchesWhere(record, where)) return record;
+      }
+      return null;
+    },
+    async findMany(table: string, where: any[], options?: { limit?: number; offset?: number }) {
+      const results = Array.from(getTable(table).values()).filter((record) =>
+        matchesWhere(record, where)
+      );
+      const offset = options?.offset ?? 0;
+      const end = typeof options?.limit === "number" ? offset + options.limit : undefined;
+      return results.slice(offset, end);
+    },
+    async update(table: string, where: any[], data: Record<string, unknown>) {
+      const tableRecords = getTable(table);
+      let count = 0;
+      for (const [id, record] of tableRecords.entries()) {
+        if (matchesWhere(record, where)) {
+          tableRecords.set(id, { ...record, ...data });
+          count++;
+        }
+      }
+      if (count === 0) {
+        throw new Error(`Record not found in ${table}`);
+      }
+      return count;
+    },
+    async delete(table: string, where: any[]) {
+      let count = 0;
+      for (const [id, record] of getTable(table).entries()) {
+        if (matchesWhere(record, where)) {
+          getTable(table).delete(id);
+          count++;
+        }
+      }
+      return count;
+    },
+  };
 
   return {
     id: "fake",
@@ -61,13 +128,15 @@ export function createFakeDbAdapter(): Adapter {
     capabilities: FAKE_DB_CAPABILITIES,
     async create(params: any) {
       const table = getTable(params.model);
-      const id =
-        params.data.uploadSessionId ||
-        params.data.versionId ||
-        params.data.fileId ||
-        params.data.permissionId ||
-        `id_${idCounter++}`;
-      const record = { ...params.data, _id: id };
+      const id = String(
+        params.data.id ??
+          params.data.uploadSessionId ??
+          params.data.versionId ??
+          params.data.fileId ??
+          params.data.permissionId ??
+          `id_${idCounter++}`
+      );
+      const record = { ...params.data, id, _id: id };
       table.set(id, record);
       return record;
     },
@@ -101,33 +170,50 @@ export function createFakeDbAdapter(): Adapter {
           return db - da;
         });
       }
-      return results.slice(0, params.limit || results.length);
+      const offset = params.offset ?? 0;
+      const end =
+        typeof params.limit === "number" ? offset + params.limit : results.length;
+      return results.slice(offset, end);
     },
     async update(params: any) {
+      const where = requireWhere(params.where, "update");
       const table = getTable(params.model);
       for (const [id, record] of table.entries()) {
-        if (matchesWhere(record, params.where)) {
+        if (matchesWhere(record, where)) {
           const updated = { ...record, ...params.data };
           table.set(id, updated);
           return updated;
         }
       }
-      return null;
+      throw new Error(`Record not found for model ${params.model}`);
     },
     async delete(params: any) {
+      const where = requireWhere(params.where, "delete");
       const table = getTable(params.model);
       for (const [id, record] of table.entries()) {
-        if (matchesWhere(record, params.where)) {
+        if (matchesWhere(record, where)) {
           table.delete(id);
           return;
         }
       }
     },
-    async createMany(params: any) {
-      return [];
+    async createMany(this: any, params: any) {
+      const created = [];
+      for (const data of params.data) {
+        created.push(await this.create({ ...params, data }));
+      }
+      return created;
     },
     async updateMany(params: any) {
-      return 0;
+      const table = getTable(params.model);
+      let count = 0;
+      for (const [id, record] of table.entries()) {
+        if (matchesWhere(record, params.where)) {
+          table.set(id, { ...record, ...params.data });
+          count++;
+        }
+      }
+      return count;
     },
     async deleteMany(params: any) {
       const table = getTable(params.model);
@@ -161,10 +247,29 @@ export function createFakeDbAdapter(): Adapter {
       });
     },
     async count(params: any) {
-      return 0;
+      const table = getTable(params.model);
+      let count = 0;
+      for (const record of table.values()) {
+        if (matchesWhere(record, params.where)) {
+          count++;
+        }
+      }
+      return count;
     },
     async transaction(callback: any) {
-      return callback(this as any);
+      const snapshot = cloneTablesSnapshot();
+      const snapshotIdCounter = idCounter;
+
+      try {
+        return await callback(this as any);
+      } catch (error) {
+        tables.clear();
+        for (const [tableName, rows] of snapshot.entries()) {
+          tables.set(tableName, new Map(rows));
+        }
+        idCounter = snapshotIdCounter;
+        throw error;
+      }
     },
     async initialize() {},
     async isHealthy() {
@@ -178,5 +283,6 @@ export function createFakeDbAdapter(): Adapter {
     async validateSchema() {
       return { valid: true };
     },
-  } as unknown as Adapter;
+    internal,
+  };
 }

@@ -11,15 +11,24 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "keywords": ["recording", "desktop", "capture", "whisper", "recfn", "superfunctions"],
+  "keywords": [
+    "recording",
+    "desktop",
+    "capture",
+    "whisper",
+    "recfn",
+    "superfunctions"
+  ],
   "author": "21n",
   "license": "MIT",
   "repository": {
@@ -28,9 +37,9 @@
     "directory": "recfn/desktop"
   },
   "dependencies": {
-    "recfn": "*",
-    "recfn-client": "*",
-    "recfn-whisper": "*"
+    "recfn": "0.1.0",
+    "recfn-client": "0.1.0",
+    "recfn-whisper": "0.1.0"
   },
   "optionalDependencies": {
     "electron": "^28.0.0"
@@ -40,5 +49,8 @@
     "jsdom": "^24.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

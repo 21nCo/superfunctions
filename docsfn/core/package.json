@@ -36,7 +36,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest"
+    "test": "vitest run"
   },
   "dependencies": {
     "@searchfn/client": "^0.3.0",

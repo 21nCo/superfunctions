@@ -14,7 +14,33 @@ import {
   isProviderModuleAvailable,
 } from './browser-provider-utils.js';
 
-type PuppeteerModule = typeof import('puppeteer');
+type PuppeteerPage = {
+  setExtraHTTPHeaders(headers: Record<string, string>): Promise<void>;
+  setCookie(...cookies: NonNullable<GetPageOptions['cookies']>): Promise<void>;
+  setViewport(viewport: { width: number; height: number; isMobile?: boolean }): Promise<void>;
+  goto(url: string, options: { waitUntil: string; timeout: number }): Promise<unknown>;
+  setJavaScriptEnabled(enabled: boolean): Promise<void>;
+  content(): Promise<string>;
+  screenshot(options: {
+    fullPage?: boolean;
+    type?: 'png' | 'jpeg';
+    quality?: number;
+  }): Promise<Uint8Array>;
+  evaluate<T>(pageFunction: () => T): Promise<T>;
+};
+
+type PuppeteerBrowser = {
+  newPage(): Promise<PuppeteerPage>;
+  close(): Promise<void>;
+};
+
+type PuppeteerModule = {
+  launch(options: {
+    headless: boolean;
+    executablePath?: string;
+    args: string[];
+  }): Promise<PuppeteerBrowser>;
+};
 
 export class PuppeteerProvider implements WebProvider {
   name = 'puppeteer';
@@ -58,7 +84,7 @@ export class PuppeteerProvider implements WebProvider {
   private async withPage<T>(
     url: string,
     options: GetPageOptions,
-    callback: (page: Awaited<ReturnType<Awaited<ReturnType<PuppeteerModule['launch']>>['newPage']>>, sanitizedUrl: string, startedAt: number) => Promise<T>
+    callback: (page: PuppeteerPage, sanitizedUrl: string, startedAt: number) => Promise<T>
   ): Promise<T> {
     const puppeteer = await this.loadPuppeteer();
     const startedAt = Date.now();
@@ -104,7 +130,8 @@ export class PuppeteerProvider implements WebProvider {
   private async loadPuppeteer(): Promise<PuppeteerModule> {
     if (!this.puppeteer) {
       try {
-        this.puppeteer = await import('puppeteer');
+        const moduleName = 'puppeteer';
+        this.puppeteer = (await import(moduleName)) as PuppeteerModule;
       } catch {
         throw new Error('Puppeteer is not installed. Install with: npm install puppeteer');
       }

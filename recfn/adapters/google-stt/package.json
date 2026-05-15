@@ -11,16 +11,25 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "lint": "echo 'lint not configured'",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "keywords": ["google", "speech-to-text", "asr", "transcription", "recfn", "superfunctions"],
+  "keywords": [
+    "google",
+    "speech-to-text",
+    "asr",
+    "transcription",
+    "recfn",
+    "superfunctions"
+  ],
   "author": "21n",
   "license": "MIT",
   "repository": {
@@ -32,8 +41,8 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn-shared-cloud": "*",
-    "recfn": "*"
+    "recfn-shared-cloud": "0.1.0",
+    "recfn": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

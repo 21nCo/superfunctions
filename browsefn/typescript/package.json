@@ -21,7 +21,7 @@
     "build:watch": "tsup --watch",
     "clean": "rm -rf dist",
     "lint": "echo 'lint not configured'",
-    "test": "vitest",
+    "test": "vitest run",
     "test:watch": "vitest --watch",
     "typecheck": "tsc --noEmit"
   },
@@ -55,8 +55,8 @@
     "namespace": "browsefn"
   },
   "dependencies": {
-    "@superfunctions/http": "*",
-    "@superfunctions/middleware": "*",
+    "@superfunctions/http": "0.1.3",
+    "@superfunctions/middleware": "0.1.0",
     "cheerio": "^1.0.0-rc.12"
   },
   "peerDependencies": {

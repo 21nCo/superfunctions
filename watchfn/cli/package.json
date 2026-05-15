@@ -8,7 +8,8 @@
   "type": "module",
   "scripts": {
     "build": "tsup",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "test": "node -e \"console.log('No tests configured')\""
   },
   "dependencies": {
     "commander": "^12.0.0",

@@ -74,7 +74,7 @@
     error = '';
 
     const file = input.files[0];
-    
+
     try {
         const handle = client.uploadFile({
             file,
@@ -107,7 +107,7 @@
           const res = await fetch(`${API_BASE}/${fileId}`, { method: 'DELETE' });
           const body = await res.json();
           if(!body.ok) throw new Error(body.error?.message);
-          
+
           await loadFiles();
       } catch(e: any) {
           alert('Delete failed: ' + e.message);
@@ -119,7 +119,7 @@
 
 <div class="container">
   <h1>FileFn Demo</h1>
-  
+
   <div class="upload-section">
     <h2>Upload File</h2>
     <input type="file" on:change={handleFileSelect} disabled={uploading} />

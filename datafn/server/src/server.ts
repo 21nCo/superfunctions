@@ -655,6 +655,77 @@ export async function createDatafnServer<TContext = any>(
     | "reconcile"
     | "search";
 
+  const isPlainObjectContext = (value: unknown): value is Record<string, unknown> => {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  };
+
+  const createEnrichedContext = (
+    ctx: TContext,
+  ): TContext & { parsedBody?: unknown } => {
+    if (isPlainObjectContext(ctx)) {
+      return { ...ctx } as TContext & { parsedBody?: unknown };
+    }
+
+    if (ctx && typeof ctx === "object") {
+      let parsedBody: unknown;
+      let hasParsedBody = false;
+      const target = ctx as Record<PropertyKey, unknown>;
+      return new Proxy(target, {
+        get(currentTarget, prop) {
+          if (prop === "parsedBody") {
+            if (hasParsedBody) {
+              return parsedBody;
+            }
+            return Reflect.get(currentTarget, prop, currentTarget);
+          }
+          const value = Reflect.get(currentTarget, prop, currentTarget);
+          return typeof value === "function" ? value.bind(currentTarget) : value;
+        },
+        set(currentTarget, prop, value) {
+          if (prop === "parsedBody") {
+            hasParsedBody = true;
+            parsedBody = value;
+            return true;
+          }
+          return Reflect.set(currentTarget, prop, value, currentTarget);
+        },
+        has(currentTarget, prop) {
+          if (prop === "parsedBody") {
+            return hasParsedBody || Reflect.has(currentTarget, prop);
+          }
+          return Reflect.has(currentTarget, prop);
+        },
+        ownKeys(currentTarget) {
+          const keys = Reflect.ownKeys(currentTarget);
+          if (hasParsedBody && !keys.includes("parsedBody")) {
+            return [...keys, "parsedBody"];
+          }
+          return keys;
+        },
+        getOwnPropertyDescriptor(currentTarget, prop) {
+          if (prop === "parsedBody") {
+            if (!hasParsedBody) {
+              return Reflect.getOwnPropertyDescriptor(currentTarget, prop);
+            }
+            return {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              value: parsedBody,
+            };
+          }
+          return Reflect.getOwnPropertyDescriptor(currentTarget, prop);
+        },
+      }) as TContext & { parsedBody?: unknown };
+    }
+
+    return { parsedBody: undefined } as TContext & { parsedBody?: unknown };
+  };
+
   // LOW-001: withAuth returns a handler with signature compatible with Route<TContext>.handler
   const withAuth = (
     action: DatafnAction,
@@ -664,7 +735,7 @@ export async function createDatafnServer<TContext = any>(
     ) => Promise<Response> | Response,
   ): ((req: Request, ctx: TContext) => Promise<Response>) => {
     return async (req: Request, ctx: TContext): Promise<Response> => {
-      const enrichedCtx = ctx as TContext & { parsedBody?: unknown };
+      const enrichedCtx = createEnrichedContext(ctx);
       // REL-009: Reject new requests immediately when shutting down
       if (shuttingDown) {
         return new Response(
@@ -678,7 +749,7 @@ export async function createDatafnServer<TContext = any>(
       try {
         // Rate limiting — applied BEFORE JSON parsing and authorization (RATE-001)
         if (rateLimitMiddleware) {
-          const rateLimitResponse = await rateLimitMiddleware(action, ctx);
+          const rateLimitResponse = await rateLimitMiddleware(action, enrichedCtx);
           if (rateLimitResponse) return rateLimitResponse;
         }
 

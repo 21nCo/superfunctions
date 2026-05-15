@@ -1,6 +1,6 @@
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { drizzleAdapter } from "@superfunctions/db/adapters";
+import { drizzleAdapter } from "@superfunctions/db/adapters/drizzle";
 import { schema, __superfunctions_schema_versions } from "./schema.js";
 import { config } from "dotenv";
 
@@ -8,9 +8,10 @@ config();
 
 const { Pool } = pg;
 
-const DATABASE_URL =
-  process.env.DATABASE_URL ||
-  "postgres://postgres:postgres@localhost:5432/filefn_demo";
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL is required");
+}
 
 export const pool = new Pool({ connectionString: DATABASE_URL });
 

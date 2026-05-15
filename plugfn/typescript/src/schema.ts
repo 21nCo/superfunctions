@@ -13,7 +13,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
 
   return {
     version: PLUGFN_SCHEMA_VERSION,
-    schemas: [
+    schemas: withDateDefaults([
       {
         modelName: models.connections,
         fields: {
@@ -152,6 +152,24 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           { name: 'idx_plugfn_action_logs_connection_id', fields: ['connectionId'] }
         ]
       }
-    ]
+    ])
   };
+}
+
+function withDateDefaults(tables: TableSchema[]): TableSchema[] {
+  return tables.map((table) => ({
+    ...table,
+    fields: Object.fromEntries(
+      Object.entries(table.fields).map(([name, field]) => [
+        name,
+        field.type === 'date' || field.type === 'datetime'
+          ? {
+              dateValueType: 'date',
+              dateStorageType: 'timestamptz',
+              ...field,
+            }
+          : field,
+      ])
+    ),
+  }));
 }

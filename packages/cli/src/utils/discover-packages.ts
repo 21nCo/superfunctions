@@ -31,35 +31,38 @@ export interface PackageRegistry {
 export function discoverSuperfunctionsPackages(
   cwd: string = process.cwd()
 ): SuperfunctionsPackageMetadata[] {
+  const nodeModulesPaths = findNodeModulesPaths(cwd);
   const discovered: SuperfunctionsPackageMetadata[] = [];
-  const nodeModulesPath = findNearestNodeModulesPath(cwd);
+  const seenPackageNames = new Set<string>();
 
-  if (!nodeModulesPath || !fs.existsSync(nodeModulesPath)) {
-    return discovered;
+  for (const nodeModulesPath of nodeModulesPaths) {
+    scanDirectory(nodeModulesPath, discovered, seenPackageNames);
   }
-
-  // Scan node_modules
-  scanDirectory(nodeModulesPath, discovered);
 
   return discovered;
 }
 
-export function findNearestNodeModulesPath(startDir: string): string | null {
+export function findNodeModulesPaths(startDir: string): string[] {
+  const paths: string[] = [];
   let currentDir = path.resolve(startDir);
 
   while (true) {
     const nodeModulesPath = path.join(currentDir, "node_modules");
     if (fs.existsSync(nodeModulesPath)) {
-      return nodeModulesPath;
+      paths.push(nodeModulesPath);
     }
 
     const parentDir = path.dirname(currentDir);
     if (parentDir === currentDir) {
-      return null;
+      return paths;
     }
 
     currentDir = parentDir;
   }
+}
+
+export function findNearestNodeModulesPath(startDir: string): string | null {
+  return findNodeModulesPaths(startDir)[0] ?? null;
 }
 
 /**
@@ -82,7 +85,8 @@ export function buildRegistry(
 
 function scanDirectory(
   dir: string,
-  discovered: SuperfunctionsPackageMetadata[]
+  discovered: SuperfunctionsPackageMetadata[],
+  seenPackageNames: Set<string> = new Set()
 ): void {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
@@ -105,7 +109,7 @@ function scanDirectory(
 
     // Handle scoped packages (@superfunctions/authfn, etc.)
     if (entry.name.startsWith("@")) {
-      scanDirectory(entryPath, discovered);
+      scanDirectory(entryPath, discovered, seenPackageNames);
       continue;
     }
 
@@ -123,13 +127,19 @@ function scanDirectory(
           packageJson.superfunctions.initFunction
         ) {
           const packageName = String(packageJson.name ?? entry.name);
+          if (seenPackageNames.has(packageName)) {
+            continue;
+          }
+          seenPackageNames.add(packageName);
+
           discovered.push({
             packageName,
             initFunction: packageJson.superfunctions.initFunction,
             schemaVersion: packageJson.superfunctions.schemaVersion,
             libraryNames: deriveLibraryNames(
               packageName,
-              packageJson.superfunctions.libraryNames
+              packageJson.superfunctions.libraryNames,
+              packageJson.superfunctions.namespace,
             ),
           });
         }
@@ -154,7 +164,8 @@ export function getSuperfunctionsRegistry(
 
 function deriveLibraryNames(
   packageName: string,
-  explicitLibraryNames?: unknown
+  explicitLibraryNames?: unknown,
+  explicitNamespace?: unknown,
 ): string[] {
   if (Array.isArray(explicitLibraryNames)) {
     const normalized = explicitLibraryNames
@@ -163,6 +174,10 @@ function deriveLibraryNames(
     if (normalized.length > 0) {
       return [...new Set(normalized)];
     }
+  }
+
+  if (typeof explicitNamespace === "string" && explicitNamespace.trim().length > 0) {
+    return [explicitNamespace.trim()];
   }
 
   if (packageName.startsWith("@superfunctions/")) {
@@ -177,7 +192,7 @@ function deriveLibraryNames(
         return [scopeName];
       }
 
-      return [...new Set([scopeName, name])];
+      return [name];
     }
   }
 

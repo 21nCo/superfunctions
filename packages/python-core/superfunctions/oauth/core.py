@@ -29,8 +29,8 @@ class OAuthProviderDescriptor(BaseModel):
     token_url: str = Field(alias="tokenUrl")
     revocation_url: Optional[str] = Field(None, alias="revocationUrl")
     default_scopes: List[str] = Field(alias="defaultScopes")
-    supports_pkce: bool = Field(alias="supportsPkce")
-    supports_refresh_token: bool = Field(alias="supportsRefreshToken")
+    supports_pkce: bool = Field(default=True, alias="supportsPkce")
+    supports_refresh_token: bool = Field(default=False, alias="supportsRefreshToken")
     scope_separator: Optional[Literal[" ", ","]] = Field(None, alias="scopeSeparator")
     extra_auth_params: Optional[Dict[str, str]] = Field(None, alias="extraAuthParams")
     token_auth_method: Optional[Literal["client_secret_post", "client_secret_basic"]] = Field(

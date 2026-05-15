@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import inspect
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional, Protocol, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Protocol
 from urllib.parse import urlencode
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .core import (
     AuthorizationResult,
@@ -19,13 +22,10 @@ from .core import (
     assert_redirect_uri_allowed,
     consume_state_or_throw,
 )
-from .http import OAuthHttpError, OAuthTokenEndpointRequest, OAuthTokenHttpClient
+from .http import OAuthHttpError, OAuthTokenEndpointRequest
 from .storage import (
-    EncryptedTokenVault,
     OAuthStateRecord,
-    OAuthStateStore,
     TokenRecord,
-    TokenVault,
     apply_subject_to_state_record,
     resolve_oauth_stored_subject,
 )
@@ -63,7 +63,7 @@ OAuthFlowEventName = Literal[
 class OAuthFlowSubject(BaseModel):
     """Canonical subject shape returned by shared OAuth flows."""
 
-    kind: Literal["connection", "browser-auth"]
+    kind: Literal["connection", "browser-auth", "browser"]
     tenant_id: Optional[str] = Field(None, alias="tenantId")
     user_id: Optional[str] = Field(None, alias="userId")
     connection_id: Optional[str] = Field(None, alias="connectionId")
@@ -93,7 +93,7 @@ class OAuthFlowStartInput(BaseModel):
     """Flow start input with either a canonical subject or connection identifiers."""
 
     provider_id: str = Field(alias="providerId")
-    redirect_uri: str = Field(alias="redirectUri")
+    redirect_uri: Optional[str] = Field(None, alias="redirectUri")
     scopes: Optional[List[str]] = None
     prompt: Optional[str] = None
     login_hint: Optional[str] = Field(None, alias="loginHint")
@@ -107,10 +107,28 @@ class OAuthFlowStartInput(BaseModel):
     class Config:
         populate_by_name = True
 
+    @field_validator("subject", mode="before")
+    @classmethod
+    def normalize_subject_model(cls, value: Any) -> Any:
+        if isinstance(value, BaseModel):
+            return value.model_dump(by_alias=True)
+        return value
+
     @model_validator(mode="after")
     def validate_subject_fields(self) -> "OAuthFlowStartInput":
         if self.subject is None and not (self.tenant_id and self.user_id):
             raise ValueError("subject or tenantId/userId is required")
+        if self.subject is None:
+            return self
+
+        if self.subject.kind in ("browser-auth", "browser") and not self.subject.intent_id:
+            raise ValueError("browser subjects require intentId")
+
+        if self.subject.kind == "connection" and not (
+            self.subject.tenant_id and self.subject.user_id
+        ):
+            raise ValueError("connection subjects require tenantId and userId")
+
         return self
 
 
@@ -120,7 +138,7 @@ class OAuthFlowCallbackInput(BaseModel):
     provider_id: Optional[str] = Field(None, alias="providerId")
     code: str
     state: str
-    redirect_uri: str = Field(alias="redirectUri")
+    redirect_uri: Optional[str] = Field(None, alias="redirectUri")
     request_id: Optional[str] = Field(None, alias="requestId")
 
     class Config:
@@ -210,9 +228,9 @@ class OAuthFlowEvent(BaseModel):
     name: OAuthFlowEventName
     request_id: str = Field(alias="requestId")
     provider_id: str = Field(alias="providerId")
-    at: str
+    at: Optional[str] = None
     ok: bool
-    subject_kind: Optional[Literal["connection", "browser-auth"]] = Field(
+    subject_kind: Optional[Literal["connection", "browser-auth", "browser"]] = Field(
         None, alias="subjectKind"
     )
     connection_id: Optional[str] = Field(None, alias="connectionId")
@@ -229,21 +247,21 @@ class OAuthFlowResolveBrowserAuthIdentityHook(Protocol):
     async def __call__(
         self, input: OAuthFlowResolveBrowserAuthIdentityInput
     ) -> Optional[OAuthFlowResolvedIdentity]:
-        ...
+        pass
 
 
 class OAuthFlowOnConnectedHook(Protocol):
     """Post-connect hook protocol."""
 
     async def __call__(self, result: OAuthFlowCallbackResult) -> None:
-        ...
+        pass
 
 
 class OAuthFlowOnDisconnectedHook(Protocol):
     """Post-disconnect hook protocol."""
 
     async def __call__(self, input: OAuthFlowDisconnectInput) -> None:
-        ...
+        pass
 
 
 class OAuthFlowIdentityHooks(BaseModel):
@@ -289,20 +307,20 @@ class OAuthFlowService(Protocol):
     """Shared flow service protocol."""
 
     async def start(self, input: OAuthFlowStartInput) -> OAuthFlowStartResult:
-        ...
+        pass
 
     async def handle_callback(
         self, input: OAuthFlowCallbackInput
     ) -> OAuthFlowCallbackResult:
-        ...
+        pass
 
     async def refresh(self, input: OAuthFlowRefreshInput) -> OAuthTokenSet:
-        ...
+        pass
 
     async def disconnect(
         self, input: OAuthFlowDisconnectInput
     ) -> OAuthFlowDisconnectResult:
-        ...
+        pass
 
 
 class OAuthFlowError(Exception):
@@ -356,11 +374,55 @@ class DefaultOAuthFlowService:
         provider = self._require_provider(payload.provider_id)
         runtime = self._require_runtime_config(payload.provider_id)
         scopes = list(payload.scopes or provider.default_scopes)
-        assert_redirect_uri_allowed(payload.redirect_uri, runtime.allowlisted_redirect_uris or [])
-
         subject = self._resolve_subject(payload)
         now = self._now()
+        if not payload.redirect_uri:
+            error = OAuthHttpError(
+                "redirectUri is required",
+                code="VALIDATION_ERROR",
+                status=400,
+                details={"redirectUri": payload.redirect_uri},
+            )
+            await self._emit_event(
+                {
+                    "name": "oauth.flow.start.failed",
+                    "requestId": payload.request_id or _create_request_id(),
+                    "providerId": payload.provider_id,
+                    "ok": False,
+                    "subjectKind": subject.kind,
+                    "errorCode": error.code,
+                    "details": error.details,
+                }
+            )
+            raise error
+
+        try:
+            assert_redirect_uri_allowed(payload.redirect_uri, runtime.allowlisted_redirect_uris or [])
+        except Exception as error:  # noqa: BLE001
+            details = getattr(error, "details", None)
+            code = getattr(error, "code", "VALIDATION_ERROR")
+            if code == "OAUTH_REDIRECT_DISALLOWED":
+                details = {"redirectUri": payload.redirect_uri}
+            await self._emit_event(
+                {
+                    "name": "oauth.flow.start.failed",
+                    "requestId": payload.request_id or _create_request_id(),
+                    "providerId": payload.provider_id,
+                    "ok": False,
+                    "subjectKind": subject.kind,
+                    "errorCode": code,
+                    "details": details,
+                }
+            )
+            raise OAuthHttpError(
+                str(error),
+                code=code,
+                status=getattr(error, "status", 400),
+                retryable=getattr(error, "retryable", False),
+                details=details,
+            ) from error
         expires_at = now + timedelta(seconds=self.config.state_ttl_seconds)
+        code_verifier = secrets.token_urlsafe(64) if provider.supports_pkce else None
         record = apply_subject_to_state_record(
             OAuthStateRecord.model_validate(
                 {
@@ -368,8 +430,9 @@ class DefaultOAuthFlowService:
                     "providerId": payload.provider_id,
                     "redirectUri": payload.redirect_uri,
                     "requestedScopes": scopes,
-                    "subject": subject,
+                    "subject": subject.model_dump(by_alias=True),
                     "metadata": payload.metadata,
+                    "codeVerifier": code_verifier,
                     "createdAt": _isoformat(now),
                     "expiresAt": _isoformat(expires_at),
                 }
@@ -413,11 +476,12 @@ class DefaultOAuthFlowService:
             provider_id = payload.provider_id or consumed.provider_id
             provider = self._require_provider(provider_id)
             runtime = self._require_runtime_config(provider_id)
+            redirect_uri = payload.redirect_uri or consumed.redirect_uri
             assert_callback_state_matches(
-                {"providerId": provider_id, "redirectUri": payload.redirect_uri},
+                {"providerId": provider_id, "redirectUri": redirect_uri},
                 consumed,
             )
-            token_response = await self._exchange_token(provider, runtime, consumed, payload)
+            token_response = await self._exchange_token(provider, runtime, consumed, payload, redirect_uri)
             token_set = _token_set_from_response(token_response, now)
             subject = OAuthFlowSubject.model_validate(
                 resolve_oauth_stored_subject(consumed).model_dump(by_alias=True)
@@ -427,7 +491,7 @@ class DefaultOAuthFlowService:
             token_record_id: Optional[str] = None
             connection_id: Optional[str] = subject.connection_id
 
-            if subject.kind == "browser-auth":
+            if subject.kind in ("browser-auth", "browser"):
                 resolved_identity = await self._resolve_browser_auth_identity(
                     provider_id, subject, consumed, token_set
                 )
@@ -478,7 +542,18 @@ class DefaultOAuthFlowService:
                 }
             )
             return result
-        except OAuthFlowError:
+        except OAuthFlowError as error:
+            await self._emit_event(
+                {
+                    "name": "oauth.flow.callback.failed",
+                    "requestId": payload.request_id or _create_request_id(),
+                    "providerId": payload.provider_id or "",
+                    "at": _isoformat(now),
+                    "ok": False,
+                    "errorCode": error.code,
+                    "details": error.details,
+                }
+            )
             raise
         except OAuthHttpError as error:
             wrapped = OAuthFlowError(
@@ -501,7 +576,7 @@ class DefaultOAuthFlowService:
             )
             raise wrapped from error
         except Exception as error:  # noqa: BLE001
-            wrapped = error if isinstance(error, OAuthFlowError) else OAuthFlowError(
+            wrapped = OAuthFlowError(
                 getattr(error, "code", "INTERNAL_ERROR"),
                 str(error),
                 status=getattr(error, "status", 500),
@@ -519,10 +594,24 @@ class DefaultOAuthFlowService:
                     "details": wrapped.details,
                 }
             )
-            raise wrapped
+            raise wrapped from error
 
     async def refresh(self, input: OAuthFlowRefreshInput | Dict[str, Any]) -> OAuthTokenSet:
-        raise OAuthFlowError("NOT_IMPLEMENTED", "OAuth token refresh is not implemented")
+        payload = input if isinstance(input, OAuthFlowRefreshInput) else OAuthFlowRefreshInput.model_validate(input)
+        error = OAuthFlowError("NOT_IMPLEMENTED", "OAuth token refresh is not implemented")
+        await self._emit_event(
+            {
+                "name": "oauth.flow.refresh.failed",
+                "requestId": payload.request_id or _create_request_id(),
+                "providerId": payload.provider_id,
+                "at": _isoformat(self._now()),
+                "ok": False,
+                "connectionId": payload.connection_id,
+                "errorCode": error.code,
+                "details": error.details,
+            }
+        )
+        raise error
 
     async def disconnect(
         self, input: OAuthFlowDisconnectInput | Dict[str, Any]
@@ -597,7 +686,34 @@ class DefaultOAuthFlowService:
             params["prompt"] = input.prompt
         if input.login_hint:
             params["login_hint"] = input.login_hint
-        params.update(provider.extra_auth_params or {})
+        reserved_extra_params = {
+            "state",
+            "redirect_uri",
+            "client_id",
+            "response_type",
+            "scope",
+            "code_challenge",
+            "code_challenge_method",
+        }
+        extra_auth_params = provider.extra_auth_params or {}
+        overlapping_params = reserved_extra_params.intersection(extra_auth_params)
+        if overlapping_params:
+            raise OAuthFlowError(
+                "VALIDATION_ERROR",
+                "OAuth provider extra_auth_params cannot override reserved authorization fields",
+                status=400,
+                details={"reservedParams": sorted(overlapping_params)},
+            )
+        if provider.supports_pkce:
+            if not record.code_verifier:
+                raise OAuthFlowError(
+                    "INTERNAL_ERROR",
+                    "OAuth PKCE verifier was not generated",
+                    status=500,
+                )
+            params["code_challenge"] = _pkce_s256_challenge(record.code_verifier)
+            params["code_challenge_method"] = "S256"
+        params.update(extra_auth_params)
         return f"{provider.authorization_url}?{urlencode(params)}"
 
     async def _exchange_token(
@@ -606,6 +722,7 @@ class DefaultOAuthFlowService:
         runtime: OAuthProviderRuntimeConfig,
         state: OAuthStateRecord,
         input: OAuthFlowCallbackInput,
+        redirect_uri: str,
     ) -> Any:
         client = self.config.token_http_client
         if client is None:
@@ -622,7 +739,7 @@ class DefaultOAuthFlowService:
                     "clientId": runtime.client_id,
                     "clientSecret": runtime.client_secret,
                     "clientSecretResolver": runtime.client_secret_resolver,
-                    "redirectUri": input.redirect_uri,
+                    "redirectUri": redirect_uri,
                     "code": input.code,
                     "codeVerifier": state.code_verifier,
                     "scopes": state.requested_scopes,
@@ -655,7 +772,7 @@ class DefaultOAuthFlowService:
                     }
                 )
             )
-            if hasattr(result, "__await__"):
+            if inspect.isawaitable(result):
                 result = await result
         except OAuthFlowError:
             raise
@@ -664,7 +781,9 @@ class DefaultOAuthFlowService:
             if isinstance(error_code, str) and error_code.startswith("AUTHFN_"):
                 raise
             raise hook_failed_error(details={"cause": str(error)}) from error
-        return result
+        if result is None or isinstance(result, OAuthFlowResolvedIdentity):
+            return result
+        return OAuthFlowResolvedIdentity.model_validate(result)
 
     async def _persist_token_record(
         self,
@@ -698,16 +817,16 @@ class DefaultOAuthFlowService:
         if hook is None:
             return
         maybe = hook(result)
-        if hasattr(maybe, "__await__"):
-            await maybe
+        if inspect.isawaitable(maybe):
+            _ = await maybe
 
     async def _run_on_disconnected(self, input: OAuthFlowDisconnectInput) -> None:
         hook = self.config.identity_hooks.on_disconnected if self.config.identity_hooks is not None else None
         if hook is None:
             return
         maybe = hook(input)
-        if hasattr(maybe, "__await__"):
-            await maybe
+        if inspect.isawaitable(maybe):
+            _ = await maybe
 
     async def _emit_event(self, event: OAuthFlowEvent | Dict[str, Any]) -> None:
         emitter = self.config.emit_event
@@ -729,7 +848,7 @@ class DefaultOAuthFlowService:
                 payload = OAuthFlowEvent.model_validate(raw_event)
         try:
             maybe = emitter(payload)
-            if hasattr(maybe, "__await__"):
+            if inspect.isawaitable(maybe):
                 await maybe
         except Exception:  # noqa: BLE001
             return
@@ -768,6 +887,11 @@ def _create_request_id() -> str:
 
 def _isoformat(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _pkce_s256_challenge(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 __all__ = [

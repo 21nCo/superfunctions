@@ -57,7 +57,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@superfunctions/envelope": "*",
-    "@superfunctions/errors": "*"
+    "@superfunctions/envelope": "0.0.1",
+    "@superfunctions/errors": "0.0.1"
   }
 }

@@ -58,7 +58,7 @@ export async function discoverLibraryConfigs(
     for (const manualPath of manualPaths) {
       const resolved = path.resolve(cwd, manualPath);
       if (fs.existsSync(resolved)) {
-        const extracted = await extractLibraryReference(resolved);
+        const extracted = await extractLibraryReference(resolved, installedLibrariesByName);
         if (extracted) {
           const packageName =
             extracted.packageName ?? installedLibrariesByName.get(extracted.libraryName);
@@ -95,41 +95,33 @@ function buildInstalledLibraryMap(cwd: string): Map<string, string> {
 }
 
 async function extractLibraryReference(
-  configPath: string
+  configPath: string,
+  installedLibrariesByName: Map<string, string>
 ): Promise<{ libraryName: string; packageName?: string } | null> {
   try {
     const content = fs.readFileSync(configPath, 'utf-8');
-    const importMatches = [...content.matchAll(/from ['"]([^'"]+)['"]/g)];
+    const specifiers = new Set<string>();
+    for (const match of content.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
+      specifiers.add(match[1]);
+    }
+    for (const match of content.matchAll(/import\s+['"]([^'"]+)['"]/g)) {
+      specifiers.add(match[1]);
+    }
+    for (const match of content.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      specifiers.add(match[1]);
+    }
 
-    for (const match of importMatches) {
-      const specifier = match[1];
-      if (specifier.startsWith('@superfunctions/')) {
-        return {
-          libraryName: specifier.slice('@superfunctions/'.length),
-          packageName: specifier,
-        };
+    for (const specifier of specifiers) {
+      const candidate = normalizeLibrarySpecifier(specifier);
+      if (!candidate) {
+        continue;
       }
 
-      if (specifier === '@authfn/core') {
+      const packageName = installedLibrariesByName.get(candidate.libraryName);
+      if (packageName) {
         return {
-          libraryName: 'authfn',
-          packageName: specifier,
-        };
-      }
-
-      if (specifier.startsWith('@')) {
-        const [scope, name] = specifier.split('/');
-        if (scope && name) {
-          return {
-            libraryName: name === 'core' ? scope.slice(1) : name,
-            packageName: specifier,
-          };
-        }
-      }
-
-      if (/^[a-z0-9-]+$/i.test(specifier)) {
-        return {
-          libraryName: specifier,
+          libraryName: candidate.libraryName,
+          packageName,
         };
       }
     }
@@ -138,4 +130,40 @@ async function extractLibraryReference(
   } catch {
     return null;
   }
+}
+
+function normalizeLibrarySpecifier(
+  specifier: string
+): { libraryName: string; packageName?: string } | null {
+  if (specifier.startsWith('@superfunctions/')) {
+    const [, name] = specifier.split('/');
+    if (!name) {
+      return null;
+    }
+    return {
+      libraryName: name,
+      packageName: `@superfunctions/${name}`,
+    };
+  }
+
+  if (specifier.startsWith('@')) {
+    const [scope, name] = specifier.split('/');
+    if (scope && name) {
+      return {
+        libraryName: name === 'core' ? scope.slice(1) : name,
+        packageName: `${scope}/${name}`,
+      };
+    }
+    return null;
+  }
+
+  if (/^[a-z0-9-]+(?:\/.*)?$/i.test(specifier)) {
+    const libraryName = specifier.split('/')[0];
+    return {
+      libraryName,
+      packageName: libraryName,
+    };
+  }
+
+  return null;
 }

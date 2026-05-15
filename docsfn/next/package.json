@@ -14,7 +14,8 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch"
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "node -e \"console.log('No tests configured')\""
   },
   "peerDependencies": {
     "next": "^15.0.0",
@@ -22,7 +23,7 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
-    "@docsfn/core": "*"
+    "@docsfn/core": "0.0.1"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

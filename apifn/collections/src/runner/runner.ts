@@ -1,6 +1,7 @@
 import type {
   Collection,
   CollectionItem,
+  CookieJar,
   Environment,
   HttpClient,
   OpenCollectionRequest,
@@ -10,7 +11,7 @@ import type {
   RunReport,
 } from "../types.js";
 import { buildRunReport } from "../report.js";
-import { createFetchHttpClient } from "./http-client.js";
+import { createCookieJar, createFetchHttpClient } from "./http-client.js";
 import { interpolateVariables, resolveVariableContext } from "../variables.js";
 import {
   executePreRequestScript,
@@ -21,7 +22,26 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_CAPTURED_BODY_BYTES = 10 * 1024 * 1024;
-const DEFAULT_REDACT_HEADERS = ["authorization"];
+const DEFAULT_REDACT_HEADERS = [
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "x-auth-token",
+];
+const DEFAULT_REDACT_BODY_KEYS = [
+  "apiKey",
+  "api_key",
+  "authorization",
+  "bearer",
+  "code",
+  "handoffCode",
+  "otp",
+  "password",
+  "refreshToken",
+  "sessionToken",
+  "token",
+];
 
 interface RequestEntry {
   item: CollectionItem;
@@ -75,6 +95,40 @@ function redactHeaders(headers: Record<string, string>, redactList: string[]): R
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
     result[key] = redactSet.has(key.toLowerCase()) ? "[REDACTED]" : value;
+  }
+  return result;
+}
+
+function redactBody(body: string | undefined): string | undefined {
+  if (body === undefined) {
+    return undefined;
+  }
+
+  try {
+    return JSON.stringify(redactJsonValue(JSON.parse(body) as unknown), null, 2);
+  } catch {
+    return DEFAULT_REDACT_BODY_KEYS.reduce((value, key) => {
+      const pattern = new RegExp(`(${key}=)([^&\\s]+)`, "gi");
+      return value.replace(pattern, `$1[REDACTED]`);
+    }, body);
+  }
+}
+
+function redactJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactJsonValue(entry));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (DEFAULT_REDACT_BODY_KEYS.some((name) => name.toLowerCase() === key.toLowerCase())) {
+      result[key] = "[REDACTED]";
+    } else {
+      result[key] = redactJsonValue(item);
+    }
   }
   return result;
 }
@@ -175,6 +229,7 @@ async function executeRequest(
     timeout: number;
     retries: number;
     httpClient: HttpClient;
+    cookieJar?: CookieJar;
     redactHeaders: string[];
     reporter?: RunReporter;
   }
@@ -200,6 +255,7 @@ async function executeRequest(
       code: script.code,
       req: mutableRequest,
       env: options.context,
+      cookies: options.cookieJar,
     });
 
     if (preRequestResult.error) {
@@ -217,7 +273,7 @@ async function executeRequest(
           method: mutableRequest.method,
           url: mutableRequest.url,
           headers: redactHeaders(mutableRequest.headers, options.redactHeaders),
-          body: mutableRequest.body,
+          body: redactBody(mutableRequest.body),
         },
       };
       options.reporter?.onRequestComplete?.(result);
@@ -240,6 +296,8 @@ async function executeRequest(
           headers: mutableRequest.headers,
           body: mutableRequest.body,
           timeout: options.timeout,
+          followRedirects: entry.request.settings?.followRedirects,
+          maxRedirects: entry.request.settings?.maxRedirects,
         }),
         options.timeout
       );
@@ -249,6 +307,10 @@ async function executeRequest(
         statusCode: response.status,
         duration: response.duration,
       });
+
+      if (response.status >= 500 && attempt < options.retries) {
+        continue;
+      }
 
       const parsedResponseBody = (() => {
         try {
@@ -274,6 +336,7 @@ async function executeRequest(
           req: mutableRequest,
           res: responseForScripts,
           env: options.context,
+          cookies: options.cookieJar,
           assertionResults,
         });
 
@@ -283,8 +346,9 @@ async function executeRequest(
       }
 
       const hasFailedAssertions = assertionResults.some((assertion) => !assertion.passed);
+      const hasExpectedStatus = statusMatchesExpected(response.status, entry.request.settings?.expectedStatus);
       const status: RequestResult["status"] =
-        response.status >= 400 || hasFailedAssertions ? "failed" : "passed";
+        !hasExpectedStatus || hasFailedAssertions ? "failed" : "passed";
       const result: RequestResult = {
         name: entry.request.info.name,
         path: entry.item.path,
@@ -300,13 +364,14 @@ async function executeRequest(
           method: mutableRequest.method,
           url: mutableRequest.url,
           headers: redactHeaders(mutableRequest.headers, options.redactHeaders),
-          body: mutableRequest.body,
+          body: redactBody(mutableRequest.body),
         },
         response: {
           status: response.status,
           headers: redactHeaders(response.headers, options.redactHeaders),
-          body: truncateBody(response.body),
+          body: redactBody(truncateBody(response.body)) ?? "",
           size: response.size,
+          redirects: response.redirects,
         },
       };
 
@@ -342,7 +407,7 @@ async function executeRequest(
       method: mutableRequest.method,
       url: mutableRequest.url,
       headers: redactHeaders(mutableRequest.headers, options.redactHeaders),
-      body: mutableRequest.body,
+      body: redactBody(mutableRequest.body),
     },
   };
 
@@ -367,6 +432,54 @@ function skippedResult(entry: RequestEntry): RequestResult {
   };
 }
 
+function patternMatches(value: string, pattern: string): boolean {
+  if (pattern === value) {
+    return true;
+  }
+
+  const escaped = pattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`, "i").test(value);
+}
+
+function shouldRunEntry(entry: RequestEntry, options: Pick<RunOptions, "include" | "exclude">): boolean {
+  const candidates = [
+    entry.item.path,
+    entry.item.name,
+    entry.request.info.name,
+    `${entry.request.http.method.toUpperCase()} ${entry.request.http.url}`,
+  ];
+
+  const included =
+    !options.include ||
+    options.include.length === 0 ||
+    options.include.some((pattern) =>
+      candidates.some((candidate) => patternMatches(candidate, pattern))
+    );
+  if (!included) {
+    return false;
+  }
+
+  return !(options.exclude ?? []).some((pattern) =>
+    candidates.some((candidate) => patternMatches(candidate, pattern))
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function statusMatchesExpected(status: number, expected: number | number[] | undefined): boolean {
+  if (expected === undefined) {
+    return status < 400;
+  }
+  return Array.isArray(expected) ? expected.includes(status) : status === expected;
+}
+
 export async function runCollection(
   collection: Collection,
   options: RunOptions
@@ -389,7 +502,8 @@ export async function runCollection(
 
   const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
   const retries = options.retries ?? 0;
-  const httpClient = options.httpClient ?? createFetchHttpClient();
+  const cookieJar = options.cookieJar ?? createCookieJar();
+  const httpClient = options.httpClient ?? createFetchHttpClient({ cookieJar });
   const redactList = [...DEFAULT_REDACT_HEADERS, ...(options.redactHeaders ?? [])];
 
   const results: Array<RequestResult | undefined> = new Array(entries.length);
@@ -409,6 +523,13 @@ export async function runCollection(
         }
 
         const entry = entries[index];
+        if (!shouldRunEntry(entry, options)) {
+          const skipped = skippedResult(entry);
+          results[index] = skipped;
+          reporter?.onRequestComplete?.(skipped);
+          continue;
+        }
+
         const result = await executeRequest(entry, {
           collection,
           context,
@@ -416,6 +537,7 @@ export async function runCollection(
           timeout: entry.request.settings?.timeout ?? timeout,
           retries,
           httpClient,
+          cookieJar,
           redactHeaders: redactList,
           reporter,
         });
@@ -437,6 +559,13 @@ export async function runCollection(
         continue;
       }
 
+      if (!shouldRunEntry(entry, options)) {
+        const skipped = skippedResult(entry);
+        results[index] = skipped;
+        reporter?.onRequestComplete?.(skipped);
+        continue;
+      }
+
       const result = await executeRequest(entry, {
         collection,
         context,
@@ -444,6 +573,7 @@ export async function runCollection(
         timeout: entry.request.settings?.timeout ?? timeout,
         retries,
         httpClient,
+        cookieJar,
         redactHeaders: redactList,
         reporter,
       });
@@ -452,6 +582,10 @@ export async function runCollection(
 
       if (options.bail && (result.status === "failed" || result.status === "error")) {
         bailTriggered = true;
+      }
+
+      if (options.delay && index < entries.length - 1) {
+        await sleep(options.delay);
       }
     }
   }

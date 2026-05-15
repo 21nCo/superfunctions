@@ -1,10 +1,10 @@
 import {
-  EmailProvider,
-  EmailProviderCapabilities,
-  SendEmailRequest,
-  SendEmailResponse
+  type EmailProvider,
+  type EmailProviderCapabilities,
+  type SendEmailRequest,
+  type SendEmailResponse
 } from './provider';
-import { ResendConfig } from '../types';
+import type { ResendConfig } from '../types';
 
 interface ResendEmailResponse {
   id?: string;

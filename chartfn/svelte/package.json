@@ -20,7 +20,7 @@
     "lint": "echo 'lint not configured'"
   },
   "dependencies": {
-    "chartfn": "file:.."
+    "chartfn": "0.0.1"
   },
   "peerDependencies": {
     "svelte": ">=5.0.0"
@@ -36,8 +36,16 @@
     "typescript": "^5.0.0",
     "vitest": "^3.2.4"
   },
-  "keywords": ["svelte", "chart", "chartfn"],
-  "files": ["dist", "src", "README.md"],
+  "keywords": [
+    "svelte",
+    "chart",
+    "chartfn"
+  ],
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
   "author": "21n",
   "license": "MIT",
   "bugs": {

@@ -21,18 +21,18 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest",
+    "test": "vitest run",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
-    "@testfn/core": "*",
+    "@testfn/core": "0.0.2",
     "yaml": "^2.8.1",
     "zod-to-json-schema": "^3.24.6"
   },
   "peerDependencies": {
     "@sinclair/typebox": "*",
-    "@superfunctions/http": "*",
+    "@superfunctions/http": "0.1.3",
     "zod": "*"
   },
   "peerDependenciesMeta": {

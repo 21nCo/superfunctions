@@ -134,4 +134,35 @@ describe("script sandbox", () => {
     expect(result.error?.message).toContain("Test script failed");
     expect(assertions[0]?.passed).toBe(false);
   });
+
+  it("exposes safe utility globals and response.json helper", async () => {
+    const assertions: AssertionResult[] = [];
+    await executeTestScript({
+      code: `
+        const url = new URL("http://localhost/items?mode=test");
+        const id = crypto.randomUUID();
+        test("safe globals work", function() {
+          expect(url.searchParams.get("mode")).to.equal("test");
+          expect(Boolean(id)).to.equal(true);
+          expect(atob(btoa("hello"))).to.equal("hello");
+          expect(res.json().ok).to.equal(true);
+        });
+      `,
+      req: {
+        method: "GET",
+        url: "http://localhost:3000/items",
+        headers: {},
+      },
+      res: {
+        status: 200,
+        headers: {},
+        body: { ok: true },
+        responseTime: 10,
+      },
+      env: {},
+      assertionResults: assertions,
+    });
+
+    expect(assertions[0]?.passed).toBe(true);
+  });
 });

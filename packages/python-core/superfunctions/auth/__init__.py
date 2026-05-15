@@ -68,13 +68,13 @@ class AuthProvider(Protocol):
     """Framework-agnostic auth provider protocol."""
 
     async def authenticate(self, request: Request) -> Optional[AuthSession]:
-        ...
+        pass
 
     async def authorize(self, session: AuthSession, resource_id: str) -> bool:
-        ...
+        pass
 
     async def revoke(self, session_id: str) -> None:
-        ...
+        pass
 
 
 def validate_auth_subject(value: Dict[str, Any]) -> AuthSubject:

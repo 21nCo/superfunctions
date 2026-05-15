@@ -4,7 +4,8 @@
   "description": "Icon library",
   "type": "module",
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "test": "node -e \"console.log('No tests configured')\""
   },
   "engines": {
     "node": ">=18.18.0"

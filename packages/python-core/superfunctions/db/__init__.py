@@ -5,7 +5,7 @@ Provides protocol-based database abstractions that work with any ORM.
 
 Example:
     >>> from superfunctions.db import Adapter, CreateParams, FindManyParams
-    >>> 
+    >>>
     >>> # Use with any adapter implementation
     >>> user = await adapter.create(
     ...     CreateParams(model="users", data={"name": "Alice"})
@@ -15,14 +15,14 @@ Example:
 from .errors import (
     AdapterError,
     AdapterErrorCode,
-    ConnectionError,
+    AdapterConnectionError,
+    AdapterTimeoutError,
     ConstraintViolationError,
     DuplicateKeyError,
     NotFoundError,
     OperationNotSupportedError,
     QueryFailedError,
     SchemaValidationError,
-    TimeoutError,
     TransactionError,
 )
 from .namespace import NamespaceManager, create_namespace_manager
@@ -30,6 +30,7 @@ from .types import (
     Adapter,
     AdapterCapabilities,
     AdapterConfig,
+    ConstraintSchema,
     CountParams,
     CreateManyParams,
     CreateParams,
@@ -87,6 +88,7 @@ __all__ = [
     # Schema types
     "FieldSchema",
     "FieldType",
+    "ConstraintSchema",
     "IndexSchema",
     "TableSchema",
     "ValidationResult",
@@ -96,7 +98,7 @@ __all__ = [
     # Errors
     "AdapterError",
     "AdapterErrorCode",
-    "ConnectionError",
+    "AdapterConnectionError",
     "ConstraintViolationError",
     "NotFoundError",
     "DuplicateKeyError",
@@ -104,7 +106,7 @@ __all__ = [
     "TransactionError",
     "SchemaValidationError",
     "OperationNotSupportedError",
-    "TimeoutError",
+    "AdapterTimeoutError",
     # Utils
     "NamespaceManager",
     "create_namespace_manager",

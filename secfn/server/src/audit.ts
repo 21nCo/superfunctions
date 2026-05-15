@@ -1,5 +1,5 @@
 import type { Adapter, WhereClause } from "@superfunctions/db";
-import { generateId, nowIso } from "@secfn/core";
+import { generateId, nowIso } from "@secfn/core/id";
 import type { SecurityAuditEvent, SecurityMetrics, SecFnLogger } from "@secfn/core";
 import type { AuditWriteInput } from "./types.js";
 

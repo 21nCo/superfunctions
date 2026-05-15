@@ -3,7 +3,7 @@ import type { TableSchema } from "@superfunctions/db";
 export const SECFN_SCHEMA_VERSION = 1;
 
 export function getSecFnSchema(): TableSchema[] {
-  return [
+  return withIsoDateDefaults([
     {
       modelName: "secfn_namespaces",
       fields: {
@@ -223,7 +223,7 @@ export function getSecFnSchema(): TableSchema[] {
         { name: "idx_secfn_scan_findings_severity", fields: ["severity"] },
       ],
     },
-  ];
+  ]);
 }
 
 export interface SecFnSchemaDefinition {
@@ -236,4 +236,22 @@ export function getSchema(): SecFnSchemaDefinition {
     version: SECFN_SCHEMA_VERSION,
     schemas: getSecFnSchema(),
   };
+}
+
+function withIsoDateDefaults(tables: TableSchema[]): TableSchema[] {
+  return tables.map((table) => ({
+    ...table,
+    fields: Object.fromEntries(
+      Object.entries(table.fields).map(([name, field]) => [
+        name,
+        field.type === "date" || field.type === "datetime"
+          ? {
+              dateValueType: "iso-string",
+              dateStorageType: "timestamptz",
+              ...field,
+            }
+          : field,
+      ])
+    ),
+  }));
 }

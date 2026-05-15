@@ -1,4 +1,4 @@
-import { runCollection } from "../src/index.js";
+import { createCookieJar, runCollection } from "../src/index.js";
 import type { Collection, HttpClient, HttpClientRequest, HttpClientResponse, RunReporter } from "../src/types.js";
 
 function makeCollection(): Collection {
@@ -332,5 +332,106 @@ describe("runCollection", () => {
     expect(events).toContain("request-start:First");
     expect(events).toContain("request-complete:Third");
     expect(events[events.length - 1]).toBe("complete");
+  });
+
+  it("supports include/exclude filters and marks non-matching requests skipped", async () => {
+    const collection = makeCollection();
+    const calls: string[] = [];
+    const httpClient: HttpClient = {
+      async send(request) {
+        calls.push(request.url);
+        return response(200);
+      },
+    };
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      include: ["*second*"],
+      exclude: ["*third*"],
+      httpClient,
+    });
+
+    expect(calls).toEqual(["http://localhost:3000/second"]);
+    expect(report.summary.passed).toBe(1);
+    expect(report.summary.skipped).toBe(2);
+  });
+
+  it("applies sequential delay between requests", async () => {
+    const collection = makeCollection();
+    const started = Date.now();
+
+    await runCollection(collection, {
+      environment: "development",
+      delay: 20,
+      httpClient: {
+        async send() {
+          return response(200);
+        },
+      },
+    });
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(35);
+  });
+
+  it("redacts sensitive request and response bodies", async () => {
+    const collection = makeCollection();
+    const first = collection.items[0]!.children![0]!;
+    first.request!.http.method = "POST";
+    first.request!.http.body = {
+      type: "json",
+      data: JSON.stringify({ email: "person@example.com", password: "secret", token: "tok" }),
+    };
+    collection.items[0]!.children = [first];
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      httpClient: {
+        async send() {
+          return response(200, JSON.stringify({ token: "secret-token", ok: true }));
+        },
+      },
+    });
+
+    expect(report.results[0]?.request.body).toContain("[REDACTED]");
+    expect(report.results[0]?.request.body).not.toContain("secret");
+    expect(report.results[0]?.response?.body).not.toContain("secret-token");
+  });
+
+  it("passes cookie jar helpers into scripts", async () => {
+    const collection = makeCollection();
+    const first = collection.items[0]!.children![0]!;
+    first.request!.runtime = {
+      scripts: [
+        {
+          type: "pre-request",
+          code: `
+            cookies.set("session", "abc", req.url);
+            req.headers.cookie = "session=" + cookies.get("session", req.url);
+          `,
+        },
+        {
+          type: "tests",
+          code: `
+            test("cookie helper is available", function() {
+              expect(cookies.get("session", req.url)).to.equal("abc");
+            });
+          `,
+        },
+      ],
+    };
+    collection.items[0]!.children = [first];
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      cookieJar: createCookieJar(),
+      httpClient: {
+        async send(request) {
+          expect(request.headers.cookie).toBe("session=abc");
+          return response(200);
+        },
+      },
+    });
+
+    expect(report.summary.passed).toBe(1);
   });
 });
