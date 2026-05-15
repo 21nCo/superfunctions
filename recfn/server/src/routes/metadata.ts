@@ -1,5 +1,5 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import { ErrorCode, type Bot, type MeetingMetadata } from 'recfn';
+import { ErrorCode, type Bot, type MeetingMetadata } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import { authenticate } from '../middleware/auth.js';

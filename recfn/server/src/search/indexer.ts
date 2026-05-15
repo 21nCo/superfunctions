@@ -1,6 +1,6 @@
-import type { Segment } from 'recfn';
+import type { Segment } from '@recfn/core';
 import type { SearchFnClient, TranscriptSearchDocument } from '../integrations/searchfn.js';
-import { sortSegmentsDeterministically } from 'recfn-shared-cloud';
+import { sortSegmentsDeterministically } from '@recfn/shared-cloud';
 
 export interface IndexTranscriptInput {
   recordingId: string;

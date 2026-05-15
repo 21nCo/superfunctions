@@ -1,5 +1,5 @@
 {
-  "name": "recfn-zoom",
+  "name": "@recfn/zoom",
   "version": "0.1.0",
   "description": "RecFn Zoom platform adapter — join Zoom meetings, capture audio/video, track participants, capture chat",
   "type": "module",
@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn": "0.1.0"
+    "@recfn/core": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

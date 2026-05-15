@@ -1,5 +1,5 @@
 {
-  "name": "recfn-shared-cloud",
+  "name": "@recfn/shared-cloud",
   "version": "0.1.0",
   "description": "Shared transport, polling, and segment helpers for RecFn cloud ASR adapters",
   "type": "module",
@@ -25,7 +25,7 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn": "0.1.0"
+    "@recfn/core": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

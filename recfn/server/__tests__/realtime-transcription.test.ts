@@ -4,7 +4,7 @@ import {
   assertRealtimeTranscriptionSupported,
   getRealtimeTranscriptionMatrix,
 } from '../src/transcription/realtime.js';
-import type { AsrAdapter, AudioChunk, Segment } from 'recfn';
+import type { AsrAdapter, AudioChunk, Segment } from '@recfn/core';
 import type { TranscriptStreamManager } from '../src/ws/transcript-stream.js';
 import type { Logger } from '../src/integrations/logfn.js';
 

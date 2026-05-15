@@ -1,4 +1,4 @@
-import type { ChatMessage } from 'recfn';
+import type { ChatMessage } from '@recfn/core';
 import type { RecFnHttpClient } from '../client.js';
 import type { ApiResult } from '../client.js';
 

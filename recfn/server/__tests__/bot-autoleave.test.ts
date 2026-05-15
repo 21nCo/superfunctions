@@ -6,7 +6,7 @@ import {
   transitionBot,
 } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
-import type { Bot } from 'recfn';
+import type { Bot } from '@recfn/core';
 
 describe('Auto-leave on empty (TV-BOT-006)', () => {
   let store: RecFnStore;

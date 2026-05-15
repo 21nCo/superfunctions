@@ -6,7 +6,7 @@ import type {
   MeetingMetadata,
   AudioChunk,
   VideoChunk,
-} from 'recfn';
+} from '@recfn/core';
 import type { ZoomMeetingSdk, ZoomMeetingSdkConfig } from './meeting-sdk.js';
 import { parseMeetingUrl } from './meeting-sdk.js';
 import { createAudioStream } from './audio-capture.js';

@@ -1,4 +1,4 @@
-import type { Calendar, CalendarEvent } from 'recfn';
+import type { Calendar, CalendarEvent } from '@recfn/core';
 import type { RecFnHttpClient } from '../client.js';
 import type { ApiResult } from '../client.js';
 

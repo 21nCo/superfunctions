@@ -1,4 +1,4 @@
-import type { Webhook } from 'recfn';
+import type { Webhook } from '@recfn/core';
 import type { RecFnHttpClient } from '../client.js';
 import type { ApiResult } from '../client.js';
 

@@ -4,7 +4,7 @@ import {
   buildTranscript,
   type WhisperBatchAdapter,
 } from '../src/transcriber.js';
-import type { Segment } from 'recfn';
+import type { Segment } from '@recfn/core';
 
 function createMockAdapter(segments: Segment[]): WhisperBatchAdapter {
   return {

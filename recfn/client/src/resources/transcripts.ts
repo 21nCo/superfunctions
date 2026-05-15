@@ -1,4 +1,4 @@
-import type { Transcript, TranscriptExportFormat } from 'recfn';
+import type { Transcript, TranscriptExportFormat } from '@recfn/core';
 import type { RecFnHttpClient } from '../client.js';
 import type { ApiResult } from '../client.js';
 import type { TranscriptStream } from '../ws.js';

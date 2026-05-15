@@ -1,5 +1,5 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import type { Participant } from 'recfn';
+import type { Participant } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import type {
@@ -10,7 +10,7 @@ import type {
 import { authenticate } from '../middleware/auth.js';
 import { checkSearchQueryLength } from '../middleware/limits.js';
 import { ok, err } from '../middleware/envelope.js';
-import { ErrorCode } from 'recfn';
+import { ErrorCode } from '@recfn/core';
 import { createTranscriptSearchDocuments } from '../search/indexer.js';
 
 type SearchParticipant = Pick<Participant, 'id' | 'name' | 'email' | 'role'>;
@@ -120,7 +120,7 @@ export function createSearchRoutes(deps: SearchRouteDeps): Route[] {
           checkSearchQueryLength(trimmed, limits);
         } catch (e) {
           return err(
-            (e as import('recfn').RecFnError).code,
+            (e as import('@recfn/core').RecFnError).code,
             (e as Error).message,
           );
         }

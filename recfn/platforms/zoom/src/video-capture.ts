@@ -1,4 +1,4 @@
-import type { VideoChunk } from 'recfn';
+import type { VideoChunk } from '@recfn/core';
 import type { ZoomMeetingSdk, ZoomVideoFrame } from './meeting-sdk.js';
 
 export function createVideoStream(

@@ -1,4 +1,4 @@
-import type { AudioChunk } from 'recfn';
+import type { AudioChunk } from '@recfn/core';
 import type { ZoomMeetingSdk, ZoomAudioFrame } from './meeting-sdk.js';
 
 export interface AudioCaptureOptions {

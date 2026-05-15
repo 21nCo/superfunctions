@@ -1,4 +1,4 @@
-import { createError, type AudioChunk } from 'recfn';
+import { createError, type AudioChunk } from '@recfn/core';
 import type { Page } from 'playwright';
 import {
   TEAMS_AUDIO_CAPTURE_POLL_INTERVAL_MS,

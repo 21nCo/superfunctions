@@ -5,11 +5,11 @@ import type {
   TranscriptStreamFrame,
   TranscriptStreamParticipantLeftData,
   TranscriptStreamStatusData,
-} from 'recfn';
+} from '@recfn/core';
 import {
   TRANSCRIPT_STREAM_FRAME_SCHEMA,
   parseTranscriptStreamFrame,
-} from 'recfn';
+} from '@recfn/core';
 import type { RecFnHttpClient } from './client.js';
 
 export interface TranscriptStreamEvents {

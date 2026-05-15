@@ -1,4 +1,4 @@
-import type { ChatMessage } from 'recfn';
+import type { ChatMessage } from '@recfn/core';
 import type { ZoomMeetingSdk, ZoomChatMessageInfo } from './meeting-sdk.js';
 
 export interface ChatTracker {

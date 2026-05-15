@@ -1,5 +1,5 @@
 import { program } from 'commander';
-import type { RecFn } from 'recfn-client';
+import type { RecFn } from '@recfn/client';
 import type { OutputFormat } from '../output.js';
 import { formatJson, formatTranscriptSearch } from '../output.js';
 

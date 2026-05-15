@@ -8,7 +8,7 @@ import type {
   Recording,
   Transcript,
   Webhook,
-} from 'recfn';
+} from '@recfn/core';
 import type {
   CreateBotInput,
   ListBotsOptions,

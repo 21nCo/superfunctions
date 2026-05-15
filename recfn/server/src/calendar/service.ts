@@ -5,7 +5,7 @@ import {
   type Calendar,
   type CalendarEvent,
   type CalendarProvider,
-} from 'recfn';
+} from '@recfn/core';
 import type { Logger } from '../integrations/logfn.js';
 import { createNoopLogger } from '../integrations/logfn.js';
 import type { QueueAdapter } from '../integrations/flowfn.js';

@@ -1,4 +1,4 @@
-import type { Participant, Segment } from 'recfn';
+import type { Participant, Segment } from '@recfn/core';
 
 const REDACTED = '[REDACTED]';
 

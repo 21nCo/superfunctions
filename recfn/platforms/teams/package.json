@@ -1,5 +1,5 @@
 {
-  "name": "recfn-teams",
+  "name": "@recfn/teams",
   "version": "0.1.0",
   "description": "RecFn Microsoft Teams platform adapter — join Teams via headless browser, capture audio, track participants, capture chat",
   "type": "module",
@@ -41,9 +41,9 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn-browser-core": "0.1.0",
-    "recfn": "0.1.0",
-    "playwright": "^1.49.0"
+    "playwright": "^1.49.0",
+    "@recfn/core": "0.1.0",
+    "@recfn/browser-core": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

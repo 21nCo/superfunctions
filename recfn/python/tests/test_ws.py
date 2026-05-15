@@ -124,7 +124,7 @@ def test_ws_schema_matches_shared_core_contract() -> None:
             "--input-type=module",
             "-e",
             (
-                "import { TRANSCRIPT_STREAM_FRAME_SCHEMA } from 'recfn'; "
+                "import { TRANSCRIPT_STREAM_FRAME_SCHEMA } from '@recfn/core'; "
                 "console.log(JSON.stringify(TRANSCRIPT_STREAM_FRAME_SCHEMA));"
             ),
         ],

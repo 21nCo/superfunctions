@@ -1,4 +1,4 @@
-import type { Envelope, EnvelopeError } from 'recfn';
+import type { Envelope, EnvelopeError } from '@recfn/core';
 
 export interface RecFnClientConfig {
   baseUrl: string;

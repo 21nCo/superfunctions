@@ -1,4 +1,4 @@
-import type { AudioChunk } from 'recfn';
+import type { AudioChunk } from '@recfn/core';
 import type { Page } from 'playwright';
 
 export interface BrowserAudioSupport {

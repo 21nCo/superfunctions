@@ -4,7 +4,7 @@ import {
   type AsrAdapter,
   type AudioChunk,
   type Platform,
-} from 'recfn';
+} from '@recfn/core';
 import type { TranscriptStreamManager } from '../ws/transcript-stream.js';
 import type { Logger } from '../integrations/logfn.js';
 

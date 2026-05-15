@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestServer, req, json } from './helpers.js';
 import type { RecFnServer } from '../src/index.js';
-import type { ChatMessage, MeetingMetadata, Participant, Recording } from 'recfn';
+import type { ChatMessage, MeetingMetadata, Participant, Recording } from '@recfn/core';
 
 describe('Bot API routes', () => {
   let server: RecFnServer;

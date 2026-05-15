@@ -5,7 +5,7 @@ import {
   validateBotConfig,
   isTerminalState,
   canTransition,
-} from 'recfn';
+} from '@recfn/core';
 import type { RecFnStore, ListBotsOptions } from '../store/types.js';
 import { checkConcurrentBots, checkPaginationLimit } from '../middleware/limits.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
@@ -24,7 +24,7 @@ import type {
   Participant,
   Platform,
   Recording,
-} from 'recfn';
+} from '@recfn/core';
 
 export interface BotRouteDeps {
   store: RecFnStore;
@@ -116,7 +116,7 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
           checkPaginationLimit(limit, limits);
         } catch (e) {
           return err(
-            (e as import('recfn').RecFnError).code,
+            (e as import('@recfn/core').RecFnError).code,
             (e as Error).message,
           );
         }

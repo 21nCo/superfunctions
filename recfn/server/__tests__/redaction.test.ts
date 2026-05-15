@@ -3,7 +3,7 @@ import {
   redactSegmentText,
   getSpeakerDisplayLabel,
 } from '../src/transcription/redact.js';
-import type { Participant, Segment } from 'recfn';
+import type { Participant, Segment } from '@recfn/core';
 
 describe('PII redaction (TV-TRX-008, TV-EXP-003)', () => {
   const participants: Participant[] = [

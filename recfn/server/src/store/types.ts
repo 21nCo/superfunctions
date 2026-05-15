@@ -10,7 +10,7 @@ import type {
   Recording,
   Transcript,
   Webhook,
-} from 'recfn';
+} from '@recfn/core';
 
 export interface RecFnStoreCapabilities {
   durable: boolean;

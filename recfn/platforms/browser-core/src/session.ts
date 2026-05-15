@@ -6,7 +6,7 @@ import type {
   Participant,
   Platform,
   PlatformAdapter,
-} from 'recfn';
+} from '@recfn/core';
 import { chromium } from 'playwright';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import type { BrowserChatTrackerLike } from './chat.js';

@@ -1,4 +1,4 @@
-import type { AudioChunk } from 'recfn';
+import type { AudioChunk } from '@recfn/core';
 
 export interface NormalizedAudioChunk {
   data: Uint8Array;

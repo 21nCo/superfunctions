@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { WhisperAdapter } from '../src/index.js';
 import { parseWhisperJsonOutput } from '../src/runner.js';
 import type { WhisperRunner, WhisperOutput } from '../src/runner.js';
-import type { Segment } from 'recfn';
+import type { Segment } from '@recfn/core';
 
 function createMockRunner(segments: Segment[]): WhisperRunner {
   return {

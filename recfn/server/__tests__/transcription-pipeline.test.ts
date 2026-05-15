@@ -4,7 +4,7 @@ import { createAsrRegistry } from '../src/transcription/registry.js';
 import { createMemoryStore } from '../src/store/memory.js';
 import { MemoryLogger } from '../src/integrations/logfn.js';
 import { createSearchFnClient } from '../src/integrations/searchfn.js';
-import type { AsrAdapter, AsrOpts, Segment } from 'recfn';
+import type { AsrAdapter, AsrOpts, Segment } from '@recfn/core';
 
 function createMockAsrAdapter(segments: Segment[]): AsrAdapter {
   return {

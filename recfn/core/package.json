@@ -1,5 +1,5 @@
 {
-  "name": "recfn",
+  "name": "@recfn/core",
   "version": "0.1.0",
   "description": "Self-hosted meeting recording SDK — core types, interfaces, and utilities",
   "type": "module",

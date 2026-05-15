@@ -7,7 +7,7 @@ import {
   ErrorCode,
   createError,
   type AudioChunk,
-} from 'recfn';
+} from '@recfn/core';
 
 function createAudioStream(chunks: AudioChunk[]): ReadableStream<AudioChunk> {
   return new ReadableStream<AudioChunk>({

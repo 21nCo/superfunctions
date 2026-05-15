@@ -2,7 +2,7 @@
  * Server upload client — upload recording file to recfn server.
  */
 
-import type { RecFn } from 'recfn-client';
+import type { RecFn } from '@recfn/client';
 
 export interface UploadOptions {
   botId: string;

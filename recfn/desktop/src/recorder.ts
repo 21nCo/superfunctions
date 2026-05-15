@@ -4,7 +4,7 @@
  * For Node tests, use recordStreamsWithMock.
  */
 
-import type { RecordingFormat } from 'recfn';
+import type { RecordingFormat } from '@recfn/core';
 import type { CaptureStreams } from './capture.js';
 
 export interface RecorderOptions {

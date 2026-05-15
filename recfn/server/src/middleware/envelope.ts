@@ -1,4 +1,4 @@
-import { type ErrorCodeType, ErrorHttpStatus } from 'recfn';
+import { type ErrorCodeType, ErrorHttpStatus } from '@recfn/core';
 import { createErrorRegistry } from '@superfunctions/errors';
 import { err as createEnvelopeError, ok as createEnvelopeSuccess, toLegacyDataEnvelope } from '@superfunctions/envelope';
 

@@ -1,6 +1,6 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import { ErrorCode, toSRT, toVTT, toText } from 'recfn';
-import type { Segment, TranscriptExportFormat } from 'recfn';
+import { ErrorCode, toSRT, toVTT, toText } from '@recfn/core';
+import type { Segment, TranscriptExportFormat } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import type { QueueAdapter } from '../integrations/flowfn.js';

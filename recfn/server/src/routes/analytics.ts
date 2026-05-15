@@ -1,6 +1,6 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import { computeAnalytics } from 'recfn';
-import { ErrorCode } from 'recfn';
+import { computeAnalytics } from '@recfn/core';
+import { ErrorCode } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
 import { authenticate } from '../middleware/auth.js';

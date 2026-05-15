@@ -1,5 +1,5 @@
-import type { AsrAdapter, AsrOpts } from 'recfn';
-import type { Segment } from 'recfn';
+import type { AsrAdapter, AsrOpts } from '@recfn/core';
+import type { Segment } from '@recfn/core';
 import {
   fetchArrayBufferOrThrow,
   fetchJsonOrThrow,
@@ -7,7 +7,7 @@ import {
   pollUntil,
   readAudioChunkStream,
   sortSegmentsDeterministically,
-} from 'recfn-shared-cloud';
+} from '@recfn/shared-cloud';
 
 export interface GoogleSttAdapterConfig {
   apiKey: string;
@@ -127,7 +127,7 @@ export class GoogleSttAdapter implements AsrAdapter {
     opts: AsrOpts,
   ): AsyncIterable<Segment> {
     const chunks = await readAudioChunkStream(
-      audio as ReadableStream<Uint8Array | import('recfn').AudioChunk>,
+      audio as ReadableStream<Uint8Array | import('@recfn/core').AudioChunk>,
     );
     const combinedSize = chunks.reduce((total, chunk) => total + chunk.data.byteLength, 0);
     const combined = new Uint8Array(combinedSize);

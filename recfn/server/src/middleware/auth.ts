@@ -2,7 +2,7 @@ import {
   createBearerAuthMiddleware as createSharedBearerAuthMiddleware,
   extractBearerToken as extractSharedBearerToken,
 } from '@superfunctions/auth';
-import { ErrorCode, RecFnError } from 'recfn';
+import { ErrorCode, RecFnError } from '@recfn/core';
 
 export interface AuthResult {
   namespace: string;

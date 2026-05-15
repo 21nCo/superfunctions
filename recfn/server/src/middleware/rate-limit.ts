@@ -8,7 +8,7 @@ import {
   createRateLimiter,
   type KVStoreAdapter,
 } from '@superfunctions/middleware';
-import { createError, ErrorCode } from 'recfn';
+import { createError, ErrorCode } from '@recfn/core';
 
 export type RateLimitStore = KVStoreAdapter;
 

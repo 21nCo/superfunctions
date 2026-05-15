@@ -1,4 +1,4 @@
-import type { Calendar } from 'recfn';
+import type { Calendar } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type { CalendarTokenStore } from './token-store.js';
 import type { GoogleCalendarClient } from './google.js';
@@ -7,7 +7,7 @@ import type { QueueAdapter } from '../integrations/flowfn.js';
 import type { Logger } from '../integrations/logfn.js';
 import { QUEUE_NAMES } from '../integrations/flowfn.js';
 import { createNoopLogger } from '../integrations/logfn.js';
-import { validateMeetingUrl } from 'recfn';
+import { validateMeetingUrl } from '@recfn/core';
 import type { MetricsEmitter } from '../integrations/watchfn.js';
 import { emitCalendarScheduleDecision } from '../observability/metrics.js';
 

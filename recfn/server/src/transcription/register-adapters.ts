@@ -15,15 +15,15 @@ export async function registerCloudAdapters(
   config: CloudAsrConfig,
 ): Promise<void> {
   if (config.deepgramApiKey) {
-    const { DeepgramAdapter } = await import('recfn-deepgram');
+    const { DeepgramAdapter } = await import('@recfn/deepgram');
     registry.register(new DeepgramAdapter({ apiKey: config.deepgramApiKey }));
   }
   if (config.assemblyAiApiKey) {
-    const { AssemblyAIAdapter } = await import('recfn-assemblyai');
+    const { AssemblyAIAdapter } = await import('@recfn/assemblyai');
     registry.register(new AssemblyAIAdapter({ apiKey: config.assemblyAiApiKey }));
   }
   if (config.googleSttApiKey) {
-    const { GoogleSttAdapter } = await import('recfn-google-stt');
+    const { GoogleSttAdapter } = await import('@recfn/google-stt');
     registry.register(new GoogleSttAdapter({ apiKey: config.googleSttApiKey }));
   }
 }

@@ -1,5 +1,5 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import { ErrorCode } from 'recfn';
+import { ErrorCode } from '@recfn/core';
 import { WEBHOOK_EVENTS } from '../webhooks/events.js';
 import type { RecFnStore } from '../store/types.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
@@ -58,7 +58,7 @@ export function createWebhookRoutes(deps: WebhookRouteDeps): Route[] {
           await checkWebhookCount(store, auth.namespace, limits);
         } catch (e) {
           return err(
-            (e as import('recfn').RecFnError).code,
+            (e as import('@recfn/core').RecFnError).code,
             (e as Error).message,
           );
         }

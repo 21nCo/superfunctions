@@ -1,6 +1,6 @@
-import type { ChatMessage } from 'recfn';
+import type { ChatMessage } from '@recfn/core';
 import type { Page } from 'playwright';
-import { createBrowserChatTracker } from 'recfn-browser-core';
+import { createBrowserChatTracker } from '@recfn/browser-core';
 
 export interface MeetChatTracker {
   getMessages(): ChatMessage[];

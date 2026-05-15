@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { AudioChunk, PlatformAdapter, Participant } from 'recfn';
+import type { AudioChunk, PlatformAdapter, Participant } from '@recfn/core';
 import {
   createMemoryStore,
   createBotWorker,

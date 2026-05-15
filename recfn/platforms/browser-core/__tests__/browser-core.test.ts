@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AudioChunk, BotConfig, ChatMessage, MeetingMetadata, Participant } from 'recfn';
+import type { AudioChunk, BotConfig, ChatMessage, MeetingMetadata, Participant } from '@recfn/core';
 import type { Browser, Page } from 'playwright';
 import {
   BrowserAutomationAdapter,

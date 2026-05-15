@@ -1,5 +1,5 @@
-import type { Bot, BotStatus } from 'recfn';
-import { assertTransition } from 'recfn';
+import type { Bot, BotStatus } from '@recfn/core';
+import { assertTransition } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
 import type { QueueAdapter } from '../integrations/flowfn.js';

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { memoryAdapter } from '@superfunctions/db/adapters';
 import { assertProductionStore, createDbStore } from '../src/store/db.js';
-import type { BotConfig, MeetingMetadata } from 'recfn';
+import type { BotConfig, MeetingMetadata } from '@recfn/core';
 import { createMemoryStore } from '../src/store/memory.js';
 
 const DEFAULT_CONFIG: Required<BotConfig> = {

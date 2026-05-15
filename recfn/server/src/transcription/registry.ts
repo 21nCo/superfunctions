@@ -1,4 +1,4 @@
-import type { AsrAdapter } from 'recfn';
+import type { AsrAdapter } from '@recfn/core';
 
 export interface AsrRegistry {
   register(adapter: AsrAdapter): void;
