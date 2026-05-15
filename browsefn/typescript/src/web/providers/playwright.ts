@@ -14,7 +14,36 @@ import {
   isProviderModuleAvailable,
 } from './browser-provider-utils.js';
 
-type PlaywrightModule = typeof import('playwright');
+type PlaywrightPage = {
+  goto(url: string, options: { waitUntil: string; timeout: number }): Promise<unknown>;
+  content(): Promise<string>;
+  screenshot(options: {
+    fullPage?: boolean;
+    type?: 'png' | 'jpeg';
+    quality?: number;
+  }): Promise<Uint8Array>;
+  evaluate<T>(pageFunction: () => T): Promise<T>;
+};
+
+type PlaywrightContext = {
+  addCookies(cookies: Array<{ name: string; value: string; domain: string; path: string }>): Promise<void>;
+  newPage(): Promise<PlaywrightPage>;
+};
+
+type PlaywrightBrowser = {
+  newContext(options: {
+    extraHTTPHeaders?: Record<string, string>;
+    userAgent?: string;
+    viewport?: { width: number; height: number };
+  }): Promise<PlaywrightContext>;
+  close(): Promise<void>;
+};
+
+type PlaywrightBrowserType = {
+  launch(options: { headless: boolean }): Promise<PlaywrightBrowser>;
+};
+
+type PlaywrightModule = Record<'chromium' | 'firefox' | 'webkit', PlaywrightBrowserType>;
 
 export class PlaywrightProvider implements WebProvider {
   name = 'playwright';
@@ -57,17 +86,7 @@ export class PlaywrightProvider implements WebProvider {
   private async withPage<T>(
     url: string,
     options: GetPageOptions,
-    callback: (
-      page: Awaited<
-        ReturnType<
-          Awaited<
-            ReturnType<Awaited<ReturnType<PlaywrightModule['chromium']['launch']>>['newContext']>
-          >['newPage']
-        >
-      >,
-      sanitizedUrl: string,
-      startedAt: number
-    ) => Promise<T>
+    callback: (page: PlaywrightPage, sanitizedUrl: string, startedAt: number) => Promise<T>
   ): Promise<T> {
     const playwright = await this.loadPlaywright();
     const startedAt = Date.now();
@@ -114,7 +133,8 @@ export class PlaywrightProvider implements WebProvider {
   private async loadPlaywright(): Promise<PlaywrightModule> {
     if (!this.playwright) {
       try {
-        this.playwright = await import('playwright');
+        const moduleName = 'playwright';
+        this.playwright = (await import(moduleName)) as PlaywrightModule;
       } catch {
         throw new Error('Playwright is not installed. Install with: npm install playwright');
       }
