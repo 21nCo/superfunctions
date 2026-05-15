@@ -354,6 +354,26 @@ describe("TV-MOCK-005: request validation", () => {
         const result = validateParameters({}, {}, op);
         expect(result.valid).toBe(false);
     });
+
+    it("rejects request bodies over the configured byte limit", async () => {
+        const mock = createMockServer({
+            spec: TEST_SPEC,
+            validateRequests: true,
+            maxRequestBodyBytes: 8,
+            port: 0,
+        });
+        await mock.start();
+        const res = await fetch(`http://localhost:${mock.port}/users`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Oversized" }),
+        });
+        await mock.stop();
+
+        expect(res.status).toBe(400);
+        const data = await res.json() as { error: string };
+        expect(data.error).toContain("Request body exceeds");
+    });
 });
 
 // ─── TV-MOCK-006: Configurable delay ─────────────────────────────────────────

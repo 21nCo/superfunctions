@@ -165,6 +165,29 @@ describe("TV-SNIP-005: additional targets", () => {
         expect(SUPPORTED_TARGETS.length).toBe(11);
     });
 
+    it("escapes generated string literals for C#, Java, and PHP targets", () => {
+        const csharp = generateSnippet(GET_OP, "/users", "get", {
+            ...BASE_OPTS,
+            target: "csharp-httpclient",
+            baseUrl: "https://api.example.com/\"quoted\"",
+        });
+        const java = generateSnippet(POST_OP, "/users", "post", {
+            ...BASE_OPTS,
+            target: "java-okhttp",
+            baseUrl: "https://api.example.com/\"quoted\"",
+        });
+        const php = generateSnippet(GET_OP, "/users", "get", {
+            ...BASE_OPTS,
+            target: "php-curl",
+            baseUrl: "https://api.example.com/o'hara",
+        });
+
+        expect(csharp).toContain("https://api.example.com/\\\"quoted\\\"/users");
+        expect(java).toContain("https://api.example.com/\\\"quoted\\\"/users");
+        expect(java).toContain("\\\"name\\\"");
+        expect(php).toContain("https://api.example.com/o\\'hara/users");
+    });
+
     it("unsupported target throws", () => {
         expect(() =>
             generateSnippet(GET_OP, "/users", "get", { ...BASE_OPTS, target: "unknown-target" as SnippetOptions["target"] })

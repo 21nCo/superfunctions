@@ -13,8 +13,6 @@ export interface InterpolationResult {
   warnings: string[];
 }
 
-const VARIABLE_PATTERN = /\{\{\s*([^}]+)\s*\}\}/g;
-
 export function loadDotEnvFile(dotEnvPath = ".env"): Record<string, string> {
   if (!existsSync(dotEnvPath)) {
     return {};
@@ -26,13 +24,6 @@ export function loadDotEnvFile(dotEnvPath = ".env"): Record<string, string> {
 
 export function resolveVariableContext(input: VariableResolutionInput): Record<string, string> {
   const resolved: Record<string, string> = {};
-
-  const processEnv = input.processEnv ?? process.env;
-  for (const [key, value] of Object.entries(processEnv)) {
-    if (typeof value === "string") {
-      resolved[key] = value;
-    }
-  }
 
   Object.assign(resolved, input.collection ?? {});
   Object.assign(resolved, input.environment ?? {});
@@ -50,27 +41,48 @@ export function interpolateVariables(
 ): InterpolationResult {
   const warnings: string[] = [];
   const processEnv = options?.processEnv ?? process.env;
+  let value = "";
+  let cursor = 0;
 
-  const value = template.replace(VARIABLE_PATTERN, (fullMatch, variableName) => {
-    const key = String(variableName).trim();
+  while (cursor < template.length) {
+    const start = template.indexOf("{{", cursor);
+    if (start === -1) {
+      value += template.slice(cursor);
+      break;
+    }
+
+    const end = template.indexOf("}}", start + 2);
+    if (end === -1) {
+      value += template.slice(cursor);
+      break;
+    }
+
+    value += template.slice(cursor, start);
+    const fullMatch = template.slice(start, end + 2);
+    const key = template.slice(start + 2, end).trim();
 
     if (key.startsWith("process.env.")) {
       const envVar = key.slice("process.env.".length);
       const resolved = processEnv[envVar];
       if (typeof resolved === "string") {
-        return resolved;
+        value += resolved;
+        cursor = end + 2;
+        continue;
       }
       throw new Error(`Environment variable ${envVar} is not set`);
     }
 
     const resolved = context[key];
     if (resolved !== undefined) {
-      return resolved;
+      value += resolved;
+      cursor = end + 2;
+      continue;
     }
 
     warnings.push(`Unresolved variable: ${key}`);
-    return fullMatch;
-  });
+    value += fullMatch;
+    cursor = end + 2;
+  }
 
   return { value, warnings };
 }

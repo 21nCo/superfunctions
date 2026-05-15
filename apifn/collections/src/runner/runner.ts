@@ -232,11 +232,13 @@ async function executeRequest(
     cookieJar?: CookieJar;
     redactHeaders: string[];
     reporter?: RunReporter;
+    isolateContext?: boolean;
   }
 ): Promise<RequestResult> {
   options.reporter?.onRequestStart?.(entry.item);
 
-  const interpolated = interpolateRequest(entry.request, options.context, options.processEnv);
+  const requestContext = options.isolateContext ? { ...options.context } : options.context;
+  const interpolated = interpolateRequest(entry.request, requestContext, options.processEnv);
   const mutableRequest: ScriptRequestContext = {
     method: interpolated.method,
     url: interpolated.url,
@@ -254,7 +256,7 @@ async function executeRequest(
     const preRequestResult = await executePreRequestScript({
       code: script.code,
       req: mutableRequest,
-      env: options.context,
+      env: requestContext,
       cookies: options.cookieJar,
     });
 
@@ -335,7 +337,7 @@ async function executeRequest(
           code: script.code,
           req: mutableRequest,
           res: responseForScripts,
-          env: options.context,
+          env: requestContext,
           cookies: options.cookieJar,
           assertionResults,
         });
@@ -540,6 +542,7 @@ export async function runCollection(
           cookieJar,
           redactHeaders: redactList,
           reporter,
+          isolateContext: true,
         });
 
         results[index] = result;

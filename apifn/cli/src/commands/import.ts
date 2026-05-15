@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { openAPIToCollection, writeCollection } from "@apifn/collections";
 import { parseOpenAPI } from "@apifn/core";
@@ -12,6 +12,7 @@ export interface ImportOpenApiCommandOptions {
   env?: string;
   groupBy?: "tag" | "path";
   force?: boolean;
+  fetchTimeoutMs?: number;
   cwd?: string;
   output: Output;
 }
@@ -21,15 +22,19 @@ export async function runImportOpenApiCommand(options: ImportOpenApiCommandOptio
   const outputDir = path.resolve(cwd, options.outputDir);
 
   try {
-    if (existsSync(outputDir) && !options.force) {
+    if (existsSync(outputDir)) {
       const entries = await readdir(outputDir);
-      if (entries.length > 0) {
-        options.output.error(`Output directory '${outputDir}' already exists. Use --force to overwrite collection files.`);
-        return 2;
+      if (entries.length > 0 && !options.force) {
+          options.output.error(`Output directory '${outputDir}' already exists. Use --force to overwrite collection files.`);
+          return 2;
+      }
+
+      if (entries.length > 0 && options.force) {
+        await rm(outputDir, { recursive: true, force: true });
       }
     }
 
-    const raw = await readSource(options.source, cwd);
+    const raw = await readSource(options.source, cwd, options.fetchTimeoutMs);
     const document = parseOpenAPI(raw);
     const collection = openAPIToCollection(document, {
       baseUrl: options.baseUrl,
@@ -48,9 +53,19 @@ export async function runImportOpenApiCommand(options: ImportOpenApiCommandOptio
   }
 }
 
-async function readSource(source: string, cwd: string): Promise<string> {
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readSource(source: string, cwd: string, timeoutMs = 10_000): Promise<string> {
   if (source.startsWith("http://") || source.startsWith("https://")) {
-    const response = await fetch(source);
+    const response = await fetchWithTimeout(source, timeoutMs);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} while reading ${source}`);
     }

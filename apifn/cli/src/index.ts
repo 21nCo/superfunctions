@@ -51,7 +51,8 @@ export async function runCli(
   cli
     .command("init [dir]", "Initialize a new OpenCollection directory")
     .option("--yes", "Skip interactive prompts")
-    .action(async (dir: string | undefined, options: { yes?: boolean }) => {
+    .option("--force", "Allow initializing into a non-empty directory")
+    .action(async (dir: string | undefined, options: { yes?: boolean; force?: boolean }) => {
       const globals = getGlobals();
       const output = createOutput({
         quiet: globals.quiet,
@@ -61,7 +62,16 @@ export async function runCli(
         writeStderr: runOptions.stderr,
       });
 
-      await runInitCommand({ dir, yes: options.yes, output });
+      const result = await runInitCommand({
+        dir,
+        yes: options.yes,
+        force: options.force,
+        cwd: runOptions.cwd,
+        output,
+      });
+      if (result !== 0) {
+        exitCode = result;
+      }
     });
 
   cli

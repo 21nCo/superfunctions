@@ -11,6 +11,34 @@
       "types": "./dist/index.d.ts",
       "svelte": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./ApiExplorer.svelte": {
+      "svelte": "./src/ApiExplorer.svelte",
+      "default": "./src/ApiExplorer.svelte"
+    },
+    "./EndpointViewer.svelte": {
+      "svelte": "./src/EndpointViewer.svelte",
+      "default": "./src/EndpointViewer.svelte"
+    },
+    "./PerformanceOverlay.svelte": {
+      "svelte": "./src/PerformanceOverlay.svelte",
+      "default": "./src/PerformanceOverlay.svelte"
+    },
+    "./RequestHistory.svelte": {
+      "svelte": "./src/RequestHistory.svelte",
+      "default": "./src/RequestHistory.svelte"
+    },
+    "./ResponseDiff.svelte": {
+      "svelte": "./src/ResponseDiff.svelte",
+      "default": "./src/ResponseDiff.svelte"
+    },
+    "./SchemaViewer.svelte": {
+      "svelte": "./src/SchemaViewer.svelte",
+      "default": "./src/SchemaViewer.svelte"
+    },
+    "./TryIt.svelte": {
+      "svelte": "./src/TryIt.svelte",
+      "default": "./src/TryIt.svelte"
     }
   },
   "scripts": {

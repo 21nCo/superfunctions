@@ -83,4 +83,23 @@ describe("environment file handling", () => {
       "https://api.example.com"
     );
   });
+
+  it("rejects array variables and duplicate environment keys", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "apifn-env-"));
+    await writeFile(
+      path.join(dir, "bad.yml"),
+      ["name: bad", "variables:", "  - nope", ""].join("\n"),
+      "utf8"
+    );
+
+    await expect(readEnvironmentFile(path.join(dir, "bad.yml"))).rejects.toThrow(
+      /Environment variables are required/
+    );
+
+    const envDir = await mkdtemp(path.join(tmpdir(), "apifn-env-dupe-"));
+    await writeFile(path.join(envDir, "dev.yml"), "name: dev\nvariables: {}\n", "utf8");
+    await writeFile(path.join(envDir, "dev.yaml"), "name: dev2\nvariables: {}\n", "utf8");
+
+    await expect(readEnvironments(envDir)).rejects.toThrow(/Duplicate environment key 'dev'/);
+  });
 });

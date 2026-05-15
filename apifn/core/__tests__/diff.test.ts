@@ -139,6 +139,30 @@ describe("TV-DIFF-002: required parameter addition", () => {
         const entry = result.breaking.find((e) => e.description.includes("required"));
         expect(entry).toBeDefined();
     });
+
+    it("unresolved parameter $ref is reported as breaking instead of being dropped", () => {
+        const before = withPaths(blankDoc(), {
+            "/users": {
+                get: {
+                    parameters: [],
+                    responses: { "200": { description: "OK" } },
+                },
+            },
+        });
+        const after = withPaths(blankDoc(), {
+            "/users": {
+                get: {
+                    parameters: [{ $ref: "#/components/parameters/Limit" } as never],
+                    responses: { "200": { description: "OK" } },
+                },
+            },
+        });
+
+        const result = diffOpenAPI(before, after);
+        const entry = result.breaking.find((e) => e.description.includes("#/components/parameters/Limit"));
+        expect(entry).toBeDefined();
+        expect(entry?.breaking).toBe(true);
+    });
 });
 
 // ─── TV-DIFF-003: Type narrowing is breaking ─────────────────────────────────
@@ -168,6 +192,53 @@ describe("TV-DIFF-003: type narrowing", () => {
         expect(result.hasBreakingChanges).toBe(true);
         const entry = result.breaking.find((e) => e.description.toLowerCase().includes("narrow"));
         expect(entry).toBeDefined();
+    });
+
+    it("existing optional request body field becoming required is breaking", () => {
+        const before = withPaths(blankDoc(), {
+            "/users": {
+                post: {
+                    requestBody: {
+                        content: {
+                            "application/json": {
+                                schema: {
+                                    type: "object",
+                                    properties: {
+                                        name: { type: "string" },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: { "201": { description: "Created" } },
+                },
+            },
+        });
+        const after = withPaths(blankDoc(), {
+            "/users": {
+                post: {
+                    requestBody: {
+                        content: {
+                            "application/json": {
+                                schema: {
+                                    type: "object",
+                                    required: ["name"],
+                                    properties: {
+                                        name: { type: "string" },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    responses: { "201": { description: "Created" } },
+                },
+            },
+        });
+
+        const result = diffOpenAPI(before, after);
+        const entry = result.breaking.find((e) => e.description.includes("became required"));
+        expect(entry).toBeDefined();
+        expect(entry?.path).toContain("requestBody");
     });
 });
 

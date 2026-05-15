@@ -62,7 +62,6 @@ function buildEntries(
     const {
         basePath = "/api",
         splitByTag = true,
-        baseUrl,
     } = options;
 
     const info = spec.info as { title?: string; version?: string } | undefined;

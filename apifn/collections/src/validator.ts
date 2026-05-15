@@ -12,29 +12,55 @@ export function validateCollection(collection: Collection): ValidationError[] {
     });
   }
 
-  for (const [envName, env] of Object.entries(collection.environments)) {
-    if (!env || typeof env !== "object") {
-      errors.push({
-        path: `environments.${envName}`,
-        message: "Environment must be an object",
-        severity: "error",
-      });
-      continue;
-    }
+  if (!collection.environments || typeof collection.environments !== "object" || Array.isArray(collection.environments)) {
+    errors.push({
+      path: "environments",
+      message: "Collection environments must be an object",
+      severity: "error",
+    });
+  } else {
+    for (const [envName, env] of Object.entries(collection.environments)) {
+      if (!env || typeof env !== "object" || Array.isArray(env)) {
+        errors.push({
+          path: `environments.${envName}`,
+          message: "Environment must be an object",
+          severity: "error",
+        });
+        continue;
+      }
 
-    if (!env.variables || typeof env.variables !== "object") {
-      errors.push({
-        path: `environments.${envName}.variables`,
-        message: "Environment variables are required",
-        severity: "error",
-      });
+      if (!env.variables || typeof env.variables !== "object" || Array.isArray(env.variables)) {
+        errors.push({
+          path: `environments.${envName}.variables`,
+          message: "Environment variables are required",
+          severity: "error",
+        });
+      }
     }
   }
 
-  function validateItems(items: Collection["items"], parentPath: string): void {
+  function validateItems(items: unknown, parentPath: string): void {
+    if (!Array.isArray(items)) {
+      errors.push({
+        path: parentPath,
+        message: "Collection items must be an array",
+        severity: "error",
+      });
+      return;
+    }
+
     for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
+      const item = items[index] as Partial<Collection["items"][number]> | null;
       const itemPath = `${parentPath}[${index}]`;
+
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        errors.push({
+          path: itemPath,
+          message: "Collection item must be an object",
+          severity: "error",
+        });
+        continue;
+      }
 
       if (item.kind === "request") {
         const method = item.request?.http?.method;

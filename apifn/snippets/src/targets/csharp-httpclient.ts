@@ -5,6 +5,10 @@
 import type { OperationObject, SnippetOptions } from "@apifn/core";
 import { buildContext } from "../context.js";
 
+function escapeCsharpString(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 export function generateCsharpHttpclient(
     operation: OperationObject,
     apiPath: string,
@@ -25,23 +29,23 @@ export function generateCsharpHttpclient(
 
     const allHeaders = { ...ctx.headers };
     for (const [k, v] of Object.entries(allHeaders)) {
-        lines.push(`client.DefaultRequestHeaders.Add("${k}", "${v}");`);
+        lines.push(`client.DefaultRequestHeaders.Add("${escapeCsharpString(k)}", "${escapeCsharpString(v)}");`);
     }
 
     if (ctx.body) {
         lines.push(`var content = new StringContent(`);
-        lines.push(`${ind}"${ctx.body.replace(/"/g, '\\"')}",`);
+        lines.push(`${ind}"${escapeCsharpString(ctx.body)}",`);
         lines.push(`${ind}Encoding.UTF8,`);
         lines.push(`${ind}"application/json"`);
         lines.push(");");
         lines.push("");
         if (m === "Post" || m === "Put" || m === "Patch") {
-            lines.push(`var response = await client.${m}Async("${ctx.url}", content);`);
+            lines.push(`var response = await client.${m}Async("${escapeCsharpString(ctx.url)}", content);`);
         } else {
-            lines.push(`var response = await client.${m}Async("${ctx.url}");`);
+            lines.push(`var response = await client.${m}Async("${escapeCsharpString(ctx.url)}");`);
         }
     } else {
-        lines.push(`var response = await client.${m}Async("${ctx.url}");`);
+        lines.push(`var response = await client.${m}Async("${escapeCsharpString(ctx.url)}");`);
     }
 
     lines.push("");

@@ -40,7 +40,14 @@ export interface DiffCommandOptions {
 
 async function loadSpec(specRef: string, cwd: string): Promise<string> {
     if (/^https?:\/\//i.test(specRef)) {
-        const res = await fetch(specRef);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        let res: Response;
+        try {
+            res = await fetch(specRef, { signal: controller.signal });
+        } finally {
+            clearTimeout(timeout);
+        }
         if (!res.ok) {
             throw new Error(`HTTP ${res.status} fetching ${specRef}`);
         }

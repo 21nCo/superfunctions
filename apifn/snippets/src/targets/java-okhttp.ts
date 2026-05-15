@@ -5,6 +5,10 @@
 import type { OperationObject, SnippetOptions } from "@apifn/core";
 import { buildContext } from "../context.js";
 
+function escapeJavaString(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 export function generateJavaOkhttp(
     operation: OperationObject,
     apiPath: string,
@@ -24,17 +28,17 @@ export function generateJavaOkhttp(
     const allHeaders = { ...ctx.headers };
 
     if (ctx.body) {
-        const escaped = ctx.body.replace(/"/g, '\\"');
+        const escaped = escapeJavaString(ctx.body);
         lines.push(`MediaType mediaType = MediaType.parse("application/json");`);
         lines.push(`RequestBody body = RequestBody.create("${escaped}", mediaType);`);
         lines.push("");
     }
 
     lines.push("Request request = new Request.Builder()");
-    lines.push(`${ind}.url("${ctx.url}")`);
+    lines.push(`${ind}.url("${escapeJavaString(ctx.url)}")`);
 
     for (const [k, v] of Object.entries(allHeaders)) {
-        lines.push(`${ind}.addHeader("${k}", "${v}")`);
+        lines.push(`${ind}.addHeader("${escapeJavaString(k)}", "${escapeJavaString(v)}")`);
     }
 
     if (ctx.body) {

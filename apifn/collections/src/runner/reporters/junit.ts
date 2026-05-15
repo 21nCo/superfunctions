@@ -14,7 +14,8 @@ function escapeXml(value: unknown): string {
 }
 
 export function reportToJUnitXml(report: RunReport): string {
-  const failures = report.summary.failed + report.summary.errors;
+  const failures = report.summary.failed;
+  const errors = report.summary.errors;
   const cases = report.results.map((result) => {
     const time = (result.duration / 1000).toFixed(3);
     const name = escapeXml(result.name);
@@ -45,7 +46,7 @@ export function reportToJUnitXml(report: RunReport): string {
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<testsuite name="${escapeXml(report.collectionName)}" tests="${report.summary.total}" failures="${failures}" skipped="${report.summary.skipped}" time="${(report.summary.duration / 1000).toFixed(3)}">`,
+    `<testsuite name="${escapeXml(report.collectionName)}" tests="${report.summary.total}" failures="${failures}" errors="${errors}" skipped="${report.summary.skipped}" time="${(report.summary.duration / 1000).toFixed(3)}">`,
     ...cases,
     "</testsuite>",
     "",

@@ -188,6 +188,17 @@ export async function runServeCommand(options: ServeCommandOptions): Promise<num
     });
 
     return new Promise((resolve) => {
+        const cleanup = () => {
+            process.off("SIGINT", cleanup);
+            process.off("SIGTERM", cleanup);
+            watcher?.close();
+            for (const client of sseClients) {
+                client.end();
+            }
+            sseClients.length = 0;
+            server.close(() => resolve(0));
+        };
+
         server.listen(port, () => {
             const url = `http://localhost:${port}`;
             options.output.success(`API Explorer running at ${url}`);
@@ -205,14 +216,7 @@ export async function runServeCommand(options: ServeCommandOptions): Promise<num
             }
         });
 
-        // Handle Ctrl+C
-        process.on("SIGINT", () => {
-            watcher?.close();
-            server.close(() => resolve(0));
-        });
-        process.on("SIGTERM", () => {
-            watcher?.close();
-            server.close(() => resolve(0));
-        });
+        process.on("SIGINT", cleanup);
+        process.on("SIGTERM", cleanup);
     });
 }

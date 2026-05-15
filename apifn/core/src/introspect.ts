@@ -25,8 +25,6 @@ const KNOWN_DESCRIPTOR_KEYS = [
   "security",
 ] as const;
 
-const PATH_PARAM_PATTERN = /:([A-Za-z0-9_]+)/g;
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -70,10 +68,33 @@ function withBasePath(path: string, basePath?: string): string {
 
 function toOpenApiPath(path: string): { path: string; pathParams: string[] } {
   const params: string[] = [];
-  const openApiPath = path.replace(PATH_PARAM_PATTERN, (_match, param: string) => {
+  let openApiPath = "";
+  let index = 0;
+
+  while (index < path.length) {
+    const char = path[index];
+    if (char !== ":") {
+      openApiPath += char;
+      index += 1;
+      continue;
+    }
+
+    let end = index + 1;
+    while (end < path.length && /[A-Za-z0-9_]/.test(path[end])) {
+      end += 1;
+    }
+
+    if (end === index + 1) {
+      openApiPath += char;
+      index += 1;
+      continue;
+    }
+
+    const param = path.slice(index + 1, end);
     params.push(param);
-    return `{${param}}`;
-  });
+    openApiPath += `{${param}}`;
+    index = end;
+  }
 
   return { path: openApiPath, pathParams: params };
 }

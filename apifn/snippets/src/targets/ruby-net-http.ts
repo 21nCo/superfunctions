@@ -12,7 +12,6 @@ export function generateRubyNetHttp(
     options: SnippetOptions
 ): string {
     const ctx = buildContext(operation, apiPath, method, options);
-    const ind = ctx.indent;
     const m = method.charAt(0).toUpperCase() + method.slice(1).toLowerCase();
     const lines: string[] = [];
 

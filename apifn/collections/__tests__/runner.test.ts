@@ -124,6 +124,44 @@ describe("runCollection", () => {
     expect(maxActive).toBeLessThanOrEqual(2);
   });
 
+  it("parallel mode isolates script-mutated variables per request", async () => {
+    const collection = makeCollection();
+    collection.environments.development.variables.token = "env-token";
+    const first = collection.items[0]!.children![0]!;
+    const second = collection.items[0]!.children![1]!;
+    first.request!.http.url = "{{baseUrl}}/first";
+    second.request!.http.url = "{{baseUrl}}/{{token}}/second";
+    first.request!.runtime = {
+      scripts: [{ type: "pre-request", code: 'env.set("token", "first-token");' }],
+    };
+    second.request!.runtime = {
+      scripts: [{ type: "pre-request", code: 'env.set("token", "second-token");' }],
+    };
+    collection.items[0]!.children = [first, second];
+
+    const calls: string[] = [];
+    const httpClient: HttpClient = {
+      async send(request) {
+        calls.push(request.url);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return response(200);
+      },
+    };
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      parallel: true,
+      concurrency: 1,
+      httpClient,
+    });
+
+    expect(report.summary.passed).toBe(2);
+    expect(calls).toEqual([
+      "http://localhost:3000/first",
+      "http://localhost:3000/env-token/second",
+    ]);
+  });
+
   it("RUN-003 + TV-RUN-003 + TV-RUN-004: resolves variables with precedence and warnings", async () => {
     const collection = makeCollection();
     collection.items[0]!.children![0]!.request!.http.url = "{{baseUrl}}/{{missing}}/first";

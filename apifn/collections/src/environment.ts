@@ -19,7 +19,7 @@ export async function readEnvironmentFile(filePath: string): Promise<Environment
   const name = typeof parsed.name === "string" ? parsed.name : fileName;
   const variables = parsed.variables;
 
-  if (!variables || typeof variables !== "object") {
+  if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
     throw new Error(`Environment variables are required in ${filePath}`);
   }
 
@@ -58,6 +58,9 @@ export async function readEnvironments(envDir: string): Promise<Record<string, E
     const filePath = path.join(envDir, entry.name);
     const environment = await readEnvironmentFile(filePath);
     const key = path.basename(entry.name, path.extname(entry.name));
+    if (result[key]) {
+      throw new Error(`Duplicate environment key '${key}' in ${envDir}`);
+    }
     result[key] = environment;
   }
 
