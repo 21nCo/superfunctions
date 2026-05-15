@@ -38,7 +38,7 @@
   "author": "21n",
   "license": "MIT",
   "dependencies": {
-    "@secfn/core": "0.0.1",
+    "@secfn/core": "0.0.2",
     "@superfunctions/http": "0.1.3",
     "@superfunctions/middleware": "0.1.0"
   },
