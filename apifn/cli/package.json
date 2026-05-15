@@ -23,10 +23,10 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@apifn/core": "0.0.1",
     "@apifn/collections": "0.0.1",
-    "@apifn/snippets": "0.0.1",
+    "@apifn/core": "0.0.1",
     "@apifn/mock": "0.0.1",
+    "@apifn/snippets": "0.0.1",
     "cac": "^6.7.14",
     "jiti": "^2.4.2",
     "picocolors": "^1.1.1",
@@ -50,5 +50,8 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }
