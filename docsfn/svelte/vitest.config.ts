@@ -12,6 +12,7 @@ export default defineConfig({
     }),
   ],
   resolve: {
+    conditions: ["browser"],
     alias: [
       { find: "@docsfn/core/browser", replacement: resolve(root, "../core/src/browser.ts") },
       { find: "@docsfn/core/search-runtime", replacement: resolve(root, "../core/src/search-runtime.ts") },

@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/core",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Core toolkit contracts for docsfn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -67,5 +67,8 @@
     "initFunction": "docsFn",
     "schemaVersion": 1,
     "namespace": "docsfn"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }
