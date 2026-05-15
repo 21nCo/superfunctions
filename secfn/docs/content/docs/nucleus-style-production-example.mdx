@@ -9,7 +9,7 @@ This pattern fits an app like Nucleus where the application hosts SecFn as an in
 import { createSecFnServer } from "@secfn/server";
 import { createSecFnRuntime } from "@secfn/runtime";
 import { createDataFnServer } from "datafn/server";
-import { createLogger } from "logfn";
+import { createLogger } from "@logfn/core";
 
 const logger = createLogger({
   service: "nucleus",

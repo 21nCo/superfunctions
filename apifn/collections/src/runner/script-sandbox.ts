@@ -1,5 +1,6 @@
 import vm from "node:vm";
-import type { AssertionResult } from "../types.js";
+import { randomUUID } from "node:crypto";
+import type { AssertionResult, CookieJar } from "../types.js";
 import { createAssertionRuntime } from "./assertions.js";
 
 export const SCRIPT_TIMEOUT_MS = 10_000;
@@ -24,6 +25,7 @@ interface BaseScriptOptions {
   code: string;
   env: EnvStore;
   req: ScriptRequestContext;
+  cookies?: CookieJar;
   timeoutMs?: number;
 }
 
@@ -42,6 +44,7 @@ function createEnvProxy(env: EnvStore): EnvStore & {
   get(name: string): string | undefined;
   set(name: string, value: unknown): void;
   unset(name: string): void;
+  delete(name: string): void;
   all(): EnvStore;
 } {
   const helper = {
@@ -52,6 +55,9 @@ function createEnvProxy(env: EnvStore): EnvStore & {
       env[name] = String(value);
     },
     unset(name: string): void {
+      delete env[name];
+    },
+    delete(name: string): void {
       delete env[name];
     },
     all(): EnvStore {
@@ -111,6 +117,24 @@ async function runInSandbox(
   const context = vm.createContext(
     {
       ...contextValues,
+      console: {
+        debug: console.debug.bind(console),
+        error: console.error.bind(console),
+        info: console.info.bind(console),
+        log: console.log.bind(console),
+        warn: console.warn.bind(console),
+      },
+      URL,
+      URLSearchParams,
+      crypto: {
+        randomUUID,
+      },
+      btoa(value: string): string {
+        return Buffer.from(value, "utf8").toString("base64");
+      },
+      atob(value: string): string {
+        return Buffer.from(value, "base64").toString("utf8");
+      },
       process: undefined,
       require: undefined,
       module: undefined,
@@ -160,6 +184,7 @@ export async function executePreRequestScript(
       {
         req: options.req,
         env,
+        cookies: options.cookies,
       },
       options.timeoutMs ?? SCRIPT_TIMEOUT_MS
     );
@@ -176,14 +201,21 @@ export async function executeTestScript(
 ): Promise<{ error?: ScriptExecutionError }> {
   const env = createEnvProxy(options.env);
   const assertionRuntime = createAssertionRuntime();
+  const res = {
+    ...options.res,
+    json() {
+      return options.res.body;
+    },
+  };
 
   try {
     await runInSandbox(
       options.code,
       {
         req: options.req,
-        res: options.res,
+        res,
         env,
+        cookies: options.cookies,
         expect: assertionRuntime.expect,
         test: assertionRuntime.test,
       },

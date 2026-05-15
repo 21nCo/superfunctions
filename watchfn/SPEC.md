@@ -893,7 +893,7 @@ Integrate with logfn for centralized log management and analysis.
 #### Log Integration
 
 ```typescript
-import { logFn } from "logfn";
+import { logFn } from "@logfn/core";
 import { watchFn } from "watchfn";
 
 const logger = logFn({ name: "app" });
@@ -1325,7 +1325,7 @@ const snapshot = await watch.dashboard.snapshot("dashboard-123", {
 ### Integration with logfn
 
 ```typescript
-import { logFn } from "logfn";
+import { logFn } from "@logfn/core";
 import { watchFn } from "watchfn";
 
 const logger = logFn({

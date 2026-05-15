@@ -23,10 +23,12 @@ export async function runGenerateCommand(options: {
   const router = await loadRouter(routerPath, cwd);
   const routes = router.getRoutes();
 
+  const configuredInfo = options.config.openapi?.info;
   const doc = fromRouter(router, {
-    info: options.config.openapi?.info ?? {
+    info: {
       title: "API",
       version: "1.0.0",
+      ...configuredInfo,
     },
     servers: options.config.openapi?.servers,
   });

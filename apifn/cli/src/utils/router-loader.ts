@@ -16,7 +16,7 @@ export async function loadRouter(
 ): Promise<Router<unknown>> {
   const resolved = path.isAbsolute(routerPath) ? routerPath : path.resolve(cwd, routerPath);
   const jiti = createJiti(cwd, { moduleCache: false });
-  const loaded = await jiti.import(resolved);
+  const loaded = await jiti.import(resolved) as Record<string, unknown>;
 
   const candidates = [loaded?.default, loaded?.router, loaded];
   const router = candidates.find((candidate) => isRouter(candidate));

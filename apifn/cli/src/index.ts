@@ -5,6 +5,7 @@ import { runGenerateCommand } from "./commands/generate.js";
 import { runExportCommand } from "./commands/export.js";
 import { runValidateCommand } from "./commands/validate.js";
 import { runTestCommand } from "./commands/test.js";
+import { runImportOpenApiCommand } from "./commands/import.js";
 import { runDiffCommand } from "./commands/diff.js";
 import { runServeCommand } from "./commands/serve.js";
 import { runMockCommand } from "./commands/mock.js";
@@ -17,6 +18,13 @@ export interface CliRunOptions {
   cwd?: string;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
+}
+
+function toArray(value: string | string[] | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return Array.isArray(value) ? value : [value];
 }
 
 export async function runCli(
@@ -111,13 +119,72 @@ export async function runCli(
     });
 
   cli
+    .command("import <kind> <source>", "Import an OpenAPI document as an OpenCollection")
+    .option("--output <dir>", "Output collection directory")
+    .option("--base-url <url>", "Base URL for generated environment")
+    .option("--env <name>", "Environment name to create (default: development)")
+    .option("--group-by <mode>", "Group requests by tag | path (default: tag)")
+    .option("--force", "Allow writing into a non-empty output directory")
+    .action(
+      async (
+        kind: string,
+        source: string,
+        options: {
+          output?: string;
+          baseUrl?: string;
+          env?: string;
+          groupBy?: string;
+          force?: boolean;
+        }
+      ) => {
+        const globals = getGlobals();
+        const output = createOutput({
+          quiet: globals.quiet,
+          verbose: globals.verbose,
+          color: globals.color !== false,
+          writeStdout: runOptions.stdout,
+          writeStderr: runOptions.stderr,
+        });
+
+        if (kind !== "openapi") {
+          output.error(`Unsupported import kind '${kind}'. Supported: openapi.`);
+          exitCode = 2;
+          return;
+        }
+
+        const groupBy = options.groupBy === "path" ? "path" : "tag";
+        const result = await runImportOpenApiCommand({
+          source,
+          outputDir: options.output ?? ".",
+          baseUrl: options.baseUrl,
+          env: options.env,
+          groupBy,
+          force: options.force,
+          cwd: runOptions.cwd,
+          output,
+        });
+        if (result !== 0) {
+          exitCode = result;
+        }
+      }
+    );
+
+  cli
     .command("test [collectionDir]", "Run a collection's tests")
     .option("--env <name>", "Environment name to use")
     .option("--bail", "Stop on first failure")
     .option("--parallel", "Run requests in parallel")
     .option("--concurrency <n>", "Max concurrent requests (parallel mode)")
     .option("--timeout <ms>", "Per-request timeout in milliseconds")
-    .option("--reporter <type>", "Reporter type: console | json | silent (default: console)")
+    .option("--include <pattern>", "Only run requests matching path/name pattern")
+    .option("--exclude <pattern>", "Skip requests matching path/name pattern")
+    .option("--retries <n>", "Retry failed requests")
+    .option("--delay <ms>", "Delay between sequential requests in milliseconds")
+    .option("--env-var <keyValue>", "Override an environment variable (KEY=value)")
+    .option("--dotenv <path>", "Load dotenv file as environment overrides")
+    .option("--redact-header <name>", "Additional response/request header to redact")
+    .option("--output <path>", "Write machine-readable report artifact")
+    .option("--reporter <type>", "Reporter type: console | json | junit | silent (default: console)")
     .action(
       async (
         collectionDir: string | undefined,
@@ -127,6 +194,14 @@ export async function runCli(
           parallel?: boolean;
           concurrency?: string;
           timeout?: string;
+          include?: string | string[];
+          exclude?: string | string[];
+          retries?: string;
+          delay?: string;
+          envVar?: string | string[];
+          dotenv?: string;
+          redactHeader?: string | string[];
+          output?: string;
           reporter?: string;
         }
       ) => {
@@ -140,7 +215,7 @@ export async function runCli(
         });
 
         const reporterValue = options.reporter;
-        const validReporters = ["console", "json", "silent"] as const;
+        const validReporters = ["console", "json", "junit", "silent"] as const;
         type R = (typeof validReporters)[number];
         const reporter: R = validReporters.includes(reporterValue as R)
           ? (reporterValue as R)
@@ -153,6 +228,14 @@ export async function runCli(
           parallel: options.parallel,
           concurrency: options.concurrency ? Number(options.concurrency) : undefined,
           timeout: options.timeout ? Number(options.timeout) : undefined,
+          include: toArray(options.include),
+          exclude: toArray(options.exclude),
+          retries: options.retries ? Number(options.retries) : undefined,
+          delay: options.delay ? Number(options.delay) : undefined,
+          envVar: toArray(options.envVar),
+          dotenv: options.dotenv,
+          redactHeader: toArray(options.redactHeader),
+          outputPath: options.output,
           reporter,
           color: globals.color !== false,
           cwd: runOptions.cwd,

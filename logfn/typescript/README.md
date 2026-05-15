@@ -16,13 +16,13 @@ Structured logging for browser and server with pluggable pipelines and transport
 ## Installation
 
 ```bash
-npm install logfn
+npm install @logfn/core
 ```
 
 ## Quick Start
 
 ```typescript
-import { devLogger } from "logfn";
+import { devLogger } from "@logfn/core";
 
 const logger = devLogger("my-app");
 
@@ -36,7 +36,7 @@ logger.error("Request failed", { statusCode: 500, path: "/api/users" });
 ### Creating a Logger
 
 ```typescript
-import { createLogger, sinkConsole } from "logfn";
+import { createLogger, sinkConsole } from "@logfn/core";
 
 const logger = createLogger({
   name: "my-service",
@@ -64,7 +64,7 @@ requestLogger.info("Request received");
 ### Redaction
 
 ```typescript
-import { createLogger, sinkConsole, redactSecFn } from "logfn";
+import { createLogger, sinkConsole, redactSecFn } from "@logfn/core";
 
 const logger = createLogger({
   name: "app",
@@ -84,7 +84,7 @@ logger.info("API call", { apiKey: "secret-123" });
 ### Context Enrichment
 
 ```typescript
-import { enrichContext } from "logfn";
+import { enrichContext } from "@logfn/core";
 
 const logger = createLogger({
   name: "app",
@@ -104,7 +104,7 @@ logger.info("Service started");
 ### Request IDs
 
 ```typescript
-import { withRequestIds } from "logfn";
+import { withRequestIds } from "@logfn/core";
 
 const logger = createLogger({
   name: "app",
@@ -119,7 +119,7 @@ logger.info("Request processed");
 ### Sampling
 
 ```typescript
-import { sample } from "logfn";
+import { sample } from "@logfn/core";
 
 const logger = createLogger({
   name: "app",
@@ -141,7 +141,7 @@ const logger = createLogger({
 ### Console Sink
 
 ```typescript
-import { sinkConsole } from "logfn";
+import { sinkConsole } from "@logfn/core";
 
 // Pretty output (development)
 const consoleSink = sinkConsole({
@@ -159,7 +159,7 @@ const jsonSink = sinkConsole({
 ### HTTP Sink
 
 ```typescript
-import { sinkHttp } from "logfn";
+import { sinkHttp } from "@logfn/core";
 
 const httpSink = sinkHttp({
   url: "https://logs.example.com/ingest",
@@ -186,7 +186,7 @@ const logger = createLogger({
 ### Error Capture
 
 ```typescript
-import { devLogger, captureBrowserErrors, attachFlushHooks } from "logfn";
+import { devLogger, captureBrowserErrors, attachFlushHooks } from "@logfn/core";
 
 const logger = devLogger("my-app");
 
@@ -202,7 +202,7 @@ attachFlushHooks(logger);
 The HTTP sink automatically handles offline scenarios in the browser:
 
 ```typescript
-import { sinkHttp } from "logfn";
+import { sinkHttp } from "@logfn/core";
 
 const httpSink = sinkHttp({
   url: "https://logs.example.com/ingest",
@@ -215,7 +215,7 @@ const httpSink = sinkHttp({
 ### Graceful Shutdown
 
 ```typescript
-import { serverLogger, registerProcessHandlers } from "logfn";
+import { serverLogger, registerProcessHandlers } from "@logfn/core";
 
 const logger = serverLogger({ name: "api-server" });
 
@@ -228,7 +228,7 @@ registerProcessHandlers(logger);
 LogFn includes a WatchFn ingest handler for collecting logs:
 
 ```typescript
-import { watchLogsHandler } from "logfn/http/watch";
+import { watchLogsHandler } from "@logfn/core/http/watch";
 
 // Create an HTTP handler
 const handler = watchLogsHandler({
@@ -269,7 +269,7 @@ interface LogEvent {
 ### Development Logger
 
 ```typescript
-import { devLogger } from "logfn";
+import { devLogger } from "@logfn/core";
 
 const logger = devLogger("my-app");
 // - Colored console output
@@ -280,7 +280,7 @@ const logger = devLogger("my-app");
 ### Server Logger
 
 ```typescript
-import { serverLogger } from "logfn";
+import { serverLogger } from "@logfn/core";
 
 const logger = serverLogger({
   name: "api-server",
@@ -297,7 +297,7 @@ const logger = serverLogger({
 ### Custom Pipeline Stage
 
 ```typescript
-import type { PipelineStage } from "logfn";
+import type { PipelineStage } from "@logfn/core";
 
 const addHostname: PipelineStage = (event) => ({
   ...event,
@@ -317,7 +317,7 @@ const logger = createLogger({
 ### Custom Sink
 
 ```typescript
-import type { Sink } from "logfn";
+import type { Sink } from "@logfn/core";
 
 const customSink: Sink = async (batch) => {
   // Process batch of log events

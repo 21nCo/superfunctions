@@ -12,7 +12,7 @@ export interface SendFnSchemaDefinition {
 }
 
 export function getSendFnSchema(_options: SendfnSchemaOptions = {}): TableSchema[] {
-  return [
+  return withDateDefaults([
     {
       modelName: 'email_transactions',
       fields: {
@@ -152,7 +152,7 @@ export function getSendFnSchema(_options: SendfnSchemaOptions = {}): TableSchema
         { name: 'idx_sendfn_communication_events_recipient_email', fields: ['recipientEmail'] },
       ],
     },
-  ];
+  ]);
 }
 
 export function getSchema(options: SendfnSchemaOptions = {}): SendFnSchemaDefinition {
@@ -160,4 +160,22 @@ export function getSchema(options: SendfnSchemaOptions = {}): SendFnSchemaDefini
     version: SENDFN_SCHEMA_VERSION,
     schemas: getSendFnSchema(options),
   };
+}
+
+function withDateDefaults(tables: TableSchema[]): TableSchema[] {
+  return tables.map((table) => ({
+    ...table,
+    fields: Object.fromEntries(
+      Object.entries(table.fields).map(([name, field]) => [
+        name,
+        field.type === 'date' || field.type === 'datetime'
+          ? {
+              dateValueType: 'date',
+              dateStorageType: 'timestamptz',
+              ...field,
+            }
+          : field,
+      ])
+    ),
+  }));
 }

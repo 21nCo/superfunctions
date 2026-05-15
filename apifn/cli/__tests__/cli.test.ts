@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runCli } from "../src/index.js";
@@ -159,5 +160,56 @@ describe("cli commands", () => {
     const invalidJson = JSON.parse(invalidOut) as { ok: boolean; errors: unknown[] };
     expect(invalidJson.ok).toBe(false);
     expect(invalidJson.errors.length).toBeGreaterThan(0);
+  });
+
+  it("imports an OpenAPI URL into an OpenCollection", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-import-"));
+    const spec = {
+      openapi: "3.1.0",
+      info: { title: "Import API", version: "1.0.0" },
+      paths: {
+        "/health": {
+          get: {
+            operationId: "getHealth",
+            tags: ["system"],
+            responses: { "200": { description: "OK" } },
+          },
+        },
+      },
+    };
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(spec));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("server did not bind");
+    }
+
+    try {
+      const outputDir = path.join(cwd, "collection");
+      const code = await runCli([
+        "import",
+        "openapi",
+        `http://127.0.0.1:${address.port}/openapi.json`,
+        "--output",
+        outputDir,
+        "--base-url",
+        "http://127.0.0.1:8787",
+        "--env",
+        "test",
+      ], { cwd });
+
+      expect(code).toBe(0);
+      expect(existsSync(path.join(outputDir, "opencollection.yml"))).toBe(true);
+      expect(existsSync(path.join(outputDir, "system", "gethealth.yml"))).toBe(true);
+      const env = await readFile(path.join(outputDir, "environments", "test.yml"), "utf8");
+      expect(env).toContain("http://127.0.0.1:8787");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => error ? reject(error) : resolve())
+      );
+    }
   });
 });

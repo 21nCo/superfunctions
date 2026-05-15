@@ -69,6 +69,7 @@ export interface OpenCollectionRequest {
     timeout?: number;
     followRedirects?: boolean;
     maxRedirects?: number;
+    expectedStatus?: number | number[];
   };
 }
 
@@ -89,12 +90,42 @@ export interface HttpClient {
   send(request: HttpClientRequest): Promise<HttpClientResponse>;
 }
 
+export interface CookieJarCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expiresAt?: number;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: string;
+}
+
+export interface CookieJar {
+  get(name: string, url?: string): string | undefined;
+  set(name: string, value: string, url?: string): void;
+  delete(name: string, url?: string): void;
+  clear(): void;
+  getCookieHeader(url: string): string | undefined;
+  storeFromResponse(url: string, setCookieHeaders: string[]): void;
+  toJSON(): CookieJarCookie[];
+}
+
 export interface HttpClientRequest {
   method: string;
   url: string;
   headers: Record<string, string>;
   body?: string;
   timeout?: number;
+  followRedirects?: boolean;
+  maxRedirects?: number;
+}
+
+export interface HttpRedirectRecord {
+  status: number;
+  url: string;
+  location: string;
+  duration: number;
 }
 
 export interface HttpClientResponse {
@@ -103,6 +134,7 @@ export interface HttpClientResponse {
   body: string;
   size: number;
   duration: number;
+  redirects?: HttpRedirectRecord[];
 }
 
 export interface RunOptions {
@@ -126,6 +158,8 @@ export interface RunOptions {
   delay?: number;
   /** Custom HTTP client (default: built-in fetch-based) */
   httpClient?: HttpClient;
+  /** Cookie jar shared across requests and collection scripts */
+  cookieJar?: CookieJar;
   /** Reporter for progress updates */
   reporter?: RunReporter;
   /** Variables that override environment variables */
@@ -171,6 +205,7 @@ export interface RequestResult {
     headers: Record<string, string>;
     body: string;
     size: number;
+    redirects?: HttpRedirectRecord[];
   };
   assertions: AssertionResult[];
   warnings?: string[];
@@ -204,6 +239,7 @@ export interface RunReporter {
 
 export interface CollectionGenerateOptions {
   baseUrl?: string;
+  environmentName?: string;
   groupBy?: "tag" | "path";
   includeExamples?: boolean;
 }

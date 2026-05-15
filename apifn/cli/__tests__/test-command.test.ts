@@ -5,7 +5,7 @@
  */
 
 import { createServer } from "node:http";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runCli } from "../src/index.js";
@@ -190,6 +190,33 @@ describe("apifn test command — CLI-004, CLI-011, RUN-009", () => {
 
         expect(code).toBe(0);
         expect(lines.length).toBe(0);
+    });
+
+    it("supports include/env-var/output and junit reporter", async () => {
+        const outputPath = path.join(await mkdtemp(path.join(tmpdir(), "apifn-junit-")), "report.xml");
+        const lines: string[] = [];
+        const code = await runCli([
+            "test",
+            passDir,
+            "--env",
+            "development",
+            "--include",
+            "*health*",
+            "--env-var",
+            "EXTRA=value",
+            "--reporter",
+            "junit",
+            "--output",
+            outputPath,
+        ], {
+            stdout: (t) => lines.push(t),
+        });
+
+        expect(code).toBe(0);
+        const stdout = lines.join("");
+        expect(stdout).toContain("<testsuite");
+        const artifact = await readFile(outputPath, "utf8");
+        expect(artifact).toContain("<testcase");
     });
 
     it("--bail flag stops on first failure", async () => {
