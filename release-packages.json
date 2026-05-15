@@ -78,7 +78,7 @@
   { "slug": "docsfn-core", "path": "docsfn/core", "name": "@docsfn/core" },
   { "slug": "drawfn", "path": "drawfn/core", "name": "drawfn" },
   { "slug": "flowfn-core", "path": "flowfn/typescript", "name": "@flowfn/core" },
-  { "slug": "iconfn", "path": "iconfn", "name": "@21native/iconfn" },
+  { "slug": "iconfn-core", "path": "iconfn", "name": "@iconfn/core" },
   { "slug": "langfn", "path": "langfn/typescript", "name": "langfn" },
   { "slug": "logfn-core", "path": "logfn/typescript", "name": "@logfn/core" },
   { "slug": "plugfn-cli", "path": "plugfn/cli", "name": "@plugfn/cli" },
