@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@recfn/core": "0.1.0",
-    "@recfn/shared-cloud": "0.1.0"
+    "@recfn/shared-cloud": "0.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
