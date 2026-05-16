@@ -240,6 +240,44 @@ describe("TV-DIFF-003: type narrowing", () => {
         expect(entry).toBeDefined();
         expect(entry?.path).toContain("requestBody");
     });
+
+    it("existing request body becoming required is breaking", () => {
+        const before = withPaths(blankDoc(), {
+            "/users": {
+                post: {
+                    requestBody: {
+                        required: false,
+                        content: {
+                            "application/json": {
+                                schema: { type: "object" },
+                            },
+                        },
+                    },
+                    responses: { "201": { description: "Created" } },
+                },
+            },
+        });
+        const after = withPaths(blankDoc(), {
+            "/users": {
+                post: {
+                    requestBody: {
+                        required: true,
+                        content: {
+                            "application/json": {
+                                schema: { type: "object" },
+                            },
+                        },
+                    },
+                    responses: { "201": { description: "Created" } },
+                },
+            },
+        });
+
+        const result = diffOpenAPI(before, after);
+        const entry = result.breaking.find((e) => e.path === "paths./users.post.requestBody.required");
+        expect(entry).toBeDefined();
+        expect(entry?.breaking).toBe(true);
+    });
 });
 
 // ─── TV-DIFF-004: Response field removal is breaking ─────────────────────────

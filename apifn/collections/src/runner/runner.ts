@@ -217,7 +217,18 @@ function truncateBody(body: string): string {
     return body;
   }
 
-  return body.slice(0, MAX_CAPTURED_BODY_BYTES);
+  let low = 0;
+  let high = body.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(body.slice(0, mid), "utf8") <= MAX_CAPTURED_BODY_BYTES) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return body.slice(0, low);
 }
 
 async function executeRequest(

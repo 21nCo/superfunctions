@@ -186,6 +186,17 @@ export function diffRequestBody(
 
     if (!beforeBody || !afterBody) return;
 
+    if (!beforeBody.required && afterBody.required) {
+        emit({
+            type: "modified",
+            breaking: true,
+            path: `${opPath}.requestBody.required`,
+            description: `Request body became required in ${opPath}`,
+            before: false,
+            after: true,
+        });
+    }
+
     // Compare JSON schemas from application/json content
     const beforeSchema = (beforeBody.content?.["application/json"]?.schema ?? null) as Record<string, unknown> | null;
     const afterSchema = (afterBody.content?.["application/json"]?.schema ?? null) as Record<string, unknown> | null;

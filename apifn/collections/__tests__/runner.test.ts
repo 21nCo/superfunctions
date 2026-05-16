@@ -236,6 +236,28 @@ describe("runCollection", () => {
     ]);
   });
 
+  it("caps captured response bodies by UTF-8 byte length", async () => {
+    const collection = makeCollection();
+    collection.items[0]!.children = [collection.items[0]!.children![0]!];
+    const maxCapturedBodyBytes = 10 * 1024 * 1024;
+    const body = "界".repeat(Math.ceil(maxCapturedBodyBytes / 3) + 10);
+
+    const httpClient: HttpClient = {
+      async send() {
+        return response(200, body);
+      },
+    };
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      httpClient,
+    });
+
+    const capturedBody = report.results[0]?.response?.body ?? "";
+    expect(Buffer.byteLength(capturedBody, "utf8")).toBeLessThanOrEqual(maxCapturedBodyBytes);
+    expect(capturedBody).not.toContain("\uFFFD");
+  });
+
   it("RUN-006: bail stops after first failed request and skips remaining", async () => {
     const collection = makeCollection();
 

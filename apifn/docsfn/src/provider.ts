@@ -21,6 +21,8 @@ const HTTP_METHODS = [
     "get", "post", "put", "patch", "delete", "head", "options",
 ] as const;
 
+type OperationParameters = NonNullable<OperationObject["parameters"]>;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function tagToSlug(tag: string, basePath: string): string {
@@ -32,14 +34,51 @@ function collectEndpoints(spec: OpenAPIDocument): ApiEndpoint[] {
     const items: ApiEndpoint[] = [];
     for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
         if (!pathItem) continue;
+        const pathParameters = Array.isArray(pathItem.parameters) ? pathItem.parameters : [];
         for (const method of HTTP_METHODS) {
             const op = pathItem[method] as OperationObject | undefined;
             if (!op) continue;
+            const operation = mergePathParameters(pathParameters, op);
             const tags = (op.tags as string[]) ?? ["default"];
-            items.push({ path, method, operation: op, tag: tags[0] ?? "default" });
+            items.push({ path, method, operation, tag: tags[0] ?? "default" });
         }
     }
     return items;
+}
+
+function parameterKey(parameter: unknown): string | undefined {
+    if (!parameter || typeof parameter !== "object" || "$ref" in parameter) {
+        return undefined;
+    }
+
+    const candidate = parameter as { name?: unknown; in?: unknown };
+    if (typeof candidate.name !== "string" || typeof candidate.in !== "string") {
+        return undefined;
+    }
+
+    return `${candidate.in}:${candidate.name}`;
+}
+
+function mergePathParameters(pathParameters: OperationParameters, operation: OperationObject): OperationObject {
+    if (pathParameters.length === 0) {
+        return operation;
+    }
+
+    const operationParameters: OperationParameters = Array.isArray(operation.parameters) ? operation.parameters : [];
+    const operationKeys = new Set(operationParameters.map(parameterKey).filter((key): key is string => Boolean(key)));
+    const inheritedParameters = pathParameters.filter((parameter) => {
+        const key = parameterKey(parameter);
+        return !key || !operationKeys.has(key);
+    });
+
+    if (inheritedParameters.length === 0) {
+        return operation;
+    }
+
+    return {
+        ...operation,
+        parameters: [...inheritedParameters, ...operationParameters],
+    };
 }
 
 function buildSidebarGroup(

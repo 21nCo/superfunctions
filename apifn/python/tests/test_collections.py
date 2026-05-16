@@ -56,3 +56,18 @@ def test_tv_py_004_collection_read_and_run(tmp_path: Path) -> None:
     assert report["summary"]["total"] == 1
     assert report["summary"]["passed"] == 1
     assert report["results"][0]["status"] == "passed"
+
+
+def test_run_collection_raises_for_missing_environment() -> None:
+    collection = {
+        "info": {"name": "Sample"},
+        "environments": {"default": {"variables": {"baseUrl": "https://api.test"}}},
+        "items": [],
+    }
+
+    try:
+        run_collection(collection, {"environment": "staging"})
+    except ValueError as exc:
+        assert str(exc) == "Environment 'staging' not found"
+    else:
+        raise AssertionError("expected missing environment to raise")

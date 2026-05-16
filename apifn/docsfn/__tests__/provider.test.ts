@@ -83,6 +83,60 @@ describe("TV-DOCS-001: createApifnProvider — split by tag", () => {
         expect(methods).toContain("delete");
     });
 
+    it("merges path-level parameters into endpoint operations", async () => {
+        const provider = createApifnProvider({
+            spec: {
+                openapi: "3.0.0",
+                info: { title: "Path Params API", version: "1.0.0" },
+                paths: {
+                    "/users/{id}": {
+                        parameters: [{ name: "id", in: "path", required: true }],
+                        get: {
+                            tags: ["users"],
+                            summary: "Get user",
+                            parameters: [{ name: "verbose", in: "query" }],
+                            responses: { "200": { description: "ok" } },
+                        },
+                    },
+                },
+            } as unknown as OpenAPIDocument,
+            splitByTag: false,
+        });
+
+        const entries = await provider();
+        const parameters = entries[0].endpoints[0].operation.parameters ?? [];
+        expect(parameters).toEqual([
+            { name: "id", in: "path", required: true },
+            { name: "verbose", in: "query" },
+        ]);
+    });
+
+    it("operation-level parameters override matching path-level parameters", async () => {
+        const provider = createApifnProvider({
+            spec: {
+                openapi: "3.0.0",
+                info: { title: "Path Params API", version: "1.0.0" },
+                paths: {
+                    "/users/{id}": {
+                        parameters: [{ name: "id", in: "path", required: true, description: "path" }],
+                        get: {
+                            tags: ["users"],
+                            summary: "Get user",
+                            parameters: [{ name: "id", in: "path", required: true, description: "operation" }],
+                            responses: { "200": { description: "ok" } },
+                        },
+                    },
+                },
+            } as unknown as OpenAPIDocument,
+            splitByTag: false,
+        });
+
+        const entries = await provider();
+        expect(entries[0].endpoints[0].operation.parameters).toEqual([
+            { name: "id", in: "path", required: true, description: "operation" },
+        ]);
+    });
+
     it("results are cached (same array reference on second call)", async () => {
         const provider = createApifnProvider({ spec: TAGGED_SPEC });
         const first = await provider();
