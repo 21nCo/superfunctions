@@ -212,4 +212,53 @@ describe("cli commands", () => {
       );
     }
   });
+
+  it("import --force replaces generated collection files without deleting unrelated files", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "apifn-cli-import-force-"));
+    const outputDir = path.join(cwd, "collection");
+    const firstSpecPath = path.join(cwd, "first.json");
+    const secondSpecPath = path.join(cwd, "second.json");
+
+    await writeFile(firstSpecPath, JSON.stringify({
+      openapi: "3.1.0",
+      info: { title: "First API", version: "1.0.0" },
+      paths: {
+        "/old": {
+          get: {
+            operationId: "oldHealth",
+            tags: ["system"],
+            responses: { "200": { description: "OK" } },
+          },
+        },
+      },
+    }), "utf8");
+    await writeFile(secondSpecPath, JSON.stringify({
+      openapi: "3.1.0",
+      info: { title: "Second API", version: "1.0.0" },
+      paths: {
+        "/new": {
+          get: {
+            operationId: "newHealth",
+            tags: ["system"],
+            responses: { "200": { description: "OK" } },
+          },
+        },
+      },
+    }), "utf8");
+
+    expect(await runCli(["import", "openapi", firstSpecPath, "--output", outputDir], { cwd })).toBe(0);
+
+    const unrelatedRootFile = path.join(outputDir, "README.md");
+    const unrelatedNestedFile = path.join(outputDir, "system", "notes.txt");
+    await writeFile(unrelatedRootFile, "keep me", "utf8");
+    await writeFile(unrelatedNestedFile, "keep me too", "utf8");
+
+    const code = await runCli(["import", "openapi", secondSpecPath, "--output", outputDir, "--force"], { cwd });
+
+    expect(code).toBe(0);
+    expect(existsSync(path.join(outputDir, "system", "oldhealth.yml"))).toBe(false);
+    expect(existsSync(path.join(outputDir, "system", "newhealth.yml"))).toBe(true);
+    expect(existsSync(unrelatedRootFile)).toBe(true);
+    expect(existsSync(unrelatedNestedFile)).toBe(true);
+  });
 });

@@ -29,8 +29,15 @@ export interface ServeCommandOptions {
 // HTML template for the basic explorer page
 // ---------------------------------------------------------------------------
 
+function toSafeScriptJson(value: unknown): string {
+    return JSON.stringify(value, null, 2)
+        .replace(/</g, "\\u003c")
+        .replace(/>/g, "\\u003e")
+        .replace(/\//g, "\\u002f");
+}
+
 function buildHtml(spec: unknown, port: number): string {
-    const specJson = JSON.stringify(spec, null, 2);
+    const specJson = toSafeScriptJson(spec);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>

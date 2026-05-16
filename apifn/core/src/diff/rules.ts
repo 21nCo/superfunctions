@@ -373,11 +373,14 @@ export function diffSecurity(
 
     for (const key of beforeKeys) {
         if (!afterKeys.has(key)) {
+            const removedAlternative = afterSec.length > 0;
             emit({
                 type: "removed",
-                breaking: false,
+                breaking: removedAlternative,
                 path: `${opPath}.security`,
-                description: `Security requirement removed from ${opPath}`,
+                description: removedAlternative
+                    ? `Security requirement alternative removed from ${opPath} — breaking`
+                    : `Security requirement removed from ${opPath}`,
                 before: beforeSec,
                 after: afterSec,
             });

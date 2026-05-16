@@ -413,6 +413,31 @@ describe("TV-DIFF-005: security requirement changes", () => {
         expect(entry).toBeDefined();
         expect(entry?.type).toBe("removed");
     });
+
+    it("security alternative removed while auth remains → breaking", () => {
+        const before = withPaths(blankDoc(), {
+            "/admin": {
+                get: {
+                    security: [{ apiKeyAuth: [] }, { bearerAuth: [] }],
+                    responses: { "200": { description: "OK" } },
+                },
+            },
+        });
+        const after = withPaths(blankDoc(), {
+            "/admin": {
+                get: {
+                    security: [{ bearerAuth: [] }],
+                    responses: { "200": { description: "OK" } },
+                },
+            },
+        });
+
+        const result = diffOpenAPI(before, after);
+        expect(result.hasBreakingChanges).toBe(true);
+        const entry = result.breaking.find((e) => e.path.includes("security"));
+        expect(entry).toBeDefined();
+        expect(entry?.type).toBe("removed");
+    });
 });
 
 // ─── TV-DIFF-006: Non-breaking additions ─────────────────────────────────────

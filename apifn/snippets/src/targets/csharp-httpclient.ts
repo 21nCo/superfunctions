@@ -6,7 +6,30 @@ import type { OperationObject, SnippetOptions } from "@apifn/core";
 import { buildContext } from "../context.js";
 
 function escapeCsharpString(value: string): string {
-    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return Array.from(value, (char) => {
+        switch (char) {
+            case "\\":
+                return "\\\\";
+            case "\"":
+                return "\\\"";
+            case "\n":
+                return "\\n";
+            case "\r":
+                return "\\r";
+            case "\t":
+                return "\\t";
+            case "\b":
+                return "\\b";
+            case "\f":
+                return "\\f";
+            case "\0":
+                return "\\0";
+            default: {
+                const code = char.charCodeAt(0);
+                return code < 0x20 ? `\\u${code.toString(16).padStart(4, "0")}` : char;
+            }
+        }
+    }).join("");
 }
 
 export function generateCsharpHttpclient(

@@ -169,7 +169,7 @@ describe("TV-SNIP-005: additional targets", () => {
         const csharp = generateSnippet(GET_OP, "/users", "get", {
             ...BASE_OPTS,
             target: "csharp-httpclient",
-            baseUrl: "https://api.example.com/\"quoted\"",
+            baseUrl: "https://api.example.com/\"quoted\"/line\nbreak",
         });
         const java = generateSnippet(POST_OP, "/users", "post", {
             ...BASE_OPTS,
@@ -182,7 +182,7 @@ describe("TV-SNIP-005: additional targets", () => {
             baseUrl: "https://api.example.com/o'hara",
         });
 
-        expect(csharp).toContain("https://api.example.com/\\\"quoted\\\"/users");
+        expect(csharp).toContain("https://api.example.com/\\\"quoted\\\"/line\\nbreak/users");
         expect(java).toContain("https://api.example.com/\\\"quoted\\\"/users");
         expect(java).toContain("\\\"name\\\"");
         expect(php).toContain("https://api.example.com/o\\'hara/users");
