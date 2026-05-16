@@ -47,8 +47,13 @@ function collectEndpoints(spec: OpenAPIDocument): ApiEndpoint[] {
 }
 
 function parameterKey(parameter: unknown): string | undefined {
-    if (!parameter || typeof parameter !== "object" || "$ref" in parameter) {
+    if (!parameter || typeof parameter !== "object") {
         return undefined;
+    }
+
+    const reference = parameter as { $ref?: unknown };
+    if (typeof reference.$ref === "string") {
+        return `$ref:${reference.$ref}`;
     }
 
     const candidate = parameter as { name?: unknown; in?: unknown };

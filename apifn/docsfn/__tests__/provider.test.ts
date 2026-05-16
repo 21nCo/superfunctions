@@ -137,6 +137,36 @@ describe("TV-DOCS-001: createApifnProvider — split by tag", () => {
         ]);
     });
 
+    it("deduplicates matching path-level and operation-level parameter references", async () => {
+        const provider = createApifnProvider({
+            spec: {
+                openapi: "3.0.0",
+                info: { title: "Path Params API", version: "1.0.0" },
+                paths: {
+                    "/users/{id}": {
+                        parameters: [{ $ref: "#/components/parameters/UserId" }],
+                        get: {
+                            tags: ["users"],
+                            summary: "Get user",
+                            parameters: [
+                                { $ref: "#/components/parameters/UserId" },
+                                { name: "verbose", in: "query" },
+                            ],
+                            responses: { "200": { description: "ok" } },
+                        },
+                    },
+                },
+            } as unknown as OpenAPIDocument,
+            splitByTag: false,
+        });
+
+        const entries = await provider();
+        expect(entries[0].endpoints[0].operation.parameters).toEqual([
+            { $ref: "#/components/parameters/UserId" },
+            { name: "verbose", in: "query" },
+        ]);
+    });
+
     it("results are cached (same array reference on second call)", async () => {
         const provider = createApifnProvider({ spec: TAGGED_SPEC });
         const first = await provider();
