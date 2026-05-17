@@ -9,6 +9,13 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_REDIRECTS = 10;
+const CROSS_ORIGIN_REDIRECT_SENSITIVE_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "x-api-key",
+  "x-auth-token",
+]);
 
 function toHeadersRecord(headers: Headers): Record<string, string> {
   const result: Record<string, string> = {};
@@ -90,6 +97,22 @@ function pathMatches(pathname: string, cookiePath: string): boolean {
 
 function cookieKey(cookie: Pick<CookieJarCookie, "name" | "domain" | "path">): string {
   return `${cookie.domain}\n${cookie.path}\n${cookie.name}`;
+}
+
+function removeCrossOriginRedirectHeaders(
+  headers: Record<string, string>,
+  fromUrl: string,
+  toUrl: string
+): Record<string, string> {
+  if (new URL(fromUrl).origin === new URL(toUrl).origin) {
+    return headers;
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) =>
+      !CROSS_ORIGIN_REDIRECT_SENSITIVE_HEADERS.has(name.toLowerCase())
+    )
+  );
 }
 
 export function createCookieJar(initialCookies: CookieJarCookie[] = []): CookieJar {
@@ -329,6 +352,7 @@ export function createFetchHttpClient(
             ...request,
             method,
             body,
+            headers: removeCrossOriginRedirectHeaders(request.headers, url, nextUrl),
           },
           nextUrl,
           redirects,

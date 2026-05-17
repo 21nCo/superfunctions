@@ -47,6 +47,21 @@ describe("script sandbox", () => {
     expect(result.error?.message).toContain("bad script");
   });
 
+  it("enforces timeouts for awaited async scripts", async () => {
+    const result = await executePreRequestScript({
+      code: "await new Promise(() => {});",
+      req: {
+        method: "GET",
+        url: "http://localhost:3000/users",
+        headers: {},
+      },
+      env: {},
+      timeoutMs: 20,
+    });
+
+    expect(result.error?.message).toContain("Script execution timed out after 20ms");
+  });
+
   it("TV-RUN-005: test script executes and records assertion results", async () => {
     const assertions: AssertionResult[] = [];
     const result = await executeTestScript({

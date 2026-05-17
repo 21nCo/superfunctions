@@ -91,10 +91,13 @@ jobs:
       - name: Resolve base spec from base branch
         id: base_spec
         shell: bash
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          SPEC_PATH: ${{ inputs.spec_path }}
         run: |
           set -euo pipefail
-          git fetch origin "${{ inputs.base_branch }}" --depth=1
-          if git show "origin/${{ inputs.base_branch }}:${{ inputs.spec_path }}" > .apifn-base-openapi.yml; then
+          git fetch origin "$BASE_BRANCH" --depth=1
+          if git show "origin/${BASE_BRANCH}:${SPEC_PATH}" > .apifn-base-openapi.yml; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
@@ -105,9 +108,11 @@ jobs:
         id: validate
         continue-on-error: true
         shell: bash
+        env:
+          SPEC_PATH: ${{ inputs.spec_path }}
         run: |
           set +e
-          npx --yes apifn validate "${{ inputs.spec_path }}" --format json > validate-report.json
+          npx --yes apifn validate "$SPEC_PATH" --format json > validate-report.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -117,13 +122,16 @@ jobs:
         if: steps.base_spec.outputs.found == 'true'
         continue-on-error: true
         shell: bash
+        env:
+          SPEC_PATH: ${{ inputs.spec_path }}
+          FAIL_ON_BREAKING: ${{ inputs.fail_on_breaking }}
         run: |
           set +e
           DIFF_ARGS=""
-          if [ "${{ inputs.fail_on_breaking }}" != "true" ]; then
+          if [ "$FAIL_ON_BREAKING" != "true" ]; then
             DIFF_ARGS="--no-fail-on-breaking"
           fi
-          npx --yes apifn diff .apifn-base-openapi.yml "${{ inputs.spec_path }}" --format json $DIFF_ARGS > diff-report.json
+          npx --yes apifn diff .apifn-base-openapi.yml "$SPEC_PATH" --format json $DIFF_ARGS > diff-report.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -132,9 +140,12 @@ jobs:
         id: test
         continue-on-error: true
         shell: bash
+        env:
+          COLLECTION_DIR: ${{ inputs.collection_dir }}
+          COLLECTION_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set +e
-          npx --yes apifn test "${{ inputs.collection_dir }}" --env "${{ inputs.environment }}" --reporter json > test-report.json
+          npx --yes apifn test "$COLLECTION_DIR" --env "$COLLECTION_ENVIRONMENT" --reporter json > test-report.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -203,8 +214,13 @@ jobs:
             const issue_number = context.payload.pull_request.number;
             const marker = '<!-- apifn-ci-report -->';
 
-            const comments = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
-            const existing = comments.data.find((c) => c.user?.type === 'Bot' && c.body?.includes(marker));
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.includes(marker));
 
             if (existing) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });

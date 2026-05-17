@@ -162,7 +162,22 @@ async function runInSandbox(
   const script = new vm.Script(wrappedCode, {
     filename: "collection-script.js",
   });
-  await script.runInContext(context, { timeout: timeoutMs });
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      script.runInContext(context, { timeout: timeoutMs }) as Promise<unknown>,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Script execution timed out after ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function normalizeScriptError(error: ScriptExecutionError, kind: "pre-request" | "tests"): ScriptExecutionError {

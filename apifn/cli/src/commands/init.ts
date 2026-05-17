@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { writeCollection, type Collection } from "@apifn/collections";
 import type { Output } from "../utils/output.js";
@@ -25,15 +25,23 @@ async function promptIfNeeded(
 export async function runInitCommand(options: {
   dir?: string;
   yes?: boolean;
+  force?: boolean;
+  cwd?: string;
   output: Output;
-}): Promise<void> {
-  const dir = path.resolve(options.dir ?? ".");
+}): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
+  const dir = path.resolve(cwd, options.dir ?? ".");
   const shouldPrompt = !options.yes;
 
   const collectionName = await promptIfNeeded("Collection name", "API Collection", shouldPrompt);
   const baseUrl = await promptIfNeeded("Base URL", "http://localhost:3000", shouldPrompt);
 
   await mkdir(dir, { recursive: true });
+  const entries = await readdir(dir);
+  if (entries.length > 0 && !options.force) {
+    options.output.error(`Directory '${dir}' is not empty. Use --force to initialize anyway.`);
+    return 2;
+  }
 
   const collection: Collection = {
     info: { name: collectionName, type: "collection" },
@@ -71,4 +79,5 @@ export async function runInitCommand(options: {
 
   await writeCollection(collection);
   options.output.success(`Initialized collection in ${dir}`);
+  return 0;
 }

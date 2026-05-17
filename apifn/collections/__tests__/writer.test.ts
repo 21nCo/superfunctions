@@ -57,4 +57,57 @@ describe("writeCollection + validateCollection", () => {
       true
     );
   });
+
+  it("rejects request and folder paths that escape the collection root", async () => {
+    const fixture = path.resolve(__dirname, "fixtures/test-collection");
+    const source = await readCollection(fixture);
+    const outDir = await mkdtemp(path.join(tmpdir(), "apifn-collection-"));
+
+    await expect(
+      writeCollection({
+        ...source,
+        rootDir: outDir,
+        items: [
+          {
+            kind: "request",
+            name: "escape",
+            path: "../escape.yml",
+            request: source.items[0]!.children![0]!.request,
+          },
+        ],
+      })
+    ).rejects.toThrow(/unsafe path segment|relative path/);
+  });
+
+  it("rejects environment names that are unsafe path segments", async () => {
+    const fixture = path.resolve(__dirname, "fixtures/test-collection");
+    const source = await readCollection(fixture);
+    const outDir = await mkdtemp(path.join(tmpdir(), "apifn-collection-"));
+
+    await expect(
+      writeCollection({
+        ...source,
+        rootDir: outDir,
+        environments: {
+          "../secrets": {
+            name: "escape",
+            variables: {},
+          },
+        },
+      })
+    ).rejects.toThrow(/Environment name contains unsafe characters/);
+  });
+
+  it("returns validation errors for malformed environments and item lists", () => {
+    const collection = {
+      info: { name: "Broken", type: "collection" },
+      rootDir: "/tmp",
+      environments: [] as unknown,
+      items: {} as unknown,
+    } as Parameters<typeof validateCollection>[0];
+
+    const errors = validateCollection(collection);
+    expect(errors.some((error) => error.path === "environments")).toBe(true);
+    expect(errors.some((error) => error.path === "items")).toBe(true);
+  });
 });

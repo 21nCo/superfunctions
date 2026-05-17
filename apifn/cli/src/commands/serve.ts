@@ -29,8 +29,15 @@ export interface ServeCommandOptions {
 // HTML template for the basic explorer page
 // ---------------------------------------------------------------------------
 
+function toSafeScriptJson(value: unknown): string {
+    return JSON.stringify(value, null, 2)
+        .replace(/</g, "\\u003c")
+        .replace(/>/g, "\\u003e")
+        .replace(/\//g, "\\u002f");
+}
+
 function buildHtml(spec: unknown, port: number): string {
-    const specJson = JSON.stringify(spec, null, 2);
+    const specJson = toSafeScriptJson(spec);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -188,6 +195,17 @@ export async function runServeCommand(options: ServeCommandOptions): Promise<num
     });
 
     return new Promise((resolve) => {
+        const cleanup = () => {
+            process.off("SIGINT", cleanup);
+            process.off("SIGTERM", cleanup);
+            watcher?.close();
+            for (const client of sseClients) {
+                client.end();
+            }
+            sseClients.length = 0;
+            server.close(() => resolve(0));
+        };
+
         server.listen(port, () => {
             const url = `http://localhost:${port}`;
             options.output.success(`API Explorer running at ${url}`);
@@ -205,14 +223,7 @@ export async function runServeCommand(options: ServeCommandOptions): Promise<num
             }
         });
 
-        // Handle Ctrl+C
-        process.on("SIGINT", () => {
-            watcher?.close();
-            server.close(() => resolve(0));
-        });
-        process.on("SIGTERM", () => {
-            watcher?.close();
-            server.close(() => resolve(0));
-        });
+        process.on("SIGINT", cleanup);
+        process.on("SIGTERM", cleanup);
     });
 }

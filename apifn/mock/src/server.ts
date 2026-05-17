@@ -32,6 +32,8 @@ export interface MockServer {
     port: number;
 }
 
+const DEFAULT_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
+
 // ─── Path pattern conversion ──────────────────────────────────────────────────
 
 /**
@@ -39,11 +41,33 @@ export interface MockServer {
  */
 function compilePath(apiPath: string): { pattern: RegExp; paramNames: string[] } {
     const paramNames: string[] = [];
-    const regex = apiPath.replace(/\{([^}]+)\}/g, (_, name: string) => {
-        paramNames.push(name);
-        return "([^/]+)";
-    });
+    let regex = "";
+    let cursor = 0;
+
+    while (cursor < apiPath.length) {
+        const start = apiPath.indexOf("{", cursor);
+        if (start === -1) {
+            regex += escapeRegExp(apiPath.slice(cursor));
+            break;
+        }
+
+        const end = apiPath.indexOf("}", start + 1);
+        if (end === -1) {
+            regex += escapeRegExp(apiPath.slice(cursor));
+            break;
+        }
+
+        regex += escapeRegExp(apiPath.slice(cursor, start));
+        paramNames.push(apiPath.slice(start + 1, end));
+        regex += "([^/]+)";
+        cursor = end + 1;
+    }
+
     return { pattern: new RegExp(`^${regex}$`), paramNames };
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ─── CORS headers ─────────────────────────────────────────────────────────────
@@ -69,11 +93,23 @@ function applyCors(
 
 // ─── Request body reader ──────────────────────────────────────────────────────
 
-function readBody(req: http.IncomingMessage): Promise<unknown> {
+function readBody(req: http.IncomingMessage, maxBytes = DEFAULT_MAX_REQUEST_BODY_BYTES): Promise<unknown> {
     return new Promise((resolve, reject) => {
         const chunks: Buffer[] = [];
-        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        let size = 0;
+        let rejected = false;
+        req.on("data", (chunk: Buffer) => {
+            if (rejected) return;
+            size += chunk.byteLength;
+            if (size > maxBytes) {
+                rejected = true;
+                reject(new Error(`Request body exceeds ${maxBytes} bytes`));
+                return;
+            }
+            chunks.push(chunk);
+        });
         req.on("end", () => {
+            if (rejected) return;
             const raw = Buffer.concat(chunks).toString("utf8");
             if (!raw) {
                 resolve(undefined);
@@ -120,6 +156,7 @@ export function createMockServer(options: MockServerOptions): MockServer {
     const validateReqs = options.validateRequests ?? false;
     const delay = options.delay ?? 0;
     const cors = options.cors;
+    const maxRequestBodyBytes = options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES;
 
     // Build route table
     const routes: RouteHandler[] = [];
@@ -192,9 +229,9 @@ export function createMockServer(options: MockServerOptions): MockServer {
             if (rawMethod === "post" || rawMethod === "put" || rawMethod === "patch") {
                 let body: unknown;
                 try {
-                    body = await readBody(req);
-                } catch {
-                    sendJson(res, 400, { error: "Invalid JSON body" });
+                    body = await readBody(req, maxRequestBodyBytes);
+                } catch (error) {
+                    sendJson(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON body" });
                     return;
                 }
                 const bodyValidation = validateRequestBody(body, match.operation);

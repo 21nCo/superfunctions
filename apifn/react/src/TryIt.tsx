@@ -126,18 +126,37 @@ export function TryIt({ path, method, operation, baseUrl = "https://api.example.
     const params = (operation.parameters ?? []) as Array<{ name: string; in: string; required?: boolean; schema?: { type?: string } }>;
     const pathParams = params.filter((p) => p.in === "path");
     const queryParams = params.filter((p) => p.in === "query");
-    const headerParams = params.filter((p) => p.in === "header");
 
     const [pathValues, setPathValues] = useState<Record<string, string>>({});
     const [queryValues, setQueryValues] = useState<Record<string, string>>({});
-    const [headerValues, setHeaderValues] = useState<Record<string, string>>({});
+    const [headerValues] = useState<Record<string, string>>({});
     const [body, setBody] = useState("");
     const [auth, setAuth] = useState<AuthConfig>(defaultAuth ?? { type: "none" });
     const [response, setResponse] = useState<TryItResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const resolvedPath = path.replace(/\{([^}]+)\}/g, (_, name: string) => pathValues[name] ?? `{${name}}`);
+    const resolvedPath = (() => {
+        let result = "";
+        let cursor = 0;
+        while (cursor < path.length) {
+            const start = path.indexOf("{", cursor);
+            if (start === -1) {
+                result += path.slice(cursor);
+                break;
+            }
+            const end = path.indexOf("}", start + 1);
+            if (end === -1) {
+                result += path.slice(cursor);
+                break;
+            }
+            const name = path.slice(start + 1, end);
+            result += path.slice(cursor, start);
+            result += pathValues[name] ?? `{${name}}`;
+            cursor = end + 1;
+        }
+        return result;
+    })();
     const queryString = Object.entries(queryValues)
         .filter(([, v]) => v)
         .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)

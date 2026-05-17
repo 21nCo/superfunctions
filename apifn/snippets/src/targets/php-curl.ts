@@ -5,6 +5,10 @@
 import type { OperationObject, SnippetOptions } from "@apifn/core";
 import { buildContext } from "../context.js";
 
+function escapePhpSingleQuoted(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 export function generatePhpCurl(
     operation: OperationObject,
     apiPath: string,
@@ -18,7 +22,7 @@ export function generatePhpCurl(
 
     lines.push("<?php");
     lines.push("");
-    lines.push(`$ch = curl_init('${ctx.url}');`);
+    lines.push(`$ch = curl_init('${escapePhpSingleQuoted(ctx.url)}');`);
 
     const allHeaders = { ...ctx.headers };
     if (ctx.body) allHeaders["Content-Type"] = "application/json";
@@ -29,13 +33,13 @@ export function generatePhpCurl(
     if (Object.keys(allHeaders).length > 0) {
         lines.push("curl_setopt($ch, CURLOPT_HTTPHEADER, [");
         for (const [k, v] of Object.entries(allHeaders)) {
-            lines.push(`${ind}'${k}: ${v}',`);
+            lines.push(`${ind}'${escapePhpSingleQuoted(`${k}: ${v}`)}',`);
         }
         lines.push("]);");
     }
 
     if (ctx.body) {
-        lines.push(`curl_setopt($ch, CURLOPT_POSTFIELDS, '${ctx.body.replace(/'/g, "\\'")}');`);
+        lines.push(`curl_setopt($ch, CURLOPT_POSTFIELDS, '${escapePhpSingleQuoted(ctx.body)}');`);
     }
 
     lines.push("");

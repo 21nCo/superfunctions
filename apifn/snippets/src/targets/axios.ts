@@ -22,7 +22,6 @@ export function generateAxios(
     const allHeaders = { ...ctx.headers };
     const hasHeaders = Object.keys(allHeaders).length > 0;
 
-    const hasBody = Boolean(ctx.body) && (m === "post" || m === "put" || m === "patch");
     const useConfig = hasHeaders;
 
     if (m === "get" || m === "delete" || m === "head" || m === "options") {

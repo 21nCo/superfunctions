@@ -100,6 +100,88 @@ describe("fetch HTTP client", () => {
     }
   });
 
+  it("keeps sensitive headers on same-origin redirects", async () => {
+    const seen: Array<Record<string, string | string[] | undefined>> = [];
+    const server = await startServer((req, res) => {
+      seen.push(req.headers);
+      if (req.url === "/start") {
+        res.writeHead(302, { location: "/finish" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("done");
+    });
+
+    try {
+      const client = createFetchHttpClient();
+      const result = await client.send({
+        method: "GET",
+        url: `${server.baseUrl}/start`,
+        headers: {
+          authorization: "Bearer secret",
+          cookie: "session=abc",
+          "x-api-key": "api-secret",
+          "x-trace-id": "trace-1",
+        },
+        followRedirects: true,
+      });
+
+      expect(result.status).toBe(200);
+      expect(seen[1]).toEqual(expect.objectContaining({
+        authorization: "Bearer secret",
+        cookie: "session=abc",
+        "x-api-key": "api-secret",
+        "x-trace-id": "trace-1",
+      }));
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("strips sensitive headers on cross-origin redirects", async () => {
+    const seen: Array<Record<string, string | string[] | undefined>> = [];
+    const first = await startServer((_req, res) => {
+      res.writeHead(302, { location: `${second.baseUrl}/finish` });
+      res.end();
+    });
+    const second = await startServer((req, res) => {
+      seen.push(req.headers);
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("done");
+    });
+
+    try {
+      const client = createFetchHttpClient();
+      const result = await client.send({
+        method: "GET",
+        url: `${first.baseUrl}/start`,
+        headers: {
+          authorization: "Bearer secret",
+          cookie: "session=abc",
+          "proxy-authorization": "Basic secret",
+          "x-api-key": "api-secret",
+          "x-auth-token": "token-secret",
+          "x-trace-id": "trace-1",
+        },
+        followRedirects: true,
+      });
+
+      expect(result.status).toBe(200);
+      expect(seen[0]).toEqual(expect.objectContaining({
+        "x-trace-id": "trace-1",
+      }));
+      expect(seen[0]?.authorization).toBeUndefined();
+      expect(seen[0]?.cookie).toBeUndefined();
+      expect(seen[0]?.["proxy-authorization"]).toBeUndefined();
+      expect(seen[0]?.["x-api-key"]).toBeUndefined();
+      expect(seen[0]?.["x-auth-token"]).toBeUndefined();
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
   it("fails when max redirects is exceeded", async () => {
     const server = await startServer((_req, res) => {
       res.writeHead(302, { location: "/loop" });

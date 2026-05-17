@@ -75,13 +75,13 @@ export async function runMockCommand(options: MockCommandOptions): Promise<numbe
     options.output.info("Press Ctrl+C to stop");
 
     return new Promise((resolve) => {
-        process.on("SIGINT", async () => {
+        const cleanup = async () => {
+            process.off("SIGINT", cleanup);
+            process.off("SIGTERM", cleanup);
             await mock.stop();
             resolve(0);
-        });
-        process.on("SIGTERM", async () => {
-            await mock.stop();
-            resolve(0);
-        });
+        };
+        process.on("SIGINT", cleanup);
+        process.on("SIGTERM", cleanup);
     });
 }

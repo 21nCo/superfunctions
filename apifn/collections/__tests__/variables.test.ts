@@ -38,7 +38,7 @@ describe("variable interpolation", () => {
     ).toThrow(/Environment variable MISSING_VAR is not set/);
   });
 
-  it("TV-ENV-004: applies precedence overrides > env > collection > process.env", () => {
+  it("TV-ENV-004: applies precedence overrides > env > collection without implicit process.env seeding", () => {
     const context = resolveVariableContext({
       overrides: { baseUrl: "http://override:3000" },
       environment: { baseUrl: "http://env:3000", apiKey: "env-key" },
@@ -49,6 +49,7 @@ describe("variable interpolation", () => {
     expect(context.baseUrl).toBe("http://override:3000");
     expect(context.apiKey).toBe("env-key");
     expect(context.timeout).toBe("5000");
+    expect(context).not.toHaveProperty("baseUrl", "http://proc:3000");
   });
 
   it("ENV-003: supports loading .env file", async () => {
