@@ -1,17 +1,24 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import adapter from "@sveltejs/adapter-auto";
+import adapterAuto from "@sveltejs/adapter-auto";
+import adapterCloudflare from "@sveltejs/adapter-cloudflare";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 const thisFilePath = fileURLToPath(import.meta.url);
 const thisDirectory = path.dirname(thisFilePath);
 const fromDocsRoot = (...segments) => path.resolve(thisDirectory, ...segments);
+const adapter = process.env.CLOUDFLARE_DOCS_DEPLOY === "1"
+  ? adapterCloudflare()
+  : adapterAuto();
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
   preprocess: vitePreprocess(),
   kit: {
-    adapter: adapter(),
+    adapter,
+    paths: {
+      assets: process.env.CLOUDFLARE_DOCS_DEPLOY === "1" ? "/docs" : "",
+    },
     alias: {
       "@docsfn/core/search-runtime": fromDocsRoot("../../docsfn/core/src/search-runtime.ts"),
       "@docsfn/core/search": fromDocsRoot("../../docsfn/core/src/search.ts"),
