@@ -1,4 +1,3 @@
-import { InMemorySearchFn, type InMemorySearchFnSnapshot } from "@searchfn/client";
 import { createDiagnostic, createDocsError } from "./diagnostics";
 import { redactSensitiveText, resolveDocsAuthMode } from "./security";
 import type {
@@ -13,6 +12,18 @@ export type { DocsSearchScope, DocsSearchRouteScopeOverride } from "./types";
 
 export type DocsSearchBodyIndexing = "full" | "summary" | "disabled";
 export type DocsSearchDocumentKind = "page" | "api" | "post";
+export type DocsSearchField = "title" | "summary" | "headings" | "tags" | "body";
+
+export interface DocsSearchSnapshot {
+  postings: Array<{
+    field: string;
+    term: string;
+    documents: Array<Record<string, unknown>>;
+  }>;
+  stats: Array<{ docId: string | number; length: number }>;
+  documents: Array<{ docId: string | number; payload: Record<string, unknown> }>;
+  vocabulary: string[];
+}
 
 export interface DocsSearchDocument {
   id: string;
@@ -29,11 +40,11 @@ export interface DocsSearchDocument {
 export interface DocsSearchArtifact {
   schemaVersion: 1;
   engine: "searchfn";
-  fields: Array<"title" | "summary" | "headings" | "tags" | "body">;
+  fields: DocsSearchField[];
   scopes: DocsSearchScope[];
   bodyIndexing: DocsSearchBodyIndexing;
   documents: DocsSearchDocument[];
-  snapshot: InMemorySearchFnSnapshot;
+  snapshot: DocsSearchSnapshot;
   diagnostics: DocsDiagnostic[];
   bytes: number;
 }
@@ -49,6 +60,45 @@ interface NormalizedRouteScopeOverride {
   pattern: string;
   scope: DocsSearchScope;
   regex: RegExp;
+}
+
+interface SearchIndexEngine {
+  add(input: {
+    id: string | number;
+    fields: Record<string, string>;
+    store?: Record<string, unknown>;
+  }): void;
+  exportSnapshot(): DocsSearchSnapshot;
+}
+
+interface SearchFnClientModule {
+  InMemorySearchFn: new (options: {
+    fields: string[];
+    pipeline?: {
+      enableEdgeNGrams?: boolean;
+      edgeNGramMinLength?: number;
+    };
+  }) => SearchIndexEngine;
+}
+
+async function loadSearchFnClient(): Promise<SearchFnClientModule> {
+  try {
+    return (await import("@searchfn/client")) as unknown as SearchFnClientModule;
+  } catch (error) {
+    throw createDocsError({
+      code: "DOCS_SEARCH_BUILD_FAILED",
+      message: "@searchfn/client is required to build a docs search index",
+      diagnostics: [
+        createDiagnostic({
+          code: "DOCS_SEARCH_BUILD_FAILED",
+          message: "@searchfn/client is required to build a docs search index",
+          suggestion:
+            "Install @searchfn/client, disable docs search, or provide a prebuilt search artifact.",
+        }),
+      ],
+      cause: error,
+    });
+  }
 }
 
 function normalizeWhitespace(value: string): string {
@@ -234,7 +284,7 @@ function resolveBodyIndexing(searchConfig: DocsConfig["search"]): DocsSearchBody
   return searchConfig?.bodyIndexing ?? "summary";
 }
 
-function createEmptySnapshot(): InMemorySearchFnSnapshot {
+function createEmptySnapshot(): DocsSearchSnapshot {
   return {
     postings: [],
     stats: [],
@@ -243,7 +293,8 @@ function createEmptySnapshot(): InMemorySearchFnSnapshot {
   };
 }
 
-function createSearchEngine(): InMemorySearchFn {
+async function createSearchEngine(): Promise<SearchIndexEngine> {
+  const { InMemorySearchFn } = await loadSearchFnClient();
   return new InMemorySearchFn({
     fields: ["title", "summary", "headings", "tags", "body"],
     pipeline: {
@@ -485,7 +536,7 @@ export async function buildSearchIndex(
   });
   assertUniqueSearchDocumentIds(documents);
 
-  const engine = createSearchEngine();
+  const engine = await createSearchEngine();
   for (const document of documents) {
     engine.add({
       id: document.id,

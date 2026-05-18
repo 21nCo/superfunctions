@@ -1,14 +1,14 @@
 {
   "name": "@docsfn/cli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "CLI workflows for docsfn",
   "type": "module",
   "bin": {
     "docsfn": "./bin/docsfn.js"
   },
   "dependencies": {
-    "@docsfn/core": "0.0.2",
-    "@docsfn/provider-fs": "0.0.1",
+    "@docsfn/core": "0.0.3",
+    "@docsfn/provider-fs": "0.0.2",
     "cac": "^6.7.0",
     "chokidar": "^3.5.0",
     "picocolors": "^1.0.0"

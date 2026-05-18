@@ -1,4 +1,3 @@
-import { InMemorySearchFn, createMemorySearchClient, type SearchClient } from "@searchfn/client";
 import { createDiagnostic, createDocsError } from "./diagnostics";
 import type { DocsSearchArtifact, DocsSearchDocument, DocsSearchScope } from "./search";
 
@@ -34,8 +33,90 @@ export interface CreateDocsSearchRuntimeInput {
 interface ValidatedArtifact {
   artifact: DocsSearchArtifact;
   client: SearchClient | null;
-  engine: InMemorySearchFn | null;
+  engine: SnapshotSearchEngine | null;
   documents: Map<string, DocsSearchDocument>;
+}
+
+interface SearchHit {
+  id: string | number;
+  score: number;
+}
+
+interface SearchClient {
+  initialize?(params: {
+    resources: Array<{
+      name: string;
+      searchFields: string[];
+    }>;
+  }): Promise<void>;
+  index(params: {
+    resource: string;
+    documents: Array<{
+      id: string | number;
+      fields: Record<string, string>;
+    }>;
+  }): Promise<void>;
+  searchAll(params: {
+    query: string;
+    resources: string[];
+    limit: number;
+    limitPerResource: number;
+    prefix: boolean;
+  }): Promise<SearchHit[]>;
+}
+
+interface SnapshotSearchEngine {
+  importSnapshot(snapshot: DocsSearchArtifact["snapshot"]): void;
+  searchDetailed(
+    query: string,
+    options: {
+      fields?: string[];
+      limit?: number;
+    }
+  ): Array<{ docId: string | number; score: number }>;
+}
+
+interface SearchFnClientModule {
+  InMemorySearchFn: new (options: {
+    fields: string[];
+    pipeline?: {
+      enableEdgeNGrams?: boolean;
+      edgeNGramMinLength?: number;
+    };
+  }) => SnapshotSearchEngine;
+  createMemorySearchClient(config?: {
+    adapterConfig?: {
+      pipeline?: {
+        enableEdgeNGrams?: boolean;
+        edgeNGramMinLength?: number;
+      };
+    };
+    defaults?: {
+      prefix?: boolean;
+      limit?: number;
+      limitPerResource?: number;
+    };
+  }): SearchClient;
+}
+
+async function loadSearchFnClient(): Promise<SearchFnClientModule> {
+  try {
+    return (await import("@searchfn/client")) as unknown as SearchFnClientModule;
+  } catch (error) {
+    throw createDocsError({
+      code: "DOCS_ARTIFACT_INVALID",
+      message: "@searchfn/client is required to query a docs search artifact",
+      diagnostics: [
+        createDiagnostic({
+          code: "DOCS_ARTIFACT_INVALID",
+          message: "@searchfn/client is required to query a docs search artifact",
+          suggestion:
+            "Install @searchfn/client or avoid creating the docs search runtime on pages that do not use search.",
+        }),
+      ],
+      cause: error,
+    });
+  }
 }
 
 function assertValidArtifact(artifact: DocsSearchArtifact): void {
@@ -66,7 +147,8 @@ function assertValidArtifact(artifact: DocsSearchArtifact): void {
   }
 }
 
-function createSearchClientForArtifact(artifact: DocsSearchArtifact): SearchClient {
+async function createSearchClientForArtifact(): Promise<SearchClient> {
+  const { createMemorySearchClient } = await loadSearchFnClient();
   return createMemorySearchClient({
     adapterConfig: {
       pipeline: {
@@ -82,7 +164,8 @@ function createSearchClientForArtifact(artifact: DocsSearchArtifact): SearchClie
   });
 }
 
-function createSnapshotSearchEngine(artifact: DocsSearchArtifact): InMemorySearchFn {
+async function createSnapshotSearchEngine(artifact: DocsSearchArtifact): Promise<SnapshotSearchEngine> {
+  const { InMemorySearchFn } = await loadSearchFnClient();
   const engine = new InMemorySearchFn({
     fields: artifact.fields,
     pipeline: {
@@ -165,13 +248,13 @@ export function createDocsSearchRuntime(
         validated = {
           artifact,
           client: null,
-          engine: createSnapshotSearchEngine(artifact),
+          engine: await createSnapshotSearchEngine(artifact),
           documents,
         };
         return validated;
       }
 
-      const client = createSearchClientForArtifact(artifact);
+      const client = await createSearchClientForArtifact();
       await client.initialize?.({
         resources: artifact.scopes.map((scope) => ({
           name: scope,

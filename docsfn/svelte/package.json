@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/svelte",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Svelte components and helpers for docsfn",
   "type": "module",
   "main": "dist/index.cjs",
@@ -90,10 +90,16 @@
     "./theme-base.css": "./dist/theme-base.css"
   },
   "peerDependencies": {
+    "@searchfn/client": "^0.3.0",
     "svelte": "^5.0.0"
   },
+  "peerDependenciesMeta": {
+    "@searchfn/client": {
+      "optional": true
+    }
+  },
   "dependencies": {
-    "@docsfn/core": "0.0.2",
+    "@docsfn/core": "0.0.3",
     "@uifn/svelte": "0.0.1",
     "marked": "^12.0.0",
     "searchfn": "*"
