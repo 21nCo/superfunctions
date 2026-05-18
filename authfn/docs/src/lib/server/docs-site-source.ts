@@ -1,20 +1,37 @@
-import path from "node:path";
+import { basename, extname } from "node:path";
+import docsConfig from "../../../docsfn.config";
 import {
+  assertValidSourceEntries,
   buildManifest,
   buildSearchIndex,
   compileSvelteContent,
   createDiagnostic,
   createDocsError,
+  createSourceEntryId,
   createDocsSearchRuntime,
-  loadDocsConfig,
+  normalizeProviderPath,
+  toLegacyRawEntries,
   type CompiledContentArtifact,
+  type DocsCollection,
   type DocsCompatPreset,
   type DocsConfig,
+  type DocsContentProvider,
   type DocsManifest,
   type DocsSearchArtifact,
   type DocsSearchRuntime,
+  type DocsSourceEntry,
 } from "@docsfn/core";
-import { FsContentProvider } from "@docsfn/provider-fs";
+
+const bundledContent = import.meta.glob("../../../content/**/*", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+const bundledStatic = import.meta.glob("../../../static/**/*", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
 
 export interface DocsSiteSource {
   siteRoot: string;
@@ -175,16 +192,9 @@ function getCompiledArtifactOrThrow(input: {
 async function loadDocsSiteServerState(): Promise<DocsSiteServerState> {
   if (!serverStatePromise) {
     serverStatePromise = (async () => {
-      const siteRoot = path.resolve(process.cwd());
-      const config = await loadDocsConfig({ cwd: siteRoot });
-      const provider = new FsContentProvider({
-        root: siteRoot,
-        docsDir: config.content.docsDir,
-        pagesDir: config.content.pagesDir,
-        blogDir: config.content.blogDir,
-        apiDir: config.content.apiDir,
-        assetsDir: config.content.assetsDir,
-      });
+      const siteRoot = ".";
+      const config = docsConfig satisfies DocsConfig;
+      const provider = createBundledContentProvider(config);
       const manifest = await buildManifest(provider, config);
       const searchArtifact = await buildSearchIndex(manifest, {
         search: config.search,
@@ -256,4 +266,236 @@ export async function createDocsSiteSearchRuntime(): Promise<DocsSearchRuntime> 
   return createDocsSearchRuntime({
     artifact: state.source.searchArtifact,
   });
+}
+
+function createBundledContentProvider(config: DocsConfig): DocsContentProvider {
+  const modules = {
+    ...normalizeBundledModules(bundledContent, "../../../"),
+    ...normalizeBundledModules(bundledStatic, "../../../"),
+  };
+
+  return {
+    providerId: "bundled",
+    async listEntries(input) {
+      const entries = input.collections.flatMap((collection) =>
+        collectEntriesForCollection(collection, modules, config)
+      );
+      return assertValidSourceEntries(entries);
+    },
+    async loadEntry(input) {
+      return input.entry;
+    },
+    async list() {
+      const entries = await this.listEntries({
+        config,
+        collections: ["docs", "pages", "blog", "api", "assets"],
+      });
+      return toLegacyRawEntries(entries);
+    },
+  };
+}
+
+function normalizeBundledModules(
+  modules: Record<string, string>,
+  prefix: string,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(modules).map(([modulePath, source]) => [
+      normalizeProviderPath(modulePath.replace(prefix, "")),
+      source,
+    ]),
+  );
+}
+
+function collectEntriesForCollection(
+  collection: DocsCollection,
+  modules: Record<string, string>,
+  config: DocsConfig,
+): DocsSourceEntry[] {
+  const directory = collectionDirectory(collection, config);
+  const entries: DocsSourceEntry[] = [];
+
+  for (const [modulePath, source] of Object.entries(modules)) {
+    if (modulePath !== directory && !modulePath.startsWith(`${directory}/`)) {
+      continue;
+    }
+
+    const relativePath = normalizeProviderPath(modulePath.slice(directory.length + 1));
+    if (!relativePath || relativePath === ".gitkeep") {
+      continue;
+    }
+
+    const extension = extname(relativePath).toLowerCase();
+    const fileName = basename(relativePath).toLowerCase();
+
+    if (fileName === (config.content.metaFileName ?? "meta.json")) {
+      entries.push(createControlEntry(collection, relativePath, source));
+      continue;
+    }
+
+    if (collection === "assets") {
+      entries.push(createAssetEntry(relativePath, source));
+      continue;
+    }
+
+    if (["docs", "pages", "blog"].includes(collection) && [".md", ".mdx"].includes(extension)) {
+      entries.push(createMarkdownEntry(collection, relativePath, source));
+      continue;
+    }
+
+    if (collection === "api" && [".json", ".yaml", ".yml"].includes(extension)) {
+      entries.push(createApiEntry(relativePath, source));
+    }
+  }
+
+  return entries.sort((left, right) =>
+    left.id.localeCompare(right.id, "en", { sensitivity: "variant", numeric: true }),
+  );
+}
+
+function collectionDirectory(collection: DocsCollection, config: DocsConfig): string {
+  if (collection === "docs") return config.content.docsDir ?? "content/docs";
+  if (collection === "pages") return config.content.pagesDir ?? "content/pages";
+  if (collection === "blog") return config.content.blogDir ?? "content/blog";
+  if (collection === "api") return config.content.apiDir ?? "content/api";
+  return config.content.assetsDir ?? "static";
+}
+
+function createMarkdownEntry(
+  collection: Extract<DocsCollection, "docs" | "pages" | "blog">,
+  relativePath: string,
+  source: string,
+): DocsSourceEntry {
+  const parsed = parseFrontmatter(source);
+  return {
+    id: createSourceEntryId(collection, relativePath),
+    collection,
+    relativePath,
+    absolutePath: `${collection}/${relativePath}`,
+    entryType: "content",
+    body: parsed.body,
+    frontmatter: {
+      title: deriveTitleFromPath(relativePath),
+      ...parsed.frontmatter,
+    },
+    bytes: byteLength(source),
+    updatedAt: "1970-01-01T00:00:00.000Z",
+    meta: {
+      extension: extname(relativePath).toLowerCase(),
+    },
+  };
+}
+
+function createControlEntry(
+  collection: DocsCollection,
+  relativePath: string,
+  source: string,
+): DocsSourceEntry {
+  return {
+    id: createSourceEntryId(collection, relativePath),
+    collection,
+    relativePath,
+    absolutePath: `${collection}/${relativePath}`,
+    entryType: "control",
+    body: source,
+    frontmatter: {},
+    bytes: byteLength(source),
+    updatedAt: "1970-01-01T00:00:00.000Z",
+    meta: {
+      controlFile: true,
+      parsed: parseJson(source),
+    },
+  };
+}
+
+function createApiEntry(relativePath: string, source: string): DocsSourceEntry {
+  return {
+    id: createSourceEntryId("api", relativePath),
+    collection: "api",
+    relativePath,
+    absolutePath: `api/${relativePath}`,
+    entryType: "content",
+    body: source,
+    frontmatter: {
+      title: deriveTitleFromPath(relativePath),
+    },
+    bytes: byteLength(source),
+    updatedAt: "1970-01-01T00:00:00.000Z",
+    meta: {
+      extension: extname(relativePath).toLowerCase(),
+    },
+  };
+}
+
+function createAssetEntry(relativePath: string, source: string): DocsSourceEntry {
+  return {
+    id: createSourceEntryId("assets", relativePath),
+    collection: "assets",
+    relativePath,
+    absolutePath: `assets/${relativePath}`,
+    entryType: "asset",
+    frontmatter: {},
+    bytes: byteLength(source),
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  };
+}
+
+function parseFrontmatter(source: string): {
+  body: string;
+  frontmatter: Record<string, unknown>;
+} {
+  if (!source.startsWith("---\n")) {
+    return { body: source, frontmatter: {} };
+  }
+
+  const closingIndex = source.indexOf("\n---", 4);
+  if (closingIndex === -1) {
+    return { body: source, frontmatter: {} };
+  }
+
+  const rawFrontmatter = source.slice(4, closingIndex);
+  const body = source.slice(closingIndex + 4).replace(/^\r?\n/, "");
+  const frontmatter: Record<string, unknown> = {};
+
+  for (const line of rawFrontmatter.split(/\r?\n/)) {
+    const separator = line.indexOf(":");
+    if (separator === -1) continue;
+
+    const key = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (!key) continue;
+
+    frontmatter[key] = parseFrontmatterValue(value);
+  }
+
+  return { body, frontmatter };
+}
+
+function parseFrontmatterValue(value: string): unknown {
+  const unquoted = value.replace(/^['"]|['"]$/g, "");
+  if (unquoted === "true") return true;
+  if (unquoted === "false") return false;
+  return unquoted;
+}
+
+function parseJson(source: string): unknown {
+  try {
+    return JSON.parse(source);
+  } catch {
+    return null;
+  }
+}
+
+function deriveTitleFromPath(relativePath: string): string {
+  return basename(relativePath)
+    .replace(/\.[^/.]+$/, "")
+    .split(/[-_]/g)
+    .map((segment) =>
+      segment.length > 0 ? `${segment.charAt(0).toUpperCase()}${segment.slice(1)}` : segment,
+    )
+    .join(" ");
+}
+
+function byteLength(source: string): number {
+  return new TextEncoder().encode(source).byteLength;
 }
