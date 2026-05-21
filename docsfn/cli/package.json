@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/cli",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "CLI workflows for docsfn",
   "type": "module",
   "bin": {
