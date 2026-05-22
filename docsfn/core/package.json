@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/core",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Core toolkit contracts for docsfn",
   "type": "module",
   "main": "dist/index.cjs",

@@ -95,6 +95,14 @@ export type {
   CompileMarkdownInput,
 } from "./markdown";
 
+export {
+  resolveMarkdownRelativeLinks,
+} from "./links";
+
+export type {
+  ResolveMarkdownRelativeLinksInput,
+} from "./links";
+
 // Svelte compile helper — thin wrapper around compileMarkdown, no node:*
 export { compileSvelteContent } from "./compile/svelte";
 
