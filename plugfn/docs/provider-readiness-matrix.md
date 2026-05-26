@@ -25,6 +25,7 @@ The minimum provider set that the release gate tracks is:
 - `linear`
 - `clickup`
 - `gmail`
+- `notion`
 
 ## Matrix
 
@@ -34,6 +35,7 @@ The minimum provider set that the release gate tracks is:
 | linear | core | production | production | production | Core provider contract exists in both languages; final production-ready claim still depends on the repo-root release gate. |
 | clickup | core | production | production | production | Core provider contract exists in both languages; final production-ready claim still depends on the repo-root release gate. |
 | gmail | core | production | production | production | Core provider contract exists in both languages; final production-ready claim still depends on the repo-root release gate. |
+| notion | core | beta | production | unsupported | TypeScript provider is release-gated for Nucleum adoption; overall status stays beta until Python parity exists. |
 | slack | adjacent | experimental | experimental | experimental | Present in both trees, but not part of the declared core release set. |
 | discord | adjacent | experimental | experimental | unsupported | TypeScript-only today. |
 | stripe | adjacent | experimental | experimental | unsupported | TypeScript-only today. |

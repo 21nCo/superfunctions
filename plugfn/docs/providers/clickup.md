@@ -10,7 +10,7 @@ Integration with ClickUp for task lifecycle automation through PlugFn public act
 
 ```ts
 import { plugFn } from 'plugfn';
-import { clickupProvider } from 'plugfn/providers';
+import { clickupProvider } from '@plugfn/providers';
 
 const plug = plugFn({
   integrations: {

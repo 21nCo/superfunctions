@@ -39,7 +39,7 @@ Examples of vertical or non-core scope include:
 - managed-mail flows
 - forwarding adapters
 - app-specific mail policy layers
-- product-specific Finatron or Fellotron workflows
+- product-specific financial extraction or send governance workflows
 
 ## Core provider set tracked by release gating
 
@@ -49,8 +49,9 @@ The provider set that release gating must cover is:
 - `linear`
 - `clickup`
 - `gmail`
+- `notion`
 
-These are the minimum providers that must be tracked explicitly across TypeScript and Python readiness. Additional providers may be listed in the matrix as `beta`, `experimental`, `vertical-only`, or `unsupported`.
+These are the minimum providers that must be tracked explicitly in the readiness matrix. Python parity may lag provider-by-provider; the matrix is the source of truth for language readiness.
 
 ## Language contract
 
