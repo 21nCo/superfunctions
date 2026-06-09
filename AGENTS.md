@@ -85,7 +85,7 @@ packages/cli/         → @superfunctions/cli
 authfn/ts-sdk/        → authfn
 drawfn/core/          → drawfn
 cachefn/typescript/   → cachefn
-plugfn/typescript/    → plugfn
+plugfn/core/         → plugfn
 searchfn/             → searchfn
 ```
 
@@ -171,7 +171,7 @@ Most core functions support **both TypeScript and Python**:
 - `authfn/typescript/` + `authfn/python/`
 - `cachefn/typescript/` + `cachefn/python/`
 - `secfn/typescript/` + `secfn/python/`
-- `plugfn/typescript/` + `plugfn/python/`
+- `plugfn/core/` + `plugfn/python/`
 - `drawfn/core/` (TypeScript only, with React/Svelte adapters)
 - `searchfn/` (TypeScript only, browser-focused)
 
@@ -365,6 +365,7 @@ superfunctions/
 - Reuse shared packages from `packages/` folder like http abstraction, db abstraction, etc.
 - Never duplicate shared code like http adapters, db abstractions, etc.
 - Don't reexport http-adapters etc - end consumers of the core function package will use the adapters directly. Refer `authfn` implementation for usage of core http router, core db, http adapters and db interface usage.
+- Function packages that accept a `@superfunctions/db` `Adapter` must wrap the incoming adapter internally with their own schema, for example `wrapWithSchema(config.database, getSchema(...))`, before passing it to services/storage. Do not require app consumers to pass `adapterSchema` to `drizzleAdapter`, `kyselyAdapter`, `prismaAdapter`, or `memoryAdapter`; `adapterSchema` is a deprecated compatibility escape hatch for direct app-level adapter use.
 
 ### Code Organization
 

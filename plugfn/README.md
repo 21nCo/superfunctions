@@ -28,7 +28,8 @@ pip install plugfn
 ## TypeScript quick start
 
 ```ts
-import { createPlugFnRouter, githubProvider, linearProvider, plugFn } from 'plugfn';
+import { createPlugFnRouter, plugFn } from 'plugfn';
+import { githubProvider, linearProvider, notionProvider } from '@plugfn/providers';
 
 const plug = plugFn({
   database: adapter,
@@ -44,11 +45,16 @@ const plug = plugFn({
       clientId: process.env.LINEAR_CLIENT_ID!,
       clientSecret: process.env.LINEAR_CLIENT_SECRET!,
     },
+    notion: {
+      clientId: process.env.NOTION_CLIENT_ID!,
+      clientSecret: process.env.NOTION_CLIENT_SECRET!,
+    },
   },
 });
 
 plug.providers.register(githubProvider);
 plug.providers.register(linearProvider);
+plug.providers.register(notionProvider);
 
 const router = createPlugFnRouter(plug);
 ```
@@ -57,7 +63,7 @@ Python examples exist, but the Python runtime is still experimental and does not
 
 ## Readiness model
 
-- Core provider set tracked by the release gate: `github`, `linear`, `clickup`, `gmail`
+- Core provider set tracked by the release gate: `github`, `linear`, `clickup`, `gmail`, `notion`
 - Additional providers may exist in source but remain `beta`, `experimental`, `vertical-only`, or `unsupported`
 - Unlisted providers are unsupported by default
 
@@ -70,7 +76,7 @@ See:
 ## Documentation
 
 - [SPEC.md](./SPEC.md) - public product contract and release conditions
-- [typescript/README.md](./typescript/README.md) - TypeScript runtime usage
+- [core/README.md](./core/README.md) - TypeScript runtime usage
 - [python/README.md](./python/README.md) - Python runtime status and usage
 - [docs/getting-started.md](./docs/getting-started.md) - setup and route-mounting walkthrough
 - [docs/provider-readiness-matrix.md](./docs/provider-readiness-matrix.md) - truthful provider status inventory

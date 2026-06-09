@@ -34,7 +34,9 @@ import { SuppressionManager } from './suppression/manager';
 import { AwsSesWebhookHandler } from './events/webhook-handler';
 import { welcomeEmailTemplate, passwordResetTemplate, notificationTemplate } from './templates/defaults';
 import { createRouter } from '@superfunctions/http';
+import { wrapWithSchema } from '@superfunctions/db';
 import { randomUUID } from 'node:crypto';
+import { getSchema } from './schema';
 import {
   DatabaseError,
   EmailProviderError,
@@ -115,7 +117,7 @@ export class Sendfn implements SendfnClient {
 
   constructor(private config: SendfnConfig) {
     // Initialize Database Wrapper
-    this.db = new SendfnDb(config.database);
+    this.db = new SendfnDb(wrapWithSchema(config.database, getSchema()));
     
     // Dependencies
     const templateEngine = new TemplateEngine();

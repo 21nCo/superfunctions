@@ -41,7 +41,7 @@ export const plug = plugFn({
   // database: adapter,
   // auth: auth.provider,
   baseUrl: process.env.BASE_URL || 'http://localhost:3000',
-  encryptionKey: process.env.ENCRYPTION_KEY || 'change-me-32-characters-long!!!',
+  encryptionKey: process.env.ENCRYPTION_KEY!,
   integrations: {
     // Configure your integrations here
     // github: {
@@ -71,7 +71,8 @@ export const plug = plugFn({
       envPath,
       `# PlugFn Configuration
 BASE_URL=http://localhost:3000
-ENCRYPTION_KEY=your-32-character-encryption-key-here!!
+# Generate with: openssl rand -hex 32
+ENCRYPTION_KEY=replace-with-a-32-byte-hex-key
 
 # Provider Credentials
 # GITHUB_CLIENT_ID=
@@ -100,7 +101,7 @@ async function connectGitHub(userId: string) {
   const authUrl = await plug.connections.getAuthUrl({
     userId,
     provider: 'github',
-    redirectUri: 'http://localhost:3000/callback',
+    redirectUri: 'http://localhost:3000/api/plugfn/callback',
     state: 'random-state'
   });
   
@@ -139,4 +140,3 @@ plug.webhooks.on('github', 'issues.opened', async (event) => {
   console.log('  3. Register providers and start building!');
   console.log('\nDocumentation: https://docs.superfunctions.dev/plugfn');
 }
-

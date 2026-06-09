@@ -5,7 +5,7 @@ PlugFn is the shared integration runtime for Superfunctions apps. This guide use
 ## Install
 
 ```bash
-npm install plugfn @superfunctions/db @superfunctions/http
+npm install plugfn @plugfn/providers @plugfn/client @superfunctions/db @superfunctions/http
 ```
 
 Optional CLI:
@@ -17,7 +17,8 @@ npm install -D @plugfn/cli
 ## Core setup
 
 ```ts
-import { githubProvider, linearProvider, plugFn } from 'plugfn';
+import { plugFn } from 'plugfn';
+import { githubProvider, linearProvider, notionProvider } from '@plugfn/providers';
 
 const plug = plugFn({
   database: adapter,
@@ -45,11 +46,16 @@ const plug = plugFn({
       clientId: process.env.LINEAR_CLIENT_ID!,
       clientSecret: process.env.LINEAR_CLIENT_SECRET!,
     },
+    notion: {
+      clientId: process.env.NOTION_CLIENT_ID!,
+      clientSecret: process.env.NOTION_CLIENT_SECRET!,
+    },
   },
 });
 
 plug.providers.register(githubProvider);
 plug.providers.register(linearProvider);
+plug.providers.register(notionProvider);
 ```
 
 ## Shared persistence and HTTP adapters
@@ -98,12 +104,22 @@ app.route('/api/plugfn', toHono(createPlugFnRouter(plug)));
 The canonical TypeScript route inventory exposed by `createPlugFnRouter(plug)` is:
 
 - `GET /callback`
+- `GET /callback/:provider`
+- `POST /webhooks/:provider`
 - `POST /webhooks/:provider/:event`
 - `GET /providers`
 - `GET /connections`
-- `POST /connections/auth`
+- `GET /connections/:connectionId`
+- `GET /connections/:connectionId/status`
+- `POST /connections/start`
 - `POST /connections/disconnect`
 - `GET /workflows`
+- `POST /sync/jobs`
+- `GET /sync/jobs`
+- `GET /sync/jobs/:jobId`
+- `POST /sync/jobs/:jobId/cancel`
+- `POST /sync/checkpoints`
+- `GET /events`
 - `GET /metrics`
 
 For non-webhook routes, PlugFn derives the principal from `plug.config.auth.authenticate` unless you pass an explicit router auth override. Any caller-supplied `userId` or `tenantId` values are treated as assertions and rejected with `TENANT_ACCESS_DENIED` when they do not match the derived principal.
@@ -122,6 +138,7 @@ The current core provider set tracked by release gating is:
 - `linear`
 - `clickup`
 - `gmail`
+- `notion`
 
 ## Release verification
 

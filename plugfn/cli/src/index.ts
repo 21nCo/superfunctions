@@ -5,13 +5,21 @@ import { initCommand } from './commands/init.js';
 import { generateTypesCommand } from './commands/generate-types.js';
 import { addProviderCommand } from './commands/add-provider.js';
 import { testCommand } from './commands/test.js';
+import {
+  connectionsListCommand,
+  doctorCommand,
+  providersInspectCommand,
+  providersListCommand,
+  syncBackfillCommand,
+  webhooksReplayCommand,
+} from './commands/runtime.js';
 
 const program = new Command();
 
 program
   .name('plugfn')
   .description('CLI tool for PlugFn SDK')
-  .version('1.0.0');
+  .version('0.0.1');
 
 // Init command
 program
@@ -52,4 +60,51 @@ program
   .option('--live', 'Run optional provider live health check')
   .action(testCommand);
 
-program.parse();
+const providers = program.command('providers').description('Inspect registered providers');
+providers
+  .command('list')
+  .description('List providers registered by the PlugFn runtime')
+  .option('--json', 'Emit machine-readable JSON output')
+  .action(providersListCommand);
+providers
+  .command('inspect')
+  .description('Inspect a registered provider')
+  .argument('<provider>', 'Provider id')
+  .option('--json', 'Emit machine-readable JSON output')
+  .action(providersInspectCommand);
+
+const connections = program.command('connections').description('Inspect PlugFn connections');
+connections
+  .command('list')
+  .description('List connections for a user')
+  .option('-p, --provider <name>', 'Provider to filter by')
+  .requiredOption('-u, --user-id <id>', 'User ID')
+  .option('--json', 'Emit machine-readable JSON output')
+  .action(connectionsListCommand);
+
+const sync = program.command('sync').description('Run PlugFn sync jobs');
+sync
+  .command('backfill')
+  .description('Start a full backfill sync job')
+  .requiredOption('-p, --provider <name>', 'Provider id')
+  .requiredOption('-c, --connection <id>', 'Connection id')
+  .requiredOption('-r, --resource <name>', 'Resource name')
+  .option('-u, --user-id <id>', 'Actor user ID')
+  .option('--json', 'Emit machine-readable JSON output')
+  .action(syncBackfillCommand);
+
+const webhooks = program.command('webhooks').description('Inspect and replay PlugFn webhooks');
+webhooks
+  .command('replay')
+  .description('Inspect a persisted webhook receipt and deliveries')
+  .requiredOption('--receipt <id>', 'Webhook receipt id')
+  .option('--json', 'Emit machine-readable JSON output')
+  .action(webhooksReplayCommand);
+
+program
+  .command('doctor')
+  .description('Validate PlugFn runtime wiring')
+  .option('--json', 'Emit machine-readable JSON output')
+  .action(doctorCommand);
+
+program.parse(process.argv);

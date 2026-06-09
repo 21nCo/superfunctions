@@ -56,7 +56,7 @@ interface RuntimeConnection {
   provider?: string;
 }
 
-interface DiagnosticRuntime {
+export interface DiagnosticRuntime {
   config: {
     baseUrl: string;
     integrations: Record<string, Record<string, unknown>>;
@@ -83,11 +83,26 @@ interface DiagnosticRuntime {
   };
   providers: {
     get(name: string): unknown;
+    list?(): any[];
+  };
+  sync?: {
+    backfill(input: {
+      provider: string;
+      connectionId: string;
+      resource: string;
+      actor?: { userId: string };
+    }): Promise<unknown>;
+  };
+  runtime?: {
+    webhooks?: {
+      getReceipt(id: string): Promise<unknown>;
+      listDeliveries(receiptId: string): Promise<unknown[]>;
+    };
   };
   [provider: string]: unknown;
 }
 
-interface DiagnosticDependencies {
+export interface DiagnosticDependencies {
   runtime?: DiagnosticRuntime;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -433,7 +448,7 @@ interface WebhookFixture {
   rawBody?: string;
 }
 
-async function resolveRuntime(
+export async function resolveRuntime(
   dependencies: DiagnosticDependencies
 ): Promise<{ runtime: DiagnosticRuntime; configPath?: string }> {
   if (dependencies.runtime) {
@@ -588,7 +603,7 @@ function resolveRedirectUri(
     }
   }
 
-  return `${runtime.config.baseUrl.replace(/\/+$/, '')}/callback`;
+  return `${runtime.config.baseUrl.replace(/\/+$/, '')}/api/plugfn/callback`;
 }
 
 function normalizeScopes(value: unknown): string[] | undefined {

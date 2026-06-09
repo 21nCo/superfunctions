@@ -23,17 +23,17 @@
 
 ### OAuth/auth entrypoints
 
-- `plugfn/typescript/src/core/connection-manager.ts`
+- `plugfn/core/src/core/connection-manager.ts`
   - Local OAuth usage via `OAuthFlowHandler`.
   - In-memory state store initialization via `MemoryTokenStore` (`line 35`).
   - Private member access for state writes/reads/deletes (`lines 77, 92, 98` via `oauthHandler['tokenStore']`).
-- `plugfn/typescript/src/auth/oauth-flow.ts`
+- `plugfn/core/src/auth/oauth-flow.ts`
   - Authorization URL generation and state persistence (`line 18+`).
   - Placeholder state metadata with blank `userId` and `provider` (`lines 26-27`).
-- `plugfn/typescript/src/router/http-router.ts`
+- `plugfn/core/src/router/http-router.ts`
   - Additional route-level state generation via `Math.random` (`lines 150-152`).
   - User identity accepted from query params on connections/workflows routes (`lines 118, 197`).
-- `plugfn/typescript/src/types/config.ts`
+- `plugfn/core/src/types/config.ts`
   - Auth provider interface exists (`line 43`) and config requires `auth` (`line 121`), but this is not enforced in router behavior.
 
 ### Webhook/routing inventory
@@ -65,7 +65,7 @@
 
 ## Baseline test status summary (relevant to OPS-001)
 
-Reference snapshot: `typescript/tests/baseline/current-failures.snapshot.md`
+Reference snapshot: `core/tests/baseline/current-failures.snapshot.md`
 
 - Command: `npm exec --workspace plugfn -- vitest --run || true`
 - Result: 1 test file run, 6 tests total, 3 failed, 3 passed.

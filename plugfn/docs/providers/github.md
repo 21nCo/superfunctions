@@ -17,7 +17,9 @@ Integration with GitHub for repository management, issues, and pull requests.
 ### 2. Configure PlugFn
 
 ```typescript
-// TypeScript
+import { plugFn } from 'plugfn';
+import { githubProvider } from '@plugfn/providers';
+
 const plug = plugFn({
   integrations: {
     github: {
@@ -372,4 +374,3 @@ plug.webhooks.on('github', 'issues.opened', async (event) => {
 - [GitHub API Documentation](https://docs.github.com/en/rest)
 - [GitHub OAuth Documentation](https://docs.github.com/en/developers/apps/building-oauth-apps)
 - [GitHub Webhooks Documentation](https://docs.github.com/en/developers/webhooks-and-events/webhooks)
-

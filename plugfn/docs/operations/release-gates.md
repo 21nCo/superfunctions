@@ -14,19 +14,30 @@ This command is the only supported global readiness check for PlugFn. It emits a
 
 `npm run gate:plugfn-release` proves all of the following from the repository root:
 
-1. `npm --prefix plugfn/typescript run build`
-2. `npm --prefix plugfn/typescript run type-check`
-3. `npm --prefix plugfn/typescript test -- --run`
-4. `npm --prefix plugfn/typescript test -- --run tests/e2e/oauth-callback.test.ts tests/e2e/webhook-verification.test.ts`
-5. `npm --prefix plugfn/cli run build`
-6. `npm --prefix plugfn/cli run type-check`
-7. `npm --prefix plugfn/cli test -- --run`
-8. `python3 -m pytest -q plugfn/python/tests`
-9. docs/status inventory checks for:
+1. `npm --prefix plugfn/core run build`
+2. `npm --prefix plugfn/core run type-check`
+3. `npm --prefix plugfn/core test -- --run`
+4. `npm --prefix plugfn/core test -- --run tests/e2e/oauth-callback.test.ts tests/e2e/webhook-verification.test.ts`
+5. `npm --prefix plugfn/client run build`
+6. `npm --prefix plugfn/client run typecheck`
+7. `npm --prefix plugfn/client test -- --run`
+8. `npm --prefix plugfn/providers run build`
+9. `npm --prefix plugfn/providers run typecheck`
+10. `npm --prefix plugfn/providers test -- --run`
+11. provider-specific gates:
+   - `npm run gate:plugfn-provider-github`
+   - `npm run gate:plugfn-provider-linear`
+   - `npm run gate:plugfn-provider-gmail`
+   - `npm run gate:plugfn-provider-notion`
+12. `npm --prefix plugfn/cli run build`
+13. `npm --prefix plugfn/cli run type-check`
+14. `npm --prefix plugfn/cli test -- --run`
+15. `python3 -m pytest -q plugfn/python/tests`
+16. docs/status inventory checks for:
    - portable paths in public docs
    - package-name truth
    - current gate wording
-   - readiness-matrix coverage for `github`, `linear`, `clickup`, and `gmail`
+   - readiness-matrix coverage for `github`, `linear`, `clickup`, `gmail`, and `notion`
 
 ## Production-ready claim rule
 
@@ -45,6 +56,10 @@ These commands are the reproducible verification surface documented by Phase 08:
 
 ```bash
 npm run gate:plugfn-release
+npm run gate:plugfn-provider-github
+npm run gate:plugfn-provider-linear
+npm run gate:plugfn-provider-gmail
+npm run gate:plugfn-provider-notion
 npm test --workspace plugfn
 npm test --workspace @plugfn/cli
 python3 -m pytest -q plugfn/python/tests
