@@ -176,12 +176,27 @@ export class Sendfn implements SendfnClient {
     }
 
     // Initialize Push Providers
-    if (config.push?.providers.fcm) {
-        this.pushProviders.set('android', new FcmProvider(config.push.providers.fcm));
-        this.pushProviders.set('web', new FcmProvider(config.push.providers.fcm)); 
+    for (const [platform, provider] of Object.entries(config.pushProviders ?? {}) as Array<[Platform, PushProvider | undefined]>) {
+        if (!provider) {
+            continue;
+        }
+        this.pushProviders.set(platform, provider);
+        provider.initialize().catch(err => console.error(`Failed to init ${platform} push provider`, err));
     }
-    if (config.push?.providers.apns) {
-        this.pushProviders.set('ios', new ApnsProvider(config.push.providers.apns));
+    if (!this.pushProviders.has('android') && config.push?.providers.fcm) {
+        const provider = new FcmProvider(config.push.providers.fcm);
+        this.pushProviders.set('android', provider);
+        provider.initialize().catch(err => console.error("Failed to init android push provider", err));
+    }
+    if (!this.pushProviders.has('web') && config.push?.providers.fcm) {
+        const provider = new FcmProvider(config.push.providers.fcm);
+        this.pushProviders.set('web', provider);
+        provider.initialize().catch(err => console.error("Failed to init web push provider", err));
+    }
+    if (!this.pushProviders.has('ios') && config.push?.providers.apns) {
+        const provider = new ApnsProvider(config.push.providers.apns);
+        this.pushProviders.set('ios', provider);
+        provider.initialize().catch(err => console.error("Failed to init ios push provider", err));
     }
     
     this.pushService = new PushService(
@@ -325,6 +340,69 @@ export class Sendfn implements SendfnClient {
                       async () => this.push(await ctx.json()),
                       { successStatus: 201, validationMessage: 'Request body failed validation' }
                     )
+              },
+              // POST /devices
+              {
+                  method: 'POST',
+                  path: '/devices',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(
+                      req,
+                      async () => this.registerDevice(await ctx.json()),
+                      { successStatus: 201, validationMessage: 'Request body failed validation' }
+                    )
+              },
+              // GET /devices?userId=...&platform=...
+              {
+                  method: 'GET',
+                  path: '/devices',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(req, async () => {
+                      const userId = ctx.query.get('userId');
+                      const platform = ctx.query.get('platform') as Platform | null;
+
+                      if (!userId) {
+                        throw new ValidationError('`userId` query parameter is required');
+                      }
+
+                      return {
+                        devices: await this.getDevices(userId, platform ?? undefined),
+                      };
+                    }, { validationMessage: 'Request query failed validation' })
+              },
+              // POST /devices/refresh
+              {
+                  method: 'POST',
+                  path: '/devices/refresh',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(
+                      req,
+                      async () => {
+                        const body = await ctx.json();
+                        return this.refreshDeviceToken(body.oldToken, body.newToken, body.userId, body.platform);
+                      },
+                      { validationMessage: 'Request body failed validation' }
+                    )
+              },
+              // DELETE /devices?token=...
+              {
+                  method: 'DELETE',
+                  path: '/devices',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(req, async () => {
+                      const token = ctx.query.get('token');
+
+                      if (!token) {
+                        throw new ValidationError('`token` query parameter is required');
+                      }
+
+                      await this.deactivateDevice(token);
+                      return { deactivated: true };
+                    }, { validationMessage: 'Request query failed validation' })
               },
               // GET /events
               {

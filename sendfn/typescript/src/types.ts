@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Adapter } from '@superfunctions/db';
 import { EmailProvider } from './email/provider';
 import { SmsProvider } from './sms/provider';
+import type { PushProvider } from './push/provider';
 import type { AwsSesWebhookHandler } from './events/webhook-handler';
 
 // --- Configuration ---
@@ -11,6 +12,7 @@ export interface SendfnConfig {
   email?: EmailConfig; // Kept for legacy options (fromEmail, etc) but provider is external
   emailProvider?: EmailProvider; // New adapter pattern
   smsProvider?: SmsProvider; // New adapter pattern
+  pushProviders?: Partial<Record<Platform, PushProvider>>; // Adapter pattern for APNS, FCM, web push, etc.
   push?: PushConfig;
   templates?: TemplateConfig;
   options?: SendfnOptions;
@@ -54,6 +56,7 @@ export interface FcmConfig {
 }
 
 export interface ApnsConfig {
+  bundleId?: string;
   keyId: string;
   teamId: string;
   key: string;

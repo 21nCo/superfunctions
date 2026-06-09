@@ -6,8 +6,8 @@ export class DeviceTokenManager {
   constructor(private adapter: SendfnDatabaseAdapter) {}
 
   async registerDevice(params: RegisterDeviceParams): Promise<DeviceToken> {
-    // Upsert device token
-    // Assuming upsertDeviceToken in adapter handles uniqueness
+    this.validateRegistration(params);
+
     return await this.adapter.upsertDeviceToken({
         userId: params.userId,
         token: params.token,
@@ -72,5 +72,19 @@ export class DeviceTokenManager {
   // Not in spec specifically but useful
   async deleteToken(id: string): Promise<void> {
       await this.adapter.deleteDeviceToken(id);
+  }
+
+  private validateRegistration(params: RegisterDeviceParams): void {
+    if (!params.userId?.trim()) {
+      throw new ValidationError('`userId` is required to register a device token');
+    }
+
+    if (!params.token?.trim()) {
+      throw new ValidationError('`token` is required to register a device');
+    }
+
+    if (params.platform !== 'ios' && params.platform !== 'android' && params.platform !== 'web') {
+      throw new ValidationError('`platform` must be ios, android, or web');
+    }
   }
 }

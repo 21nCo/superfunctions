@@ -5,7 +5,7 @@ The `sendfn` SDK is a unified communications platform that provides email, SMS, 
 ## Features
 
 - **Unified API**: Send emails, SMS, and push notifications through a single interface.
-- **Adapter-Based Providers**: Inject your preferred providers (for example AWS SES for email and the shipped console SMS adapter for development).
+- **Adapter-Based Providers**: Inject your preferred providers (for example AWS SES for email, APNS/FCM for push, and the shipped console SMS adapter for development).
 - **Built-in API Router**: Optional REST API endpoints for remote management.
 - **Template Engine**: Lightweight engine with default templates (Welcome, Password Reset, etc.).
 - **Suppression Management**: Built-in handling for email bounces and complaints.
@@ -37,7 +37,7 @@ npm run release:verify
 ### 1. Initialize the Client
 
 ```typescript
-import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';
+import { sendfn, awsSesAdapter, apnsAdapter, consoleSmsAdapter } from 'sendfn';
 import type { Adapter } from '@superfunctions/db';
 
 // 1. Setup your shared database adapter.
@@ -53,6 +53,15 @@ const client = sendfn({
     region: 'us-east-1',
   }),
   smsProvider: consoleSmsAdapter(), // Logs SMS to console for development
+  pushProviders: {
+    ios: apnsAdapter({
+      keyId: process.env.APNS_KEY_ID!,
+      teamId: process.env.APNS_TEAM_ID!,
+      key: process.env.APNS_PRIVATE_KEY!,
+      bundleId: 'com.example.app',
+      production: false,
+    }),
+  },
   email: {
     fromEmail: 'noreply@yourdomain.com',
     fromName: 'SuperFunctions App',
@@ -77,8 +86,12 @@ app.listen(3000);
 // Endpoints (Requires 'Authorization: Bearer <adminKey>'):
 // POST /email - Send an email
 // POST /sms   - Send an SMS
-// POST /push  - Send a push notification
-// GET  /events - Query communication events
+// POST /push             - Send a push notification
+// POST /devices          - Register a native/web device token
+// GET  /devices          - List active device tokens for a user
+// POST /devices/refresh  - Refresh a native/web device token
+// DELETE /devices        - Deactivate a device token
+// GET  /events           - Query communication events
 // POST /webhooks/aws-ses - Process verified SES lifecycle events
 ```
 
@@ -90,7 +103,8 @@ interface SendfnConfig {
   emailProvider?: EmailProvider; // e.g., awsSesAdapter()
   smsProvider?: SmsProvider;     // e.g., consoleSmsAdapter()
   email?: EmailConfig;         // Default settings (fromEmail, fromName)
-  push?: PushConfig;           // Credentials for FCM/APNS
+  pushProviders?: Partial<Record<Platform, PushProvider>>; // APNS/FCM/custom adapters
+  push?: PushConfig;           // Legacy credentials for FCM/APNS
   options?: {
     suppressionEnabled?: boolean; // default: true
     eventTracking?: boolean;      // default: true
@@ -131,8 +145,8 @@ await client.sms({
 // Register a device token for a user
 await client.registerDevice({
   userId: 'user-123',
-  token: 'fcm-token-xyz',
-  platform: 'android',
+  token: 'apns-token-xyz',
+  platform: 'ios',
 });
 
 // Send push to all active devices of the user

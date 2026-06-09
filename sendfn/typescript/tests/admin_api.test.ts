@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EmailProvider, SendEmailRequest, SendEmailResponse } from '../src/email/provider';
+import type { PushProvider, SendPushRequest, SendPushResponse } from '../src/push/provider';
 import { sendfn, type SendfnConfig } from '../src/sendfn';
 import { StrongMockAdapter } from './mock-adapter';
 
@@ -30,6 +31,45 @@ class FakeEmailProvider implements EmailProvider {
 
   validateEmail(): boolean {
     return true;
+  }
+
+  async isHealthy(): Promise<boolean> {
+    return true;
+  }
+
+  async close(): Promise<void> {}
+}
+
+class FakePushProvider implements PushProvider {
+  readonly name = 'fake-apns';
+  readonly platform = 'ios';
+  readonly capabilities = {
+    maxPayloadSize: 4096,
+    supportsBatching: true,
+    supportsScheduling: false,
+    supportsImages: true,
+    supportsSilentPush: true,
+  };
+
+  async initialize(): Promise<void> {}
+
+  async sendPush(params: SendPushRequest): Promise<SendPushResponse> {
+    return {
+      success: true,
+      successCount: params.deviceTokens.length,
+      failedCount: 0,
+      invalidTokens: [],
+      results: params.deviceTokens.map((token) => ({ token, success: true })),
+      timestamp: new Date('2026-04-05T00:00:00Z'),
+    };
+  }
+
+  async sendBulkPush(params: SendPushRequest[]): Promise<SendPushResponse[]> {
+    return Promise.all(params.map((request) => this.sendPush(request)));
+  }
+
+  validateToken(token: string): boolean {
+    return Boolean(token);
   }
 
   async isHealthy(): Promise<boolean> {
@@ -122,6 +162,73 @@ describe('admin API envelopes', () => {
       meta: {
         requestId: 'req_admin_unauthorized',
         version: 'v0',
+      },
+    });
+  });
+
+  it('exposes device-token admin routes used by native push clients', async () => {
+    const client = sendfn({
+      database: new StrongMockAdapter() as any,
+      pushProviders: {
+        ios: new FakePushProvider(),
+      },
+      enableApi: true,
+      apiConfig: {
+        adminKey: 'top-secret',
+      },
+    } satisfies SendfnConfig);
+
+    const registerResponse = await (client.router as any).handle(
+      new Request('http://localhost/devices', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer top-secret',
+          'content-type': 'application/json',
+          'x-request-id': 'req_device_register',
+        },
+        body: JSON.stringify({
+          userId: 'user-1',
+          token: 'ios-token',
+          platform: 'ios',
+          appVersion: '1.0.0',
+        }),
+      }),
+    );
+
+    expect(registerResponse.status).toBe(201);
+    await expect(registerResponse.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        userId: 'user-1',
+        token: 'ios-token',
+        platform: 'ios',
+        isActive: true,
+      },
+      meta: {
+        requestId: 'req_device_register',
+      },
+    });
+
+    const listResponse = await (client.router as any).handle(
+      new Request('http://localhost/devices?userId=user-1&platform=ios', {
+        headers: {
+          authorization: 'Bearer top-secret',
+          'x-request-id': 'req_device_list',
+        },
+      }),
+    );
+
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        devices: [
+          {
+            userId: 'user-1',
+            token: 'ios-token',
+            platform: 'ios',
+          },
+        ],
       },
     });
   });

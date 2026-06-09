@@ -275,6 +275,64 @@ describe('push and device phase 5 contracts', () => {
     expect(activeDevices.map((device) => device.token)).toEqual(['android-good', 'web-good']);
   });
 
+  it('supports injected push providers without legacy credential config', async () => {
+    await deviceManager.registerDevice({
+      userId: 'ios-user',
+      token: 'ios-token',
+      platform: 'ios',
+    });
+
+    const iosProvider = new FakePushProvider('custom-apns', 'ios');
+    const service = new PushService(
+      new Map([
+        ['ios', iosProvider],
+      ]),
+      db,
+      deviceManager,
+      {}
+    );
+
+    const result = await service.sendPush({
+      userId: 'ios-user',
+      title: 'Urgent email',
+      body: 'Your OTP is ready.',
+      data: {
+        messageId: 'gmail-msg-1',
+      },
+    });
+
+    expect(result).toMatchObject({
+      provider: 'custom-apns',
+      platform: 'ios',
+      sentCount: 1,
+      status: 'sent',
+    });
+  });
+
+  it('validates device registrations before persistence', async () => {
+    await expect(
+      deviceManager.registerDevice({
+        userId: '',
+        token: 'token',
+        platform: 'ios',
+      })
+    ).rejects.toMatchObject({
+      code: 'SENDFN_VALIDATION_ERROR',
+      message: '`userId` is required to register a device token',
+    });
+
+    await expect(
+      deviceManager.registerDevice({
+        userId: 'user-1',
+        token: '',
+        platform: 'ios',
+      })
+    ).rejects.toMatchObject({
+      code: 'SENDFN_VALIDATION_ERROR',
+      message: '`token` is required to register a device',
+    });
+  });
+
   it('refreshes device tokens by preserving metadata and rejects mismatched old tokens', async () => {
     const initial = await deviceManager.registerDevice({
       userId: 'user-123',

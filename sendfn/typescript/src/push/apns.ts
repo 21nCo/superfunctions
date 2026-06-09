@@ -24,7 +24,7 @@ export class ApnsProvider implements PushProvider {
       team: config.teamId,
       keyId: config.keyId,
       signingKey: config.key,
-      defaultTopic: config.production ? undefined : undefined // Topic usually bundleId
+      defaultTopic: config.bundleId,
     });
   }
 
@@ -34,6 +34,7 @@ export class ApnsProvider implements PushProvider {
 
   async sendPush(params: SendPushRequest): Promise<SendPushResponse> {
     const invalidTokens: string[] = [];
+    const bundleId = this.config?.bundleId;
 
     const results = await mapWithConcurrency(
       params.deviceTokens,
@@ -47,7 +48,8 @@ export class ApnsProvider implements PushProvider {
             data: params.data,
             badge: params.badge,
             sound: params.sound,
-            topic: params.category, // often mapped
+            topic: bundleId,
+            category: params.category,
             priority: params.priority === 'high' ? 10 : 5,
             expiration: params.ttl ? Math.floor(Date.now() / 1000) + params.ttl : undefined,
             collapseId: params.collapseKey,
@@ -117,4 +119,8 @@ export class ApnsProvider implements PushProvider {
     // It uses http2 session. It might need it.
     // Assuming standard usage.
   }
+}
+
+export function apnsAdapter(config: ApnsConfig): ApnsProvider {
+  return new ApnsProvider(config);
 }
