@@ -1,11 +1,19 @@
 import { resendAdapter } from './email/resend-adapter';
 import type { EmailProvider } from './email/provider';
-import type { EmailTransaction, SendEmailParams } from './types';
+import { metaWhatsAppAdapter } from './whatsapp/meta-cloud-adapter';
+import type { WhatsAppProvider } from './whatsapp/provider';
+import type {
+  EmailTransaction,
+  SendEmailParams,
+  SendWhatsAppParams,
+  WhatsAppTransaction,
+} from './types';
 
-export { resendAdapter };
+export { metaWhatsAppAdapter, resendAdapter };
 
 export interface SendFnEdgeConfig {
-  emailProvider: EmailProvider;
+  emailProvider?: EmailProvider;
+  whatsappProvider?: WhatsAppProvider;
   email?: {
     /**
      * Full RFC 5322-ish sender string, for example:
@@ -22,26 +30,44 @@ export interface SendFnEdgeConfig {
 
 export interface SendFnEdgeClient {
   email(params: SendEmailParams): Promise<EmailTransaction>;
+  whatsapp(params: SendWhatsAppParams): Promise<WhatsAppTransaction>;
   close(): Promise<void>;
 }
 
 export function createSendFn(config: SendFnEdgeConfig): SendFnEdgeClient {
-  let initialized = false;
+  let emailInitialized = false;
+  let whatsappInitialized = false;
 
-  async function ensureInitialized(): Promise<void> {
-    if (!initialized) {
+  async function ensureEmailInitialized(): Promise<void> {
+    if (!config.emailProvider) {
+      throw new Error('SendFn email provider not configured');
+    }
+
+    if (!emailInitialized) {
       await config.emailProvider.initialize();
-      initialized = true;
+      emailInitialized = true;
+    }
+  }
+
+  async function ensureWhatsAppInitialized(): Promise<void> {
+    if (!config.whatsappProvider) {
+      throw new Error('SendFn WhatsApp provider not configured');
+    }
+
+    if (!whatsappInitialized) {
+      await config.whatsappProvider.initialize();
+      whatsappInitialized = true;
     }
   }
 
   return {
     async email(params) {
-      await ensureInitialized();
+      await ensureEmailInitialized();
+      const emailProvider = config.emailProvider!;
       const now = new Date();
       const recipients = toArray(params.to) ?? [];
       const sender = resolveSender(config.email);
-      const response = await config.emailProvider.sendEmail({
+      const response = await emailProvider.sendEmail({
         from: sender.header,
         to: recipients,
         cc: toArray(params.cc),
@@ -66,7 +92,7 @@ export function createSendFn(config: SendFnEdgeConfig): SendFnEdgeClient {
         templateId: params.templateId ?? null,
         templateData: params.templateData ?? null,
         status: 'sent',
-        provider: config.emailProvider.name,
+        provider: emailProvider.name,
         providerMessageId: response.providerMessageId ?? response.messageId ?? null,
         deliveredAt: null,
         bouncedAt: null,
@@ -77,8 +103,43 @@ export function createSendFn(config: SendFnEdgeConfig): SendFnEdgeClient {
         sentAt: response.timestamp
       } as EmailTransaction;
     },
+    async whatsapp(params) {
+      await ensureWhatsAppInitialized();
+      const whatsappProvider = config.whatsappProvider!;
+      const now = new Date();
+      const response = await whatsappProvider.sendWhatsApp({
+        to: params.to,
+        message: params.message,
+        previewUrl: params.previewUrl,
+        metadata: params.metadata,
+      });
+
+      if (!response.success) {
+        throw new Error(response.error?.message ?? 'SendFn WhatsApp delivery failed');
+      }
+
+      return {
+        id: response.messageId ?? response.providerMessageId ?? crypto.randomUUID(),
+        userId: params.userId,
+        to: params.to,
+        message: params.message,
+        provider: whatsappProvider.name,
+        providerMessageId: response.providerMessageId ?? response.messageId ?? null,
+        status: 'sent',
+        sentAt: response.timestamp,
+        metadata: {
+          ...(params.metadata ?? {}),
+          raw: response.raw,
+        },
+        createdAt: now,
+        updatedAt: now,
+      } as WhatsAppTransaction;
+    },
     async close() {
-      await config.emailProvider.close();
+      await Promise.all([
+        config.emailProvider?.close(),
+        config.whatsappProvider?.close(),
+      ]);
     }
   };
 }

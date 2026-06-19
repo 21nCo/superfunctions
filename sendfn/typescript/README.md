@@ -1,11 +1,11 @@
 # Sendfn TypeScript SDK
 
-The `sendfn` SDK is a unified communications platform that provides email, SMS, and push notification capabilities. It follows the Superfunctions pattern, utilizing shared database and HTTP abstractions with a modular adapter system for providers.
+The `sendfn` SDK is a unified communications platform that provides email, SMS, WhatsApp, and push notification capabilities. It follows the Superfunctions pattern, utilizing shared database and HTTP abstractions with a modular adapter system for providers.
 
 ## Features
 
-- **Unified API**: Send emails, SMS, and push notifications through a single interface.
-- **Adapter-Based Providers**: Inject your preferred providers (for example AWS SES for email and the shipped console SMS adapter for development).
+- **Unified API**: Send emails, SMS, WhatsApp messages, and push notifications through a single interface.
+- **Adapter-Based Providers**: Inject your preferred providers (for example AWS SES for email, Meta WhatsApp Cloud API for WhatsApp, and the shipped console SMS adapter for development).
 - **Built-in API Router**: Optional REST API endpoints for remote management.
 - **Template Engine**: Lightweight engine with default templates (Welcome, Password Reset, etc.).
 - **Suppression Management**: Built-in handling for email bounces and complaints.
@@ -37,7 +37,7 @@ npm run release:verify
 ### 1. Initialize the Client
 
 ```typescript
-import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';
+import { sendfn, awsSesAdapter, consoleSmsAdapter, metaWhatsAppAdapter } from 'sendfn';
 import type { Adapter } from '@superfunctions/db';
 
 // 1. Setup your shared database adapter.
@@ -53,6 +53,10 @@ const client = sendfn({
     region: 'us-east-1',
   }),
   smsProvider: consoleSmsAdapter(), // Logs SMS to console for development
+  whatsappProvider: metaWhatsAppAdapter({
+    accessToken: process.env.WHATSAPP_ACCESS_TOKEN!,
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID!,
+  }),
   email: {
     fromEmail: 'noreply@yourdomain.com',
     fromName: 'SuperFunctions App',
@@ -77,6 +81,7 @@ app.listen(3000);
 // Endpoints (Requires 'Authorization: Bearer <adminKey>'):
 // POST /email - Send an email
 // POST /sms   - Send an SMS
+// POST /whatsapp - Send a WhatsApp message
 // POST /push  - Send a push notification
 // GET  /events - Query communication events
 // POST /webhooks/aws-ses - Process verified SES lifecycle events
@@ -89,6 +94,7 @@ interface SendfnConfig {
   database: Adapter;           // From @superfunctions/db
   emailProvider?: EmailProvider; // e.g., awsSesAdapter()
   smsProvider?: SmsProvider;     // e.g., consoleSmsAdapter()
+  whatsappProvider?: WhatsAppProvider; // e.g., metaWhatsAppAdapter()
   email?: EmailConfig;         // Default settings (fromEmail, fromName)
   push?: PushConfig;           // Credentials for FCM/APNS
   options?: {
@@ -122,6 +128,16 @@ await client.sms({
   userId: 'user-123',
   to: '+1234567890',
   message: 'Your verification code is 554433',
+});
+```
+
+### Sending WhatsApp Messages
+
+```typescript
+await client.whatsapp({
+  userId: 'user-123',
+  to: '+1234567890',
+  message: 'Your reminder is due',
 });
 ```
 
@@ -171,6 +187,7 @@ The database adapter expects the following models to be present in your database
 
 - `email_transactions`
 - `sms_transactions`
+- `whatsapp_transactions`
 - `push_notifications`
 - `device_tokens`
 - `suppression_list`

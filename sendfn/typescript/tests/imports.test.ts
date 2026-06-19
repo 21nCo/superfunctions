@@ -1,11 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { sendfn } from '../src';
+import { metaWhatsAppAdapter, sendfn } from '../src';
 
 describe('TypeScript package baseline', () => {
   it('exports the public factory', () => {
     expect(typeof sendfn).toBe('function');
+  });
+
+  it('exports the WhatsApp adapter factory', () => {
+    expect(typeof metaWhatsAppAdapter).toBe('function');
   });
 
   it('keeps the package manifest aligned with the public package name', () => {
@@ -32,7 +36,7 @@ describe('TypeScript package baseline', () => {
     const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 
     expect(readme).toContain('npm install sendfn @superfunctions/db @superfunctions/http');
-    expect(readme).toContain("import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';");
+    expect(readme).toContain("import { sendfn, awsSesAdapter, consoleSmsAdapter, metaWhatsAppAdapter } from 'sendfn';");
     expect(readme).not.toContain('@sendfn/core');
   });
 });

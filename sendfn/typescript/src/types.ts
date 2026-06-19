@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { Adapter } from '@superfunctions/db';
 import { EmailProvider } from './email/provider';
 import { SmsProvider } from './sms/provider';
+import type { PushProvider } from './push/provider';
+import type { WhatsAppProvider } from './whatsapp/provider';
 import type { AwsSesWebhookHandler } from './events/webhook-handler';
 
 // --- Configuration ---
@@ -11,6 +13,8 @@ export interface SendfnConfig {
   email?: EmailConfig; // Kept for legacy options (fromEmail, etc) but provider is external
   emailProvider?: EmailProvider; // New adapter pattern
   smsProvider?: SmsProvider; // New adapter pattern
+  whatsappProvider?: WhatsAppProvider;
+  pushProviders?: Partial<Record<Platform, PushProvider>>;
   push?: PushConfig;
   templates?: TemplateConfig;
   options?: SendfnOptions;
@@ -116,6 +120,23 @@ export interface SendSmsParams {
   metadata?: Record<string, any>;
 }
 
+// --- WhatsApp ---
+
+export interface MetaWhatsAppConfig {
+  accessToken: string;
+  phoneNumberId: string;
+  apiVersion?: string;
+  endpoint?: string;
+}
+
+export interface SendWhatsAppParams {
+  userId: string;
+  to: string;
+  message: string;
+  previewUrl?: boolean;
+  metadata?: Record<string, any>;
+}
+
 // --- Push ---
 
 export interface SendPushParams {
@@ -181,6 +202,22 @@ export const SmsTransactionSchema = z.object({
 
 export type SmsTransaction = z.infer<typeof SmsTransactionSchema>;
 
+export const WhatsAppTransactionSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string(),
+  to: z.string(),
+  message: z.string(),
+  provider: z.string(),
+  providerMessageId: z.string().nullable(),
+  status: z.enum(['pending', 'sent', 'delivered', 'failed']),
+  sentAt: z.date().nullable(),
+  metadata: z.record(z.any()).default({}),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+
+export type WhatsAppTransaction = z.infer<typeof WhatsAppTransactionSchema>;
+
 export const PushNotificationSchema = z.object({
   id: z.string().uuid(),
   userId: z.string(),
@@ -232,7 +269,7 @@ export type SuppressionList = z.infer<typeof SuppressionListSchema>;
 export const CommunicationEventSchema = z.object({
   id: z.string().uuid(),
   referenceId: z.string(), // Foreign key to EmailTransaction or PushNotification
-  referenceType: z.enum(['email', 'push', 'sms']),
+  referenceType: z.enum(['email', 'push', 'sms', 'whatsapp']),
   eventType: z.enum(['sent', 'delivered', 'bounced', 'complained', 'opened', 'clicked', 'failed']),
   provider: z.string(),
   providerEventId: z.string().nullable(),
@@ -250,6 +287,7 @@ export type CommunicationEvent = z.infer<typeof CommunicationEventSchema>;
 
 export type CreateEmailTransaction = Omit<EmailTransaction, 'id' | 'createdAt' | 'updatedAt'>;
 export type CreateSmsTransaction = Omit<SmsTransaction, 'id' | 'createdAt' | 'updatedAt'>;
+export type CreateWhatsAppTransaction = Omit<WhatsAppTransaction, 'id' | 'createdAt' | 'updatedAt'>;
 export type CreatePushNotification = Omit<PushNotification, 'id' | 'createdAt' | 'updatedAt'>;
 export type CreateDeviceToken = Omit<DeviceToken, 'id' | 'createdAt' | 'updatedAt'>;
 export type CreateSuppression = Omit<SuppressionList, 'id' | 'createdAt'>;
@@ -261,7 +299,7 @@ export type SendfnErrorDetails = Record<string, unknown>;
 
 export interface QueryEventsParams {
   referenceId?: string;
-  referenceType?: 'email' | 'push' | 'sms';
+  referenceType?: 'email' | 'push' | 'sms' | 'whatsapp';
   providerMessageId?: string;
   provider?: string;
   userId?: string;
@@ -284,6 +322,7 @@ export interface SendfnClient {
   email(params: SendEmailParams): Promise<EmailTransaction>;
   bulkEmail(recipients: SendEmailParams[]): Promise<EmailTransaction[]>;
   sms(params: SendSmsParams): Promise<SmsTransaction>;
+  whatsapp(params: SendWhatsAppParams): Promise<WhatsAppTransaction>;
   push(params: SendPushParams): Promise<PushNotification>;
   bulkPush(notifications: SendPushParams[]): Promise<PushNotification[]>;
   registerDevice(params: RegisterDeviceParams): Promise<DeviceToken>;
@@ -302,6 +341,7 @@ export interface SendfnClient {
   getEmailEvents(transactionId: string): Promise<CommunicationEvent[]>;
   getPushEvents(notificationId: string): Promise<CommunicationEvent[]>;
   getSmsEvents(transactionId: string): Promise<CommunicationEvent[]>;
+  getWhatsAppEvents(transactionId: string): Promise<CommunicationEvent[]>;
   queryEvents(params: QueryEventsParams): Promise<CommunicationEvent[]>;
   checkSuppressionList(email: string): Promise<SuppressionCheckResult>;
   addToSuppressionList(params: AddSuppressionParams): Promise<SuppressionList>;

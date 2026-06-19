@@ -118,3 +118,7 @@ export class ApnsProvider implements PushProvider {
     // Assuming standard usage.
   }
 }
+
+export function apnsAdapter(config: ApnsConfig): ApnsProvider {
+  return new ApnsProvider(config);
+}

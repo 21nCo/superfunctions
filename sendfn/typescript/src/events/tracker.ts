@@ -10,7 +10,7 @@ export class EventTracker {
 
   async getEvents(
     referenceId: string,
-    referenceType: 'email' | 'push' | 'sms'
+    referenceType: 'email' | 'push' | 'sms' | 'whatsapp'
   ): Promise<CommunicationEvent[]> {
     return this.adapter.getEventsByReference(referenceId, referenceType);
   }

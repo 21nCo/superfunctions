@@ -4,6 +4,8 @@ import {
   EmailTransaction,
   SendSmsParams,
   SmsTransaction,
+  SendWhatsAppParams,
+  WhatsAppTransaction,
   SendPushParams,
   PushNotification,
   RegisterDeviceParams,
@@ -28,6 +30,8 @@ import { ApnsProvider } from './push/apns';
 import type { PushProvider } from './push/provider';
 import { SmsService } from './sms/service';
 import type { SmsProvider } from './sms/provider';
+import { WhatsAppService } from './whatsapp/service';
+import type { WhatsAppProvider } from './whatsapp/provider';
 import { DeviceTokenManager } from './push/device-manager';
 import { EventTracker } from './events/tracker';
 import { SuppressionManager } from './suppression/manager';
@@ -44,6 +48,7 @@ import {
   SuppressionError,
   TemplateError,
   ValidationError,
+  WhatsAppProviderError,
 } from './errors';
 
 type SendfnErrorConstructor = new (message: string, options?: { cause?: unknown }) => SendfnError;
@@ -99,6 +104,7 @@ function buildErrorResponse(
 export class Sendfn implements SendfnClient {
   private emailService?: EmailService;
   private smsService?: SmsService;
+  private whatsappService?: WhatsAppService;
   private pushService: PushService;
   private eventTracker: EventTracker;
   private suppressionManager: SuppressionManager;
@@ -108,6 +114,7 @@ export class Sendfn implements SendfnClient {
   private db: SendfnDb;
   private emailProvider?: EmailProvider;
   private smsProvider?: SmsProvider;
+  private whatsappProvider?: WhatsAppProvider;
   private pushProviders = new Map<Platform, PushProvider>();
   private closed = false;
   
@@ -175,13 +182,42 @@ export class Sendfn implements SendfnClient {
         );
     }
 
-    // Initialize Push Providers
-    if (config.push?.providers.fcm) {
-        this.pushProviders.set('android', new FcmProvider(config.push.providers.fcm));
-        this.pushProviders.set('web', new FcmProvider(config.push.providers.fcm)); 
+    // Initialize WhatsApp Service if Provider is provided
+    if (config.whatsappProvider) {
+        this.whatsappProvider = config.whatsappProvider;
+        config.whatsappProvider.initialize().catch(err => console.error("Failed to init whatsapp provider", err));
+
+        this.whatsappService = new WhatsAppService(
+            config.whatsappProvider,
+            this.db,
+            config.options || {}
+        );
     }
-    if (config.push?.providers.apns) {
-        this.pushProviders.set('ios', new ApnsProvider(config.push.providers.apns));
+
+    // Initialize Push Providers
+    for (const [platform, provider] of Object.entries(config.pushProviders ?? {}) as Array<[Platform, PushProvider | undefined]>) {
+        if (!provider) {
+            continue;
+        }
+        this.pushProviders.set(platform, provider);
+        provider.initialize().catch(err => console.error(`Failed to init ${platform} push provider`, err));
+    }
+    if (config.push?.providers.fcm) {
+        if (!this.pushProviders.has('android')) {
+          const provider = new FcmProvider(config.push.providers.fcm);
+          this.pushProviders.set('android', provider);
+          provider.initialize().catch(err => console.error("Failed to init android push provider", err));
+        }
+        if (!this.pushProviders.has('web')) {
+          const provider = new FcmProvider(config.push.providers.fcm);
+          this.pushProviders.set('web', provider);
+          provider.initialize().catch(err => console.error("Failed to init web push provider", err));
+        }
+    }
+    if (!this.pushProviders.has('ios') && config.push?.providers.apns) {
+        const provider = new ApnsProvider(config.push.providers.apns);
+        this.pushProviders.set('ios', provider);
+        provider.initialize().catch(err => console.error("Failed to init ios push provider", err));
     }
     
     this.pushService = new PushService(
@@ -314,6 +350,18 @@ export class Sendfn implements SendfnClient {
                       { successStatus: 201, validationMessage: 'Request body failed validation' }
                     )
               },
+              // POST /whatsapp
+              {
+                  method: 'POST',
+                  path: '/whatsapp',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(
+                      req,
+                      async () => this.whatsapp(await ctx.json()),
+                      { successStatus: 201, validationMessage: 'Request body failed validation' }
+                    )
+              },
               // POST /push
               {
                   method: 'POST',
@@ -408,6 +456,14 @@ export class Sendfn implements SendfnClient {
       return this.withTypedError(() => this.smsService!.sendSms(params), SmsProviderError);
   }
 
+  // WhatsApp methods
+  async whatsapp(params: SendWhatsAppParams): Promise<WhatsAppTransaction> {
+      if (!this.whatsappService) {
+          throw new WhatsAppProviderError("WhatsApp provider not configured");
+      }
+      return this.withTypedError(() => this.whatsappService!.sendWhatsApp(params), WhatsAppProviderError);
+  }
+
   // Push methods
   async push(params: SendPushParams): Promise<PushNotification> {
     return this.withTypedError(() => this.pushService.sendPush(params), PushProviderError);
@@ -488,6 +544,10 @@ export class Sendfn implements SendfnClient {
       return this.withTypedError(() => this.eventTracker.getEvents(transactionId, "sms"), DatabaseError);
   }
 
+  async getWhatsAppEvents(transactionId: string): Promise<CommunicationEvent[]> {
+      return this.withTypedError(() => this.eventTracker.getEvents(transactionId, "whatsapp"), DatabaseError);
+  }
+
   async queryEvents(params: QueryEventsParams): Promise<CommunicationEvent[]> {
     return this.withTypedError(
       () => this.eventTracker.queryEvents(params as FindEventParams),
@@ -545,6 +605,9 @@ export class Sendfn implements SendfnClient {
     }
     if (this.smsProvider) {
       resources.add(this.smsProvider);
+    }
+    if (this.whatsappProvider) {
+      resources.add(this.whatsappProvider);
     }
     for (const provider of this.pushProviders.values()) {
       resources.add(provider);
