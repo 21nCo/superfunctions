@@ -1,8 +1,12 @@
 export * from "./route-helpers";
 export {
+  createCollectionPostLoad as createDocsCollectionPostLoad,
   createSearchArtifactResponse as createDocsSearchArtifactResponse,
   createPostLoad as createDocsBlogPostLoad,
+  generateCollectionParams as generateDocsCollectionParams,
   generateBlogParams as generateDocsBlogParams,
+  getCollectionPostData as getDocsCollectionPostData,
+  getCollectionPosts as getDocsCollectionPosts,
   getPostData as getDocsBlogPostData,
   resolveDocsPageSurface as resolveEmbeddedDocsSurface,
   resolveDocsRouteData as resolveEmbeddedDocsRouteData,

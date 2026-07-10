@@ -1,9 +1,11 @@
 import {
   assertValidSourceEntries,
+  createNamedCollection,
   createSourceEntryId,
+  normalizeDatedCollectionId,
   normalizeProviderPath,
 } from "./provider";
-import { buildCanonicalBlogRecords } from "./blog";
+import { buildCanonicalDatedCollectionRecords } from "./blog";
 import { buildOpenApiReference } from "./openapi";
 import { assertRouteAvailability } from "./routing";
 import { buildSidebars } from "./navigation";
@@ -27,6 +29,8 @@ interface LegacyManifestConfig {
   };
   versions?: Version[];
   navigation?: DocsConfig["navigation"];
+  blog?: DocsConfig["blog"];
+  collections?: DocsConfig["collections"];
   content?: Partial<DocsConfig["content"]>;
 }
 
@@ -44,6 +48,34 @@ const DEFAULT_COLLECTIONS: DocsCollection[] = [
   "api",
   "assets",
 ];
+
+function getConfiguredDatedCollectionIds(config: DocsConfig): string[] {
+  return Object.keys(config.collections ?? {})
+    .map((collectionId) => normalizeDatedCollectionId(collectionId))
+    .filter((collectionId) => collectionId.length > 0)
+    .sort((left, right) =>
+      left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
+    );
+}
+
+function getConfiguredDatedCollection(
+  config: DocsConfig,
+  collectionId: string
+): NonNullable<DocsConfig["collections"]>[string] | undefined {
+  const entries = Object.entries(config.collections ?? {});
+  return entries.find(
+    ([key]) => normalizeDatedCollectionId(key) === collectionId
+  )?.[1];
+}
+
+function getSourceCollections(config: DocsConfig): DocsCollection[] {
+  return [
+    ...DEFAULT_COLLECTIONS,
+    ...getConfiguredDatedCollectionIds(config).map((collectionId) =>
+      createNamedCollection(collectionId)
+    ),
+  ];
+}
 
 function isDocsConfig(config: ManifestConfig): config is DocsConfig {
   return (
@@ -73,6 +105,7 @@ function toCanonicalConfig(config: ManifestConfig): DocsConfig {
         assetsDir: config.content.assetsDir ?? "public",
         metaFileName: config.content.metaFileName ?? "meta.json",
       },
+      collections: config.collections,
     };
   }
 
@@ -112,6 +145,8 @@ function toCanonicalConfig(config: ManifestConfig): DocsConfig {
       metaFileName: config.content?.metaFileName ?? "meta.json",
     },
     navigation: config.navigation,
+    collections: config.collections,
+    blog: config.blog,
   };
 }
 
@@ -152,7 +187,7 @@ async function listCanonicalEntries(input: {
   if (typeof input.provider.listEntries === "function") {
     entries = await input.provider.listEntries({
       config: input.config,
-      collections: DEFAULT_COLLECTIONS,
+      collections: getSourceCollections(input.config),
     });
   } else {
     const legacy = await input.provider.list();
@@ -211,35 +246,82 @@ export async function buildManifest(
     };
   }
 
-  const canonicalBlog = buildCanonicalBlogRecords({
-    posts: normalized.posts,
-    basePath: canonicalConfig.site.basePath,
-    preview: options.preview,
-    pageSize: options.blogPageSize,
-  });
-  for (const post of canonicalBlog.posts) {
-    assertRouteAvailability({
-      routes,
-      path: post.path,
-      sourceId: post.id,
+  const postsByCollection = new Map<string, typeof normalized.posts>();
+  for (const post of normalized.posts) {
+    const collectionId = normalizeDatedCollectionId(post.collectionId || "blog");
+    const collectionPosts = postsByCollection.get(collectionId) ?? [];
+    collectionPosts.push(post);
+    postsByCollection.set(collectionId, collectionPosts);
+  }
+  if (!postsByCollection.has("blog")) {
+    postsByCollection.set("blog", []);
+  }
+  for (const collectionId of getConfiguredDatedCollectionIds(canonicalConfig)) {
+    if (!postsByCollection.has(collectionId)) {
+      postsByCollection.set(collectionId, []);
+    }
+  }
+
+  const datedCollections: NonNullable<DocsManifest["collections"]> = {};
+  const sortedDatedCollectionIds = [...postsByCollection.keys()].sort((left, right) =>
+    left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
+  );
+
+  for (const collectionId of sortedDatedCollectionIds) {
+    const collectionConfig = getConfiguredDatedCollection(canonicalConfig, collectionId);
+    const isLegacyBlog = collectionId === "blog";
+    const label = collectionConfig?.label ?? (isLegacyBlog ? "Blog" : collectionId);
+    const searchScope = collectionConfig?.scope ?? (isLegacyBlog ? "blog" : collectionId);
+    const canonicalCollection = buildCanonicalDatedCollectionRecords({
+      posts: postsByCollection.get(collectionId) ?? [],
+      collectionId,
+      label,
+      searchScope,
+      basePath: canonicalConfig.site.basePath,
+      routeBase: isLegacyBlog ? canonicalConfig.blog?.routeBase : collectionConfig?.routeBase,
+      feedPath: isLegacyBlog ? canonicalConfig.blog?.feedPath : collectionConfig?.feedPath,
+      preview: options.preview,
+      pageSize: options.blogPageSize,
     });
-    routes.set(post.path, post.id);
-    posts[post.id] = {
-      kind: "post",
-      id: post.id,
-      slug: post.slug,
-      path: post.path,
-      title: post.title,
-      date: post.date,
-      publishedAt: post.publishedAt,
-      author: post.author,
-      excerpt: post.excerpt,
-      summary: post.summary,
-      draft: post.draft,
-      tags: post.tags,
-      body: post.body,
-      frontmatter: post.frontmatter,
+
+    datedCollections[collectionId] = {
+      id: canonicalCollection.id,
+      label: canonicalCollection.label,
+      scope: canonicalCollection.scope,
+      listRoute: canonicalCollection.listRoute,
+      feedPath: canonicalCollection.feedPath,
+      postOrder: canonicalCollection.postOrder,
+      tags: canonicalCollection.tags,
+      archives: canonicalCollection.archives,
     };
+
+    for (const post of canonicalCollection.posts) {
+      assertRouteAvailability({
+        routes,
+        path: post.path,
+        sourceId: post.id,
+      });
+      routes.set(post.path, post.id);
+      posts[post.id] = {
+        kind: "post",
+        id: post.id,
+        collectionId: post.collectionId,
+        collectionLabel: post.collectionLabel,
+        searchScope: post.searchScope,
+        slug: post.slug,
+        path: post.path,
+        title: post.title,
+        date: post.date,
+        publishedAt: post.publishedAt,
+        author: post.author,
+        excerpt: post.excerpt,
+        summary: post.summary,
+        draft: post.draft,
+        tags: post.tags,
+        body: post.body,
+        frontmatter: post.frontmatter,
+      };
+    }
   }
 
   for (const api of normalized.apis) {
@@ -334,12 +416,13 @@ export async function buildManifest(
     apis,
     sidebars,
     blog: {
-      listRoute: canonicalBlog.listRoute,
-      feedPath: canonicalBlog.feedPath,
-      postOrder: canonicalBlog.postOrder,
-      tags: canonicalBlog.tags,
-      archives: canonicalBlog.archives,
+      listRoute: datedCollections.blog.listRoute,
+      feedPath: datedCollections.blog.feedPath,
+      postOrder: datedCollections.blog.postOrder,
+      tags: datedCollections.blog.tags,
+      archives: datedCollections.blog.archives,
     },
+    collections: datedCollections,
     embedded: {
       pageRoutePrefix: embeddedPageRoutePrefix,
       surfaceRoutePrefix: embeddedSurfaceRoutePrefix,

@@ -4,6 +4,11 @@ import type { BlogPost, DocsManifest } from "./types";
 export interface RSSFeedOptions {
   title: string;
   description: string;
+  /**
+   * Generate a feed for a named dated collection such as `changelog`.
+   * When omitted, the legacy blog surface is used.
+   */
+  collectionId?: string;
   /** Public URL for the channel (often the blog index page). */
   link: string;
   language?: string;
@@ -29,24 +34,29 @@ export function generateRSSFeed(
   const { title, description, link, language = "en" } = options;
 
   const normalizedLink = link.replace(/\/+$/, "");
-  const orderedIds = manifest.blog?.postOrder ?? [];
+  const collectionSurface = options.collectionId
+    ? manifest.collections?.[options.collectionId]
+    : undefined;
+  const orderedIds = collectionSurface?.postOrder ?? manifest.blog?.postOrder ?? [];
   const orderedPostsFromManifest = orderedIds
     .map((id) => manifest.posts[id])
     .filter((post): post is BlogPost => Boolean(post));
   const posts =
     orderedPostsFromManifest.length > 0
       ? orderedPostsFromManifest
-      : Object.values(manifest.posts).sort((left, right) => {
-          const leftDate = assertValidBlogPublishMetadata(left).timestamp;
-          const rightDate = assertValidBlogPublishMetadata(right).timestamp;
-          if (leftDate !== rightDate) {
-            return rightDate - leftDate;
-          }
-          return left.slug.localeCompare(right.slug, "en", {
-            sensitivity: "variant",
-            numeric: true,
+      : Object.values(manifest.posts)
+          .filter((post) => !options.collectionId || post.collectionId === options.collectionId)
+          .sort((left, right) => {
+            const leftDate = assertValidBlogPublishMetadata(left).timestamp;
+            const rightDate = assertValidBlogPublishMetadata(right).timestamp;
+            if (leftDate !== rightDate) {
+              return rightDate - leftDate;
+            }
+            return left.slug.localeCompare(right.slug, "en", {
+              sensitivity: "variant",
+              numeric: true,
+            });
           });
-        });
 
   const items = posts
     .map((post) => {
@@ -69,7 +79,7 @@ export function generateRSSFeed(
     })
     .join("");
 
-  const feedPath = manifest.blog?.feedPath ?? "/rss.xml";
+  const feedPath = collectionSurface?.feedPath ?? manifest.blog?.feedPath ?? "/rss.xml";
   const feedLink = options.feedHref ?? `${normalizedLink}${feedPath}`;
   const lastBuildDate = resolveBlogLastBuildDate(posts);
 

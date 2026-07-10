@@ -1,7 +1,10 @@
 export * from "./route-helpers";
 export {
   createSearchArtifactResponse as createDocsSearchArtifactResponse,
+  generateCollectionParams as generateDocsCollectionParams,
   generateBlogParams as generateDocsBlogParams,
+  getCollectionPostData as getDocsCollectionPostData,
+  getCollectionPosts as getDocsCollectionPosts,
   getPostData as getDocsBlogPostData,
   resolveDocsPageSurface as resolveEmbeddedDocsSurface,
   resolveDocsRouteData as resolveEmbeddedDocsRouteData,

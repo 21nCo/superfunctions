@@ -23,6 +23,9 @@ export interface DocPage {
 export interface BlogPost {
   kind: "post";
   id: string;
+  collectionId?: string;
+  collectionLabel?: string;
+  searchScope?: string;
   slug: string;
   path: string;
   title: string;
@@ -60,6 +63,12 @@ export interface BlogManifestSurface {
   postOrder: string[];
   tags: Record<string, BlogTagIndex>;
   archives: BlogArchivePage[];
+}
+
+export interface DatedCollectionManifestSurface extends BlogManifestSurface {
+  id: string;
+  label: string;
+  scope: string;
 }
 
 export interface EmbeddedPageRoute {
@@ -123,6 +132,7 @@ export interface DocsManifest {
   sidebars: Record<string, Sidebar>; // Can be keyed by version, e.g., 'v2:default'
   routes: Record<string, string>; // path -> ID map for routing
   blog?: BlogManifestSurface;
+  collections?: Record<string, DatedCollectionManifestSurface>;
   embedded?: EmbeddedManifestSurface;
 }
 
@@ -135,7 +145,9 @@ export interface RawContentEntry {
 }
 
 export type DocsFramework = "next" | "sveltekit" | "embedded";
-export type DocsCollection = "docs" | "pages" | "blog" | "api" | "assets";
+export type DocsSystemCollection = "docs" | "pages" | "blog" | "api" | "assets";
+export type DocsNamedCollection = `collection:${string}`;
+export type DocsCollection = DocsSystemCollection | DocsNamedCollection;
 export type DocsVersionMode = "none" | "path-prefix" | "path-segment";
 export type DocsCompatPreset = "none" | "fumadocs-v15";
 
@@ -171,7 +183,7 @@ export interface DocsSidebarDefinition {
   include?: string[];
 }
 
-export type DocsSearchScope = "docs" | "api" | "blog";
+export type DocsSearchScope = "docs" | "api" | "blog" | (string & {});
 
 export interface DocsSearchRouteScopeOverride {
   pattern: string;
@@ -184,6 +196,29 @@ export interface DocsSearchConfig {
   bodyIndexing?: "full" | "summary" | "disabled";
   maxArtifactBytes?: number;
   routeScopeOverrides?: DocsSearchRouteScopeOverride[];
+}
+
+export interface DocsBlogConfig {
+  /**
+   * Public route for the dated post/update collection.
+   *
+   * Defaults to `${site.basePath}/blog`. Product docs can set this to
+   * `/changelog` while reusing the same one-MDX-file-per-update pipeline.
+   */
+  routeBase?: `/${string}`;
+  /**
+   * Public RSS/feed route. Defaults to `${routeBase}/rss.xml`.
+   */
+  feedPath?: `/${string}`;
+}
+
+export interface DocsDatedCollectionConfig {
+  type?: "dated";
+  dir: string;
+  routeBase: `/${string}`;
+  feedPath?: `/${string}`;
+  label?: string;
+  scope?: string;
 }
 
 export interface CompiledHeadingBlock {
@@ -302,6 +337,8 @@ export interface DocsConfig {
     topNav?: DocsTopNavItem[];
     sidebars?: Record<string, DocsSidebarDefinition>;
   };
+  collections?: Record<string, DocsDatedCollectionConfig>;
+  blog?: DocsBlogConfig;
   search?: DocsSearchConfig;
   auth?: {
     enabled: boolean;

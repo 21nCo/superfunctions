@@ -125,7 +125,10 @@ function summarizeBody(value: string, maxLength = 220): string {
   return redactSensitiveText(`${normalized.slice(0, maxLength - 1).trimEnd()}…`);
 }
 
-function normalizeScopes(searchConfig: DocsConfig["search"]): DocsSearchScope[] {
+function normalizeScopes(
+  searchConfig: DocsConfig["search"],
+  manifest?: DocsManifest
+): DocsSearchScope[] {
   const explicitScopes = searchConfig?.scopes;
   if (Array.isArray(explicitScopes) && explicitScopes.length === 0) {
     throw createDocsError({
@@ -139,8 +142,14 @@ function normalizeScopes(searchConfig: DocsConfig["search"]): DocsSearchScope[] 
       ],
     });
   }
-  const scopes = (explicitScopes ?? DEFAULT_SCOPES) as DocsSearchScope[];
-  return [...scopes].sort((left, right) =>
+  const manifestCollectionScopes = Object.values(manifest?.collections ?? {}).map(
+    (collection) => collection.scope
+  );
+  const scopes = (explicitScopes ?? [
+    ...DEFAULT_SCOPES,
+    ...manifestCollectionScopes,
+  ]) as DocsSearchScope[];
+  return [...new Set(scopes)].sort((left, right) =>
     left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
   );
 }
@@ -206,14 +215,14 @@ function normalizeRouteScopeOverrides(
   return [...overrides]
     .map((override) => {
       const pattern = normalizeRoutePattern(override.pattern);
-      if (override.scope !== "docs" && override.scope !== "api" && override.scope !== "blog") {
+      if (typeof override.scope !== "string" || override.scope.trim().length === 0) {
         throw createDocsError({
           code: "DOCS_SEARCH_SCOPE_INVALID",
-          message: `search.routeScopeOverrides scope must be one of docs, api, blog: ${String(override.scope)}`,
+          message: `search.routeScopeOverrides scope is required: ${String(override.scope)}`,
           diagnostics: [
             createDiagnostic({
               code: "DOCS_SEARCH_SCOPE_INVALID",
-              message: `search.routeScopeOverrides scope must be one of docs, api, blog: ${String(override.scope)}`,
+              message: `search.routeScopeOverrides scope is required: ${String(override.scope)}`,
               details: {
                 pattern,
                 scope: override.scope,
@@ -245,10 +254,11 @@ function defaultScopeForDocumentKind(kind: DocsSearchDocumentKind): DocsSearchSc
 export function resolveSearchScopeForRoute(input: {
   route: string;
   kind: DocsSearchDocumentKind;
+  defaultScope?: DocsSearchScope;
   routeScopeOverrides?: DocsSearchRouteScopeOverride[];
 }): DocsSearchScope {
   const normalizedRoute = normalizeRouteForMatch(input.route);
-  const defaultScope = defaultScopeForDocumentKind(input.kind);
+  const defaultScope = input.defaultScope ?? defaultScopeForDocumentKind(input.kind);
   const overrides = normalizeRouteScopeOverrides(input.routeScopeOverrides);
   const matches = overrides.filter((override) => override.regex.test(normalizedRoute));
 
@@ -427,6 +437,7 @@ function collectSearchDocuments(input: {
     const scope = resolveSearchScopeForRoute({
       route: post.path,
       kind: "post",
+      defaultScope: post.searchScope ?? post.collectionId ?? "blog",
       routeScopeOverrides: input.routeScopeOverrides,
     });
     if (!input.scopes.includes(scope)) {
@@ -503,7 +514,7 @@ export async function buildSearchIndex(
 ): Promise<DocsSearchArtifact> {
   const searchConfig = options.search;
   const enabled = searchConfig?.enabled ?? true;
-  const scopes = normalizeScopes(searchConfig);
+  const scopes = normalizeScopes(searchConfig, manifest);
   const bodyIndexing = resolveBodyIndexing(searchConfig);
   normalizeRouteScopeOverrides(searchConfig?.routeScopeOverrides);
   const diagnostics: DocsDiagnostic[] = [];

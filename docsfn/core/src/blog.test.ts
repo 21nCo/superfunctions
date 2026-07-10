@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCanonicalBlogRecords } from "./blog";
+import { buildCanonicalBlogRecords, buildCanonicalDatedCollectionRecords } from "./blog";
 import type { NormalizedPostRecord } from "./normalize";
 
 function createPost(
@@ -103,6 +103,55 @@ describe("buildCanonicalBlogRecords", () => {
 
     expect(canonical.posts).toHaveLength(1);
     expect(canonical.posts[0].draft).toBe(true);
+  });
+
+  it("accepts Date objects from parsed YAML frontmatter dates", () => {
+    const canonical = buildCanonicalBlogRecords({
+      posts: [
+        createPost("blog:date-object.mdx", {
+          slug: "date-object",
+          frontmatter: {
+            date: new Date("2026-03-04T00:00:00.000Z"),
+          },
+        }),
+      ],
+      basePath: "/docs",
+    });
+
+    expect(canonical.posts[0].date).toBe("2026-03-04");
+  });
+
+  it("uses custom route and feed paths for first-class changelog collections", () => {
+    const canonical = buildCanonicalDatedCollectionRecords({
+      posts: [
+        createPost("collection:changelog:release.mdx", {
+          collectionId: "changelog",
+          collectionLabel: "Changelog",
+          searchScope: "changelog",
+          slug: "release",
+          title: "Release",
+          date: "2026-03-01",
+          tags: ["release"],
+        }),
+      ],
+      collectionId: "changelog",
+      label: "Changelog",
+      searchScope: "changelog",
+      basePath: "/docs",
+      routeBase: "/changelog",
+      feedPath: "/changelog/rss.xml",
+    });
+
+    expect(canonical.listRoute).toBe("/changelog");
+    expect(canonical.feedPath).toBe("/changelog/rss.xml");
+    expect(canonical.id).toBe("changelog");
+    expect(canonical.label).toBe("Changelog");
+    expect(canonical.scope).toBe("changelog");
+    expect(canonical.postOrder).toEqual(["collection:changelog:release.mdx"]);
+    expect(canonical.posts[0].path).toBe("/changelog/release");
+    expect(canonical.posts[0].collectionId).toBe("changelog");
+    expect(canonical.tags.release.path).toBe("/changelog/tags/release");
+    expect(canonical.archives[0].path).toBe("/changelog");
   });
 
   it("throws DOCS_ARTIFACT_INVALID when publish date metadata is invalid", () => {

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { buildManifest } from "./manifest";
 import { resolveOpenApiRoute } from "./openapi";
-import { createSourceEntryId } from "./provider";
+import { createNamedCollection, createSourceEntryId, isNamedCollection } from "./provider";
 import { buildSearchIndex } from "./search";
 import type {
   DocsCollection,
@@ -45,6 +45,8 @@ function createConfig(overrides: Partial<DocsConfig> = {}): DocsConfig {
       ...(overrides.content ?? {}),
     },
     navigation: overrides.navigation,
+    collections: overrides.collections,
+    blog: overrides.blog,
     search: overrides.search,
     auth: overrides.auth,
     analytics: overrides.analytics,
@@ -70,7 +72,12 @@ class InMemorySourceProvider implements DocsContentProvider {
       .filter((entry) => entry.entryType !== "control")
       .map((entry) => ({
         id: entry.relativePath,
-        kind: entry.collection === "blog" ? "post" : entry.collection === "api" ? "api" : "page",
+        kind:
+          entry.collection === "blog" || isNamedCollection(entry.collection)
+            ? "post"
+            : entry.collection === "api"
+              ? "api"
+              : "page",
         body: entry.body ?? "",
         frontmatter: entry.frontmatter,
       }));
@@ -565,6 +572,63 @@ describe("buildManifest", () => {
     expect(manifest.embedded?.hasSidebar).toBe(true);
     expect(manifest.embedded?.hasSearchTrigger).toBe(true);
     expect(manifest.embedded?.hasTopNavSlot).toBe(true);
+  });
+
+  it("supports changelog routes as a first-class dated collection", async () => {
+    const changelogCollection = createNamedCollection("changelog");
+    const provider = new InMemorySourceProvider([
+      {
+        id: createSourceEntryId(changelogCollection, "release.mdx"),
+        collection: changelogCollection,
+        relativePath: "release.mdx",
+        entryType: "content",
+        frontmatter: {
+          title: "Release",
+          date: "2026-03-01",
+          tags: ["release"],
+        },
+        body: "# Release\n\nRelease notes",
+      },
+    ]);
+
+    const manifest = await buildManifest(
+      provider,
+      createConfig({
+        collections: {
+          changelog: {
+            dir: "content/changelog",
+            routeBase: "/changelog",
+            label: "Changelog",
+            scope: "changelog",
+          },
+        },
+      })
+    );
+    const artifact = await buildSearchIndex(manifest, {
+      search: {
+        enabled: true,
+        scopes: ["changelog"],
+        bodyIndexing: "summary",
+      },
+    });
+
+    expect(manifest.routes["/changelog/release"]).toBe("collection:changelog:release.mdx");
+    expect(manifest.collections?.changelog?.label).toBe("Changelog");
+    expect(manifest.collections?.changelog?.scope).toBe("changelog");
+    expect(manifest.collections?.changelog?.listRoute).toBe("/changelog");
+    expect(manifest.collections?.changelog?.feedPath).toBe("/changelog/rss.xml");
+    expect(manifest.collections?.changelog?.tags.release.path).toBe(
+      "/changelog/tags/release"
+    );
+    expect(manifest.blog?.listRoute).toBe("/docs/blog");
+    expect(manifest.posts["collection:changelog:release.mdx"]).toMatchObject({
+      collectionId: "changelog",
+      collectionLabel: "Changelog",
+      searchScope: "changelog",
+      path: "/changelog/release",
+    });
+    expect(artifact.documents.map((doc) => doc.path)).toEqual(["/changelog/release"]);
+    expect(artifact.documents.map((doc) => doc.scope)).toEqual(["changelog"]);
   });
 
   it("builds mixed docs/api/blog search scope from manifest-derived routes (TV-SEARCH-001)", async () => {

@@ -429,11 +429,11 @@ describe("buildSearchIndex", () => {
           enabled: true,
           scopes: ["docs", "api", "blog"],
           routeScopeOverrides: [
-            { pattern: "/docs/api/**", scope: "guides" as unknown as "docs" },
+            { pattern: "/docs/api/**", scope: "" as unknown as "docs" },
           ],
         },
       })
-    ).rejects.toThrowError(/DOCS_SEARCH_SCOPE_INVALID|must be one of docs, api, blog/);
+    ).rejects.toThrowError(/DOCS_SEARCH_SCOPE_INVALID|scope is required/);
   });
 
   it("throws DOCS_SEARCH_SCOPE_INVALID for invalid override patterns even when search is disabled", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCanonicalBlogRecords } from "./blog";
+import { buildCanonicalBlogRecords, buildCanonicalDatedCollectionRecords } from "./blog";
 import { generateRSSFeed } from "./rss";
 import type { DocsManifest } from "./types";
 
@@ -121,5 +121,64 @@ describe("generateRSSFeed", () => {
         link: "https://docs.example.com",
       })
     ).toThrowError(/DOCS_ARTIFACT_INVALID|invalid publish date metadata/);
+  });
+
+  it("generates RSS for a named dated collection without mixing blog posts", () => {
+    const manifest = createManifest();
+    const canonicalChangelog = buildCanonicalDatedCollectionRecords({
+      collectionId: "changelog",
+      label: "Changelog",
+      searchScope: "changelog",
+      routeBase: "/changelog",
+      feedPath: "/changelog/rss.xml",
+      posts: [
+        {
+          id: "collection:changelog:release.mdx",
+          collectionId: "changelog",
+          collectionLabel: "Changelog",
+          searchScope: "changelog",
+          slug: "release",
+          path: "/changelog/release",
+          title: "Release",
+          date: "2026-04-01",
+          tags: ["release"],
+          body: "Release details",
+          frontmatter: {
+            date: "2026-04-01",
+            excerpt: "Release excerpt",
+          },
+        },
+      ],
+    });
+    manifest.posts = {
+      ...manifest.posts,
+      ...Object.fromEntries(canonicalChangelog.posts.map((post) => [post.id, post])),
+    };
+    manifest.collections = {
+      changelog: {
+        id: canonicalChangelog.id,
+        label: canonicalChangelog.label,
+        scope: canonicalChangelog.scope,
+        listRoute: canonicalChangelog.listRoute,
+        feedPath: canonicalChangelog.feedPath,
+        postOrder: canonicalChangelog.postOrder,
+        tags: canonicalChangelog.tags,
+        archives: canonicalChangelog.archives,
+      },
+    };
+
+    const rss = generateRSSFeed(manifest, {
+      collectionId: "changelog",
+      title: "Docs Changelog",
+      description: "Product updates",
+      link: "https://docs.example.com/changelog",
+      feedHref: "https://docs.example.com/changelog/rss.xml",
+      itemHref: (post) => `https://docs.example.com${post.path}`,
+    });
+
+    expect(rss).toContain("<title>Docs Changelog</title>");
+    expect(rss).toContain("https://docs.example.com/changelog/release");
+    expect(rss).not.toContain("/docs/blog/alpha");
+    expect(rss).not.toContain("/docs/blog/beta");
   });
 });

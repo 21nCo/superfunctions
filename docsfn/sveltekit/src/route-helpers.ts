@@ -94,6 +94,10 @@ export interface SearchArtifactResponseInput {
   cacheControl?: string;
 }
 
+export interface CollectionPostOptions {
+  includeDrafts?: boolean;
+}
+
 function compareStrings(left: string, right: string): number {
   return left.localeCompare(right, "en", {
     sensitivity: "variant",
@@ -117,6 +121,25 @@ function normalizeSlugSegments(slug: SlugParam): string[] {
   return [];
 }
 
+function normalizeCollectionId(collectionId: string): string {
+  const trimmed = collectionId.trim();
+  const withoutPrefix = trimmed.startsWith("collection:")
+    ? trimmed.slice("collection:".length)
+    : trimmed;
+  return withoutPrefix
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((segment) => segment.length > 0 && segment !== ".")
+    .join("/")
+    .replaceAll("/", "-")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizePostSlug(slug: string): string {
+  return slug.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
 function buildDocsPath(slug: SlugParam, basePath?: string): string {
   const resolvedBasePath = normalizeBasePath(basePath);
   const segments = normalizeSlugSegments(slug);
@@ -124,6 +147,54 @@ function buildDocsPath(slug: SlugParam, basePath?: string): string {
     return resolvedBasePath;
   }
   return `${resolvedBasePath}/${segments.join("/")}`.replace(/\/{2,}/g, "/");
+}
+
+type DatedCollectionSurface = NonNullable<DocsManifest["collections"]>[string];
+
+function getPostCollectionId(post: BlogPost): string {
+  return normalizeCollectionId(post.collectionId ?? "blog") || "blog";
+}
+
+function getDatedCollectionSurface(
+  collectionId: string,
+  manifest: DocsManifest
+): DatedCollectionSurface | null {
+  const normalizedCollectionId = normalizeCollectionId(collectionId);
+  if (!normalizedCollectionId) {
+    return null;
+  }
+
+  const collection = manifest.collections?.[normalizedCollectionId];
+  if (collection) {
+    return collection;
+  }
+
+  if (normalizedCollectionId === "blog" && manifest.blog) {
+    return {
+      id: "blog",
+      label: "Blog",
+      scope: "blog",
+      listRoute: manifest.blog.listRoute,
+      feedPath: manifest.blog.feedPath,
+      postOrder: manifest.blog.postOrder,
+      tags: manifest.blog.tags,
+      archives: manifest.blog.archives,
+    };
+  }
+
+  return null;
+}
+
+function resolveCollectionPostRoute(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest
+): string {
+  const normalizedCollectionId = normalizeCollectionId(collectionId) || collectionId;
+  const collection = getDatedCollectionSurface(normalizedCollectionId, manifest);
+  const listRoute =
+    collection?.listRoute ?? (normalizedCollectionId === "blog" ? "/blog" : `/${normalizedCollectionId}`);
+  return `${listRoute}/${normalizePostSlug(slug)}`.replace(/\/{2,}/g, "/");
 }
 
 function resolveRouteEntry(routePath: string, manifest: DocsManifest): DocsRouteEntry | null {
@@ -463,19 +534,92 @@ export function getVersionedPageDataOrThrow(
   throw createRouteNotFoundError(`docs route ${routePath} was not generated`, routePath);
 }
 
-export function getPostData(slug: string, manifest: DocsManifest): BlogPost | null {
-  const normalizedSlug = slug.replace(/^\/+/, "");
+export function getCollectionPosts(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost[] {
+  const normalizedCollectionId = normalizeCollectionId(collectionId);
+  if (!normalizedCollectionId) {
+    return [];
+  }
+
+  const includeDrafts = Boolean(options.includeDrafts);
+  const collection = getDatedCollectionSurface(normalizedCollectionId, manifest);
+  const postOrder = collection?.postOrder ?? [];
+  const orderedPosts = postOrder
+    .map((id) => manifest.posts[id])
+    .filter(
+      (post): post is BlogPost =>
+        Boolean(post) &&
+        getPostCollectionId(post) === normalizedCollectionId &&
+        (includeDrafts || !post.draft)
+    );
+
+  if (postOrder.length > 0) {
+    return orderedPosts;
+  }
+
+  return Object.values(manifest.posts)
+    .filter(
+      (post) =>
+        getPostCollectionId(post) === normalizedCollectionId &&
+        (includeDrafts || !post.draft)
+    )
+    .sort((left, right) => {
+      const dateCompare = right.date.localeCompare(left.date);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      return compareStrings(left.slug, right.slug);
+    });
+}
+
+export function getCollectionPostData(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost | null {
+  const normalizedSlug = normalizePostSlug(slug);
   return (
-    Object.values(manifest.posts).find((post) => post.slug === normalizedSlug) ?? null
+    getCollectionPosts(collectionId, manifest, options).find(
+      (post) => post.slug === normalizedSlug
+    ) ?? null
   );
 }
 
-export function getPostDataOrThrow(slug: string, manifest: DocsManifest): BlogPost {
-  const post = getPostData(slug, manifest);
+export function getCollectionPostDataOrThrow(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  const post = getCollectionPostData(collectionId, slug, manifest, options);
   if (post) {
     return post;
   }
-  throw createRouteNotFoundError(`blog route /blog/${slug} was not generated`, `/blog/${slug}`);
+  const route = resolveCollectionPostRoute(collectionId, slug, manifest);
+  throw createRouteNotFoundError(
+    `${normalizeCollectionId(collectionId) || "collection"} route ${route} was not generated`,
+    route
+  );
+}
+
+export function getPostData(
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost | null {
+  return getCollectionPostData("blog", slug, manifest, options);
+}
+
+export function getPostDataOrThrow(
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  return getCollectionPostDataOrThrow("blog", slug, manifest, options);
 }
 
 export function getApiData(
@@ -522,8 +666,21 @@ export function loadVersionedPageData(
   return getVersionedPageDataOrThrow(version, slug, manifest, options);
 }
 
-export function loadPostData(slug: string, manifest: DocsManifest): BlogPost {
-  return getPostDataOrThrow(slug, manifest);
+export function loadCollectionPostData(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  return getCollectionPostDataOrThrow(collectionId, slug, manifest, options);
+}
+
+export function loadPostData(
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  return getPostDataOrThrow(slug, manifest, options);
 }
 
 export function loadApiData(
@@ -534,12 +691,23 @@ export function loadApiData(
   return getApiDataOrThrow(slug, manifest, options);
 }
 
-export function generateBlogParams(manifest: DocsManifest) {
-  return Object.values(manifest.posts)
+export function generateCollectionParams(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return getCollectionPosts(collectionId, manifest, options)
     .sort((left, right) => compareStrings(left.slug, right.slug))
     .map((post) => ({
       slug: post.slug,
     }));
+}
+
+export function generateBlogParams(
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return generateCollectionParams("blog", manifest, options);
 }
 
 export function generateApiParams(manifest: DocsManifest) {
@@ -550,12 +718,23 @@ export function generateApiParams(manifest: DocsManifest) {
     }));
 }
 
-export function getBlogPaths(manifest: DocsManifest) {
-  return generateBlogParams(manifest).map((entry) => ({
+export function getCollectionPaths(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return generateCollectionParams(collectionId, manifest, options).map((entry) => ({
     params: {
       slug: entry.slug,
     },
   }));
+}
+
+export function getBlogPaths(
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return getCollectionPaths("blog", manifest, options);
 }
 
 export function getApiPaths(manifest: DocsManifest) {
@@ -711,11 +890,36 @@ export function createVersionedPageLoad(
   };
 }
 
-export function createPostLoad(manifest: DocsManifest) {
+export function createPostLoad(
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
   return ({ params }: LoadEvent<{ slug: string }>) => {
     try {
-      const post = getPostDataOrThrow(params.slug, manifest);
+      const post = getPostDataOrThrow(params.slug, manifest, options);
       return {
+        post,
+        manifest,
+      };
+    } catch (error) {
+      if (isDocsRouteNotFound(error)) {
+        throw svelteKitError(404, error.message);
+      }
+      throw error;
+    }
+  };
+}
+
+export function createCollectionPostLoad(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return ({ params }: LoadEvent<{ slug: string }>) => {
+    try {
+      const post = getCollectionPostDataOrThrow(collectionId, params.slug, manifest, options);
+      return {
+        collection: getDatedCollectionSurface(collectionId, manifest),
         post,
         manifest,
       };

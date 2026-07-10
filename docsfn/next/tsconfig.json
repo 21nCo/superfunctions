@@ -3,7 +3,11 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM"],
     "outDir": "./dist",
-    "rootDir": "./src"
+    "baseUrl": ".",
+    "paths": {
+      "@docsfn/core": ["../core/src/index.ts"],
+      "@docsfn/core/*": ["../core/src/*"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

@@ -34,6 +34,25 @@ const DEFAULT_COLLECTIONS: DocsCollection[] = [
   "assets",
 ];
 
+function normalizeDatedCollectionId(value: string): string {
+  return normalizeProviderPath(value)
+    .replaceAll("/", "-")
+    .trim()
+    .toLowerCase();
+}
+
+function isNamedCollection(collection: DocsCollection): collection is `collection:${string}` {
+  return collection.startsWith("collection:");
+}
+
+function getNamedCollectionId(collection: DocsCollection): string | undefined {
+  if (!isNamedCollection(collection)) {
+    return undefined;
+  }
+  const collectionId = collection.slice("collection:".length);
+  return collectionId.length > 0 ? collectionId : undefined;
+}
+
 export interface FsProviderOptions {
   root: string;
   docsDir?: string;
@@ -228,6 +247,15 @@ export class FsContentProvider implements DocsContentProvider {
     if (collection === "blog") {
       return config.content.blogDir ?? this.options.blogDir;
     }
+    if (isNamedCollection(collection)) {
+      const collectionId = getNamedCollectionId(collection);
+      if (!collectionId) {
+        return undefined;
+      }
+      return Object.entries(config.collections ?? {}).find(
+        ([key]) => normalizeDatedCollectionId(key) === collectionId
+      )?.[1].dir;
+    }
     if (collection === "api") {
       return config.content.apiDir ?? this.options.apiDir;
     }
@@ -243,6 +271,9 @@ export class FsContentProvider implements DocsContentProvider {
     }
     if (collection === "blog") {
       return ["blog"];
+    }
+    if (isNamedCollection(collection)) {
+      return [];
     }
     if (collection === "api") {
       return ["api"];
@@ -324,7 +355,10 @@ export class FsContentProvider implements DocsContentProvider {
       }
 
       if (
-        (collection === "docs" || collection === "pages" || collection === "blog") &&
+        (collection === "docs" ||
+          collection === "pages" ||
+          collection === "blog" ||
+          isNamedCollection(collection)) &&
         MARKDOWN_EXTENSIONS.has(extension)
       ) {
         entries.push(
@@ -342,7 +376,7 @@ export class FsContentProvider implements DocsContentProvider {
   }
 
   private async createMarkdownEntry(
-    collection: Extract<DocsCollection, "docs" | "pages" | "blog">,
+    collection: DocsCollection,
     relativePath: string,
     absolutePath: string
   ): Promise<DocsSourceEntry> {

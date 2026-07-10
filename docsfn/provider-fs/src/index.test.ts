@@ -88,6 +88,42 @@ describe("FsContentProvider", () => {
     expect(legacyEntries.some((entry) => entry.id === "getting-started.mdx")).toBe(true);
   });
 
+  it("loads configured dated collections from their own directories", async () => {
+    const root = await createTempRoot();
+    await mkdir(join(root, "content/docs"), { recursive: true });
+    await mkdir(join(root, "content/changelog"), { recursive: true });
+    await writeFile(join(root, "content/docs/index.mdx"), "# Home\n");
+    await writeFile(
+      join(root, "content/changelog/release.mdx"),
+      "---\ntitle: Release\ndate: 2026-03-01\n---\n\n# Release\n"
+    );
+
+    const provider = new FsContentProvider({ root });
+    const changelogCollection = "collection:changelog" as const;
+    const entries = await provider.listEntries({
+      config: createConfig(root, {
+        collections: {
+          changelog: {
+            dir: "content/changelog",
+            routeBase: "/changelog",
+          },
+        },
+      }),
+      collections: ["docs", changelogCollection],
+    });
+
+    const changelogEntry = entries.find(
+      (entry) => entry.collection === changelogCollection
+    );
+    expect(changelogEntry).toMatchObject({
+      id: "collection:changelog:release.mdx",
+      collection: changelogCollection,
+      relativePath: "release.mdx",
+      entryType: "content",
+    });
+    expect(changelogEntry?.frontmatter.title).toBe("Release");
+  });
+
   it("assigns missing frontmatter title defaults", async () => {
     const root = await createTempRoot();
     await mkdir(join(root, "content/docs"), { recursive: true });

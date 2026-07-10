@@ -5,13 +5,27 @@ import type {
   BlogManifestSurface,
   BlogPost,
   BlogTagIndex,
+  DatedCollectionManifestSurface,
 } from "./types";
 
-export interface BuildCanonicalBlogRecordsInput {
+export interface BuildCanonicalDatedCollectionRecordsInput {
   posts: NormalizedPostRecord[];
+  collectionId?: string;
+  label?: string;
+  searchScope?: string;
   basePath?: string;
+  routeBase?: string;
+  feedPath?: string;
   preview?: boolean;
   pageSize?: number;
+}
+
+export interface BuildCanonicalBlogRecordsInput
+  extends BuildCanonicalDatedCollectionRecordsInput {}
+
+export interface CanonicalDatedCollectionBuildResult
+  extends DatedCollectionManifestSurface {
+  posts: BlogPost[];
 }
 
 export interface CanonicalBlogBuildResult extends BlogManifestSurface {
@@ -28,6 +42,12 @@ function compareStrings(left: string, right: string): number {
 function normalizeBasePath(basePath?: string): string {
   const value = typeof basePath === "string" && basePath.length > 0 ? basePath : "/docs";
   const prefixed = value.startsWith("/") ? value : `/${value}`;
+  return prefixed.length > 1 ? prefixed.replace(/\/+$/, "") : prefixed;
+}
+
+function normalizeAbsoluteRoute(value: string, fallback: string): string {
+  const candidate = value.trim().length > 0 ? value : fallback;
+  const prefixed = candidate.startsWith("/") ? candidate : `/${candidate}`;
   return prefixed.length > 1 ? prefixed.replace(/\/+$/, "") : prefixed;
 }
 
@@ -105,6 +125,16 @@ function parseAuthor(frontmatter: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+function parseFrontmatterDate(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString();
+  }
+  return undefined;
+}
+
 function parseExcerpt(input: {
   excerpt?: unknown;
   body: string;
@@ -116,20 +146,25 @@ function parseExcerpt(input: {
   return summary.length > 0 ? summary : undefined;
 }
 
-function parsePublishedDate(input: { date: string; sourceId: string }): {
+function parsePublishedDate(input: {
+  date: string;
+  sourceId: string;
+  collectionLabel?: string;
+}): {
   date: string;
   publishedAt: string;
   timestamp: number;
 } {
   const timestamp = Date.parse(input.date);
   if (!Number.isFinite(timestamp)) {
+    const label = input.collectionLabel ?? "dated content entry";
     throw createDocsError({
       code: "DOCS_ARTIFACT_INVALID",
-      message: `blog post ${input.sourceId} has invalid publish date metadata`,
+      message: `${label} ${input.sourceId} has invalid publish date metadata`,
       diagnostics: [
         createDiagnostic({
           code: "DOCS_ARTIFACT_INVALID",
-          message: `blog post ${input.sourceId} has invalid publish date metadata`,
+          message: `${label} ${input.sourceId} has invalid publish date metadata`,
           details: {
             sourceId: input.sourceId,
             date: input.date,
@@ -230,26 +265,36 @@ export function resolveBlogLastBuildDate(posts: Array<Pick<BlogPost, "id" | "dat
   return new Date(latest.publishedAt).toUTCString();
 }
 
-export function buildCanonicalBlogRecords(
-  input: BuildCanonicalBlogRecordsInput
-): CanonicalBlogBuildResult {
+export function buildCanonicalDatedCollectionRecords(
+  input: BuildCanonicalDatedCollectionRecordsInput
+): CanonicalDatedCollectionBuildResult {
+  const collectionId = input.collectionId ?? "blog";
+  const label = input.label ?? (collectionId === "blog" ? "Blog" : collectionId);
+  const searchScope = input.searchScope ?? (collectionId === "blog" ? "blog" : collectionId);
   const basePath = normalizeBasePath(input.basePath);
-  const listRoute = `${basePath}/blog`;
-  const feedPath = `${listRoute}/rss.xml`;
+  const defaultRouteBase = `${basePath}/${collectionId}`;
+  const listRoute = normalizeAbsoluteRoute(
+    input.routeBase ?? (collectionId === "blog" ? `${basePath}/blog` : defaultRouteBase),
+    collectionId === "blog" ? `${basePath}/blog` : defaultRouteBase
+  );
+  const feedPath = normalizeAbsoluteRoute(
+    input.feedPath ?? `${listRoute}/rss.xml`,
+    `${listRoute}/rss.xml`
+  );
   const includeDrafts = Boolean(input.preview);
   const pageSize = Math.max(1, Math.trunc(input.pageSize ?? 10));
 
   const canonicalPosts = input.posts
     .map((post) => {
-      const frontmatterDate = post.frontmatter?.date;
-      if (!(typeof frontmatterDate === "string" && frontmatterDate.trim().length > 0)) {
+      const frontmatterDate = parseFrontmatterDate(post.frontmatter?.date);
+      if (!frontmatterDate) {
         throw createDocsError({
           code: "DOCS_ARTIFACT_INVALID",
-          message: `blog post ${post.id} is missing publish date metadata`,
+          message: `${label} ${post.id} is missing publish date metadata`,
           diagnostics: [
             createDiagnostic({
               code: "DOCS_ARTIFACT_INVALID",
-              message: `blog post ${post.id} is missing publish date metadata`,
+              message: `${label} ${post.id} is missing publish date metadata`,
               details: {
                 sourceId: post.id,
               },
@@ -262,6 +307,7 @@ export function buildCanonicalBlogRecords(
       const publish = parsePublishedDate({
         date: frontmatterDate,
         sourceId: post.id,
+        collectionLabel: label,
       });
       const tags = normalizeTags(post.tags);
       const excerpt = parseExcerpt({
@@ -272,6 +318,9 @@ export function buildCanonicalBlogRecords(
       return {
         kind: "post" as const,
         id: post.id,
+        collectionId: post.collectionId ?? collectionId,
+        collectionLabel: post.collectionLabel ?? label,
+        searchScope: post.searchScope ?? searchScope,
         slug: post.slug,
         path: post.slug ? `${listRoute}/${post.slug}` : listRoute,
         title: post.title,
@@ -309,11 +358,33 @@ export function buildCanonicalBlogRecords(
   const postOrder = posts.map((post) => post.id);
 
   return {
+    id: collectionId,
+    label,
+    scope: searchScope,
     posts,
     listRoute,
     feedPath,
     postOrder,
     tags,
     archives,
+  };
+}
+
+export function buildCanonicalBlogRecords(
+  input: BuildCanonicalBlogRecordsInput
+): CanonicalBlogBuildResult {
+  const canonical = buildCanonicalDatedCollectionRecords({
+    ...input,
+    collectionId: input.collectionId ?? "blog",
+    label: input.label ?? "Blog",
+    searchScope: input.searchScope ?? "blog",
+  });
+  return {
+    posts: canonical.posts,
+    listRoute: canonical.listRoute,
+    feedPath: canonical.feedPath,
+    postOrder: canonical.postOrder,
+    tags: canonical.tags,
+    archives: canonical.archives,
   };
 }

@@ -4,13 +4,20 @@ import { describe, expect, it } from "vitest";
 import { buildManifest, loadDocsConfig, type DocsManifest } from "../../core/src/index";
 import { FsContentProvider } from "../../provider-fs/src/index";
 import {
+  generateCollectionParams as generateNextCollectionParams,
   generateStaticParams as generateNextStaticParams,
+  getCollectionPostData as getNextCollectionPostData,
+  getCollectionPosts as getNextCollectionPosts,
   resolveDocsPageSurface as resolveNextDocsPageSurface,
   resolveDocsRouteDataOrThrow as resolveNextDocsRouteDataOrThrow,
 } from "../../next/src/route-helpers";
 import {
   createPageLoad,
+  generateCollectionParams,
   generateStaticParams,
+  getCollectionPostData,
+  getCollectionPosts,
+  getPostData,
   resolveDocsPageSurface,
   resolveDocsRouteDataOrThrow,
 } from "./route-helpers";
@@ -40,6 +47,99 @@ async function loadCanonicalManifest(): Promise<DocsManifest> {
   }
 
   return manifestPromise;
+}
+
+function createDatedCollectionManifest(): DocsManifest {
+  const blogPost = {
+    kind: "post" as const,
+    id: "blog:introducing-docsfn.md",
+    collectionId: "blog",
+    collectionLabel: "Blog",
+    searchScope: "blog",
+    slug: "introducing-docsfn",
+    path: "/blog/introducing-docsfn",
+    title: "Introducing docsfn",
+    date: "2026-03-22",
+    publishedAt: "2026-03-22T00:00:00.000Z",
+    excerpt: "Launch notes",
+    summary: "Launch notes",
+    tags: [],
+    body: "Blog body",
+    frontmatter: {},
+  };
+  const draftBlogPost = {
+    ...blogPost,
+    id: "blog:draft.md",
+    slug: "draft",
+    path: "/blog/draft",
+    title: "Draft",
+    draft: true,
+  };
+  const changelogPost = {
+    kind: "post" as const,
+    id: "collection:changelog:docsfn-v0-1-0.md",
+    collectionId: "changelog",
+    collectionLabel: "Changelog",
+    searchScope: "changelog",
+    slug: "docsfn-v0-1-0",
+    path: "/changelog/docsfn-v0-1-0",
+    title: "Docsfn v0.1.0",
+    date: "2026-07-10",
+    publishedAt: "2026-07-10T00:00:00.000Z",
+    excerpt: "Changelog foundation",
+    summary: "Changelog foundation",
+    tags: [],
+    body: "Changelog body",
+    frontmatter: {},
+  };
+
+  return {
+    site: {
+      title: "docsfn",
+    },
+    topNav: [],
+    pages: {},
+    posts: {
+      [blogPost.id]: blogPost,
+      [draftBlogPost.id]: draftBlogPost,
+      [changelogPost.id]: changelogPost,
+    },
+    apis: {},
+    sidebars: {},
+    routes: {
+      [blogPost.path]: blogPost.id,
+      [changelogPost.path]: changelogPost.id,
+    },
+    blog: {
+      listRoute: "/blog",
+      feedPath: "/blog/rss.xml",
+      postOrder: [draftBlogPost.id, blogPost.id],
+      tags: {},
+      archives: [],
+    },
+    collections: {
+      blog: {
+        id: "blog",
+        label: "Blog",
+        scope: "blog",
+        listRoute: "/blog",
+        feedPath: "/blog/rss.xml",
+        postOrder: [draftBlogPost.id, blogPost.id],
+        tags: {},
+        archives: [],
+      },
+      changelog: {
+        id: "changelog",
+        label: "Changelog",
+        scope: "changelog",
+        listRoute: "/changelog",
+        feedPath: "/changelog/rss.xml",
+        postOrder: [changelogPost.id],
+        tags: {},
+        archives: [],
+      },
+    },
+  };
 }
 
 describe("sveltekit route helper parity", () => {
@@ -85,6 +185,37 @@ describe("sveltekit route helper parity", () => {
 
     expect(svelteParams).toEqual(normalizedNext);
     expect(svelteParams[0]).toEqual({});
+  });
+
+  it("keeps dated collection helpers scoped across SvelteKit and Next adapters", () => {
+    const manifest = createDatedCollectionManifest();
+
+    expect(getCollectionPosts("blog", manifest).map((post) => post.slug)).toEqual([
+      "introducing-docsfn",
+    ]);
+    expect(getCollectionPosts("changelog", manifest).map((post) => post.slug)).toEqual([
+      "docsfn-v0-1-0",
+    ]);
+    expect(getCollectionPosts("blog", manifest, { includeDrafts: true }).map((post) => post.slug))
+      .toEqual(["draft", "introducing-docsfn"]);
+
+    expect(getPostData("docsfn-v0-1-0", manifest)).toBeNull();
+    expect(getCollectionPostData("changelog", "docsfn-v0-1-0", manifest)?.path).toBe(
+      "/changelog/docsfn-v0-1-0"
+    );
+    expect(generateCollectionParams("changelog", manifest)).toEqual([
+      { slug: "docsfn-v0-1-0" },
+    ]);
+
+    expect(getNextCollectionPosts("blog", manifest).map((post) => post.slug)).toEqual([
+      "introducing-docsfn",
+    ]);
+    expect(getNextCollectionPostData("changelog", "/docsfn-v0-1-0", manifest)?.path).toBe(
+      "/changelog/docsfn-v0-1-0"
+    );
+    expect(generateNextCollectionParams("changelog", manifest)).toEqual([
+      { slug: "docsfn-v0-1-0" },
+    ]);
   });
 
   it("derives page surface metadata with parity to Next helper output (TV-PAGE-001 + TV-NAV-001)", async () => {

@@ -142,6 +142,115 @@ describe("loadDocsConfig", () => {
     });
   });
 
+  it("loads blog route config for changelog-style sections", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Changelog Config", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: {
+          root: cwd,
+          docsDir: "content/docs",
+          blogDir: "content/changelog",
+        },
+        blog: {
+          routeBase: "/changelog",
+          feedPath: "/changelog/rss.xml",
+        },
+      })
+    );
+
+    const loaded = await loadDocsConfig({ cwd });
+
+    expect(loaded.content.blogDir).toBe("content/changelog");
+    expect(loaded.blog?.routeBase).toBe("/changelog");
+    expect(loaded.blog?.feedPath).toBe("/changelog/rss.xml");
+  });
+
+  it("loads dated collection config for first-class changelog sections", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Collections Config", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: {
+          root: cwd,
+          docsDir: "content/docs",
+        },
+        collections: {
+          changelog: {
+            type: "dated",
+            dir: "content/changelog",
+            routeBase: "/changelog",
+            feedPath: "/changelog/rss.xml",
+            label: "Changelog",
+            scope: "changelog",
+          },
+        },
+      })
+    );
+
+    const loaded = await loadDocsConfig({ cwd });
+
+    expect(loaded.collections?.changelog?.dir).toBe("content/changelog");
+    expect(loaded.collections?.changelog?.routeBase).toBe("/changelog");
+    expect(loaded.collections?.changelog?.feedPath).toBe("/changelog/rss.xml");
+    expect(loaded.collections?.changelog?.label).toBe("Changelog");
+    expect(loaded.collections?.changelog?.scope).toBe("changelog");
+  });
+
+  it("rejects blog route config that does not start with a slash", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Invalid Blog Route", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: { root: cwd, docsDir: "content/docs" },
+        blog: {
+          routeBase: "changelog",
+        },
+      })
+    );
+
+    await expect(loadDocsConfig({ cwd })).rejects.toMatchObject({
+      code: "DOCS_CONFIG_INVALID",
+    });
+  });
+
+  it("rejects dated collection routes that do not start with a slash", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Invalid Collection Route", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: { root: cwd, docsDir: "content/docs" },
+        collections: {
+          changelog: {
+            dir: "content/changelog",
+            routeBase: "changelog",
+          },
+        },
+      })
+    );
+
+    await expect(loadDocsConfig({ cwd })).rejects.toMatchObject({
+      code: "DOCS_CONFIG_INVALID",
+    });
+  });
+
+
   it("returns deterministic defaults only when no config file exists", async () => {
     const cwd = await createTempDir();
 
