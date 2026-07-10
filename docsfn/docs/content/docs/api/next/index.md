@@ -40,6 +40,7 @@ Supporting types: **`NextDocsPageLink`**, **`NextDocsPageBreadcrumbItem`**, **`N
 | **`GenerateMetadataOptions`** | `siteTitle?`, `canonicalUrl?` |
 | **`ResolvePageSurfaceOptions`** | `basePath?`, `sidebarId?`, `homeLabel?`, `homeHref?`, `canonicalUrl?`, `pageActions?`, `editLink?`, `versionMode?` |
 | **`SearchArtifactResponseInput`** | `artifact?`, `loadArtifact?`, `cacheControl?` |
+| **`CollectionPostOptions`** | `includeDrafts?` |
 
 `SlugParam` accepted by slug-based helpers is `string | string[] | readonly string[] | undefined`.
 
@@ -56,10 +57,12 @@ Supporting types: **`NextDocsPageLink`**, **`NextDocsPageBreadcrumbItem`**, **`N
 | --- | --- |
 | **`getPageData` / `getPageDataOrThrow`** | `DocPage` from slug under `basePath` |
 | **`getVersionedPageData` / `getVersionedPageDataOrThrow`** | `DocPage` for versioned routes (`version` + `slug`) |
-| **`getPostData(slug, manifest)`** | `BlogPost \| null` by normalized blog slug |
+| **`getPostData` / `getPostDataOrThrow`** | `BlogPost` by normalized blog slug |
+| **`getCollectionPosts(collectionId, manifest, options?)`** | Ordered dated entries for a named collection like `blog` or `changelog` |
+| **`getCollectionPostData` / `getCollectionPostDataOrThrow`** | Single dated entry by collection + slug |
 | **`getApiData(slug, manifest, options?)`** | `ApiReference \| null` — treats slug segments under `{basePath}/api/...` |
 
-There are **no** `*OrThrow` variants for posts/API in this package; handle `null` or use `resolveDocsRouteDataOrThrow` and branch on `kind`.
+There is no `getApiDataOrThrow` variant in this package; handle `null` or use `resolveDocsRouteDataOrThrow` and branch on `kind`.
 
 ## Static generation
 
@@ -68,6 +71,7 @@ There are **no** `*OrThrow` variants for posts/API in this package; handle `null
 | **`generateStaticParams(manifest, options?)`** | `Array<{ slug?: string[] }>` for `[...slug]` (or similar) catch-all segments |
 | **`generateVersionedStaticParams(manifest, options?)`** | Adds `version` alongside optional `slug` |
 | **`generateBlogParams(manifest)`** | `{ slug: string }[]` sorted by slug |
+| **`generateCollectionParams(collectionId, manifest, options?)`** | `{ slug: string }[]` for any dated collection, e.g. `changelog` |
 | **`generateApiParams(manifest)`** | `{ slug: string }[]` sorted by slug |
 
 ## Page metadata
@@ -104,7 +108,10 @@ Async; returns a Web **`Response`** with JSON (`DocsSearchArtifact`) and `conten
 | --- | --- |
 | **`resolveEmbeddedDocsRouteData`** | `resolveDocsRouteData` |
 | **`getDocsBlogPostData`** | `getPostData` |
+| **`getDocsCollectionPostData`** | `getCollectionPostData` |
+| **`getDocsCollectionPosts`** | `getCollectionPosts` |
 | **`generateDocsBlogParams`** | `generateBlogParams` |
+| **`generateDocsCollectionParams`** | `generateCollectionParams` |
 
 ## Re-exports from `@docsfn/core`
 

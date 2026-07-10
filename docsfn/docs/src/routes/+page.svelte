@@ -8,8 +8,10 @@
   let { data }: Props = $props();
 
   const tagline = "The documentation toolchain for superfunctions";
-  const configDescription = data.source.config.site.description ?? "";
-  const extraBlurb = configDescription && configDescription !== tagline ? configDescription : "";
+  const configDescription = $derived(data.source.config.site.description ?? "");
+  const extraBlurb = $derived(
+    configDescription && configDescription !== tagline ? configDescription : ""
+  );
 
   const features = [
     {
@@ -35,6 +37,7 @@
     { label: "Core Concepts", href: "/docs/core-concepts", blurb: "Configuration, content, navigation, and more." },
     { label: "API Reference", href: "/docs/api", blurb: "Package-level API documentation." },
     { label: "Blog", href: "/blog", blurb: "Release notes and announcements." },
+    { label: "Changelog", href: "/changelog", blurb: "Product updates and release notes." },
   ];
 </script>
 

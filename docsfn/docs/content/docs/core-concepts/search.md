@@ -16,7 +16,7 @@ In **`docsfn.config.ts`**:
 ```ts
 search: {
   enabled: true,
-  scopes: ["docs", "api", "blog"],
+  scopes: ["docs", "api", "blog", "changelog"],
   bodyIndexing: "summary",
   maxArtifactBytes: 1_500_000,
 },
@@ -24,15 +24,16 @@ search: {
 
 - **`enabled`**: When `false`, the pipeline skips emitting `search.json` in CLI artifact writes (and you should avoid exposing an empty endpoint).
 
-## Scopes: `docs`, `api`, `blog`
+## Scopes
 
 Each indexed document carries a **`scope`** (`DocsSearchScope`). The runtime can filter results:
 
 - **`docs`** — documentation pages.
 - **`api`** — API reference entries, including OpenAPI routes and any `/docs/api...` markdown routes that you classify with `search.routeScopeOverrides`.
 - **`blog`** — blog posts.
+- **custom scopes** — named dated collections can define scopes such as **`changelog`**.
 
-`DocsSearch` defaults to scope filters **`["all", "docs", "api", "blog"]`**. Pass a narrower `scopes` prop if your site disables some collections.
+`DocsSearch` can filter by any scopes present in the artifact. Pass a narrower `scopes` prop if your UI should show only selected sections.
 
 ### Route-based scope overrides
 
@@ -41,7 +42,7 @@ Use `search.routeScopeOverrides` when a route should search like API content eve
 ```ts
 search: {
   enabled: true,
-  scopes: ["docs", "api", "blog"],
+  scopes: ["docs", "api", "blog", "changelog"],
   routeScopeOverrides: [
     { pattern: "/docs/api", scope: "api" },
     { pattern: "/docs/api/**", scope: "api" },

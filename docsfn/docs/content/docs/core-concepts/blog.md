@@ -5,13 +5,38 @@ description: Blog posts, frontmatter, drafts, tags, archives, and manifest surfa
 
 # Blog
 
-Blog content lives in the **blog** collection (by default `content/blog/` or the path set in `content.blogDir`). Posts are Markdown files; the pipeline turns them into **`BlogPost`** records and a **`BlogManifestSurface`** on the docs manifest.
+Blog content lives in the legacy **blog** collection (by default `content/blog/` or the path set in `content.blogDir`). Posts are Markdown files; the dated-content engine turns them into **`BlogPost`** records and a **`BlogManifestSurface`** on the docs manifest.
+
+For product changelog, use `collections.changelog` so changelog is represented as its own collection instead of being configured as a fake blog.
 
 See also: [Content format](./content-format), [RSS](./rss), [Search](./search).
 
 ## Directory setup
 
-Point `content.blogDir` at a folder of `.md` / `.mdx` files. Each file becomes a post with a URL derived from its path (see routing for the `/blog` segment).
+Point `content.blogDir` at a folder of `.md` / `.mdx` files for a normal blog. Each file becomes a post with a URL derived from its path. The default public section is `{site.basePath}/blog`.
+
+```ts
+content: {
+  blogDir: "content/blog",
+},
+blog: {
+  routeBase: "/docs/blog",
+},
+```
+
+For changelog:
+
+```ts
+collections: {
+  changelog: {
+    dir: "content/changelog",
+    routeBase: "/changelog",
+    feedPath: "/changelog/rss.xml",
+    label: "Changelog",
+    scope: "changelog",
+  },
+},
+```
 
 ## Required frontmatter
 
@@ -59,13 +84,13 @@ For each tag, **`BlogTagIndex`** includes `tag`, `slug`, `path` (`{listRoute}/ta
 
 ## Listing and post routes
 
-Typical app routes (exact prefixes depend on `site.basePath`):
+Typical app routes (exact prefixes depend on `site.basePath`, `blog.routeBase`, or `collections.<id>.routeBase`):
 
 - **Index / paginated list** — `listRoute` and `.../page/:page`
 - **Post** — `{listRoute}/{postSlug}`
 - **Tag** — `{listRoute}/tags/:slug`
 
-Your SvelteKit or Next adapter should use **`manifest.blog`** for params and links.
+Your SvelteKit or Next adapter should use **`manifest.blog`** for legacy blog params and links. For changelog or other dated sections, use **`manifest.collections.<id>`**.
 
 ## `BlogManifestSurface`
 
@@ -80,3 +105,5 @@ Exposed on **`DocsManifest.blog`**:
 | `archives` | Paginated archive descriptors. |
 
 Posts themselves live in **`manifest.posts`** keyed by id.
+
+Named dated collections are exposed on **`DocsManifest.collections`** with the same surface shape plus `id`, `label`, and `scope`.
