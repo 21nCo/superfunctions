@@ -21,6 +21,10 @@ async function readFixture(relativePath: string): Promise<string> {
 const SUPPORTED_PUBLIC_IMPORTS = [
   "@docsfn/svelte/ApiReferenceRenderer.svelte",
   "@docsfn/svelte/Breadcrumbs.svelte",
+  "@docsfn/svelte/ChangelogEntry.svelte",
+  "@docsfn/svelte/ChangelogList.svelte",
+  "@docsfn/svelte/DatedCollectionEntry.svelte",
+  "@docsfn/svelte/DatedCollectionList.svelte",
   "@docsfn/svelte/DocsContent.svelte",
   "@docsfn/svelte/DocsLayout.svelte",
   "@docsfn/svelte/DocsSearch.svelte",

@@ -49,6 +49,15 @@ Supporting types: **`DocsPageLink`**, **`DocsPageBreadcrumbItem`**, **`DocsPageP
 
 **`CollectionPostOptions`:** `{ includeDrafts?: boolean }`.
 
+## Embed mode
+
+| Function | Returns | Notes |
+| --- | --- | --- |
+| **`resolveEmbedMode(urlOrSearchParams, options?)`** | `boolean` | Reads `?embed=1` by default; useful for hiding site chrome inside product apps. |
+| **`isEmbedModeValue(value)`** | `boolean` | Normalizes raw query values such as `1`, `true`, `yes`, `on`, or an empty present param. |
+
+**`EmbedModeOptions`:** `{ param?: string }`.
+
 ## Loader wrappers (`load*`)
 
 Thin wrappers mapping errors to SvelteKit **`error(404, ...)`**:

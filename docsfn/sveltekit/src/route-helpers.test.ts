@@ -10,6 +10,7 @@ import {
   getCollectionPosts as getNextCollectionPosts,
   resolveDocsPageSurface as resolveNextDocsPageSurface,
   resolveDocsRouteDataOrThrow as resolveNextDocsRouteDataOrThrow,
+  resolveEmbedMode as resolveNextEmbedMode,
 } from "../../next/src/route-helpers";
 import {
   createPageLoad,
@@ -20,6 +21,7 @@ import {
   getPostData,
   resolveDocsPageSurface,
   resolveDocsRouteDataOrThrow,
+  resolveEmbedMode,
 } from "./route-helpers";
 
 const thisFilePath = fileURLToPath(import.meta.url);
@@ -216,6 +218,20 @@ describe("sveltekit route helper parity", () => {
     expect(generateNextCollectionParams("changelog", manifest)).toEqual([
       { slug: "docsfn-v0-1-0" },
     ]);
+  });
+
+  it("resolves embed mode query params across SvelteKit and Next request shapes", () => {
+    expect(resolveEmbedMode(new URL("https://example.com/docs?embed=1"))).toBe(true);
+    expect(resolveEmbedMode(new URL("https://example.com/docs?embed=true"))).toBe(true);
+    expect(resolveEmbedMode(new URL("https://example.com/docs?embed"))).toBe(true);
+    expect(resolveEmbedMode(new URL("https://example.com/docs?embed=0"))).toBe(false);
+    expect(resolveEmbedMode(new URL("https://example.com/docs"))).toBe(false);
+
+    expect(resolveNextEmbedMode({ embed: "yes" })).toBe(true);
+    expect(resolveNextEmbedMode({ searchParams: { embed: ["0", "1"] } })).toBe(true);
+    expect(resolveNextEmbedMode({ searchParams: { embed: "false" } })).toBe(false);
+    expect(resolveNextEmbedMode({ searchParams: { docsEmbed: "on" } }, { param: "docsEmbed" }))
+      .toBe(true);
   });
 
   it("derives page surface metadata with parity to Next helper output (TV-PAGE-001 + TV-NAV-001)", async () => {

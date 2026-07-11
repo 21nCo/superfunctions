@@ -41,22 +41,25 @@
   export let sidebar: Sidebar | undefined = undefined;
   export let headings: DocHeading[] | undefined = undefined;
   export let activePath: string | undefined = undefined;
+  export let embedded = false;
 
   $: resolvedSidebar = sidebar ?? surface?.sidebar;
   $: resolvedHeadings = headings ?? surface?.headings ?? [];
   $: resolvedActivePath = activePath ?? surface?.route;
+  $: showSidebar = !embedded && Boolean(resolvedSidebar);
+  $: showToc = !embedded && resolvedHeadings.length > 0;
 
   let sidebarOpen = false;
 </script>
 
-<div class="docsfn-layout">
-  {#if $$slots.topbar}
+<div class="docsfn-layout" class:docsfn-layout--embedded={embedded}>
+  {#if !embedded && $$slots.topbar}
     <header class="docsfn-topbar">
       <slot name="topbar" />
     </header>
   {/if}
 
-  {#if resolvedSidebar}
+  {#if showSidebar}
     <div class="docsfn-mobile-toolbar">
       <button
         type="button"
@@ -80,7 +83,7 @@
   {/if}
 
   <div class="docsfn-container">
-    {#if resolvedSidebar}
+    {#if showSidebar && resolvedSidebar}
       <aside
         id="docsfn-sidebar-panel"
         class="docsfn-sidebar-col"
@@ -94,7 +97,7 @@
       <slot />
     </main>
 
-    {#if resolvedHeadings.length > 0}
+    {#if showToc}
       <aside class="docsfn-toc-col">
         <DocsToc surface={surface} headings={resolvedHeadings} />
       </aside>
@@ -103,6 +106,23 @@
 </div>
 
 <style>
+  .docsfn-layout--embedded {
+    min-height: auto;
+    background: transparent;
+  }
+
+  .docsfn-layout--embedded .docsfn-container {
+    display: block;
+    max-width: none;
+    margin: 0;
+  }
+
+  .docsfn-layout--embedded .docsfn-main {
+    max-width: none;
+    justify-self: auto;
+    padding: 0;
+  }
+
   .docsfn-mobile-toolbar {
     display: block;
     padding: 0.5rem 1rem;

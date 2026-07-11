@@ -20,8 +20,10 @@
   {/if}
 </svelte:head>
 
-<DocsLayout surface={data.surface} sidebar={data.sidebar}>
-  <Breadcrumbs surface={data.surface} />
+<DocsLayout surface={data.surface} sidebar={data.sidebar} embedded={data.embed}>
+  {#if !data.embed}
+    <Breadcrumbs surface={data.surface} />
+  {/if}
   {#if data.routeEntry.kind === "page" && data.compiled}
     <article class="docs-page-article">
       <DocsContent compiled={data.compiled} />
@@ -31,11 +33,17 @@
       <ApiReferenceRenderer api={data.routeEntry.api} />
     </article>
   {/if}
-  <Pagination surface={data.surface} />
+  {#if !data.embed}
+    <Pagination surface={data.surface} />
+  {/if}
 </DocsLayout>
 
 <style>
   .docs-page-article {
     margin-top: 0.5rem;
+  }
+
+  :global(.docsfn-layout--embedded) .docs-page-article {
+    margin-top: 0;
   }
 </style>

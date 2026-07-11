@@ -9,6 +9,10 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_COMPONENTS = [
   "ApiReferenceRenderer",
   "Breadcrumbs",
+  "ChangelogEntry",
+  "ChangelogList",
+  "DatedCollectionEntry",
+  "DatedCollectionList",
   "DocsContent",
   "DocsLayout",
   "DocsSearch",

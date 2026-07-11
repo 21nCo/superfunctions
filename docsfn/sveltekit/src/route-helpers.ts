@@ -1,4 +1,5 @@
 import {
+  buildDatedCollectionJsonFeed,
   buildDocsStaticParams,
   createDiagnostic,
   createDocsError,
@@ -8,6 +9,7 @@ import {
   resolveSidebarForRoute,
   type ApiReference,
   type BlogPost,
+  type BuildDatedCollectionJsonFeedOptions,
   type DocPage,
   type DocsManifest,
   type DocsSearchArtifact,
@@ -94,9 +96,31 @@ export interface SearchArtifactResponseInput {
   cacheControl?: string;
 }
 
+export interface DatedCollectionJsonFeedResponseInput
+  extends BuildDatedCollectionJsonFeedOptions {
+  manifest?: DocsManifest;
+  loadManifest?: () => Promise<DocsManifest>;
+  cacheControl?: string;
+}
+
 export interface CollectionPostOptions {
   includeDrafts?: boolean;
 }
+
+export interface EmbedModeOptions {
+  param?: string;
+}
+
+type EmbedSearchParamsRecord = Record<
+  string,
+  string | string[] | readonly string[] | null | undefined
+>;
+
+type EmbedModeInput =
+  | URL
+  | URLSearchParams
+  | EmbedSearchParamsRecord
+  | { searchParams: URLSearchParams | EmbedSearchParamsRecord };
 
 function compareStrings(left: string, right: string): number {
   return left.localeCompare(right, "en", {
@@ -138,6 +162,66 @@ function normalizeCollectionId(collectionId: string): string {
 
 function normalizePostSlug(slug: string): string {
   return slug.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function normalizeEmbedParamName(param: string | undefined): string {
+  const normalized = typeof param === "string" ? param.trim() : "";
+  return normalized.length > 0 ? normalized : "embed";
+}
+
+function isEmbedSearchParamsRecord(input: unknown): input is EmbedSearchParamsRecord {
+  return typeof input === "object" && input !== null && !(input instanceof URLSearchParams);
+}
+
+function getEmbedSearchParamValue(
+  input: EmbedModeInput,
+  param: string
+): string | string[] | readonly string[] | null | undefined {
+  if (input instanceof URL) {
+    return input.searchParams.get(param);
+  }
+  if (input instanceof URLSearchParams) {
+    return input.get(param);
+  }
+  if ("searchParams" in input) {
+    const searchParams = input.searchParams;
+    if (searchParams instanceof URLSearchParams) {
+      return searchParams.get(param);
+    }
+    if (isEmbedSearchParamsRecord(searchParams)) {
+      return searchParams[param];
+    }
+    return undefined;
+  }
+  if (isEmbedSearchParamsRecord(input)) {
+    return input[param];
+  }
+  return undefined;
+}
+
+export function isEmbedModeValue(
+  value: string | string[] | readonly string[] | null | undefined
+): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value !== "string") {
+    return value.some((entry) => isEmbedModeValue(entry));
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return true;
+  }
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+export function resolveEmbedMode(
+  input: EmbedModeInput,
+  options: EmbedModeOptions = {}
+): boolean {
+  const param = normalizeEmbedParamName(options.param);
+  return isEmbedModeValue(getEmbedSearchParamValue(input, param));
 }
 
 function buildDocsPath(slug: SlugParam, basePath?: string): string {
@@ -983,6 +1067,56 @@ export async function createSearchArtifactResponse(
         ? String((error as { code: unknown }).code)
         : "DOCS_ARTIFACT_INVALID";
     const message = error instanceof Error ? error.message : "failed to load search artifact";
+
+    return new Response(
+      JSON.stringify({
+        code,
+        message,
+      }),
+      {
+        status: 500,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+}
+
+export async function createDatedCollectionJsonFeedResponse(
+  input: DatedCollectionJsonFeedResponseInput
+): Promise<Response> {
+  try {
+    const manifest = input.manifest ?? (input.loadManifest ? await input.loadManifest() : undefined);
+    if (!manifest) {
+      throw createDocsError({
+        code: "DOCS_ARTIFACT_INVALID",
+        message: "docs manifest is not available",
+        diagnostics: [
+          createDiagnostic({
+            code: "DOCS_ARTIFACT_INVALID",
+            message: "docs manifest is not available",
+          }),
+        ],
+      });
+    }
+
+    const feed = buildDatedCollectionJsonFeed(manifest, input);
+    return new Response(JSON.stringify(feed), {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": input.cacheControl ?? "public, max-age=0, must-revalidate",
+      },
+    });
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code: unknown }).code)
+        : "DOCS_ARTIFACT_INVALID";
+    const message =
+      error instanceof Error ? error.message : "failed to load dated collection JSON feed";
 
     return new Response(
       JSON.stringify({

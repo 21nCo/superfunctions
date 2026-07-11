@@ -18,6 +18,7 @@ export * from "./openapi";
 export * from "./helpers";
 export * from "./theme";
 export * from "./rss";
+export * from "./collection-json";
 export * from "./blog";
 export * from "./security";
 export * from "./analytics";

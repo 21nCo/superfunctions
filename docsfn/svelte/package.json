@@ -26,6 +26,30 @@
       "import": "./dist/Breadcrumbs.js",
       "require": "./dist/Breadcrumbs.cjs"
     },
+    "./ChangelogEntry.svelte": {
+      "types": "./dist/ChangelogEntry.d.ts",
+      "svelte": "./src/ChangelogEntry.svelte",
+      "import": "./dist/ChangelogEntry.js",
+      "require": "./dist/ChangelogEntry.cjs"
+    },
+    "./ChangelogList.svelte": {
+      "types": "./dist/ChangelogList.d.ts",
+      "svelte": "./src/ChangelogList.svelte",
+      "import": "./dist/ChangelogList.js",
+      "require": "./dist/ChangelogList.cjs"
+    },
+    "./DatedCollectionEntry.svelte": {
+      "types": "./dist/DatedCollectionEntry.d.ts",
+      "svelte": "./src/DatedCollectionEntry.svelte",
+      "import": "./dist/DatedCollectionEntry.js",
+      "require": "./dist/DatedCollectionEntry.cjs"
+    },
+    "./DatedCollectionList.svelte": {
+      "types": "./dist/DatedCollectionList.d.ts",
+      "svelte": "./src/DatedCollectionList.svelte",
+      "import": "./dist/DatedCollectionList.js",
+      "require": "./dist/DatedCollectionList.cjs"
+    },
     "./DocsContent.svelte": {
       "types": "./dist/DocsContent.d.ts",
       "svelte": "./src/DocsContent.svelte",

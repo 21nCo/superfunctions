@@ -1,5 +1,6 @@
 export * from "./route-helpers";
 export {
+  createDatedCollectionJsonFeedResponse as createDocsCollectionJsonFeedResponse,
   createSearchArtifactResponse as createDocsSearchArtifactResponse,
   generateCollectionParams as generateDocsCollectionParams,
   generateBlogParams as generateDocsBlogParams,
@@ -8,6 +9,7 @@ export {
   getPostData as getDocsBlogPostData,
   resolveDocsPageSurface as resolveEmbeddedDocsSurface,
   resolveDocsRouteData as resolveEmbeddedDocsRouteData,
+  resolveEmbedMode as resolveDocsEmbedMode,
 } from "./route-helpers";
 export {
   CANONICAL_DOCS_ANALYTICS_EVENT_NAMES,

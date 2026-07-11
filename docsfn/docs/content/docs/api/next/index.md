@@ -41,6 +41,7 @@ Supporting types: **`NextDocsPageLink`**, **`NextDocsPageBreadcrumbItem`**, **`N
 | **`ResolvePageSurfaceOptions`** | `basePath?`, `sidebarId?`, `homeLabel?`, `homeHref?`, `canonicalUrl?`, `pageActions?`, `editLink?`, `versionMode?` |
 | **`SearchArtifactResponseInput`** | `artifact?`, `loadArtifact?`, `cacheControl?` |
 | **`CollectionPostOptions`** | `includeDrafts?` |
+| **`EmbedModeOptions`** | `param?` |
 
 `SlugParam` accepted by slug-based helpers is `string | string[] | readonly string[] | undefined`.
 
@@ -63,6 +64,13 @@ Supporting types: **`NextDocsPageLink`**, **`NextDocsPageBreadcrumbItem`**, **`N
 | **`getApiData(slug, manifest, options?)`** | `ApiReference \| null` — treats slug segments under `{basePath}/api/...` |
 
 There is no `getApiDataOrThrow` variant in this package; handle `null` or use `resolveDocsRouteDataOrThrow` and branch on `kind`.
+
+## Embed mode
+
+| Function | Returns | Notes |
+| --- | --- | --- |
+| **`resolveEmbedMode(searchParams, options?)`** | `boolean` | Reads `?embed=1` by default; accepts Next-style `searchParams` objects. |
+| **`isEmbedModeValue(value)`** | `boolean` | Normalizes raw query values such as `1`, `true`, `yes`, `on`, or an empty present param. |
 
 ## Static generation
 
@@ -112,6 +120,7 @@ Async; returns a Web **`Response`** with JSON (`DocsSearchArtifact`) and `conten
 | **`getDocsCollectionPosts`** | `getCollectionPosts` |
 | **`generateDocsBlogParams`** | `generateBlogParams` |
 | **`generateDocsCollectionParams`** | `generateCollectionParams` |
+| **`resolveDocsEmbedMode`** | `resolveEmbedMode` |
 
 ## Re-exports from `@docsfn/core`
 
