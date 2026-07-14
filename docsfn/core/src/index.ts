@@ -13,6 +13,7 @@ export * from "./sidebar";
 export * from "./markdown";
 export * from "./sanitize";
 export * from "./search";
+export * from "./search-adapter";
 export * from "./search-runtime";
 export * from "./openapi";
 export * from "./helpers";

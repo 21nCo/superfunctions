@@ -13,5 +13,5 @@
 <DocsSearch
   {loadSearchArtifact}
   placeholder="Search documentation..."
-  scopes={["all", "docs", "api", "blog"]}
+  scopes={["all", "docs", "api", "blog", "changelog"]}
 />

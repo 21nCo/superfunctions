@@ -1,4 +1,9 @@
 import { createDiagnostic, createDocsError } from "./diagnostics";
+import {
+  getDefaultDocsSearchEngineAdapter,
+  type DocsSearchEngineAdapter,
+  type DocsSearchEngineName,
+} from "./search-adapter";
 import { redactSensitiveText, resolveDocsAuthMode } from "./security";
 import type {
   DocsConfig,
@@ -39,7 +44,7 @@ export interface DocsSearchDocument {
 
 export interface DocsSearchArtifact {
   schemaVersion: 1;
-  engine: "searchfn";
+  engine: DocsSearchEngineName;
   fields: DocsSearchField[];
   scopes: DocsSearchScope[];
   bodyIndexing: DocsSearchBodyIndexing;
@@ -52,53 +57,16 @@ export interface DocsSearchArtifact {
 export interface BuildSearchIndexOptions {
   search?: DocsConfig["search"];
   auth?: DocsConfig["auth"];
+  searchAdapter?: DocsSearchEngineAdapter;
 }
 
 const DEFAULT_SCOPES: DocsSearchScope[] = ["docs", "api", "blog"];
+const SEARCH_FIELDS: DocsSearchField[] = ["title", "summary", "headings", "tags", "body"];
 
 interface NormalizedRouteScopeOverride {
   pattern: string;
   scope: DocsSearchScope;
   regex: RegExp;
-}
-
-interface SearchIndexEngine {
-  add(input: {
-    id: string | number;
-    fields: Record<string, string>;
-    store?: Record<string, unknown>;
-  }): void;
-  exportSnapshot(): DocsSearchSnapshot;
-}
-
-interface SearchFnClientModule {
-  InMemorySearchFn: new (options: {
-    fields: string[];
-    pipeline?: {
-      enableEdgeNGrams?: boolean;
-      edgeNGramMinLength?: number;
-    };
-  }) => SearchIndexEngine;
-}
-
-async function loadSearchFnClient(): Promise<SearchFnClientModule> {
-  try {
-    return (await import("@searchfn/client")) as unknown as SearchFnClientModule;
-  } catch (error) {
-    throw createDocsError({
-      code: "DOCS_SEARCH_BUILD_FAILED",
-      message: "@searchfn/client is required to build a docs search index",
-      diagnostics: [
-        createDiagnostic({
-          code: "DOCS_SEARCH_BUILD_FAILED",
-          message: "@searchfn/client is required to build a docs search index",
-          suggestion:
-            "Install @searchfn/client, disable docs search, or provide a prebuilt search artifact.",
-        }),
-      ],
-      cause: error,
-    });
-  }
 }
 
 function normalizeWhitespace(value: string): string {
@@ -303,17 +271,6 @@ function createEmptySnapshot(): DocsSearchSnapshot {
   };
 }
 
-async function createSearchEngine(): Promise<SearchIndexEngine> {
-  const { InMemorySearchFn } = await loadSearchFnClient();
-  return new InMemorySearchFn({
-    fields: ["title", "summary", "headings", "tags", "body"],
-    pipeline: {
-      enableEdgeNGrams: true,
-      edgeNGramMinLength: 2,
-    },
-  });
-}
-
 function resolveBodyField(input: {
   bodyIndexing: DocsSearchBodyIndexing;
   body: string;
@@ -516,14 +473,15 @@ export async function buildSearchIndex(
   const enabled = searchConfig?.enabled ?? true;
   const scopes = normalizeScopes(searchConfig, manifest);
   const bodyIndexing = resolveBodyIndexing(searchConfig);
+  const searchAdapter = options.searchAdapter ?? getDefaultDocsSearchEngineAdapter();
   normalizeRouteScopeOverrides(searchConfig?.routeScopeOverrides);
   const diagnostics: DocsDiagnostic[] = [];
 
   if (!enabled) {
     const emptyArtifact: DocsSearchArtifact = {
       schemaVersion: 1,
-      engine: "searchfn",
-      fields: ["title", "summary", "headings", "tags", "body"],
+      engine: searchAdapter.name,
+      fields: SEARCH_FIELDS,
       scopes,
       bodyIndexing,
       documents: [],
@@ -547,7 +505,7 @@ export async function buildSearchIndex(
   });
   assertUniqueSearchDocumentIds(documents);
 
-  const engine = await createSearchEngine();
+  const engine = await searchAdapter.createIndexEngine({ fields: SEARCH_FIELDS });
   for (const document of documents) {
     engine.add({
       id: document.id,
@@ -572,8 +530,8 @@ export async function buildSearchIndex(
   const snapshot = engine.exportSnapshot();
   const artifactBase: Omit<DocsSearchArtifact, "bytes"> = {
     schemaVersion: 1,
-    engine: "searchfn",
-    fields: ["title", "summary", "headings", "tags", "body"],
+    engine: searchAdapter.name,
+    fields: SEARCH_FIELDS,
     scopes,
     bodyIndexing,
     documents,

@@ -5,7 +5,9 @@ description: Configure docsfn search scopes, body indexing, artifacts, and the D
 
 # Search
 
-docsfn builds a **search artifact** (`DocsSearchArtifact`) at compile time and serves it as JSON. The browser loads that artifact (or fetches it lazily) and hydrates a **searchfn** memory client from the artifact documents.
+docsfn builds a **search artifact** (`DocsSearchArtifact`) at compile time and serves it as JSON. Search is local/static by default: the browser loads that artifact (or fetches it lazily) and queries it in-process.
+
+The default engine is **searchfn**. Internally, docsfn now talks to search through a small adapter boundary, so searchfn remains the built-in starting point while other engines can be added later without rewriting the docs UI or manifest pipeline.
 
 See also: [Configuration](./configuration), [CLI](./cli), [Content providers](./content-providers).
 
@@ -102,10 +104,10 @@ From **`@docsfn/svelte`**:
 
 ### Scope filtering
 
-The dialog UI lets users restrict queries to **All**, **docs**, **api**, or **blog**; the runtime passes the selected scope into **`createDocsSearchRuntime`’s `query()`**.
+The dialog UI lets users restrict queries to **All**, **Docs**, **API**, **Blog**, or **Changelog**; the runtime passes the selected scope into **`createDocsSearchRuntime`’s `query()`**.
 
 ## How scoring works (brief)
 
-The build captures canonical search documents and engine metadata in the artifact. At query time, `createDocsSearchRuntime()` initializes a memory-backed **searchfn** client, indexes those documents by scope, and returns results sorted by **score**, **title**, and **path** for stable ordering.
+The build captures canonical search documents and engine metadata in the artifact. At query time, `createDocsSearchRuntime()` reads the artifact engine, resolves the matching docsfn search adapter, and returns results sorted by **score**, **title**, and **path** for stable ordering.
 
 You do not configure BM25 weights in `docsfn.config.ts`; tuning is achieved by **scope**, **body indexing mode**, and content structure.

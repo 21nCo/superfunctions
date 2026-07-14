@@ -22,7 +22,7 @@
     "svelte": "^4.0.0 || ^5.0.0"
   },
   "dependencies": {
-    "@docsfn/core": "0.0.3"
+    "@docsfn/core": "*"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

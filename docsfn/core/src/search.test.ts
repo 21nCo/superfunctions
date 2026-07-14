@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { buildManifest } from "./manifest";
 import { createSourceEntryId } from "./provider";
 import { buildSearchIndex, resolveSearchScopeForRoute } from "./search";
+import type { DocsSearchEngineAdapter } from "./search-adapter";
 import type {
   DocsCollection,
   DocsContentProvider,
@@ -253,6 +254,51 @@ describe("buildSearchIndex", () => {
     expect(artifact.documents.find((doc) => doc.id === "docs:adapter")?.headings).toEqual([
       "IndexedDB Adapter",
       "Setup",
+    ]);
+  });
+
+  it("can build through a custom search adapter boundary", async () => {
+    const indexedIds: Array<string | number> = [];
+    const adapter: DocsSearchEngineAdapter = {
+      name: "test-static",
+      async createIndexEngine() {
+        return {
+          add(input) {
+            indexedIds.push(input.id);
+          },
+          exportSnapshot() {
+            return {
+              postings: [],
+              stats: [],
+              documents: indexedIds.map((docId) => ({ docId, payload: {} })),
+              vocabulary: [],
+            };
+          },
+        };
+      },
+      async createRuntime() {
+        return {
+          async query() {
+            return [];
+          },
+        };
+      },
+    };
+
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: {
+        enabled: true,
+        scopes: ["docs", "api", "blog"],
+      },
+      searchAdapter: adapter,
+    });
+
+    expect(artifact.engine).toBe("test-static");
+    expect(indexedIds).toEqual([
+      "api:search",
+      "blog:release",
+      "docs:adapter",
+      "docs:index",
     ]);
   });
 

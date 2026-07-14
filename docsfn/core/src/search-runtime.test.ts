@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildSearchIndex } from "./search";
 import { maybeEmitAnalyticsEvent } from "./analytics";
 import { createDocsSearchRuntime } from "./search-runtime";
+import type { DocsSearchEngineAdapter } from "./search-adapter";
 import type { DocsManifest } from "./types";
 
 function createManifest(): DocsManifest {
@@ -115,6 +116,83 @@ describe("search runtime", () => {
         scope: "foo" as "docs",
       })
     ).rejects.toThrowError(/DOCS_CONFIG_INVALID|unknown search scope foo/);
+  });
+
+  it("resolves custom search adapters by artifact engine", async () => {
+    const adapter: DocsSearchEngineAdapter = {
+      name: "test-static",
+      async createIndexEngine() {
+        return {
+          add() {},
+          exportSnapshot() {
+            return {
+              postings: [],
+              stats: [],
+              documents: [],
+              vocabulary: [],
+            };
+          },
+        };
+      },
+      async createRuntime({ documents }) {
+        return {
+          async query(input) {
+            const normalizedQuery = input.query.toLowerCase();
+            return [...documents.values()]
+              .filter((document) => input.scope === "all" || document.scope === input.scope)
+              .filter((document) =>
+                `${document.title} ${document.summary} ${document.body}`
+                  .toLowerCase()
+                  .includes(normalizedQuery)
+              )
+              .map((document) => ({
+                id: document.id,
+                scope: document.scope,
+                kind: document.kind,
+                path: document.path,
+                title: document.title,
+                summary: document.summary,
+                score: 1,
+              }));
+          },
+        };
+      },
+    };
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: { enabled: true, scopes: ["docs", "api", "blog"] },
+      searchAdapter: adapter,
+    });
+    const runtime = createDocsSearchRuntime({
+      artifact,
+      searchAdapters: [adapter],
+    });
+
+    const results = await runtime.query({
+      query: "adapter",
+      scope: "api",
+      limit: 10,
+    });
+
+    expect(artifact.engine).toBe("test-static");
+    expect(results.map((result) => result.path)).toEqual(["/docs/api/adapter"]);
+  });
+
+  it("throws DOCS_ARTIFACT_INVALID for unsupported artifact engines", async () => {
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: { enabled: true, scopes: ["docs", "api", "blog"] },
+    });
+    const runtime = createDocsSearchRuntime({
+      artifact: {
+        ...artifact,
+        engine: "unknown-engine",
+      },
+    });
+
+    await expect(
+      runtime.query({
+        query: "adapter",
+      })
+    ).rejects.toThrowError(/DOCS_ARTIFACT_INVALID|unsupported search artifact engine unknown-engine/);
   });
 
   it("uses deterministic tie-break ordering for equal-score results", async () => {
