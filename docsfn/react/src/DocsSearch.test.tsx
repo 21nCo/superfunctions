@@ -84,7 +84,8 @@ describe("DocsSearch", () => {
     });
 
     const input = await screen.findByRole("textbox", { name: "Search query" });
-    const scopeSelect = screen.getByRole("combobox", { name: "Search scope" });
+    const apiScope = screen.getByRole("button", { name: "API" });
+    const allScope = screen.getByRole("button", { name: "All" });
     fireEvent.change(input, { target: { value: "search" } });
 
     await screen.findByText("Search API");
@@ -97,13 +98,13 @@ describe("DocsSearch", () => {
     expect(resultButtons[0]?.textContent).toContain("/docs/");
     expect(resultButtons[0]?.textContent).toContain("Search");
 
-    fireEvent.change(scopeSelect, { target: { value: "api" } });
+    fireEvent.click(apiScope);
     await waitFor(() => {
       expect(screen.getByText("Search API")).toBeTruthy();
       expect(screen.queryByText("Search Guide")).toBeNull();
     });
 
-    fireEvent.change(scopeSelect, { target: { value: "all" } });
+    fireEvent.click(allScope);
     await waitFor(() => {
       expect(screen.getByText("Search API")).toBeTruthy();
       expect(screen.getByText("Search Guide")).toBeTruthy();

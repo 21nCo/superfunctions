@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Search from "@lucide/svelte/icons/search";
+  import X from "@lucide/svelte/icons/x";
   import { maybeEmitAnalyticsEvent, type DocsAnalyticsEvent } from "@docsfn/core/analytics";
   import type { DocsSearchArtifact, DocsSearchScope } from "@docsfn/core/search";
   import {
@@ -217,7 +219,9 @@
     on:click={() => (isOpen = true)}
     aria-label="Search documentation"
   >
-    <span class="docsfn-search-icon" aria-hidden="true">🔍</span>
+    <span class="docsfn-search-icon" aria-hidden="true">
+      <Search size={16} strokeWidth={1.8} />
+    </span>
     <span class="docsfn-search-placeholder">{placeholder}</span>
     <kbd class="docsfn-search-kbd">
       <span>⌘</span>
@@ -229,7 +233,9 @@
     <DialogOverlay class="docsfn-search-overlay" />
     <DialogContent class="docsfn-search-content" on:keydown={handleKeyDown}>
       <div class="docsfn-search-header">
-        <span class="docsfn-search-icon" aria-hidden="true">🔍</span>
+        <span class="docsfn-search-icon" aria-hidden="true">
+          <Search size={18} strokeWidth={1.8} />
+        </span>
         <input
           bind:this={inputRef}
           type="text"
@@ -244,7 +250,7 @@
             class="docsfn-search-clear"
             aria-label="Clear search"
           >
-            ✕
+            <X size={17} strokeWidth={1.8} aria-hidden="true" />
           </button>
         {/if}
       </div>
@@ -302,15 +308,85 @@
 </Dialog>
 
 <style>
+  :global(.docsfn-search-overlay) {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: rgb(15 23 42 / 0.42);
+    backdrop-filter: blur(3px);
+  }
+
   :global(.docsfn-search-content) {
+    position: fixed;
+    top: min(14vh, 7rem);
+    left: 50%;
+    z-index: 71;
+    transform: translateX(-50%);
     width: min(42rem, calc(100vw - 2rem));
     max-height: min(80vh, 42rem);
     border: 1px solid var(--docsfn-color-border, #e2e8f0);
-    border-radius: 0.75rem;
+    border-radius: 0.5rem;
     background: var(--docsfn-color-surface, #fff);
     color: var(--docsfn-color-fg, #0f172a);
     box-shadow: 0 24px 60px rgb(15 23 42 / 0.2);
     overflow: hidden;
+  }
+
+  .docsfn-search-trigger {
+    width: min(18rem, 28vw);
+    min-width: 11rem;
+    height: 2.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0 0.45rem 0 0.7rem;
+    border: 1px solid var(--docsfn-color-border, #e2e8f0);
+    border-radius: 0.375rem;
+    background: var(--docsfn-color-surface, #fff);
+    color: var(--docsfn-color-muted, #64748b);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+  }
+
+  .docsfn-search-trigger:hover,
+  .docsfn-search-trigger:focus-visible {
+    border-color: var(--docsfn-color-primary, #2563eb);
+    color: var(--docsfn-color-fg, #0f172a);
+    box-shadow: 0 0 0 3px var(--docsfn-color-accent-soft, rgb(37 99 235 / 0.08));
+    outline: 0;
+  }
+
+  .docsfn-search-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    color: var(--docsfn-color-muted, #64748b);
+  }
+
+  .docsfn-search-placeholder {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.84rem;
+  }
+
+  .docsfn-search-kbd {
+    min-width: 2.2rem;
+    height: 1.45rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+    border: 1px solid var(--docsfn-color-border, #e2e8f0);
+    border-radius: 0.25rem;
+    background: var(--docsfn-color-bg, #f8fafc);
+    color: var(--docsfn-color-muted, #64748b);
+    font-family: inherit;
+    font-size: 0.68rem;
+    line-height: 1;
   }
 
   .docsfn-search-header {
@@ -332,6 +408,12 @@
   }
 
   .docsfn-search-clear {
+    width: 1.9rem;
+    height: 1.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.3rem;
     border: 0;
     background: transparent;
     color: var(--docsfn-color-muted, #64748b);
@@ -339,9 +421,14 @@
     font: inherit;
   }
 
+  .docsfn-search-clear:hover {
+    background: var(--docsfn-color-accent-soft, rgb(37 99 235 / 0.08));
+    color: var(--docsfn-color-fg, #0f172a);
+  }
+
   .docsfn-search-scopes {
     display: flex;
-    gap: 0.4rem;
+    gap: 0;
     padding: 0.7rem 1rem;
     border-bottom: 1px solid var(--docsfn-color-border, #e2e8f0);
     overflow-x: auto;
@@ -349,7 +436,8 @@
 
   .docsfn-search-scopes button {
     border: 1px solid var(--docsfn-color-border, #e2e8f0);
-    border-radius: 999px;
+    border-radius: 0;
+    margin-left: -1px;
     padding: 0.35rem 0.7rem;
     background: transparent;
     color: var(--docsfn-color-muted, #64748b);
@@ -357,6 +445,15 @@
     font: inherit;
     font-size: 0.8rem;
     white-space: nowrap;
+  }
+
+  .docsfn-search-scopes button:first-child {
+    margin-left: 0;
+    border-radius: 0.35rem 0 0 0.35rem;
+  }
+
+  .docsfn-search-scopes button:last-child {
+    border-radius: 0 0.35rem 0.35rem 0;
   }
 
   .docsfn-search-scopes button:hover,
@@ -401,7 +498,7 @@
 
   .docsfn-search-item-scope {
     flex: 0 0 auto;
-    border-radius: 999px;
+    border-radius: 0.25rem;
     padding: 0.18rem 0.48rem;
     background: var(--docsfn-color-border, #e2e8f0);
     color: var(--docsfn-color-fg, #0f172a);
@@ -448,5 +545,25 @@
 
   .docsfn-search-empty p {
     margin: 0;
+  }
+
+  @media (max-width: 720px) {
+    .docsfn-search-trigger {
+      width: 2.25rem;
+      min-width: 2.25rem;
+      padding: 0;
+      justify-content: center;
+    }
+
+    .docsfn-search-placeholder,
+    .docsfn-search-kbd {
+      display: none;
+    }
+
+    :global(.docsfn-search-content) {
+      top: 0.75rem;
+      width: calc(100vw - 1.5rem);
+      max-height: calc(100vh - 1.5rem);
+    }
   }
 </style>

@@ -19,6 +19,7 @@
   "dependencies": {
     "@docsfn/core": "*",
     "@uifn/react": "0.0.1",
+    "lucide-react": "^0.575.0",
     "markdown-to-jsx": "^7.3.2",
     "searchfn": "*"
   },

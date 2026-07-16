@@ -1,5 +1,12 @@
 <script lang="ts">
   import type { ComponentType } from "svelte";
+  import Check from "@lucide/svelte/icons/check";
+  import CircleAlert from "@lucide/svelte/icons/circle-alert";
+  import CircleCheck from "@lucide/svelte/icons/circle-check";
+  import Copy from "@lucide/svelte/icons/copy";
+  import Info from "@lucide/svelte/icons/info";
+  import Lightbulb from "@lucide/svelte/icons/lightbulb";
+  import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import {
     assertCompiledContentTrusted,
     compileSvelteContent,
@@ -25,6 +32,7 @@
   export let nested = false;
 
   let activeTabs: Record<string, string> = {};
+  let copiedCodeKey: string | undefined = undefined;
 
   $: compiledContent =
     compiled ??
@@ -71,6 +79,39 @@
     });
   }
 
+  function getCalloutLabel(kind: string): string {
+    return {
+      note: "Note",
+      tip: "Tip",
+      warning: "Warning",
+      info: "Info",
+      caution: "Caution",
+    }[kind] ?? "Note";
+  }
+
+  function getCalloutIcon(kind: string): ComponentType {
+    return {
+      note: CircleAlert,
+      tip: Lightbulb,
+      warning: TriangleAlert,
+      info: Info,
+      caution: CircleCheck,
+    }[kind] ?? CircleAlert;
+  }
+
+  async function copyCode(code: string, codeKey: string) {
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+    await navigator.clipboard.writeText(code);
+    copiedCodeKey = codeKey;
+    setTimeout(() => {
+      if (copiedCodeKey === codeKey) {
+        copiedCodeKey = undefined;
+      }
+    }, 1800);
+  }
+
   function resolveComponent(name: string): ComponentType {
     const component = components[name];
     if (!component) {
@@ -89,9 +130,28 @@
     {:else if block.type === "list"}
       {@html block.html}
     {:else if block.type === "table"}
-      {@html block.html}
+      <div class="docsfn-table-wrap">{@html block.html}</div>
     {:else if block.type === "code"}
-      <pre data-docsfn-code="true"><code data-lang={block.lang}>{block.code}</code></pre>
+      {@const codeKey = `${keyPath}.code.${index}`}
+      <div class="docsfn-code-block">
+        <div class="docsfn-code-header">
+          <span>{block.lang ?? "Code"}</span>
+          <button
+            type="button"
+            aria-label={copiedCodeKey === codeKey ? "Code copied" : "Copy code"}
+            on:click={() => copyCode(block.code, codeKey)}
+          >
+            {#if copiedCodeKey === codeKey}
+              <Check size={14} strokeWidth={1.8} aria-hidden="true" />
+              Copied
+            {:else}
+              <Copy size={14} strokeWidth={1.8} aria-hidden="true" />
+              Copy
+            {/if}
+          </button>
+        </div>
+        <pre data-docsfn-code="true"><code data-lang={block.lang}>{block.code}</code></pre>
+      </div>
     {:else if block.type === "mermaid"}
       {#if renderMermaid}
         <svelte:component this={renderMermaid} {block} />
@@ -102,7 +162,11 @@
       {/if}
     {:else if block.type === "callout"}
       <aside data-docsfn-callout={block.kind}>
-        {@html block.html}
+        <div class="docsfn-callout-title">
+          <svelte:component this={getCalloutIcon(block.kind)} size={17} strokeWidth={1.8} />
+          <span>{getCalloutLabel(block.kind)}</span>
+        </div>
+        <div class="docsfn-callout-content">{@html block.html}</div>
       </aside>
     {:else if block.type === "tabs"}
       {@const fallbackTab = block.items[0] ?? block.tabs[0]?.value ?? ""}

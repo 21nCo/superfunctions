@@ -19,6 +19,9 @@ export interface MetaPageRule {
   key: string;
   label?: string;
   icon?: string;
+  badge?: string;
+  description?: string;
+  expanded?: boolean;
   hidden?: boolean;
 }
 
@@ -164,6 +167,11 @@ function parseMetaPageRule(value: unknown): MetaPageRule {
             ? record.title
             : undefined,
       icon: typeof record.icon === "string" ? record.icon : undefined,
+      badge: typeof record.badge === "string" ? record.badge : undefined,
+      description:
+        typeof record.description === "string" ? record.description : undefined,
+      expanded:
+        typeof record.expanded === "boolean" ? record.expanded : undefined,
       hidden: Boolean(record.hidden),
     };
   }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { BlogPost } from "@docsfn/core/browser";
+  import ArrowLeft from "@lucide/svelte/icons/arrow-left";
 
   export interface DatedCollectionEntryProps {
     post: BlogPost;
@@ -21,7 +22,10 @@
   class:docsfn-dated-entry--embedded={embedded}
 >
   {#if !embedded && showBackLink && collectionHref}
-    <a class="docsfn-dated-entry-back" href={collectionHref}>{collectionLabel}</a>
+    <a class="docsfn-dated-entry-back" href={collectionHref}>
+      <ArrowLeft size={15} strokeWidth={1.8} aria-hidden="true" />
+      {collectionLabel}
+    </a>
   {/if}
 
   <header class="docsfn-dated-entry-header">
@@ -45,18 +49,22 @@
 
 <style>
   .docsfn-dated-entry {
-    padding-block: 2rem 3rem;
-    max-width: 48rem;
+    width: min(48rem, calc(100% - 2rem));
+    margin-inline: auto;
+    padding-block: 3.5rem 4rem;
   }
 
   .docsfn-dated-entry--embedded {
     padding-block: 0;
     max-width: none;
+    width: 100%;
     background: transparent;
   }
 
   .docsfn-dated-entry-back {
     display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     margin-bottom: 1.5rem;
     font-size: 0.9rem;
     font-weight: 500;
@@ -76,7 +84,8 @@
 
   .docsfn-dated-entry-header h1 {
     margin: 0;
-    font-size: 2rem;
+    font-size: 2.35rem;
+    line-height: 1.18;
     color: var(--docsfn-color-fg, #0f172a);
   }
 
@@ -102,6 +111,19 @@
   }
 
   .docsfn-dated-entry-body {
-    margin-top: 2rem;
+    margin-top: 1.75rem;
+    padding-top: 1.75rem;
+    border-top: 1px solid var(--docsfn-color-border, #e2e8f0);
+  }
+
+  @media (max-width: 640px) {
+    .docsfn-dated-entry {
+      width: min(100% - 1.5rem, 48rem);
+      padding-block: 2.25rem 3rem;
+    }
+
+    .docsfn-dated-entry-header h1 {
+      font-size: 1.9rem;
+    }
   }
 </style>

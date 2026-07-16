@@ -101,6 +101,9 @@ export interface SidebarItem {
   link?: string; // for links
   items?: SidebarItem[]; // for groups
   expanded?: boolean; // if true, group is always open regardless of active page
+  icon?: string;
+  badge?: string;
+  description?: string;
 }
 
 export interface Sidebar {

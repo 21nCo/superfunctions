@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { SidebarItem } from "@docsfn/core/browser";
+  import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import ExternalLink from "@lucide/svelte/icons/external-link";
+  import SidebarIcon from "./SidebarIcon.svelte";
 
   export let item: SidebarItem;
   export let activePath: string | undefined = undefined;
@@ -15,8 +18,16 @@
     return false;
   }
 
+  let groupOpen =
+    item.type === "group" &&
+    (item.expanded === true || hasActiveLink(item, activePath));
+
   $: hasActiveChild = hasActiveLink(item, activePath);
+  $: if (item.type === "group" && hasActiveChild) {
+    groupOpen = true;
+  }
   $: isActive = item.type === 'link' && activePath === item.link;
+  $: isExternal = item.type === "link" && Boolean(item.link?.startsWith("http"));
 </script>
 
 {#if item.type === 'separator'}
@@ -25,20 +36,18 @@
   <details
     class="docsfn-sidebar-group"
     data-depth={depth}
-    open={item.expanded === true || hasActiveChild}
+    bind:open={groupOpen}
   >
     <summary class="docsfn-sidebar-group-trigger">
-      <span class="docsfn-sidebar-group-text">{item.text}</span>
+      {#if item.icon}
+        <span class="docsfn-sidebar-item-icon"><SidebarIcon name={item.icon} /></span>
+      {/if}
+      <span class="docsfn-sidebar-group-text" title={item.description}>{item.text}</span>
+      {#if item.badge}
+        <span class="docsfn-sidebar-badge">{item.badge}</span>
+      {/if}
       <span class="docsfn-sidebar-group-icon" aria-hidden="true">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path
-            d="M4 3L7 6L4 9"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
+        <ChevronRight size={13} strokeWidth={1.8} />
       </span>
     </summary>
 
@@ -57,7 +66,19 @@
     data-active={isActive}
     data-depth={depth}
     aria-current={isActive ? 'page' : undefined}
+    title={item.description}
+    target={isExternal ? "_blank" : undefined}
+    rel={isExternal ? "noreferrer noopener" : undefined}
   >
-    {item.text}
+    {#if item.icon}
+      <span class="docsfn-sidebar-item-icon"><SidebarIcon name={item.icon} /></span>
+    {/if}
+    <span class="docsfn-sidebar-link-text">{item.text}</span>
+    {#if item.badge}
+      <span class="docsfn-sidebar-badge">{item.badge}</span>
+    {/if}
+    {#if isExternal}
+      <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
+    {/if}
   </a>
 {/if}

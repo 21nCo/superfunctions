@@ -113,7 +113,12 @@ describe("navigation", () => {
         title: "SearchFn",
         pages: [
           { key: "index" },
-          { key: "getting-started" },
+          {
+            key: "getting-started",
+            icon: "rocket",
+            badge: "New",
+            description: "Start building",
+          },
           { key: "architecture" },
           { key: "reference" },
           { key: "integrations" },
@@ -141,6 +146,11 @@ describe("navigation", () => {
       "Integrations",
       "Operations",
     ]);
+    expect(sidebars.default.items[1]).toMatchObject({
+      icon: "rocket",
+      badge: "New",
+      description: "Start building",
+    });
   });
 
   it("supports meta.root flattening and hidden entries", () => {

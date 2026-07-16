@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { DocHeading, DocsTopNavItem, Sidebar, Version } from "@docsfn/core/browser";
+  import Menu from "@lucide/svelte/icons/menu";
+  import X from "@lucide/svelte/icons/x";
   import DocsSidebar from "./DocsSidebar.svelte";
   import DocsToc from "./DocsToc.svelte";
 
@@ -54,9 +56,9 @@
 
 <div class="docsfn-layout" class:docsfn-layout--embedded={embedded}>
   {#if !embedded && $$slots.topbar}
-    <header class="docsfn-topbar">
+    <div class="docsfn-layout-topbar">
       <slot name="topbar" />
-    </header>
+    </div>
   {/if}
 
   {#if showSidebar}
@@ -68,7 +70,13 @@
         aria-controls="docsfn-sidebar-panel"
         on:click={() => (sidebarOpen = !sidebarOpen)}
       >
-        Menu
+        {#if sidebarOpen}
+          <X size={17} strokeWidth={1.8} aria-hidden="true" />
+          Close
+        {:else}
+          <Menu size={17} strokeWidth={1.8} aria-hidden="true" />
+          Menu
+        {/if}
       </button>
     </div>
 

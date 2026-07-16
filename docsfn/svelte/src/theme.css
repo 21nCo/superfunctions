@@ -162,7 +162,16 @@
 }
 
 .docsfn-content aside[data-docsfn-callout] {
-  background: var(--docsfn-color-surface-raised);
+  background: var(--docsfn-color-accent-soft);
+}
+
+.docsfn-content aside[data-docsfn-callout="tip"] {
+  background: rgb(22 163 74 / 0.08);
+}
+
+.docsfn-content aside[data-docsfn-callout="warning"],
+.docsfn-content aside[data-docsfn-callout="caution"] {
+  background: rgb(217 119 6 / 0.08);
 }
 
 .docsfn-content [data-docsfn-tabs="true"] {
@@ -179,7 +188,7 @@
 
 .docsfn-content [data-docsfn-tabs="true"] button[role="tab"][aria-selected="true"] {
   color: var(--docsfn-color-fg);
-  border-color: var(--docsfn-color-border);
+  border-color: var(--docsfn-color-primary);
   background: var(--docsfn-color-surface);
 }
 

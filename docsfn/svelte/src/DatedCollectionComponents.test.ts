@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("dated collection Svelte components", () => {
-  it("renders changelog list cards from shared post data", () => {
+  it("renders a changelog list from shared post data", () => {
     render(ChangelogList, {
       posts: [changelogPost],
       title: "Changelog",

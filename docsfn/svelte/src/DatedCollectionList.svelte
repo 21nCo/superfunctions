@@ -59,17 +59,20 @@
 
 <style>
   .docsfn-dated-list {
-    padding-block: 2rem 3rem;
+    width: min(54rem, calc(100% - 2rem));
+    margin-inline: auto;
+    padding-block: 3.5rem 4rem;
   }
 
   .docsfn-dated-list--embedded {
     padding-block: 0;
+    width: 100%;
     background: transparent;
   }
 
   .docsfn-dated-list-header h1 {
     margin: 0 0 0.5rem;
-    font-size: 2rem;
+    font-size: 2.35rem;
     color: var(--docsfn-color-fg, #0f172a);
   }
 
@@ -83,6 +86,11 @@
     color: var(--docsfn-color-muted, #64748b);
   }
 
+  .docsfn-dated-list-header {
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--docsfn-color-border, #e2e8f0);
+  }
+
   .docsfn-dated-list-empty {
     margin-top: 2rem;
   }
@@ -92,7 +100,7 @@
     margin: 2rem 0 0;
     padding: 0;
     display: grid;
-    gap: 1rem;
+    gap: 0;
   }
 
   .docsfn-dated-list--embedded .docsfn-dated-list-items {
@@ -101,38 +109,60 @@
 
   .docsfn-dated-list-card {
     display: grid;
-    gap: 0.4rem;
-    padding: 1rem 1.25rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--docsfn-color-border, #e2e8f0);
+    grid-template-columns: 7rem minmax(0, 1fr);
+    gap: 0.4rem 1.5rem;
+    padding: 1.35rem 0;
+    border-radius: 0;
+    border: 0;
+    border-bottom: 1px solid var(--docsfn-color-border, #e2e8f0);
     text-decoration: none;
     color: inherit;
-    background: var(--docsfn-color-surface, #fff);
-    transition:
-      border-color 0.15s ease,
-      box-shadow 0.15s ease;
+    background: transparent;
+    transition: color 0.15s ease;
   }
 
   .docsfn-dated-list-card:hover {
-    border-color: var(--docsfn-color-primary, #2563eb);
-    box-shadow: 0 2px 12px rgb(37 99 235 / 0.1);
+    color: var(--docsfn-color-primary, #2563eb);
   }
 
   .docsfn-dated-list-date {
+    grid-column: 1;
+    grid-row: 1 / span 2;
     font-size: 0.8rem;
     color: var(--docsfn-color-muted, #64748b);
   }
 
   .docsfn-dated-list-title {
+    grid-column: 2;
     font-weight: 600;
     font-size: 1.05rem;
     color: var(--docsfn-color-fg, #0f172a);
   }
 
   .docsfn-dated-list-excerpt {
+    grid-column: 2;
     margin: 0;
     font-size: 0.9rem;
     line-height: 1.5;
     color: var(--docsfn-color-muted, #64748b);
+  }
+
+  @media (max-width: 640px) {
+    .docsfn-dated-list {
+      width: min(100% - 1.5rem, 54rem);
+      padding-block: 2.25rem 3rem;
+    }
+
+    .docsfn-dated-list-card {
+      grid-template-columns: 1fr;
+      gap: 0.35rem;
+    }
+
+    .docsfn-dated-list-date,
+    .docsfn-dated-list-title,
+    .docsfn-dated-list-excerpt {
+      grid-column: 1;
+      grid-row: auto;
+    }
   }
 </style>

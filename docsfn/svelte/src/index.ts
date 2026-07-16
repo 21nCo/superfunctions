@@ -5,6 +5,9 @@ export type {
   DocsPagePagination,
   DocsPageSurface,
 } from "./DocsLayout.svelte";
+export { default as DocsSiteShell } from "./DocsSiteShell.svelte";
+export { default as DocsFooter } from "./DocsFooter.svelte";
+export type { DocsFooterLink } from "./DocsFooter.svelte";
 export { default as DocsContent } from "./DocsContent.svelte";
 export { default as DocsSidebar } from "./DocsSidebar.svelte";
 export { default as SidebarGroup } from "./SidebarGroup.svelte";
@@ -26,3 +29,5 @@ export { default as VersionSwitcher } from "./VersionSwitcher.svelte";
 export type { VersionSwitcherProps } from "./VersionSwitcher.svelte";
 export { default as ApiReferenceRenderer } from "./ApiReferenceRenderer.svelte";
 export { default as EmbeddedPage } from "./EmbeddedPage.svelte";
+export { default as PageActions } from "./PageActions.svelte";
+export type { PageFeedbackValue } from "./PageActions.svelte";

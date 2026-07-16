@@ -29,6 +29,7 @@ export default defineConfig({
       { find: "@searchfn/adapter-indexeddb", replacement: path.join(searchfnRoot, "adapter-indexeddb/src/index.ts") },
       { find: "@site/docs-content", replacement: path.join(svelteSrc, "DocsContent.svelte") },
       { find: "@site/docs-layout", replacement: path.join(svelteSrc, "DocsLayout.svelte") },
+      { find: "@site/docs-site-shell", replacement: path.join(svelteSrc, "DocsSiteShell.svelte") },
       { find: "@site/topbar", replacement: path.join(svelteSrc, "TopBar.svelte") },
       { find: "@site/breadcrumbs", replacement: path.join(svelteSrc, "Breadcrumbs.svelte") },
       { find: "@site/pagination", replacement: path.join(svelteSrc, "Pagination.svelte") },
@@ -36,6 +37,8 @@ export default defineConfig({
       { find: "@site/docs-toc", replacement: path.join(svelteSrc, "DocsToc.svelte") },
       { find: "@site/api-reference-renderer", replacement: path.join(svelteSrc, "ApiReferenceRenderer.svelte") },
       { find: "@site/docs-search", replacement: path.join(svelteSrc, "DocsSearch.svelte") },
+      { find: "@site/page-actions", replacement: path.join(svelteSrc, "PageActions.svelte") },
+      { find: "@site/dated-collection-list", replacement: path.join(svelteSrc, "DatedCollectionList.svelte") },
     ],
   },
 });

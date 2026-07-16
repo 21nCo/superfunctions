@@ -56,6 +56,12 @@
       "import": "./dist/DocsContent.js",
       "require": "./dist/DocsContent.cjs"
     },
+    "./DocsFooter.svelte": {
+      "types": "./dist/DocsFooter.d.ts",
+      "svelte": "./src/DocsFooter.svelte",
+      "import": "./dist/DocsFooter.js",
+      "require": "./dist/DocsFooter.cjs"
+    },
     "./DocsLayout.svelte": {
       "types": "./dist/DocsLayout.d.ts",
       "svelte": "./src/DocsLayout.svelte",
@@ -74,6 +80,12 @@
       "import": "./dist/DocsSidebar.js",
       "require": "./dist/DocsSidebar.cjs"
     },
+    "./DocsSiteShell.svelte": {
+      "types": "./dist/DocsSiteShell.d.ts",
+      "svelte": "./src/DocsSiteShell.svelte",
+      "import": "./dist/DocsSiteShell.js",
+      "require": "./dist/DocsSiteShell.cjs"
+    },
     "./DocsToc.svelte": {
       "types": "./dist/DocsToc.d.ts",
       "svelte": "./src/DocsToc.svelte",
@@ -91,6 +103,12 @@
       "svelte": "./src/Pagination.svelte",
       "import": "./dist/Pagination.js",
       "require": "./dist/Pagination.cjs"
+    },
+    "./PageActions.svelte": {
+      "types": "./dist/PageActions.d.ts",
+      "svelte": "./src/PageActions.svelte",
+      "import": "./dist/PageActions.js",
+      "require": "./dist/PageActions.cjs"
     },
     "./SidebarGroup.svelte": {
       "types": "./dist/SidebarGroup.d.ts",
@@ -125,6 +143,7 @@
   "dependencies": {
     "@docsfn/core": "*",
     "@uifn/svelte": "0.0.1",
+    "@lucide/svelte": "^1.24.0",
     "marked": "^12.0.0",
     "searchfn": "*"
   },
