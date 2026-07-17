@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import Search from "@lucide/svelte/icons/search";
-  import X from "@lucide/svelte/icons/x";
   import { maybeEmitAnalyticsEvent, type DocsAnalyticsEvent } from "@docsfn/core/analytics";
   import type { DocsSearchArtifact, DocsSearchScope } from "@docsfn/core/search";
   import {
@@ -11,6 +9,7 @@
     type DocsSearchRuntimeResultItem,
   } from "@docsfn/core/search-runtime";
   import { Dialog, DialogPortal, DialogOverlay, DialogContent } from "@uifn/svelte";
+  import Icon from "./Icon.svelte";
 
   type SearchScopeFilter = DocsSearchScope | "all";
 
@@ -220,7 +219,7 @@
     aria-label="Search documentation"
   >
     <span class="docsfn-search-icon" aria-hidden="true">
-      <Search size={16} strokeWidth={1.8} />
+      <Icon name="search" size={16} strokeWidth={1.8} />
     </span>
     <span class="docsfn-search-placeholder">{placeholder}</span>
     <kbd class="docsfn-search-kbd">
@@ -234,7 +233,7 @@
     <DialogContent class="docsfn-search-content" on:keydown={handleKeyDown}>
       <div class="docsfn-search-header">
         <span class="docsfn-search-icon" aria-hidden="true">
-          <Search size={18} strokeWidth={1.8} />
+          <Icon name="search" size={18} strokeWidth={1.8} />
         </span>
         <input
           bind:this={inputRef}
@@ -250,7 +249,7 @@
             class="docsfn-search-clear"
             aria-label="Clear search"
           >
-            <X size={17} strokeWidth={1.8} aria-hidden="true" />
+            <Icon name="x" size={17} strokeWidth={1.8} />
           </button>
         {/if}
       </div>

@@ -1,12 +1,5 @@
 <script lang="ts">
   import type { ComponentType } from "svelte";
-  import Check from "@lucide/svelte/icons/check";
-  import CircleAlert from "@lucide/svelte/icons/circle-alert";
-  import CircleCheck from "@lucide/svelte/icons/circle-check";
-  import Copy from "@lucide/svelte/icons/copy";
-  import Info from "@lucide/svelte/icons/info";
-  import Lightbulb from "@lucide/svelte/icons/lightbulb";
-  import TriangleAlert from "@lucide/svelte/icons/triangle-alert";
   import {
     assertCompiledContentTrusted,
     compileSvelteContent,
@@ -17,6 +10,7 @@
     type CompiledMermaidBlock,
     type DocsCompatPreset,
   } from "@docsfn/core/browser";
+  import Icon, { type IconName } from "./Icon.svelte";
 
   export let compiled: CompiledContentArtifact | undefined = undefined;
   export let blocks: CompiledContentBlock[] | undefined = undefined;
@@ -89,14 +83,14 @@
     }[kind] ?? "Note";
   }
 
-  function getCalloutIcon(kind: string): ComponentType {
+  function getCalloutIcon(kind: string): IconName {
     return {
-      note: CircleAlert,
-      tip: Lightbulb,
-      warning: TriangleAlert,
-      info: Info,
-      caution: CircleCheck,
-    }[kind] ?? CircleAlert;
+      note: "circle-alert",
+      tip: "lightbulb",
+      warning: "triangle-alert",
+      info: "info",
+      caution: "circle-check",
+    }[kind] ?? "circle-alert";
   }
 
   async function copyCode(code: string, codeKey: string) {
@@ -142,10 +136,10 @@
             on:click={() => copyCode(block.code, codeKey)}
           >
             {#if copiedCodeKey === codeKey}
-              <Check size={14} strokeWidth={1.8} aria-hidden="true" />
+              <Icon name="check" size={14} strokeWidth={1.8} />
               Copied
             {:else}
-              <Copy size={14} strokeWidth={1.8} aria-hidden="true" />
+              <Icon name="copy" size={14} strokeWidth={1.8} />
               Copy
             {/if}
           </button>
@@ -163,7 +157,7 @@
     {:else if block.type === "callout"}
       <aside data-docsfn-callout={block.kind}>
         <div class="docsfn-callout-title">
-          <svelte:component this={getCalloutIcon(block.kind)} size={17} strokeWidth={1.8} />
+          <Icon name={getCalloutIcon(block.kind)} size={17} strokeWidth={1.8} />
           <span>{getCalloutLabel(block.kind)}</span>
         </div>
         <div class="docsfn-callout-content">{@html block.html}</div>

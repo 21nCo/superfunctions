@@ -12,6 +12,7 @@ export {
   resolveDocsPageSurface as resolveEmbeddedDocsSurface,
   resolveDocsRouteData as resolveEmbeddedDocsRouteData,
   resolveEmbedMode as resolveDocsEmbedMode,
+  resolveEmbedSidebarMode as resolveDocsEmbedSidebarMode,
 } from "./route-helpers";
 export {
   CANONICAL_DOCS_ANALYTICS_EVENT_NAMES,

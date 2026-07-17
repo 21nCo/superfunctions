@@ -115,6 +115,11 @@ export interface EmbedModeOptions {
   param?: string;
 }
 
+export interface EmbedSidebarModeOptions {
+  param?: string;
+  aliases?: string[];
+}
+
 type EmbedSearchParamsRecord = Record<
   string,
   string | string[] | readonly string[] | null | undefined
@@ -173,6 +178,16 @@ function normalizeEmbedParamName(param: string | undefined): string {
   return normalized.length > 0 ? normalized : "embed";
 }
 
+function normalizeEmbedSidebarParamNames(options: EmbedSidebarModeOptions): string[] {
+  const params = [
+    typeof options.param === "string" && options.param.trim().length > 0
+      ? options.param.trim()
+      : "showSidebar",
+    ...(options.aliases ?? ["showsidebar", "sidebar"]),
+  ];
+  return [...new Set(params.map((param) => param.trim()).filter(Boolean))];
+}
+
 function isEmbedSearchParamsRecord(input: unknown): input is EmbedSearchParamsRecord {
   return typeof input === "object" && input !== null && !(input instanceof URLSearchParams);
 }
@@ -226,6 +241,19 @@ export function resolveEmbedMode(
 ): boolean {
   const param = normalizeEmbedParamName(options.param);
   return isEmbedModeValue(getEmbedSearchParamValue(input, param));
+}
+
+export function resolveEmbedSidebarMode(
+  input: EmbedModeInput,
+  options: EmbedSidebarModeOptions = {}
+): boolean {
+  for (const param of normalizeEmbedSidebarParamNames(options)) {
+    const value = getEmbedSearchParamValue(input, param);
+    if (value !== null && value !== undefined) {
+      return isEmbedModeValue(value);
+    }
+  }
+  return false;
 }
 
 function buildDocsPath(slug: SlugParam, basePath?: string): string {

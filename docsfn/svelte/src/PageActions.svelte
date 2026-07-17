@@ -1,9 +1,5 @@
 <script lang="ts">
-  import Check from "@lucide/svelte/icons/check";
-  import Copy from "@lucide/svelte/icons/copy";
-  import Pencil from "@lucide/svelte/icons/pencil";
-  import ThumbsDown from "@lucide/svelte/icons/thumbs-down";
-  import ThumbsUp from "@lucide/svelte/icons/thumbs-up";
+  import Icon from "./Icon.svelte";
 
   export type PageFeedbackValue = "helpful" | "not-helpful";
 
@@ -45,17 +41,17 @@
       {#if showCopy}
         <button type="button" on:click={copyPageLink}>
           {#if copied}
-            <Check size={15} strokeWidth={1.8} aria-hidden="true" />
+            <Icon name="check" size={15} strokeWidth={1.8} />
             Copied
           {:else}
-            <Copy size={15} strokeWidth={1.8} aria-hidden="true" />
+            <Icon name="copy" size={15} strokeWidth={1.8} />
             Copy link
           {/if}
         </button>
       {/if}
       {#if editLink}
         <a href={editLink} target="_blank" rel="noreferrer noopener">
-          <Pencil size={15} strokeWidth={1.8} aria-hidden="true" />
+          <Icon name="pencil" size={15} strokeWidth={1.8} />
           Edit page
         </a>
       {/if}
@@ -70,14 +66,14 @@
             aria-label="This page was helpful"
             on:click={() => submitFeedback("helpful")}
           >
-            <ThumbsUp size={15} strokeWidth={1.8} aria-hidden="true" />
+            <Icon name="thumbs-up" size={15} strokeWidth={1.8} />
           </button>
           <button
             type="button"
             aria-label="This page was not helpful"
             on:click={() => submitFeedback("not-helpful")}
           >
-            <ThumbsDown size={15} strokeWidth={1.8} aria-hidden="true" />
+            <Icon name="thumbs-down" size={15} strokeWidth={1.8} />
           </button>
         {/if}
       </div>

@@ -6,6 +6,7 @@
   export let surface: DocsPageSurface | undefined = undefined;
   export let sidebar: Sidebar | undefined = undefined;
   export let activePath: string | undefined = undefined;
+  export let preservedSearchParams: Record<string, string> = {};
 
   $: resolvedSidebar = sidebar ?? surface?.sidebar;
   $: resolvedActivePath = activePath ?? surface?.route;
@@ -19,6 +20,7 @@
           <SidebarGroup
             {item}
             activePath={resolvedActivePath}
+            {preservedSearchParams}
           />
         {/each}
       </nav>

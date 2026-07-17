@@ -1,9 +1,8 @@
 <script lang="ts">
   import type { DocHeading, DocsTopNavItem, Sidebar, Version } from "@docsfn/core/browser";
-  import Menu from "@lucide/svelte/icons/menu";
-  import X from "@lucide/svelte/icons/x";
   import DocsSidebar from "./DocsSidebar.svelte";
   import DocsToc from "./DocsToc.svelte";
+  import Icon from "./Icon.svelte";
 
   export interface DocsPageLink {
     title: string;
@@ -44,24 +43,30 @@
   export let headings: DocHeading[] | undefined = undefined;
   export let activePath: string | undefined = undefined;
   export let embedded = false;
+  export let showSidebar: boolean | undefined = undefined;
+  export let preservedSearchParams: Record<string, string> = {};
 
   $: resolvedSidebar = sidebar ?? surface?.sidebar;
   $: resolvedHeadings = headings ?? surface?.headings ?? [];
   $: resolvedActivePath = activePath ?? surface?.route;
-  $: showSidebar = !embedded && Boolean(resolvedSidebar);
+  $: sidebarVisible = (showSidebar ?? !embedded) && Boolean(resolvedSidebar);
   $: showToc = !embedded && resolvedHeadings.length > 0;
 
   let sidebarOpen = false;
 </script>
 
-<div class="docsfn-layout" class:docsfn-layout--embedded={embedded}>
+<div
+  class="docsfn-layout"
+  class:docsfn-layout--embedded={embedded}
+  class:docsfn-layout--sidebar-visible={sidebarVisible}
+>
   {#if !embedded && $$slots.topbar}
     <div class="docsfn-layout-topbar">
       <slot name="topbar" />
     </div>
   {/if}
 
-  {#if showSidebar}
+  {#if sidebarVisible}
     <div class="docsfn-mobile-toolbar">
       <button
         type="button"
@@ -71,10 +76,10 @@
         on:click={() => (sidebarOpen = !sidebarOpen)}
       >
         {#if sidebarOpen}
-          <X size={17} strokeWidth={1.8} aria-hidden="true" />
+          <Icon name="x" size={17} strokeWidth={1.8} />
           Close
         {:else}
-          <Menu size={17} strokeWidth={1.8} aria-hidden="true" />
+          <Icon name="menu" size={17} strokeWidth={1.8} />
           Menu
         {/if}
       </button>
@@ -91,13 +96,18 @@
   {/if}
 
   <div class="docsfn-container">
-    {#if showSidebar && resolvedSidebar}
+    {#if sidebarVisible && resolvedSidebar}
       <aside
         id="docsfn-sidebar-panel"
         class="docsfn-sidebar-col"
         class:docsfn-sidebar-col--open={sidebarOpen}
       >
-        <DocsSidebar surface={surface} sidebar={resolvedSidebar} activePath={resolvedActivePath} />
+        <DocsSidebar
+          surface={surface}
+          sidebar={resolvedSidebar}
+          activePath={resolvedActivePath}
+          {preservedSearchParams}
+        />
       </aside>
     {/if}
 
@@ -126,9 +136,17 @@
   }
 
   .docsfn-layout--embedded .docsfn-main {
-    max-width: none;
-    justify-self: auto;
-    padding: 0;
+    max-width: min(100%, var(--docsfn-embed-main-max-width, 56rem));
+    justify-self: start;
+    padding:
+      var(--docsfn-embed-padding-block, 1.25rem)
+      var(--docsfn-embed-padding-inline, clamp(1rem, 3vw, 2rem));
+  }
+
+  .docsfn-layout--embedded .docsfn-sidebar-col {
+    top: 0;
+    height: 100vh;
+    max-height: 100vh;
   }
 
   .docsfn-mobile-toolbar {
@@ -139,6 +157,15 @@
   }
 
   @media (min-width: 1024px) {
+    .docsfn-layout--embedded.docsfn-layout--sidebar-visible .docsfn-container {
+      display: grid;
+      grid-template-columns: var(--docsfn-sidebar-width) minmax(0, 1fr);
+    }
+
+    .docsfn-layout--embedded.docsfn-layout--sidebar-visible .docsfn-main {
+      padding-left: var(--docsfn-embed-sidebar-gap, clamp(1.25rem, 2.4vw, 2rem));
+    }
+
     /* Remove from layout flow entirely (avoids stray gap above .docsfn-container). */
     .docsfn-mobile-toolbar {
       display: none !important;

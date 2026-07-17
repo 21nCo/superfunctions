@@ -1,12 +1,12 @@
 <script lang="ts">
   import type { SidebarItem } from "@docsfn/core/browser";
-  import ChevronRight from "@lucide/svelte/icons/chevron-right";
-  import ExternalLink from "@lucide/svelte/icons/external-link";
+  import Icon from "./Icon.svelte";
   import SidebarIcon from "./SidebarIcon.svelte";
 
   export let item: SidebarItem;
   export let activePath: string | undefined = undefined;
   export let depth = 0;
+  export let preservedSearchParams: Record<string, string> = {};
 
   function hasActiveLink(item: SidebarItem, activePath?: string): boolean {
     if (item.type === 'link' && item.link === activePath) {
@@ -28,6 +28,27 @@
   }
   $: isActive = item.type === 'link' && activePath === item.link;
   $: isExternal = item.type === "link" && Boolean(item.link?.startsWith("http"));
+  $: resolvedHref = item.type === "link" ? resolveHref(item.link) : undefined;
+
+  function resolveHref(href: string | undefined): string | undefined {
+    if (!href || href.startsWith("#") || href.startsWith("http")) {
+      return href;
+    }
+
+    const entries = Object.entries(preservedSearchParams).filter(([, value]) => value.length > 0);
+    if (entries.length === 0) {
+      return href;
+    }
+
+    const url = new URL(href, "https://docsfn.local");
+    for (const [param, value] of entries) {
+      if (!url.searchParams.has(param)) {
+        url.searchParams.set(param, value);
+      }
+    }
+
+    return `${url.pathname}${url.search}${url.hash}`;
+  }
 </script>
 
 {#if item.type === 'separator'}
@@ -47,21 +68,26 @@
         <span class="docsfn-sidebar-badge">{item.badge}</span>
       {/if}
       <span class="docsfn-sidebar-group-icon" aria-hidden="true">
-        <ChevronRight size={13} strokeWidth={1.8} />
+        <Icon name="chevron-right" size={13} strokeWidth={1.8} />
       </span>
     </summary>
 
     <div class="docsfn-sidebar-group-content">
       {#if item.items}
         {#each item.items as sub, i (i)}
-          <svelte:self item={sub} activePath={activePath} depth={depth + 1} />
+          <svelte:self
+            item={sub}
+            activePath={activePath}
+            depth={depth + 1}
+            {preservedSearchParams}
+          />
         {/each}
       {/if}
     </div>
   </details>
 {:else if item.type === 'link'}
   <a 
-    href={item.link} 
+    href={resolvedHref}
     class="docsfn-sidebar-link {isActive ? 'active' : ''}"
     data-active={isActive}
     data-depth={depth}
@@ -78,7 +104,7 @@
       <span class="docsfn-sidebar-badge">{item.badge}</span>
     {/if}
     {#if isExternal}
-      <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
+      <Icon name="external-link" size={12} strokeWidth={1.8} />
     {/if}
   </a>
 {/if}

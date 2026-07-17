@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BlogPost } from "@docsfn/core/browser";
-  import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+  import Icon from "./Icon.svelte";
 
   export interface DatedCollectionEntryProps {
     post: BlogPost;
@@ -23,7 +23,7 @@
 >
   {#if !embedded && showBackLink && collectionHref}
     <a class="docsfn-dated-entry-back" href={collectionHref}>
-      <ArrowLeft size={15} strokeWidth={1.8} aria-hidden="true" />
+      <Icon name="arrow-left" size={15} strokeWidth={1.8} />
       {collectionLabel}
     </a>
   {/if}

@@ -11,6 +11,7 @@ import {
   resolveDocsPageSurface as resolveNextDocsPageSurface,
   resolveDocsRouteDataOrThrow as resolveNextDocsRouteDataOrThrow,
   resolveEmbedMode as resolveNextEmbedMode,
+  resolveEmbedSidebarMode as resolveNextEmbedSidebarMode,
 } from "../../next/src/route-helpers";
 import {
   createPageLoad,
@@ -22,6 +23,7 @@ import {
   resolveDocsPageSurface,
   resolveDocsRouteDataOrThrow,
   resolveEmbedMode,
+  resolveEmbedSidebarMode,
 } from "./route-helpers";
 
 const thisFilePath = fileURLToPath(import.meta.url);
@@ -232,6 +234,27 @@ describe("sveltekit route helper parity", () => {
     expect(resolveNextEmbedMode({ searchParams: { embed: "false" } })).toBe(false);
     expect(resolveNextEmbedMode({ searchParams: { docsEmbed: "on" } }, { param: "docsEmbed" }))
       .toBe(true);
+  });
+
+  it("resolves optional embedded sidebar query params across SvelteKit and Next request shapes", () => {
+    expect(resolveEmbedSidebarMode(new URL("https://example.com/docs?embed=1&showSidebar=1")))
+      .toBe(true);
+    expect(resolveEmbedSidebarMode(new URL("https://example.com/docs?embed=1&showSidebar=false")))
+      .toBe(false);
+    expect(resolveEmbedSidebarMode(new URL("https://example.com/docs?embed=1&showsidebar=true")))
+      .toBe(true);
+    expect(resolveEmbedSidebarMode(new URL("https://example.com/docs?embed=1&sidebar=on")))
+      .toBe(true);
+    expect(resolveEmbedSidebarMode(new URL("https://example.com/docs?embed=1"))).toBe(false);
+
+    expect(resolveNextEmbedSidebarMode({ searchParams: { showSidebar: ["0", "1"] } })).toBe(true);
+    expect(resolveNextEmbedSidebarMode({ searchParams: { showSidebar: "false" } })).toBe(false);
+    expect(
+      resolveNextEmbedSidebarMode(
+        { searchParams: { docsSidebar: "yes" } },
+        { param: "docsSidebar" }
+      )
+    ).toBe(true);
   });
 
   it("derives page surface metadata with parity to Next helper output (TV-PAGE-001 + TV-NAV-001)", async () => {

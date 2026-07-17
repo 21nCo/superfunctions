@@ -1,37 +1,28 @@
 <script lang="ts">
-  import type { ComponentType } from "svelte";
-  import BookOpen from "@lucide/svelte/icons/book-open";
-  import Boxes from "@lucide/svelte/icons/boxes";
-  import Braces from "@lucide/svelte/icons/braces";
-  import Code2 from "@lucide/svelte/icons/code-2";
-  import FileText from "@lucide/svelte/icons/file-text";
-  import Rocket from "@lucide/svelte/icons/rocket";
-  import Settings2 from "@lucide/svelte/icons/settings-2";
-  import Terminal from "@lucide/svelte/icons/terminal";
-  import Wrench from "@lucide/svelte/icons/wrench";
+  import Icon, { type IconName } from "./Icon.svelte";
 
   export let name: string;
   export let size = 15;
 
-  const icons: Record<string, ComponentType> = {
-    book: BookOpen,
-    "book-open": BookOpen,
-    boxes: Boxes,
-    blocks: Boxes,
-    braces: Braces,
-    code: Code2,
-    "code-2": Code2,
-    file: FileText,
-    "file-text": FileText,
-    rocket: Rocket,
-    settings: Settings2,
-    "settings-2": Settings2,
-    terminal: Terminal,
-    wrench: Wrench,
+  const icons: Record<string, IconName> = {
+    book: "book-open",
+    "book-open": "book-open",
+    boxes: "boxes",
+    blocks: "boxes",
+    braces: "braces",
+    code: "code-2",
+    "code-2": "code-2",
+    file: "file-text",
+    "file-text": "file-text",
+    rocket: "rocket",
+    settings: "settings-2",
+    "settings-2": "settings-2",
+    terminal: "terminal",
+    wrench: "wrench",
   };
 
   $: normalizedName = name.trim().toLowerCase().replace(/[\s_]+/g, "-");
-  $: Icon = icons[normalizedName] ?? FileText;
+  $: iconName = icons[normalizedName] ?? "file-text";
 </script>
 
-<svelte:component this={Icon} {size} strokeWidth={1.8} aria-hidden="true" />
+<Icon name={iconName} {size} strokeWidth={1.8} />

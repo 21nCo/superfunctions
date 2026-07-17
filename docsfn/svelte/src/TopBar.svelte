@@ -1,11 +1,6 @@
 <script lang="ts">
   import type { ComponentType } from "svelte";
   import type { DocsTopNavItem } from "@docsfn/core/browser";
-  import BookOpen from "@lucide/svelte/icons/book-open";
-  import ChevronDown from "@lucide/svelte/icons/chevron-down";
-  import ExternalLink from "@lucide/svelte/icons/external-link";
-  import Menu from "@lucide/svelte/icons/menu";
-  import X from "@lucide/svelte/icons/x";
   import {
     DropdownMenu,
     DropdownMenuContent,
@@ -13,6 +8,7 @@
     DropdownMenuTrigger,
   } from "@uifn/svelte";
   import type { DocsPageSurface } from "./DocsLayout.svelte";
+  import Icon from "./Icon.svelte";
 
   export interface TopBarLink {
     label: string;
@@ -85,7 +81,7 @@
           <span class="docsfn-topbar-logo"><svelte:component this={logo} /></span>
         {:else}
           <span class="docsfn-topbar-brand-mark" aria-hidden="true">
-            <BookOpen size={17} strokeWidth={2} />
+            <Icon name="book-open" size={17} strokeWidth={2} />
           </span>
         {/if}
         {#if brand}
@@ -100,7 +96,7 @@
           <DropdownMenu>
             <DropdownMenuTrigger class="docsfn-topbar-dropdown-trigger">
               {item.label}
-              <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
+              <Icon name="chevron-down" size={13} strokeWidth={1.8} />
             </DropdownMenuTrigger>
             <DropdownMenuContent class="docsfn-topbar-dropdown-content">
               {#each item.items as subItem, subIndex (`${subItem.label}:${subIndex}`)}
@@ -113,7 +109,7 @@
                   >
                     {subItem.label}
                     {#if subItem.external}
-                      <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+                      <Icon name="external-link" size={13} strokeWidth={1.8} />
                     {/if}
                   </a>
                 </DropdownMenuItem>
@@ -129,7 +125,7 @@
           >
             {item.label}
             {#if item.external}
-              <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+              <Icon name="external-link" size={13} strokeWidth={1.8} />
             {/if}
           </a>
         {/if}
@@ -155,9 +151,9 @@
           on:click={() => (mobileNavOpen = !mobileNavOpen)}
         >
           {#if mobileNavOpen}
-            <X size={19} strokeWidth={1.8} aria-hidden="true" />
+            <Icon name="x" size={19} strokeWidth={1.8} />
           {:else}
-            <Menu size={19} strokeWidth={1.8} aria-hidden="true" />
+            <Icon name="menu" size={19} strokeWidth={1.8} />
           {/if}
         </button>
       {/if}
@@ -179,7 +175,7 @@
               >
                 {subItem.label}
                 {#if subItem.external}
-                  <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+                  <Icon name="external-link" size={13} strokeWidth={1.8} />
                 {/if}
               </a>
             {/each}
@@ -193,7 +189,7 @@
           >
             {item.label}
             {#if item.external}
-              <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+              <Icon name="external-link" size={13} strokeWidth={1.8} />
             {/if}
           </a>
         {/if}

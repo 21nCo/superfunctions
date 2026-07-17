@@ -15,6 +15,7 @@
   export let footerNote = "Built with docsfn";
   export let footerLinks: DocsFooterLink[] = [];
   export let preserveEmbedRoutes = ["/docs", "/blog", "/changelog"];
+  export let preserveEmbedParams = ["showSidebar", "showsidebar", "sidebar"];
 
   function shouldPreserveEmbedMode(url: URL): boolean {
     return (
@@ -54,12 +55,19 @@
         return;
       }
 
+      const currentUrl = new URL(window.location.href);
       const nextUrl = new URL(anchor.href, window.location.href);
-      if (!shouldPreserveEmbedMode(nextUrl) || nextUrl.searchParams.get("embed") === "1") {
+      if (!shouldPreserveEmbedMode(nextUrl)) {
         return;
       }
 
       nextUrl.searchParams.set("embed", "1");
+      for (const param of preserveEmbedParams) {
+        const value = currentUrl.searchParams.get(param);
+        if (value !== null && !nextUrl.searchParams.has(param)) {
+          nextUrl.searchParams.set(param, value);
+        }
+      }
       anchor.href = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
     };
 

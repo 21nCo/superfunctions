@@ -29,6 +29,14 @@
       sidebar?: Sidebar;
     }
   );
+  const preservedSearchParams = $derived(
+    data.embed
+      ? {
+          embed: "1",
+          ...(data.embedSidebar ? { showSidebar: "1" } : {}),
+        }
+      : {}
+  );
 
   onMount(() => {
     clientSearchReady = true;
@@ -69,6 +77,8 @@
       surface={docsRouteData.surface}
       sidebar={docsRouteData.sidebar}
       embedded={data.embed}
+      showSidebar={data.embed ? data.embedSidebar : undefined}
+      {preservedSearchParams}
     >
       {@render routeContent()}
     </DocsLayout>
