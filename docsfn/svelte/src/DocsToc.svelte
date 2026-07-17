@@ -74,8 +74,8 @@
       <nav class="docsfn-toc-nav" aria-label="Table of contents">
         <div class="docsfn-toc-title">On this page</div>
         <ul class="docsfn-toc-list">
-          {#each resolvedHeadings as h (h.slug)}
-            {@const isActive = currentHash === `#${h.slug}`}
+          {#each resolvedHeadings as h, i (h.slug)}
+            {@const isActive = currentHash === `#${h.slug}` || (!currentHash && i === 0)}
             <li
               class="docsfn-toc-item"
               data-level={h.level}

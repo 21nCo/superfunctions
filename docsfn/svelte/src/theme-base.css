@@ -108,6 +108,25 @@
   border-left: 1px solid var(--docsfn-color-border, transparent);
 }
 
+.docsfn-mobile-toolbar {
+  display: block;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--docsfn-color-border, #e2e8f0);
+  background: var(--docsfn-color-surface, #fff);
+}
+
+@media (min-width: 1024px) {
+  .docsfn-mobile-toolbar {
+    display: none !important;
+    height: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+  }
+}
+
 @media (max-width: 1279px) {
   .docsfn-container:has(.docsfn-sidebar-col):has(.docsfn-toc-col) {
     grid-template-columns: var(--docsfn-sidebar-width) minmax(0, 1fr);
@@ -397,30 +416,64 @@
 }
 
 .docsfn-toc-title {
-  margin: 0 0 0.65rem;
-  font-weight: 600;
-  font-size: 0.75rem;
+  margin: 0 0 0.8rem;
+  font-weight: 700;
+  font-size: 0.72rem;
+  line-height: 1.25;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
 .docsfn-toc-list {
+  position: relative;
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0 0 0.8rem;
+}
+
+.docsfn-toc-list::before {
+  content: "";
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: 0;
+  width: 1px;
+  background: var(--docsfn-color-border, transparent);
 }
 
 .docsfn-toc-item {
-  margin: 0.2rem 0;
+  margin: 0.05rem 0;
 }
 
 .docsfn-toc-link {
+  position: relative;
   display: block;
+  width: 100%;
+  box-sizing: border-box;
   text-decoration: none;
-  line-height: 1.35;
-  padding: 0.2rem 0;
-  border-radius: 0.25rem;
-  transition: color 0.12s ease;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.375rem;
+  overflow-wrap: anywhere;
+  transition:
+    color 0.12s ease,
+    background-color 0.12s ease;
+}
+
+.docsfn-toc-link::before {
+  content: "";
+  position: absolute;
+  top: 0.55rem;
+  bottom: 0.55rem;
+  left: -0.8rem;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.docsfn-toc-link.active::before {
+  background: var(--docsfn-color-primary, currentColor);
 }
 
 .docsfn-toc-viewport {

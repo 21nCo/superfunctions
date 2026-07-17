@@ -129,9 +129,15 @@
   color: var(--docsfn-color-muted);
 }
 
-.docsfn-toc-link:hover,
+.docsfn-toc-link:hover {
+  color: var(--docsfn-color-fg);
+  background: color-mix(in srgb, var(--docsfn-color-accent-soft) 58%, transparent);
+}
+
 .docsfn-toc-link.active {
   color: var(--docsfn-color-primary);
+  background: var(--docsfn-color-accent-soft);
+  font-weight: 650;
 }
 
 .docsfn-content {
