@@ -11,6 +11,7 @@
     type DocsCompatPreset,
   } from "@docsfn/core/browser";
   import Icon, { type IconName } from "./Icon.svelte";
+  import YouTubeEmbed from "./YouTubeEmbed.svelte";
 
   export let compiled: CompiledContentArtifact | undefined = undefined;
   export let blocks: CompiledContentBlock[] | undefined = undefined;
@@ -27,6 +28,9 @@
 
   let activeTabs: Record<string, string> = {};
   let copiedCodeKey: string | undefined = undefined;
+  const builtinComponents: Record<string, ComponentType | undefined> = {
+    YouTube: YouTubeEmbed,
+  };
 
   $: compiledContent =
     compiled ??
@@ -107,7 +111,7 @@
   }
 
   function resolveComponent(name: string): ComponentType {
-    const component = components[name];
+    const component = components[name] ?? builtinComponents[name];
     if (!component) {
       throw createMissingComponentError(name);
     }

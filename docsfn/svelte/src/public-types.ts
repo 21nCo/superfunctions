@@ -103,4 +103,5 @@ export const VersionSwitcher: ComponentType;
 export const ApiReferenceRenderer: ComponentType;
 export const EmbeddedPage: ComponentType;
 export const PageActions: ComponentType;
+export const YouTubeEmbed: ComponentType;
 `;

@@ -24,3 +24,4 @@ export * from "./DatedCollectionList";
 export * from "./DatedCollectionEntry";
 export * from "./ChangelogList";
 export * from "./ChangelogEntry";
+export * from "./YouTubeEmbed";

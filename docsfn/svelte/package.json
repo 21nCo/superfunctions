@@ -98,6 +98,12 @@
       "import": "./dist/EmbeddedPage.js",
       "require": "./dist/EmbeddedPage.cjs"
     },
+    "./YouTubeEmbed.svelte": {
+      "types": "./dist/YouTubeEmbed.d.ts",
+      "svelte": "./src/YouTubeEmbed.svelte",
+      "import": "./dist/YouTubeEmbed.js",
+      "require": "./dist/YouTubeEmbed.cjs"
+    },
     "./Pagination.svelte": {
       "types": "./dist/Pagination.d.ts",
       "svelte": "./src/Pagination.svelte",

@@ -31,3 +31,4 @@ export { default as ApiReferenceRenderer } from "./ApiReferenceRenderer.svelte";
 export { default as EmbeddedPage } from "./EmbeddedPage.svelte";
 export { default as PageActions } from "./PageActions.svelte";
 export type { PageFeedbackValue } from "./PageActions.svelte";
+export { default as YouTubeEmbed } from "./YouTubeEmbed.svelte";

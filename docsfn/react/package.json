@@ -58,6 +58,11 @@
       "import": "./dist/EmbeddedPage.js",
       "require": "./dist/EmbeddedPage.cjs"
     },
+    "./YouTubeEmbed": {
+      "types": "./dist/YouTubeEmbed.d.ts",
+      "import": "./dist/YouTubeEmbed.js",
+      "require": "./dist/YouTubeEmbed.cjs"
+    },
     "./theme.css": "./dist/theme.css",
     "./theme-base.css": "./dist/theme-base.css"
   },

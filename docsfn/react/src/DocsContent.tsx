@@ -20,12 +20,17 @@ import {
   type CompiledContentBlock,
   type DocsCompatPreset,
 } from "@docsfn/core/browser";
+import { YouTubeEmbed } from "./YouTubeEmbed";
 
 type DocsContentComponentProps = Record<string, unknown> & {
   children?: React.ReactNode;
 };
 
 type MermaidBlock = Extract<CompiledContentBlock, { type: "mermaid" }>;
+
+const builtinComponents: Record<string, React.ComponentType<DocsContentComponentProps>> = {
+  YouTube: YouTubeEmbed,
+};
 
 export interface DocsContentProps {
   compiled?: CompiledContentArtifact;
@@ -233,7 +238,7 @@ function renderBlock(input: {
     );
   }
 
-  const Component = input.components?.[block.name];
+  const Component = input.components?.[block.name] ?? builtinComponents[block.name];
   if (!Component) {
     throw createMissingComponentError(block.name);
   }

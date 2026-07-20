@@ -35,6 +35,7 @@ const SUPPORTED_PUBLIC_IMPORTS = [
   "@docsfn/svelte/SidebarGroup.svelte",
   "@docsfn/svelte/TopBar.svelte",
   "@docsfn/svelte/VersionSwitcher.svelte",
+  "@docsfn/svelte/YouTubeEmbed.svelte",
 ];
 
 afterEach(() => {
@@ -104,6 +105,25 @@ describe("DocsContent", () => {
     expect(demoCard).toBeTruthy();
     expect(within(demoCard as HTMLElement).getByRole("heading", { name: "Nested" })).toBeTruthy();
     expect(within(demoCard as HTMLElement).getByText("Child body")).toBeTruthy();
+  });
+
+  it("renders built-in YouTube embeds without custom component wiring", () => {
+    const compiled = compileSvelteContent({
+      source: `<YouTube id="SeWdndc7y4A" title="Intro video" />`,
+      sourcePath: "content/docs/quickstart.mdx",
+      compatPreset: "none",
+    });
+
+    render(DocsContent, {
+      compiled,
+    });
+
+    const iframe = document.querySelector(
+      "[data-docsfn-youtube-embed='true'] iframe"
+    ) as HTMLIFrameElement | null;
+    expect(iframe).toBeTruthy();
+    expect(iframe?.src).toContain("youtube-nocookie.com/embed/SeWdndc7y4A");
+    expect(iframe?.title).toBe("Intro video");
   });
 
   it("fails closed on unresolved component mappings", () => {

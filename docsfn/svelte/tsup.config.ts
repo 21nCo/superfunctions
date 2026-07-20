@@ -26,6 +26,7 @@ const PUBLIC_COMPONENTS = [
   "SidebarGroup",
   "TopBar",
   "VersionSwitcher",
+  "YouTubeEmbed",
 ];
 
 export default defineConfig({
