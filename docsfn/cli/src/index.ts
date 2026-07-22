@@ -130,14 +130,18 @@ async function loadConfig(cwd: string, configPath?: string): Promise<DocsConfig>
   });
 }
 
-function resolveCollectionDirectories(config: DocsConfig): Record<string, string> {
+function resolveCollectionDirectories(config: DocsConfig): Record<string, string[]> {
   const root = path.resolve(config.content.root);
+  const directories = (value: string | string[] | undefined, fallback: string): string[] =>
+    (Array.isArray(value) ? value : [value ?? fallback]).map((directory) =>
+      path.resolve(root, directory)
+    );
   return {
-    docs: path.resolve(root, config.content.docsDir ?? "content/docs"),
-    pages: path.resolve(root, config.content.pagesDir ?? "pages"),
-    blog: path.resolve(root, config.content.blogDir ?? "blog"),
-    api: path.resolve(root, config.content.apiDir ?? "api"),
-    assets: path.resolve(root, config.content.assetsDir ?? "public"),
+    docs: directories(config.content.docsDir, "content/docs"),
+    pages: directories(config.content.pagesDir, "pages"),
+    blog: directories(config.content.blogDir, "blog"),
+    api: directories(config.content.apiDir, "api"),
+    assets: directories(config.content.assetsDir, "public"),
   };
 }
 
@@ -169,15 +173,20 @@ function computeInvalidatedPaths(input: {
     }
 
     let matchedCollection = false;
-    for (const [collection, directory] of Object.entries(directories)) {
-      const absoluteDirectory = path.resolve(directory);
-      if (
-        absolutePath === absoluteDirectory ||
-        absolutePath.startsWith(`${absoluteDirectory}${path.sep}`)
-      ) {
-        const relative = normalizePath(path.relative(absoluteDirectory, absolutePath));
-        invalidated.add(`${collection}:${relative || "*"}`);
-        matchedCollection = true;
+    for (const [collection, collectionDirectories] of Object.entries(directories)) {
+      for (const directory of collectionDirectories) {
+        const absoluteDirectory = path.resolve(directory);
+        if (
+          absolutePath === absoluteDirectory ||
+          absolutePath.startsWith(`${absoluteDirectory}${path.sep}`)
+        ) {
+          const relative = normalizePath(path.relative(absoluteDirectory, absolutePath));
+          invalidated.add(`${collection}:${relative || "*"}`);
+          matchedCollection = true;
+          break;
+        }
+      }
+      if (matchedCollection) {
         break;
       }
     }
@@ -398,7 +407,7 @@ function resolveWatchTargets(input: {
     }
   } else {
     const directories = resolveCollectionDirectories(input.config);
-    for (const directory of Object.values(directories)) {
+    for (const directory of Object.values(directories).flat()) {
       const resolved = path.resolve(directory);
       if (resolved === outDir || resolved.startsWith(`${outDir}${path.sep}`)) {
         continue;

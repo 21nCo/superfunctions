@@ -205,6 +205,27 @@ describe("loadDocsConfig", () => {
     expect(loaded.collections?.changelog?.scope).toBe("changelog");
   });
 
+  it("loads multiple docs directories for shared and product-specific docs", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Multi Root Config", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: {
+          root: cwd,
+          docsDir: ["../common/content/docs", "content/docs"],
+        },
+      })
+    );
+
+    const loaded = await loadDocsConfig({ cwd });
+
+    expect(loaded.content.docsDir).toEqual(["../common/content/docs", "content/docs"]);
+  });
+
   it("rejects blog route config that does not start with a slash", async () => {
     const cwd = await createTempDir();
 

@@ -224,6 +224,8 @@ export interface DocsDatedCollectionConfig {
   scope?: string;
 }
 
+export type DocsContentDirectory = string | string[];
+
 export interface CompiledHeadingBlock {
   type: "heading";
   level: number;
@@ -329,7 +331,7 @@ export interface DocsConfig {
   };
   content: {
     root: string;
-    docsDir?: string;
+    docsDir?: DocsContentDirectory;
     pagesDir?: string;
     blogDir?: string;
     apiDir?: string;

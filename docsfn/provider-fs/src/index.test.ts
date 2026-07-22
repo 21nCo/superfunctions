@@ -140,6 +140,39 @@ describe("FsContentProvider", () => {
     expect(entry?.frontmatter.title).toBe("No Frontmatter");
   });
 
+  it("loads multiple docs directories and lets later directories override shared pages", async () => {
+    const root = await createTempRoot();
+    await mkdir(join(root, "common/docs"), { recursive: true });
+    await mkdir(join(root, "product/docs"), { recursive: true });
+    await writeFile(join(root, "common/docs/shared.mdx"), "# Shared from common\n");
+    await writeFile(join(root, "common/docs/override.mdx"), "# Override from common\n");
+    await writeFile(join(root, "product/docs/override.mdx"), "# Override from product\n");
+    await writeFile(join(root, "product/docs/product-only.mdx"), "# Product only\n");
+
+    const provider = new FsContentProvider({ root });
+    const entries = await provider.listEntries({
+      config: createConfig(root, {
+        content: {
+          root,
+          docsDir: ["common/docs", "product/docs"],
+        },
+      }),
+      collections: ["docs"],
+    });
+
+    expect(entries.map((entry) => entry.relativePath)).toEqual([
+      "override.mdx",
+      "product-only.mdx",
+      "shared.mdx",
+    ]);
+    expect(entries.find((entry) => entry.relativePath === "override.mdx")?.body).toContain(
+      "Override from product"
+    );
+    expect(entries.find((entry) => entry.relativePath === "shared.mdx")?.body).toContain(
+      "Shared from common"
+    );
+  });
+
   it("ignores unsupported extensions for docs collection", async () => {
     const root = await createTempRoot();
     await mkdir(join(root, "content/docs"), { recursive: true });

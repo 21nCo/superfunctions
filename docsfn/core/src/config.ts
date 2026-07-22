@@ -105,7 +105,9 @@ const docsConfigSchema = z.object({
   versions: docsVersionsSchema.optional(),
   content: z.object({
     root: z.string().min(1, "content.root is required"),
-    docsDir: z.string().min(1).optional(),
+    docsDir: z
+      .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+      .optional(),
     pagesDir: z.string().min(1).optional(),
     blogDir: z.string().min(1).optional(),
     apiDir: z.string().min(1).optional(),
