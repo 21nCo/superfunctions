@@ -6,6 +6,7 @@ node_modules/
 
 # Build outputs
 dist/
+storybook-static/
 build/
 *.tsbuildinfo
 **/*.js
@@ -51,6 +52,7 @@ lerna-debug.log*
 # Testing
 coverage/
 .nyc_output
+.vite-vitest/
 test-results/
 .pytest_cache/
 __pycache__/
