@@ -1,5 +1,6 @@
 export * from './surface';
 export * from './button';
+export * from './component';
 export * from './generated/component-recipes';
 
 export const recipesPackage = {

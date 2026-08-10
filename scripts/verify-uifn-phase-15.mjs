@@ -155,7 +155,11 @@ export function verifyPhase15(options = {}) {
     solid: (solidSource.match(/styleSolidPart\(Headless/g) ?? []).length,
   };
   for (const [framework, count] of Object.entries(wrapperCounts)) if (count !== expectedPartCount) failures.push({ code: 'UIFN_STYLED_PART_COVERAGE_MISMATCH', framework, expected: expectedPartCount, actual: count });
-  if (svelteFiles.some((file) => !read(file).includes('<HeadlessPart') || !read(file).includes('data-uifn-part='))) failures.push({ code: 'UIFN_STYLED_PART_DELEGATION_MISSING', framework: 'svelte' });
+  if (svelteFiles.some((file) => {
+    const source = read(file);
+    return !source.includes('<HeadlessPart')
+      || (!source.includes('data-uifn-part=') && !source.includes('{...recipe.data}'));
+  })) failures.push({ code: 'UIFN_STYLED_PART_DELEGATION_MISSING', framework: 'svelte' });
 
   const css = read('uifn/components/styles.css');
   failures.push(...inspectStyleContract(css).map((failure) => ({ ...failure, path: 'uifn/components/styles.css' })));

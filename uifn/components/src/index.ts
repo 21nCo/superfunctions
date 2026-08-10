@@ -9,3 +9,4 @@ export const componentsPackage = {
 
 export * from './generated/catalog';
 export * from './contracts';
+export * from './pilots';

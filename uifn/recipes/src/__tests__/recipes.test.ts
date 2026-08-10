@@ -6,6 +6,7 @@ import {
   COMPONENT_RECIPES,
 } from '../generated/component-recipes';
 import { UIFnRecipeError, surface, surfaceHover } from '../surface';
+import { openComponentPartRecipe } from '../component';
 
 describe('style recipes', () => {
   it('provides stable selectors for every public styled component and anatomy part', () => {
@@ -15,7 +16,28 @@ describe('style recipes', () => {
       expect(recipe.rootSelector).toBe(`[data-uifn-component="${component}"][data-uifn-part="root"]`);
       expect(recipe.cssLayer).toBe('uifn.components');
       expect(Object.keys(recipe.partSelectors).length).toBeGreaterThan(0);
+      expect(recipe.stylingProps).toEqual(['variant', 'size', 'density', 'unstyled', 'className', 'classes', 'style', 'styles']);
     }
+  });
+
+  it('creates the public open-component recipe consumed by every framework wrapper', () => {
+    expect(openComponentPartRecipe('button', 'root', {
+      variant: 'outline',
+      size: 'lg',
+      density: 'compact',
+      classes: { root: 'consumer-root' },
+      styles: { root: { paddingInline: '1rem' } },
+    })).toMatchObject({
+      className: 'uifn-button uifn-button__root uifn-button--outline uifn-button--lg uifn-button--density-compact consumer-root',
+      style: { paddingInline: '1rem' },
+      data: {
+        'data-uifn-component': 'button',
+        'data-uifn-part': 'root',
+        'data-uifn-variant': 'outline',
+        'data-uifn-size': 'lg',
+        'data-uifn-density': 'compact',
+      },
+    });
   });
 
   it('TV-STYLE-004 resolves semantic surface and numeric depth', () => {

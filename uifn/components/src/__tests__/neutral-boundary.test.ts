@@ -24,11 +24,33 @@ describe('@uifn/components neutral boundary', () => {
     expect(STYLED_COMPONENT_COUNT).toBe(69);
     expect(STYLED_PART_COUNT).toBe(465);
     expect(new Set(STYLED_COMPONENT_CATALOG.map((entry) => entry.id)).size).toBe(69);
-    expect(createStyledPartRecipe('accordion', 'trigger', { state: 'open', className: 'consumer' })).toEqual({
-      className: 'uifn-accordion uifn-accordion__trigger consumer',
+    expect(createStyledPartRecipe('accordion', 'trigger', {
+      state: 'open',
+      className: 'consumer',
+      classes: { trigger: 'consumer-part' },
+      styles: { trigger: { paddingInline: '1rem' } },
+    })).toEqual({
+      className: 'uifn-accordion uifn-accordion__trigger consumer-part consumer',
+      style: { paddingInline: '1rem' },
       vars: {},
-      data: { 'uifn-component': 'accordion', 'uifn-part': 'trigger', state: 'open' },
+      data: { 'data-uifn-component': 'accordion', 'data-uifn-part': 'trigger', 'data-state': 'open' },
       selector: '[data-uifn-component="accordion"][data-uifn-part="trigger"]',
+    });
+    expect(createStyledPartRecipe('button', 'root', {
+      variant: 'danger',
+      size: 'lg',
+      density: 'compact',
+    })).toMatchObject({
+      className: 'uifn-button uifn-button__root uifn-button--danger uifn-button--lg uifn-button--density-compact',
+      data: {
+        'data-uifn-variant': 'danger',
+        'data-uifn-size': 'lg',
+        'data-uifn-density': 'compact',
+      },
+    });
+    expect(createStyledPartRecipe('button', 'root', { unstyled: true, className: 'consumer' })).toMatchObject({
+      className: 'consumer',
+      data: { 'data-uifn-unstyled': 'true' },
     });
   });
 

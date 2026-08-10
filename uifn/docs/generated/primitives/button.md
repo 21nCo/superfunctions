@@ -117,6 +117,7 @@ CSS variables:
 - `--uifn-component-bg-muted` (shared)
 - `--uifn-component-border` (shared)
 - `--uifn-component-border-strong` (shared)
+- `--uifn-component-border-width` (shared)
 - `--uifn-component-danger` (shared)
 - `--uifn-component-fg` (shared)
 - `--uifn-component-fg-muted` (shared)
@@ -126,6 +127,13 @@ CSS variables:
 - `--uifn-component-shadow` (shared)
 - `--uifn-control-block-size` (shared)
 - `--uifn-control-gap` (shared)
+- `--uifn-control-padding-block` (shared)
+- `--uifn-control-padding-inline` (shared)
+- `--uifn-elevation-shadow-md` (shared)
+- `--uifn-elevation-shadow-sm` (shared)
+- `--uifn-motion-duration-fast` (shared)
+- `--uifn-motion-easing-standard` (shared)
+- `--uifn-typography-weight-semibold` (shared)
 
 ## Package install
 

@@ -7,6 +7,7 @@ import {
   type DesignTokenTheme,
   type OklchColor,
 } from '@uifn/tokens';
+import { createFoundationalTokens } from './foundations';
 
 export interface CreateBrandThemeOptions {
   name: string;
@@ -165,6 +166,7 @@ export function createBrandTheme(options: CreateBrandThemeOptions): DesignTokenT
     name: options.name,
     mode: options.mode,
     tokens: {
+      ...createFoundationalTokens(),
       color: {
         surface: createSurfaceTokens(neutral, options.mode),
         text: createTextTokens(neutral, options.mode),

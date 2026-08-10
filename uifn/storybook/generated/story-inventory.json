@@ -11,9 +11,9 @@
   "primitiveCount": 69,
   "scenarioCountPerFramework": 705,
   "storyCount": 2115,
-  "definitionSha256": "150ab99ed04a9122e136cb470de07718d7bf298bbd0dacce5daa32185ddd32fe",
+  "definitionSha256": "1922a99421d69a4cdb4b1f68a362146a46d30a26ea1fb746f3412a03151c88b9",
   "generatorSha256": "9da367ad045f1baa361e21cf41e2650f65ed615cb7776f2c5f300206b866fa59",
-  "registryCatalogSha256": "f02bb6f2efbced2890ba411b5704d71bca50ffb5c13a0e054cd24cae39268b75",
+  "registryCatalogSha256": "5a4371c6007791ce2807c66d60ff977c1f48e1422ab05992abd3c81a186cc86b",
   "stories": [
     {
       "id": "stable-accordion--default",

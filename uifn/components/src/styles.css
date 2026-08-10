@@ -35,16 +35,21 @@
     --uifn-component-accent: var(--uifn-color-accent-solid, #1d4ed8);
     --uifn-component-accent-contrast: var(--uifn-color-accent-contrast, #fff);
     --uifn-component-danger: var(--uifn-color-danger-solid, #b42318);
-    --uifn-component-shadow: 0 12px 32px rgb(15 23 42 / 14%);
+    --uifn-component-shadow: var(--uifn-elevation-shadow-lg, 0 18px 48px rgb(15 23 42 / 16%));
+    --uifn-component-shadow-overlay: var(--uifn-elevation-shadow-overlay, 0 28px 90px rgb(15 23 42 / 24%));
     --uifn-component-radius-sm: var(--uifn-radius-sm, .375rem);
     --uifn-component-radius-md: var(--uifn-radius-md, .625rem);
     --uifn-component-radius-lg: var(--uifn-radius-lg, .875rem);
-    --uifn-control-block-size: 2.5rem;
-    --uifn-control-gap: .5rem;
+    --uifn-control-block-size: var(--uifn-control-size-md, 2.5rem);
+    --uifn-control-gap: var(--uifn-control-gap-md, .5rem);
+    --uifn-control-padding-block: var(--uifn-space-2, .5rem);
+    --uifn-control-padding-inline: var(--uifn-space-3, .75rem);
+    --uifn-component-border-width: var(--uifn-border-width-default, 1px);
+    --uifn-component-icon-size: var(--uifn-icon-size-md, 1rem);
     color: var(--uifn-component-fg);
-    font-family: var(--uifn-font-family, ui-sans-serif, system-ui, sans-serif);
-    font-size: .875rem;
-    line-height: 1.45;
+    font-family: var(--uifn-typography-family-sans, ui-sans-serif, system-ui, sans-serif);
+    font-size: var(--uifn-typography-size-md, .875rem);
+    line-height: var(--uifn-typography-lineHeight-normal, 1.45);
   }
 
   :where([data-uifn-component][data-uifn-part]) {
@@ -66,13 +71,13 @@
   ) {
     align-items: center;
     min-block-size: var(--uifn-control-block-size);
-    border: 1px solid var(--uifn-component-border);
+    border: var(--uifn-component-border-width) solid var(--uifn-component-border);
     background: var(--uifn-component-bg);
     color: var(--uifn-component-fg);
     cursor: pointer;
     gap: var(--uifn-control-gap);
     justify-content: center;
-    padding: .5rem .75rem;
+    padding: var(--uifn-control-padding-block) var(--uifn-control-padding-inline);
   }
 
   :where(
@@ -94,6 +99,32 @@
   :where([data-uifn-component][data-uifn-part]:focus-visible) {
     outline: max(2px, .125rem) solid var(--uifn-component-accent);
     outline-offset: max(2px, .125rem);
+  }
+
+  :where([data-uifn-component][data-uifn-part="root"][data-uifn-size="sm"]) {
+    --uifn-control-block-size: var(--uifn-control-size-sm, 2rem);
+    --uifn-control-gap: var(--uifn-control-gap-sm, .375rem);
+    --uifn-control-padding-block: var(--uifn-space-1, .25rem);
+    --uifn-control-padding-inline: var(--uifn-space-2, .5rem);
+    font-size: var(--uifn-typography-size-sm, .8125rem);
+  }
+
+  :where([data-uifn-component][data-uifn-part="root"][data-uifn-size="lg"]) {
+    --uifn-control-block-size: var(--uifn-control-size-lg, 3rem);
+    --uifn-control-gap: var(--uifn-control-gap-lg, .75rem);
+    --uifn-control-padding-block: var(--uifn-space-3, .75rem);
+    --uifn-control-padding-inline: var(--uifn-space-5, 1.25rem);
+    font-size: var(--uifn-typography-size-lg, 1rem);
+  }
+
+  :where([data-uifn-component][data-uifn-part="root"][data-uifn-variant="secondary"]) {
+    --uifn-component-accent: var(--uifn-color-surface-sunken, color-mix(in srgb, Canvas 94%, CanvasText));
+    --uifn-component-accent-contrast: var(--uifn-color-text-primary, CanvasText);
+  }
+
+  :where([data-uifn-component][data-uifn-part="root"][data-uifn-variant="danger"]) {
+    --uifn-component-accent: var(--uifn-color-danger-solid, #b42318);
+    --uifn-component-accent-contrast: var(--uifn-color-danger-contrast, #fff);
   }
 
   :where(
@@ -133,7 +164,7 @@
     border: 1px solid var(--uifn-component-border);
     background: var(--uifn-component-bg);
     color: var(--uifn-component-fg);
-    padding: .5rem .75rem;
+    padding: var(--uifn-control-padding-block) var(--uifn-control-padding-inline);
   }
 
   :where([data-uifn-component][data-uifn-part="label"]) {
@@ -715,12 +746,46 @@
     align-items: center;
     justify-content: center;
     min-block-size: var(--uifn-control-block-size);
-    border: 1px solid transparent;
+    border: var(--uifn-component-border-width) solid transparent;
     background: var(--uifn-component-accent);
     color: var(--uifn-component-accent-contrast);
     cursor: pointer;
-    gap: .5rem;
-    padding: .5rem .875rem;
+    gap: var(--uifn-control-gap);
+    padding: var(--uifn-control-padding-block) var(--uifn-control-padding-inline);
+    font-weight: var(--uifn-typography-weight-semibold, 650);
+    white-space: nowrap;
+    transition:
+      transform var(--uifn-motion-duration-fast, 120ms) var(--uifn-motion-easing-standard, ease),
+      background var(--uifn-motion-duration-fast, 120ms) var(--uifn-motion-easing-standard, ease),
+      border-color var(--uifn-motion-duration-fast, 120ms) var(--uifn-motion-easing-standard, ease),
+      box-shadow var(--uifn-motion-duration-fast, 120ms) var(--uifn-motion-easing-standard, ease);
+  }
+
+  :where([data-uifn-component="button"][data-uifn-part="root"]:hover:not(:disabled)) {
+    box-shadow: var(--uifn-elevation-shadow-md, 0 8px 24px rgb(15 23 42 / 10%));
+    transform: translateY(-1px);
+  }
+
+  :where([data-uifn-component="button"][data-uifn-part="root"]:active:not(:disabled)) {
+    box-shadow: var(--uifn-elevation-shadow-sm, 0 1px 2px rgb(15 23 42 / 8%));
+    transform: translateY(0) scale(.98);
+  }
+
+  :where([data-uifn-component="button"][data-uifn-part="root"][data-uifn-variant="outline"]) {
+    border-color: var(--uifn-component-accent);
+    background: transparent;
+    color: var(--uifn-component-accent);
+  }
+
+  :where([data-uifn-component="button"][data-uifn-part="root"][data-uifn-variant="ghost"]) {
+    border-color: transparent;
+    background: transparent;
+    color: var(--uifn-component-fg);
+    box-shadow: none;
+  }
+
+  :where([data-uifn-component="button"][data-uifn-part="root"][data-uifn-variant="secondary"]) {
+    border-color: var(--uifn-component-border);
   }
 
   :where(
@@ -2586,22 +2651,33 @@
     visibility: hidden;
     pointer-events: none;
   }
+
+  /* The public escape hatch keeps anatomy/data hooks while removing this layer. */
+  :where([data-uifn-component][data-uifn-unstyled="true"]) {
+    all: revert-layer;
+  }
 }
 
 @layer uifn.preferences {
   :where([data-uifn-density="compact"]) {
-    --uifn-control-block-size: 2rem;
-    --uifn-control-gap: .375rem;
+    --uifn-control-block-size: var(--uifn-control-size-sm, 2rem);
+    --uifn-control-gap: var(--uifn-control-gap-sm, .375rem);
+    --uifn-control-padding-block: var(--uifn-space-1, .25rem);
+    --uifn-control-padding-inline: var(--uifn-space-2, .5rem);
   }
 
   :where([data-uifn-density="comfortable"]) {
-    --uifn-control-block-size: 2.5rem;
-    --uifn-control-gap: .5rem;
+    --uifn-control-block-size: var(--uifn-control-size-md, 2.5rem);
+    --uifn-control-gap: var(--uifn-control-gap-md, .5rem);
+    --uifn-control-padding-block: var(--uifn-space-2, .5rem);
+    --uifn-control-padding-inline: var(--uifn-space-3, .75rem);
   }
 
   :where([data-uifn-density="spacious"]) {
-    --uifn-control-block-size: 3rem;
-    --uifn-control-gap: .75rem;
+    --uifn-control-block-size: var(--uifn-control-size-lg, 3rem);
+    --uifn-control-gap: var(--uifn-control-gap-lg, .75rem);
+    --uifn-control-padding-block: var(--uifn-space-3, .75rem);
+    --uifn-control-padding-inline: var(--uifn-space-5, 1.25rem);
   }
 
   :where([dir="rtl"] [data-uifn-component]) {
