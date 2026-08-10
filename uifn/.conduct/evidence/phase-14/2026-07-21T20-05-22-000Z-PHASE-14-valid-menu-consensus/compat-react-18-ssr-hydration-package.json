@@ -1,0 +1,429 @@
+[
+  {
+    "primitive": "Accordion",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "AlertDialog",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "AngleSlider",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Autocomplete",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Avatar",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Button",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Carousel",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Checkbox",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "CheckboxGroup",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Clipboard",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Collapsible",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "ColorPicker",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Combobox",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "ContextMenu",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "DateInput",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "DatePicker",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Dialog",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Drawer",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Editable",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Field",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Fieldset",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "FileUpload",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "FloatingPanel",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Form",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "HoverCard",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "ImageCropper",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Input",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Listbox",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Marquee",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Menu",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Menubar",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Meter",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "NavigationMenu",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "NumberInput",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Pagination",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "PasswordInput",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "PinInput",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Popover",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Progress",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "QRCode",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "RadioGroup",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "RatingGroup",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "ScrollArea",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "SegmentGroup",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Select",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Separator",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "SignaturePad",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Slider",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Splitter",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Steps",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Switch",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Tabs",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "TagsInput",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Timer",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Toast",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Toggle",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "ToggleGroup",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Toolbar",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Tooltip",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "Tour",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  },
+  {
+    "primitive": "TreeView",
+    "framework": "react",
+    "frameworkVersion": "18.3.1",
+    "installMode": "package",
+    "result": "passed"
+  }
+]

@@ -1,0 +1,1385 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "phase19-human-a11y-20260726T050506193Z",
+  "evidenceClass": "manual-assistive-technology-and-independent-review",
+  "requirementIds": [
+    "A11Y-003",
+    "A11Y-004"
+  ],
+  "vectorIds": [
+    "TV-A11Y-003-P",
+    "TV-A11Y-003-N",
+    "TV-A11Y-004-P",
+    "TV-A11Y-004-N"
+  ],
+  "status": "blocked",
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "lockfileSha256": "b6eb7085aaa93040ccc2d1290683d4d4670b7340166c1495523002a78b0abfeb",
+    "definitionSha256": "444d1adabfa311caeac643571794107c4b337ad037c7906077feda3a66c3cad0",
+    "artifactHashes": [
+      {
+        "path": "uifn/accessibility/phase-19/matrix.json",
+        "sha256": "e76c8bbfbcaf7f7dab8a1ddb6efdfad0c805db0947fc06d1d124a180931058e0"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-18/20260726T042653Z-PHASE-18-final/phase-18.json",
+        "sha256": "4a005006d1f6db69814d624361fbebfd584d90ad66511f1399336953fc23e9ac"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/trace-run.json",
+        "sha256": "4c046649f1f247aa9af600bf4f739b0c4402975d767bbe6022385d292d22bdbb"
+      },
+      {
+        "path": "uifn/.conduct/contracts/phase-19-trust-policy.json",
+        "sha256": "6dff256123846204f49d6bc4bbe358354e3cbf4c8f0bce59d8493bf1a07c1c49"
+      }
+    ]
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "runtime": "v20.20.0",
+    "verifier": "scripts/verify-uifn-phase-19.mjs",
+    "requiredAssistiveTechnologies": [
+      "VoiceOver macOS",
+      "VoiceOver iOS",
+      "NVDA Windows",
+      "TalkBack Android"
+    ],
+    "jaws": "not-tested-user-deferred"
+  },
+  "timing": {
+    "startedAt": "2026-07-26T05:05:04.287Z",
+    "completedAt": "2026-07-26T05:05:06.193Z",
+    "durationMs": 1906
+  },
+  "counts": {
+    "total": 245,
+    "executed": 0,
+    "passed": 0,
+    "failed": 0,
+    "blocked": 245,
+    "skipped": 0,
+    "notApplicable": 0
+  },
+  "artifacts": [
+    "uifn/accessibility/phase-19/matrix.json",
+    "uifn/.conduct/evidence/phase-18/20260726T042653Z-PHASE-18-final/phase-18.json",
+    "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/trace-run.json",
+    "uifn/.conduct/contracts/phase-19-trust-policy.json"
+  ],
+  "defects": [],
+  "signatures": [
+    {
+      "kind": "automation-verifier",
+      "signer": "scripts/verify-uifn-phase-19.mjs",
+      "signedAt": "2026-07-26T05:05:06.193Z",
+      "attestation": "This verifier signature reports evidence validation only. It is not a human assistive-technology signature or an independent accessibility-review signature."
+    }
+  ],
+  "expiresAt": "2026-10-24T05:05:06.193Z",
+  "supersedes": null,
+  "trust": null,
+  "releaseCandidate": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": false,
+    "definitionSha256": "08ce41a343610565ed728b45afb1ec9c32f16c7a0af9b7c55fb54287a2daface",
+    "artifactSetSha256": "acbde26f16a2859202681b7699f08fef598bb750dc84ec1141dc935041abfba5",
+    "phase18EvidenceSha256": "4a005006d1f6db69814d624361fbebfd584d90ad66511f1399336953fc23e9ac",
+    "matrixDefinitionSha256": "444d1adabfa311caeac643571794107c4b337ad037c7906077feda3a66c3cad0",
+    "artifacts": [
+      {
+        "package": "@uifn/core",
+        "filename": "uifn-core-0.0.1.tgz",
+        "sha256": "4b6ac3c85b6dc20fe0de4209b69992f8d68835704bd11a4e2e884d111cf072e3"
+      },
+      {
+        "package": "@uifn/dom",
+        "filename": "uifn-dom-0.0.1.tgz",
+        "sha256": "85f8f38d626981d8ef0b165e872b5e1725736162995309578340d4c33650e148"
+      },
+      {
+        "package": "@uifn/adapter-kit",
+        "filename": "uifn-adapter-kit-0.0.1.tgz",
+        "sha256": "cecc040efc9d8282c66459104d4de75ca69dac9ae187adb0b95c3e73c163c90a"
+      },
+      {
+        "package": "@uifn/react",
+        "filename": "uifn-react-0.0.1.tgz",
+        "sha256": "1ff328c59cac5615807d42e6c27bd30b3577c181e57b786f87e485efa4bc9282"
+      },
+      {
+        "package": "@uifn/svelte",
+        "filename": "uifn-svelte-0.0.1.tgz",
+        "sha256": "b91fbe698efac2f8507a27feca28f79df80d00274e5d589d8ca29d43a06f42b9"
+      },
+      {
+        "package": "@uifn/solid",
+        "filename": "uifn-solid-0.0.1.tgz",
+        "sha256": "2782d959d4c2e778e9909d6fe13cb37bc90f5e208ee72d9d769767cbe71e8ef0"
+      }
+    ]
+  },
+  "compatibility": null,
+  "matrix": {
+    "revision": "uifn-manual-at-matrix-v1",
+    "definitionSha256": "444d1adabfa311caeac643571794107c4b337ad037c7906077feda3a66c3cad0",
+    "requiredRows": 244,
+    "suppliedRows": 0,
+    "validRows": 0
+  },
+  "failures": [
+    {
+      "code": "UIFN_PHASE19_RC_NOT_FROZEN",
+      "reason": "worktree-dirty"
+    },
+    {
+      "code": "UIFN_PHASE19_PHASE18_RC_INVALID",
+      "reason": "Phase 18 must pass on the exact clean current release-candidate commit."
+    },
+    {
+      "code": "UIFN_PHASE19_TRACE_RUN_INVALID",
+      "reason": "Trace run must bind six frozen packages and the consumer kit to the exact clean current commit."
+    },
+    {
+      "code": "UIFN_PHASE19_SIGNED_COMPATIBILITY_MISSING",
+      "reason": "Exact per-cell Sigstore evidence directory and clean trace run are required."
+    },
+    {
+      "code": "UIFN_PARTICIPANT_TRUST_ROOT_UNPROVISIONED",
+      "reason": "The independently approved public trust-root hash is not active and pinned."
+    },
+    {
+      "code": "UIFN_PARTICIPANT_TRUST_ROOT_MISSING"
+    },
+    {
+      "code": "UIFN_PARTICIPANT_REGISTRY_INVALID",
+      "reason": "missing"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-accordion-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-accordion-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-accordion-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-accordion-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-alert-dialog-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-alert-dialog-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-alert-dialog-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-alert-dialog-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-angle-slider-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-angle-slider-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-angle-slider-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-angle-slider-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-autocomplete-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-autocomplete-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-autocomplete-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-autocomplete-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-avatar-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-avatar-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-avatar-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-avatar-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-button-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-button-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-button-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-button-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-carousel-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-carousel-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-carousel-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-carousel-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-group-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-group-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-group-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-group-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-checkbox-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-clipboard-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-clipboard-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-clipboard-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-clipboard-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-collapsible-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-collapsible-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-collapsible-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-collapsible-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-color-picker-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-color-picker-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-color-picker-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-color-picker-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-combobox-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-combobox-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-combobox-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-combobox-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-context-menu-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-context-menu-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-context-menu-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-context-menu-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-input-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-input-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-input-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-input-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-picker-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-picker-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-picker-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-date-picker-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-dialog-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-dialog-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-dialog-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-dialog-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-drawer-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-drawer-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-drawer-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-drawer-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-editable-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-editable-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-editable-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-editable-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-field-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-field-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-field-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-field-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-fieldset-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-fieldset-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-fieldset-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-fieldset-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-file-upload-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-file-upload-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-file-upload-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-file-upload-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-floating-panel-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-floating-panel-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-floating-panel-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-floating-panel-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-form-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-form-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-form-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-form-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-hover-card-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-hover-card-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-hover-card-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-hover-card-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-image-cropper-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-image-cropper-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-image-cropper-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-image-cropper-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-input-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-input-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-input-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-input-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-listbox-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-listbox-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-listbox-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-listbox-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-marquee-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-marquee-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-marquee-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-marquee-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menu-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menu-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menu-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menu-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menubar-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menubar-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menubar-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-menubar-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-meter-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-meter-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-meter-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-meter-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-navigation-menu-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-navigation-menu-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-navigation-menu-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-navigation-menu-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-number-input-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-number-input-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-number-input-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-number-input-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pagination-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pagination-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pagination-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pagination-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-password-input-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-password-input-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-password-input-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-password-input-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pin-input-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pin-input-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pin-input-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-pin-input-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-popover-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-popover-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-popover-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-popover-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-progress-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-progress-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-progress-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-progress-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-qr-code-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-qr-code-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-qr-code-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-qr-code-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-radio-group-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-radio-group-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-radio-group-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-radio-group-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-rating-group-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-rating-group-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-rating-group-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-rating-group-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-scroll-area-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-scroll-area-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-scroll-area-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-scroll-area-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-segment-group-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-segment-group-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-segment-group-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-segment-group-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-select-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-select-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-select-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-select-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-separator-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-separator-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-separator-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-separator-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-signature-pad-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-signature-pad-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-signature-pad-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-signature-pad-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-slider-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-slider-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-slider-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-slider-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-splitter-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-splitter-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-splitter-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-splitter-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-steps-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-steps-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-steps-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-steps-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-switch-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-switch-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-switch-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-switch-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tabs-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tabs-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tabs-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tabs-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tags-input-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tags-input-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tags-input-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tags-input-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-timer-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-timer-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-timer-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-timer-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toast-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toast-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toast-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toast-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-group-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-group-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-group-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-group-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toggle-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toolbar-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toolbar-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toolbar-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-toolbar-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tooltip-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tooltip-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tooltip-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tooltip-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tour-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tour-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tour-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tour-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tree-view-nvda-windows",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tree-view-talkback-android",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tree-view-voiceover-ios",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_MANUAL_MATRIX_MISSING",
+      "rowId": "P19-tree-view-voiceover-macos",
+      "reason": "missing-signed-row"
+    },
+    {
+      "code": "UIFN_REVIEW_EVIDENCE_MISSING"
+    }
+  ]
+}

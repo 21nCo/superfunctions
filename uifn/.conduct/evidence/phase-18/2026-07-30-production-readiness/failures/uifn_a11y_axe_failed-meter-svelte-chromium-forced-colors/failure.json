@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "meter",
+  "framework": "svelte",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "9b758213846896c4e204ec099eebfd06eb425a1355e144fe1060d2a3f714a9ca",
+  "dom": "<section data-uifn-story-framework=\"svelte\" data-uifn-story-id=\"meter--forced-colors\" data-uifn-story-scenario=\"forced-colors\" data-uifn-theme=\"high-contrast\" data-uifn-forced-colors=\"true\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><!----><!----><!----><!----><div role=\"meter\" id=\"meter-c1-meter-root\" class=\"uifn-meter uifn-meter__root\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"1\" aria-valuetext=\"1\" aria-labelledby=\"meter-c1-meter-label\" aria-describedby=\"meter-c1-meter-value-text\" data-state=\"critical\" data-uifn-component=\"meter\" data-uifn-part=\"root\"><!----><!----><!----><!----><!----><!----><!----><!----><!----><span id=\"meter-c1-meter-label\" class=\"uifn-meter uifn-meter__label\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"meter\" data-uifn-part=\"label\"><!----><!----><!----> <!---->label fixture<!----><!----> <!----></span><!----><!----><!----><!----><!----><!----><div id=\"meter-c1-meter-track\" class=\"uifn-meter uifn-meter__track\" data-uifn-story-anatomy=\"track\" data-uifn-component=\"meter\" data-uifn-part=\"track\"><!----><!----><!----> <!---->track fixture<!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><div id=\"meter-c1-meter-range\" class=\"uifn-meter uifn-meter__range\" data-state=\"critical\" data-uifn-story-anatomy=\"range\" data-uifn-component=\"meter\" data-uifn-part=\"range\" style=\"width: 1%;\"><!----><!----><!----> <!---->range fixture<!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><span id=\"meter-c1-meter-value-text\" class=\"uifn-meter uifn-meter__valueText\" data-value=\"1\" data-uifn-story-anatomy=\"valueText\" data-uifn-component=\"meter\" data-uifn-part=\"valueText\"><!----><!----><!----> <!---->valueText fixture<!----><!----> <!----></span></div><!----></section>",
+  "semanticTrace": [
+    {
+      "part": "label",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "range",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "critical"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "range"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": "meter",
+      "aria": [
+        [
+          "aria-describedby",
+          "meter-c1-meter-value-text"
+        ],
+        [
+          "aria-labelledby",
+          "meter-c1-meter-label"
+        ],
+        [
+          "aria-valuemax",
+          "100"
+        ],
+        [
+          "aria-valuemin",
+          "0"
+        ],
+        [
+          "aria-valuenow",
+          "1"
+        ],
+        [
+          "aria-valuetext",
+          "1"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "critical"
+        ]
+      ]
+    },
+    {
+      "part": "track",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "track"
+        ]
+      ]
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ],
+        [
+          "data-value",
+          "1"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [],
+  "focusPath": [],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:30:15.912Z",
+  "expiresAt": "2026-08-06T16:30:15.912Z"
+}

@@ -1,0 +1,265 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "autocomplete",
+  "framework": "solid",
+  "deliveryMode": "package",
+  "browser": "webkit",
+  "version": "26.0",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-framework=\"solid\" data-uifn-story-id=\"autocomplete--keyboard-focus\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div id=\"autocomplete-root-autocomplete-uifn-cl-0\" class=\"uifn-autocomplete uifn-autocomplete__root\" data-state=\"idle\" data-uifn-component=\"autocomplete\" data-uifn-part=\"root\"><label id=\"autocomplete-label-autocomplete-uifn-cl-0\" class=\"uifn-autocomplete uifn-autocomplete__label\" data-state=\"idle\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"autocomplete\" data-uifn-part=\"label\">label fixture</label><div id=\"autocomplete-control-autocomplete-uifn-cl-0\" class=\"uifn-autocomplete uifn-autocomplete__control\" data-state=\"idle\" data-uifn-story-anatomy=\"control\" data-uifn-component=\"autocomplete\" data-uifn-part=\"control\"><input value=\"\" autocomplete=\"off\" role=\"combobox\" id=\"autocomplete-input-autocomplete-uifn-cl-0\" tabindex=\"0\" class=\"uifn-autocomplete uifn-autocomplete__input\" aria-labelledby=\"autocomplete-label-autocomplete-uifn-cl-0\" aria-expanded=\"false\" aria-controls=\"autocomplete-content-autocomplete-uifn-cl-0\" aria-activedescendant=\"autocomplete-root-autocomplete-uifn-cl-0-item-item-1\" aria-autocomplete=\"list\" aria-invalid=\"false\" aria-required=\"false\" data-state=\"idle\" data-uifn-story-anatomy=\"input\" data-uifn-component=\"autocomplete\" data-uifn-part=\"input\"><button type=\"button\" role=\"button\" id=\"autocomplete-clear-autocomplete-uifn-cl-0\" class=\"uifn-autocomplete uifn-autocomplete__clear\" aria-label=\"Clear\" data-state=\"idle\" data-uifn-story-anatomy=\"clear\" data-uifn-component=\"autocomplete\" data-uifn-part=\"clear\">clear fixture</button></div><!--uifn-portal:autocomplete-root-autocomplete-uifn-cl-0-portal--></div></section>",
+  "semanticTrace": [
+    {
+      "part": "clear",
+      "tag": "button",
+      "role": "button",
+      "aria": [
+        [
+          "aria-label",
+          "Clear"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "clear"
+        ]
+      ]
+    },
+    {
+      "part": "content",
+      "tag": "div",
+      "role": "listbox",
+      "aria": [
+        [
+          "aria-labelledby",
+          "autocomplete-label-autocomplete-uifn-cl-0"
+        ],
+        [
+          "aria-multiselectable",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "content"
+        ]
+      ]
+    },
+    {
+      "part": "control",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "control"
+        ]
+      ]
+    },
+    {
+      "part": "empty",
+      "tag": "div",
+      "role": "status",
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "empty"
+        ]
+      ]
+    },
+    {
+      "part": "input",
+      "tag": "input",
+      "role": "combobox",
+      "aria": [
+        [
+          "aria-activedescendant",
+          "autocomplete-root-autocomplete-uifn-cl-0-item-item-1"
+        ],
+        [
+          "aria-autocomplete",
+          "list"
+        ],
+        [
+          "aria-controls",
+          "autocomplete-content-autocomplete-uifn-cl-0"
+        ],
+        [
+          "aria-expanded",
+          "false"
+        ],
+        [
+          "aria-invalid",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "autocomplete-label-autocomplete-uifn-cl-0"
+        ],
+        [
+          "aria-required",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "input"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "div",
+      "role": "option",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-selected",
+          "true"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "positioner",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-portal-id",
+          "autocomplete-root-autocomplete-uifn-cl-0-portal"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "positioner"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "cbc9403cdf81d94fb155f9f738e291859df8368eeac6a21fa30964eb8f4a3db7"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "cba9dbe9ac9e2e05cee55adcab146e0af6cfaa458fbf328c993ec210efe1b5f8"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "cba9dbe9ac9e2e05cee55adcab146e0af6cfaa458fbf328c993ec210efe1b5f8"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "04516470f2d934ff42a55aac6da12ec46847dfea8f30f64d57c37c2d158a1f08"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "bc6f655d5a6480443fad810e153759c3e8adf1a09a5f8c1bad0a34e5955aa715"
+    }
+  ],
+  "focusPath": [
+    "input",
+    "input",
+    "input",
+    "input",
+    "input",
+    "input"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:52:25.534Z",
+  "expiresAt": "2026-08-06T16:52:25.534Z"
+}

@@ -1,0 +1,164 @@
+{
+  "ok": true,
+  "command": "verify-uifn-solid-consumer",
+  "requirement": "SOLID-001",
+  "vector": "TV-SOLID-001-P",
+  "solidVersion": "1.9.13",
+  "browsers": [
+    "chromium",
+    "firefox",
+    "webkit"
+  ],
+  "packageMode": {
+    "mode": "package",
+    "html": "<button data-hk=\"00\" type=\"button\" data-testid=\"dispose-tree\">Dispose tree</button><form data-hk=\"01\"><!--$--><div data-hk=\"021000\" id=\"accordion-root-accordion-uifn-020\" style=\"\" data-orientation=\"vertical\" data-type=\"multiple\" ><div data-hk=\"0210010000\" id=\"accordion-root-accordion-uifn-020-item-one\" style=\"\" data-state=\"closed\" data-value=\"one\" ><h2 data-hk=\"02100100010000\" role=\"heading\" id=\"accordion-root-accordion-uifn-020-header-one\" style=\"\" aria-level=\"3\" data-value=\"one\" ><button data-hk=\"021001000100010000\" type=\"button\" role=\"button\" id=\"accordion-root-accordion-uifn-020-trigger-one\" tabIndex=\"0\" style=\"\" aria-expanded=\"false\" aria-controls=\"accordion-root-accordion-uifn-020-content-one\" aria-disabled=\"false\" data-state=\"closed\" data-orientation=\"vertical\" data-value=\"one\" >First section</button></h2><div data-hk=\"02100100020000\" role=\"region\" id=\"accordion-root-accordion-uifn-020-content-one\" hidden style=\"\" aria-labelledby=\"accordion-root-accordion-uifn-020-trigger-one\" data-state=\"closed\" data-value=\"one\" >First content</div></div></div><!--/--><output data-testid=\"accordion-value\">[]</output><!--$--><label data-hk=\"031000\" id=\"checkbox-root-checkbox-uifn-030\" style=\"\" aria-labelledby=\"checkbox-label-checkbox-uifn-030\" aria-disabled=\"false\" aria-readonly=\"false\" aria-required=\"false\" aria-invalid=\"false\" data-state=\"unchecked\" ><!--$--><button data-hk=\"0310010000\" type=\"button\" role=\"checkbox\" id=\"checkbox-root-checkbox-uifn-030-control-on\" tabIndex=\"0\" style=\"\" aria-checked=\"false\" aria-disabled=\"false\" data-state=\"unchecked\" data-value=\"on\" data-testid=\"checkbox-control\" >Accept terms</button><!--/--><!--$--><input data-hk=\"0310020000\" type=\"checkbox\" name=\"terms\" value=\"accepted\" id=\"checkbox-hiddeninput-checkbox-uifn-030\" hidden style=\"\" data-state=\"unchecked\" /><!--/--></label><!--/--><!--$--><div data-hk=\"041000\" id=\"dialog-root-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" ><!--$--><button data-hk=\"0410010000\" type=\"button\" role=\"button\" id=\"dialog-trigger-dialog-uifn-040\" tabIndex=\"0\" style=\"\" aria-haspopup=\"dialog\" aria-expanded=\"false\" aria-controls=\"dialog-content-dialog-uifn-040\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" >Open dialog</button><!--/--><!--$--><div data-hk=\"0410020000\" id=\"dialog-portal-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" data-testid=\"dialog-portal\" ><div data-hk=\"04100200010000\" role=\"dialog\" id=\"dialog-content-dialog-uifn-040\" tabIndex=\"-1\" hidden style=\"\" aria-modal=\"true\" aria-labelledby=\"dialog-title-dialog-uifn-040\" aria-describedby=\"dialog-description-dialog-uifn-040\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" ><h2 data-hk=\"041002000100010000\" id=\"dialog-title-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" >Consumer dialog</h2><p data-hk=\"041002000100020000\" id=\"dialog-description-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" >Hydrated description</p></div></div><!--/--></div><!--/--></form>",
+    "browserResults": [
+      {
+        "name": "chromium",
+        "diagnostics": [],
+        "hydratedIdsMatch": true,
+        "expanded": "true",
+        "value": "[\"one\"]",
+        "checked": true,
+        "formValue": "accepted",
+        "portalParent": "BODY",
+        "zeroLeaks": true
+      },
+      {
+        "name": "firefox",
+        "diagnostics": [],
+        "hydratedIdsMatch": true,
+        "expanded": "true",
+        "value": "[\"one\"]",
+        "checked": true,
+        "formValue": "accepted",
+        "portalParent": "BODY",
+        "zeroLeaks": true
+      },
+      {
+        "name": "webkit",
+        "diagnostics": [],
+        "hydratedIdsMatch": true,
+        "expanded": "true",
+        "value": "[\"one\"]",
+        "checked": true,
+        "formValue": "accepted",
+        "portalParent": "BODY",
+        "zeroLeaks": true
+      }
+    ],
+    "ok": true
+  },
+  "sourceMode": {
+    "mode": "source",
+    "html": "<button data-hk=\"00\" type=\"button\" data-testid=\"dispose-tree\">Dispose tree</button><form data-hk=\"01\"><!--$--><div data-hk=\"021000\" id=\"accordion-root-accordion-uifn-020\" style=\"\" data-orientation=\"vertical\" data-type=\"multiple\" ><div data-hk=\"0210010000\" id=\"accordion-root-accordion-uifn-020-item-one\" style=\"\" data-state=\"closed\" data-value=\"one\" ><h2 data-hk=\"02100100010000\" role=\"heading\" id=\"accordion-root-accordion-uifn-020-header-one\" style=\"\" aria-level=\"3\" data-value=\"one\" ><button data-hk=\"021001000100010000\" type=\"button\" role=\"button\" id=\"accordion-root-accordion-uifn-020-trigger-one\" tabIndex=\"0\" style=\"\" aria-expanded=\"false\" aria-controls=\"accordion-root-accordion-uifn-020-content-one\" aria-disabled=\"false\" data-state=\"closed\" data-orientation=\"vertical\" data-value=\"one\" >First section</button></h2><div data-hk=\"02100100020000\" role=\"region\" id=\"accordion-root-accordion-uifn-020-content-one\" hidden style=\"\" aria-labelledby=\"accordion-root-accordion-uifn-020-trigger-one\" data-state=\"closed\" data-value=\"one\" >First content</div></div></div><!--/--><output data-testid=\"accordion-value\">[]</output><!--$--><label data-hk=\"031000\" id=\"checkbox-root-checkbox-uifn-030\" style=\"\" aria-labelledby=\"checkbox-label-checkbox-uifn-030\" aria-disabled=\"false\" aria-readonly=\"false\" aria-required=\"false\" aria-invalid=\"false\" data-state=\"unchecked\" ><!--$--><button data-hk=\"0310010000\" type=\"button\" role=\"checkbox\" id=\"checkbox-root-checkbox-uifn-030-control-on\" tabIndex=\"0\" style=\"\" aria-checked=\"false\" aria-disabled=\"false\" data-state=\"unchecked\" data-value=\"on\" data-testid=\"checkbox-control\" >Accept terms</button><!--/--><!--$--><input data-hk=\"0310020000\" type=\"checkbox\" name=\"terms\" value=\"accepted\" id=\"checkbox-hiddeninput-checkbox-uifn-030\" hidden style=\"\" data-state=\"unchecked\" /><!--/--></label><!--/--><!--$--><div data-hk=\"041000\" id=\"dialog-root-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" ><!--$--><button data-hk=\"0410010000\" type=\"button\" role=\"button\" id=\"dialog-trigger-dialog-uifn-040\" tabIndex=\"0\" style=\"\" aria-haspopup=\"dialog\" aria-expanded=\"false\" aria-controls=\"dialog-content-dialog-uifn-040\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" >Open dialog</button><!--/--><!--$--><div data-hk=\"0410020000\" id=\"dialog-portal-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" data-testid=\"dialog-portal\" ><div data-hk=\"04100200010000\" role=\"dialog\" id=\"dialog-content-dialog-uifn-040\" tabIndex=\"-1\" hidden style=\"\" aria-modal=\"true\" aria-labelledby=\"dialog-title-dialog-uifn-040\" aria-describedby=\"dialog-description-dialog-uifn-040\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" ><h2 data-hk=\"041002000100010000\" id=\"dialog-title-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" >Consumer dialog</h2><p data-hk=\"041002000100020000\" id=\"dialog-description-dialog-uifn-040\" style=\"\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\" >Hydrated description</p></div></div><!--/--></div><!--/--></form>",
+    "browserResults": [
+      {
+        "name": "chromium",
+        "diagnostics": [],
+        "hydratedIdsMatch": true,
+        "expanded": "true",
+        "value": "[\"one\"]",
+        "checked": true,
+        "formValue": "accepted",
+        "portalParent": "BODY",
+        "zeroLeaks": true
+      },
+      {
+        "name": "firefox",
+        "diagnostics": [],
+        "hydratedIdsMatch": true,
+        "expanded": "true",
+        "value": "[\"one\"]",
+        "checked": true,
+        "formValue": "accepted",
+        "portalParent": "BODY",
+        "zeroLeaks": true
+      },
+      {
+        "name": "webkit",
+        "diagnostics": [],
+        "hydratedIdsMatch": true,
+        "expanded": "true",
+        "value": "[\"one\"]",
+        "checked": true,
+        "formValue": "accepted",
+        "portalParent": "BODY",
+        "zeroLeaks": true
+      }
+    ],
+    "ok": true
+  },
+  "equivalent": true,
+  "treeShaking": {
+    "ok": true,
+    "bytes": 35406,
+    "included": [
+      "createCheckboxController"
+    ],
+    "excluded": [
+      "createAccordionController",
+      "createDialogController",
+      "createSelectController",
+      "AccordionDefinition",
+      "DialogDefinition"
+    ]
+  },
+  "artifactHashes": {
+    "@uifn/adapter-kit": "e918f70c37745d03909381022031284e000e49ce41a892ef2c9d91cbffd5ebda",
+    "@uifn/core": "36f9547e47cec69ec9fc0f23f9e6cc9c8de6d14185d0150fda772f8fcc410b84",
+    "@uifn/dom": "5162b4e29545c9a261a0a5ed78fb2eea8f3f8a68aa8447b70c6dc9ca3ccebea9",
+    "@uifn/solid": "17951e233b28add68010732bd01e8fe2aa56f6249617e27e8db08c30b94c0d3e"
+  },
+  "checks": [
+    {
+      "command": "npm pack --workspace @uifn/adapter-kit --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"dist/index.d.mts\",\n        \"size\": 10515,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.d.ts\",\n        \"size\": 10515,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.js\",\n        \"size\": 39705,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.mjs\",\n        \"size\": 37737,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 1371,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 6,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/adapter-kit@0.0.1 prepack\n> npm run build\n\n\n> @uifn/adapter-kit@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts\n\nnpm notice\nnpm notice New major version of npm available! 10.8.2 -> 12.0.1\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.1\nnpm notice To update run: npm install -g npm@12.0.1\nnpm notice"
+    },
+    {
+      "command": "npm pack --workspace @uifn/core --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"generated/phase-10-golden-corpus.json\",\n        \"size\": 8609,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"generated/phase-10-test-manifest.json\",\n        \"size\": 986,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"generated/phase-10-types.d.ts\",\n        \"size\": 859,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"migrations/removed-apis.json\",\n        \"size\": 3188,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 3514,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 135,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/core@0.0.1 prepack\n> npm run build\n\n\n> @uifn/core@0.0.1 build\n> tsup"
+    },
+    {
+      "command": "npm pack --workspace @uifn/dom --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"dist/index.js\",\n        \"size\": 124244,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.js.map\",\n        \"size\": 237336,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.mjs\",\n        \"size\": 120626,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/index.mjs.map\",\n        \"size\": 237285,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 1485,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 9,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/dom@0.0.1 prepack\n> npm run build\n\n\n> @uifn/dom@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --sourcemap"
+    },
+    {
+      "command": "npm pack --workspace @uifn/solid --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"path\": \"dist/props.d.ts\",\n        \"size\": 749,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/props.d.ts.map\",\n        \"size\": 489,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/props.js\",\n        \"size\": 7839,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"dist/props.js.map\",\n        \"size\": 8239,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 2278,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 275,\n    \"bundled\": []\n  }\n]",
+      "stderr": "> @uifn/solid@0.0.1 prepack\n> npm run generate:check && npm run build\n\n\n> @uifn/solid@0.0.1 generate:check\n> node ../../scripts/generate-uifn-phase-13.mjs --check\n\n\n> @uifn/solid@0.0.1 build\n> node ../../scripts/build-uifn-solid.mjs"
+    },
+    {
+      "command": "npm install --ignore-scripts --no-audit --no-fund /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs/uifn-adapter-kit-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs/uifn-core-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs/uifn-dom-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-solid-consumer-HtxsR9/tarballs/uifn-solid-0.0.1.tgz solid-js@1.9.13 vite@5.4.21 vite-plugin-solid@2.11.12",
+      "ok": true,
+      "status": 0,
+      "stdout": "added 78 packages in 6s",
+      "stderr": ""
+    },
+    {
+      "command": "vite build (package)",
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "vite build (source)",
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

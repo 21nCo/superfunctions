@@ -1,0 +1,137 @@
+{
+  "ok": true,
+  "command": "verify:uifn-phase-12",
+  "requirement": "SVELTE-001",
+  "vectors": [
+    "TV-SVELTE-001-P",
+    "TV-SVELTE-001-N"
+  ],
+  "primitiveCount": 61,
+  "anatomyCount": 419,
+  "browsers": [
+    "chromium",
+    "firefox",
+    "webkit"
+  ],
+  "checks": [
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/generate-uifn-phase-12.mjs --check",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"generate:uifn-phase-12 --check\",\n  \"primitiveCount\": 61,\n  \"issues\": []\n}",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/core run typecheck",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/core@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/core run test",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/core@0.0.1 test\n> vitest run\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/core\n\n ✓ src/utils/id.test.ts  (8 tests) 3ms\n ✓ src/utils/position.test.ts  (5 tests) 3ms\n ✓ src/internal/runtime/service.test.ts  (16 tests) 33ms\n ✓ src/__tests__/phase-06-algorithms.test.ts  (8 tests) 86ms\n ✓ src/primitives/dialog.test.ts  (4 tests) 9ms\n ✓ src/primitives/accordion.test.ts  (3 tests) 6ms\n ✓ src/utils/roving-focus.test.ts  (6 tests) 2ms\n ✓ src/primitives/popover.test.ts  (4 tests) 8ms\n ✓ src/primitives/scroll-area.test.ts  (3 tests) 4ms\n ✓ src/primitives/switch.test.ts  (3 tests) 5ms\n ✓ src/primitives/tooltip.test.ts  (2 tests) 7ms\n ✓ src/errors.test.ts  (6 tests) 4ms\n ✓ src/__tests__/primitive-vectors.test.ts  (5 tests) 13ms\n ✓ src/__tests__/phase-08-navigation.test.ts  (11 tests) 26ms\n ✓ src/__tests__/phase-06-primitives.test.ts  (9 tests) 21ms\n ✓ src/__tests__/phase-07-overlays.test.ts  (6 tests) 30ms\n ✓ src/__tests__/phase-09-selection-input.test.ts  (10 tests) 44ms\n ✓ src/__tests__/phase-04-contract.test.ts  (8 tests) 51ms\n ✓ src/primitives/collapsible.test.ts  (3 tests) 7ms\n ✓ src/primitives/alert-dialog.test.ts  (2 tests) 11ms\n ✓ src/primitives/toast.test.ts  (1 test) 12ms\n ✓ src/primitives/slider.test.ts  (2 tests) 14ms\n ✓ src/__tests__/controller-contract.test.ts  (10 tests) 139ms\n ✓ src/primitives/separator.test.ts  (2 tests) 2ms\n ✓ src/primitives/avatar.test.ts  (2 tests) 4ms\n ✓ src/primitives/toolbar.test.ts  (1 test) 5ms\n ✓ src/primitives/hover-card.test.ts  (1 test) 6ms\n ✓ src/utils/index.test.ts  (1 test) 1ms\n ✓ src/primitives/progress.test.ts  (1 test) 6ms\n ✓ src/__tests__/phase-10-gesture-date-feedback.test.ts  (13 tests) 348ms\n\n Test Files  30 passed (30)\n      Tests  156 passed (156)\n   Start at  21:28:56\n   Duration  1.11s (transform 1.36s, setup 1ms, collect 5.99s, tests 910ms, environment 4ms, prepare 2.11s)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "command": "npm --workspace @uifn/core run build",
+      "ok": true,
+      "status": 0,
+      "stdout": "CJS dist/utils/roving-focus.js      2.96 KB\nCJS dist/utils/index.js             69.77 KB\nCJS dist/primitives/index.js        408.49 KB\nCJS dist/index.js                   458.13 KB\nCJS dist/errors.js.map              23.34 KB\nCJS dist/parts.js.map               36.98 KB\nCJS dist/environment.js.map         38.84 KB\nCJS dist/aria/index.js.map          779.00 B\nCJS dist/utils/portal.js.map        2.27 KB\nCJS dist/utils/id.js.map            31.51 KB\nCJS dist/utils/outside-click.js.map 3.01 KB\nCJS dist/utils/focus-trap.js.map    9.18 KB\nCJS dist/aria/keys.js.map           778.00 B\nCJS dist/algorithms/index.js.map    112.75 KB\nCJS dist/utils/position.js.map      19.96 KB\nCJS dist/utils/escape-key.js.map    22.92 KB\nCJS dist/utils/index.js.map         187.96 KB\nCJS dist/utils/presence.js.map      121.00 KB\nCJS dist/utils/roving-focus.js.map  18.59 KB\nCJS dist/controller.js.map          51.26 KB\nCJS dist/index.js.map               1.11 MB\nCJS dist/primitives/index.js.map    1.03 MB\nCJS ⚡️ Build success in 1366ms\nESM dist/environment.mjs             15.18 KB\nESM dist/aria/keys.mjs               362.00 B\nESM dist/aria/index.mjs              364.00 B\nESM dist/errors.mjs                  14.25 KB\nESM dist/utils/focus-trap.mjs        3.85 KB\nESM dist/parts.mjs                   14.54 KB\nESM dist/utils/position.mjs          7.27 KB\nESM dist/utils/portal.mjs            1007.00 B\nESM dist/algorithms/index.mjs        46.82 KB\nESM dist/utils/outside-click.mjs     1.21 KB\nESM dist/controller.mjs              20.13 KB\nESM dist/utils/escape-key.mjs        9.77 KB\nESM dist/utils/roving-focus.mjs      2.86 KB\nESM dist/utils/id.mjs                13.08 KB\nESM dist/utils/presence.mjs          47.49 KB\nESM dist/utils/index.mjs             68.99 KB\nESM dist/index.mjs                   452.77 KB\nESM dist/primitives/index.mjs        406.03 KB\nESM dist/aria/index.mjs.map          778.00 B\nESM dist/environment.mjs.map         38.83 KB\nESM dist/errors.mjs.map              23.34 KB\nESM dist/parts.mjs.map               36.98 KB\nESM dist/utils/position.mjs.map      19.96 KB\nESM dist/aria/keys.mjs.map           777.00 B\nESM dist/utils/portal.mjs.map        2.27 KB\nESM dist/utils/focus-trap.mjs.map    9.18 KB\nESM dist/controller.mjs.map          51.26 KB\nESM dist/utils/id.mjs.map            31.51 KB\nESM dist/utils/outside-click.mjs.map 3.01 KB\nESM dist/algorithms/index.mjs.map    112.74 KB\nESM dist/utils/index.mjs.map         187.96 KB\nESM dist/utils/presence.mjs.map      121.00 KB\nESM dist/utils/escape-key.mjs.map    22.92 KB\nESM dist/utils/roving-focus.mjs.map  18.59 KB\nESM dist/index.mjs.map               1.11 MB\nESM dist/primitives/index.mjs.map    1.03 MB\nESM ⚡️ Build success in 1366ms\nDTS ⚡️ Build success in 4307ms\nDTS dist/index.d.ts                13.75 KB\nDTS dist/utils/index.d.ts          1.57 KB\nDTS dist/utils/escape-key.d.ts     504.00 B\nDTS dist/utils/focus-trap.d.ts     1.68 KB\nDTS dist/utils/id.d.ts             1.95 KB\nDTS dist/utils/outside-click.d.ts  714.00 B\nDTS dist/utils/portal.d.ts         539.00 B\nDTS dist/utils/position.d.ts       1.53 KB\nDTS dist/utils/presence.d.ts       1.75 KB\nDTS dist/utils/roving-focus.d.ts   1.17 KB\nDTS dist/controller.d.ts           3.79 KB\nDTS dist/environment.d.ts          4.75 KB\nDTS dist/parts.d.ts                3.92 KB\nDTS dist/errors.d.ts               5.56 KB\nDTS dist/algorithms/index.d.ts     5.70 KB\nDTS dist/aria/keys.d.ts            466.00 B\nDTS dist/primitives/index.d.ts     112.27 KB\nDTS dist/aria/index.d.ts           36.00 B\nDTS dist/color-BLYCEZcw.d.ts       12.34 KB\nDTS dist/index.d.mts               13.77 KB\nDTS dist/utils/index.d.mts         1.58 KB\nDTS dist/utils/escape-key.d.mts    504.00 B\nDTS dist/utils/focus-trap.d.mts    1.68 KB\nDTS dist/utils/id.d.mts            1.95 KB\nDTS dist/utils/outside-click.d.mts 714.00 B\nDTS dist/utils/portal.d.mts        539.00 B\nDTS dist/utils/position.d.mts      1.53 KB\nDTS dist/utils/presence.d.mts      1.75 KB\nDTS dist/utils/roving-focus.d.mts  1.17 KB\nDTS dist/controller.d.mts          3.79 KB\nDTS dist/environment.d.mts         4.75 KB\nDTS dist/parts.d.mts               3.92 KB\nDTS dist/errors.d.mts              5.56 KB\nDTS dist/algorithms/index.d.mts    5.70 KB\nDTS dist/aria/keys.d.mts           466.00 B\nDTS dist/primitives/index.d.mts    112.28 KB\nDTS dist/aria/index.d.mts          37.00 B\nDTS dist/color-BLYCEZcw.d.mts      12.34 KB",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/dom run typecheck",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/dom run test",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 test\n> vitest run\n\n\n RUN  v3.2.4 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom\n\n ✓ src/positioning.test.ts (1 test) 2ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  21:29:04\n   Duration  263ms (transform 38ms, setup 0ms, collect 40ms, tests 2ms, environment 0ms, prepare 112ms)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "command": "npm --workspace @uifn/dom run build",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --sourcemap\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nESM dist/index.mjs     117.80 KB\nESM dist/index.mjs.map 231.72 KB\nESM ⚡️ Build success in 24ms\nCJS dist/index.js     121.33 KB\nCJS dist/index.js.map 231.77 KB\nCJS ⚡️ Build success in 25ms\nDTS Build start\nDTS ⚡️ Build success in 1057ms\nDTS dist/index.d.mts 25.36 KB\nDTS dist/index.d.ts  25.36 KB",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/adapter-kit run typecheck",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/adapter-kit run test",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 test\n> vitest run --config vitest.config.ts --pool=forks --maxWorkers=1 --minWorkers=1\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/adapter-kit\n\n ✓ src/__tests__/conformance.test.ts  (4 tests) 65ms\n ✓ src/__tests__/refs-lifecycle-focus-portal-ssr.test.ts  (6 tests) 4ms\n ✓ src/__tests__/hooks.test.ts  (3 tests) 3ms\n ✓ src/__tests__/merge-props.test.ts  (3 tests) 3ms\n\n Test Files  4 passed (4)\n      Tests  16 passed (16)\n   Start at  21:29:08\n   Duration  1.03s (transform 327ms, setup 0ms, collect 505ms, tests 75ms, environment 0ms, prepare 145ms)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "command": "npm --workspace @uifn/adapter-kit run build",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nESM dist/index.mjs 36.85 KB\nESM ⚡️ Build success in 18ms\nCJS dist/index.js 38.77 KB\nCJS ⚡️ Build success in 18ms\nDTS Build start\nDTS ⚡️ Build success in 1558ms\nDTS dist/index.d.mts 10.27 KB\nDTS dist/index.d.ts  10.27 KB",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/svelte run typecheck",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/svelte@0.0.1 typecheck\n> svelte-check --tsconfig ./tsconfig.json\n\n\n====================================\nLoading svelte-check in workspace: /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/svelte\nGetting Svelte diagnostics...\n\n====================================\nsvelte-check found 0 errors and 0 warnings",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/svelte run test",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/svelte@0.0.1 test\n> vitest run --config vitest.config.mts\n\n\n RUN  v3.2.4 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/svelte\n\n ✓ tests/hooks.behavior.test.ts (4 tests) 5ms\n ✓ tests/phase-12-svelte.test.ts (4 tests) 250ms\n\n Test Files  2 passed (2)\n      Tests  8 passed (8)\n   Start at  21:29:16\n   Duration  2.85s (transform 1.47s, setup 0ms, collect 2.54s, tests 255ms, environment 770ms, prepare 99ms)",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/svelte run build",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/svelte@0.0.1 build\n> svelte-package -i lib -o dist --tsconfig ./tsconfig.json\n\nlib -> dist",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node --test scripts/verify-uifn-phase-12-contract.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: TV-SVELTE-001-P accepts the canonical source contract\nok 1 - TV-SVELTE-001-P accepts the canonical source contract\n  ---\n  duration_ms: 14.346708\n  ...\n# Subtest: TV-SVELTE-001-N classifies raw source exports exactly\nok 2 - TV-SVELTE-001-N classifies raw source exports exactly\n  ---\n  duration_ms: 0.121875\n  ...\n# Subtest: TV-SVELTE-001-N classifies controller recreation exactly\nok 3 - TV-SVELTE-001-N classifies controller recreation exactly\n  ---\n  duration_ms: 0.0525\n  ...\n# Subtest: TV-SVELTE-001-N preserves deterministic multi-mutation ordering\nok 4 - TV-SVELTE-001-N preserves deterministic multi-mutation ordering\n  ---\n  duration_ms: 0.0485\n  ...\n1..4\n# tests 4\n# suites 0\n# pass 4\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 54.53375",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/verify-uifn-phase-12-contract.mjs --require-dist",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"verify-uifn-phase-12-contract --require-dist\",\n  \"requirement\": \"SVELTE-001\",\n  \"vectors\": [\n    \"TV-SVELTE-001-P\",\n    \"TV-SVELTE-001-N\"\n  ],\n  \"primitiveCount\": 61,\n  \"anatomyCount\": 419,\n  \"issues\": []\n}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/verify-uifn-svelte-consumer.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"expanded\": \"true\",\n        \"value\": \"[\\\"one\\\"]\"\n      },\n      {\n        \"name\": \"firefox\",\n        \"diagnostics\": [],\n        \"ssrIds\": [\n          \"accordion-root-accordion-s1\",\n          \"accordion-root-accordion-s1-item-one\",\n          \"accordion-root-accordion-s1-header-one\",\n          \"accordion-root-accordion-s1-trigger-one\",\n          \"accordion-root-accordion-s1-content-one\"\n        ],\n        \"clientIds\": [\n          \"accordion-root-accordion-s1\",\n          \"accordion-root-accordion-s1-item-one\",\n          \"accordion-root-accordion-s1-header-one\",\n          \"accordion-root-accordion-s1-trigger-one\",\n          \"accordion-root-accordion-s1-content-one\"\n        ],\n        \"expanded\": \"true\",\n        \"value\": \"[\\\"one\\\"]\"\n      },\n      {\n        \"name\": \"webkit\",\n        \"diagnostics\": [],\n        \"ssrIds\": [\n          \"accordion-root-accordion-s1\",\n          \"accordion-root-accordion-s1-item-one\",\n          \"accordion-root-accordion-s1-header-one\",\n          \"accordion-root-accordion-s1-trigger-one\",\n          \"accordion-root-accordion-s1-content-one\"\n        ],\n        \"clientIds\": [\n          \"accordion-root-accordion-s1\",\n          \"accordion-root-accordion-s1-item-one\",\n          \"accordion-root-accordion-s1-header-one\",\n          \"accordion-root-accordion-s1-trigger-one\",\n          \"accordion-root-accordion-s1-content-one\"\n        ],\n        \"expanded\": \"true\",\n        \"value\": \"[\\\"one\\\"]\"\n      }\n    ],\n    \"ok\": true\n  },\n  \"equivalent\": true,\n  \"checks\": [\n    {\n      \"command\": \"npm pack --workspace @uifn/adapter-kit --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"\\\"path\\\": \\\"dist/index.d.mts\\\",\\n        \\\"size\\\": 10515,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/index.d.ts\\\",\\n        \\\"size\\\": 10515,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/index.js\\\",\\n        \\\"size\\\": 39705,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/index.mjs\\\",\\n        \\\"size\\\": 37737,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"package.json\\\",\\n        \\\"size\\\": 1371,\\n        \\\"mode\\\": 420\\n      }\\n    ],\\n    \\\"entryCount\\\": 6,\\n    \\\"bundled\\\": []\\n  }\\n]\",\n      \"stderr\": \"> @uifn/adapter-kit@0.0.1 prepack\\n> npm run build\\n\\n\\n> @uifn/adapter-kit@0.0.1 build\\n> tsup src/index.ts --format esm,cjs --dts\\n\\nnpm notice\\nnpm notice New major version of npm available! 10.8.2 -> 12.0.1\\nnpm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.1\\nnpm notice To update run: npm install -g npm@12.0.1\\nnpm notice\"\n    },\n    {\n      \"command\": \"npm pack --workspace @uifn/core --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"\\\"path\\\": \\\"generated/phase-10-golden-corpus.json\\\",\\n        \\\"size\\\": 8609,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"generated/phase-10-test-manifest.json\\\",\\n        \\\"size\\\": 986,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"generated/phase-10-types.d.ts\\\",\\n        \\\"size\\\": 859,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"migrations/removed-apis.json\\\",\\n        \\\"size\\\": 3188,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"package.json\\\",\\n        \\\"size\\\": 3514,\\n        \\\"mode\\\": 420\\n      }\\n    ],\\n    \\\"entryCount\\\": 135,\\n    \\\"bundled\\\": []\\n  }\\n]\",\n      \"stderr\": \"> @uifn/core@0.0.1 prepack\\n> npm run build\\n\\n\\n> @uifn/core@0.0.1 build\\n> tsup\"\n    },\n    {\n      \"command\": \"npm pack --workspace @uifn/dom --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"\\\"path\\\": \\\"dist/index.js\\\",\\n        \\\"size\\\": 124244,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/index.js.map\\\",\\n        \\\"size\\\": 237336,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/index.mjs\\\",\\n        \\\"size\\\": 120626,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/index.mjs.map\\\",\\n        \\\"size\\\": 237285,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"package.json\\\",\\n        \\\"size\\\": 1485,\\n        \\\"mode\\\": 420\\n      }\\n    ],\\n    \\\"entryCount\\\": 9,\\n    \\\"bundled\\\": []\\n  }\\n]\",\n      \"stderr\": \"> @uifn/dom@0.0.1 prepack\\n> npm run build\\n\\n\\n> @uifn/dom@0.0.1 build\\n> tsup src/index.ts --format esm,cjs --dts --sourcemap\"\n    },\n    {\n      \"command\": \"npm pack --workspace @uifn/svelte --json --pack-destination /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"\\\"path\\\": \\\"dist/internal/PrimitiveRoot.svelte.d.ts.map\\\",\\n        \\\"size\\\": 642,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/internal/props.d.ts\\\",\\n        \\\"size\\\": 629,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/internal/props.d.ts.map\\\",\\n        \\\"size\\\": 589,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"dist/internal/props.js\\\",\\n        \\\"size\\\": 8020,\\n        \\\"mode\\\": 420\\n      },\\n      {\\n        \\\"path\\\": \\\"package.json\\\",\\n        \\\"size\\\": 2522,\\n        \\\"mode\\\": 420\\n      }\\n    ],\\n    \\\"entryCount\\\": 1656,\\n    \\\"bundled\\\": []\\n  }\\n]\",\n      \"stderr\": \"> @uifn/svelte@0.0.1 prepack\\n> npm run generate:check && npm run build\\n\\n\\n> @uifn/svelte@0.0.1 generate:check\\n> node ../../scripts/generate-uifn-phase-12.mjs --check\\n\\n\\n> @uifn/svelte@0.0.1 build\\n> svelte-package -i lib -o dist --tsconfig ./tsconfig.json\"\n    },\n    {\n      \"command\": \"npm install --ignore-scripts --no-audit --no-fund /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs/uifn-adapter-kit-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs/uifn-core-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs/uifn-dom-0.0.1.tgz /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-svelte-consumer-Lt7YL6/tarballs/uifn-svelte-0.0.1.tgz svelte@5.46.4 vite@5.4.21 @sveltejs/vite-plugin-svelte@4.0.4\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"added 44 packages in 6s\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"vite build (package)\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"vite build (source)\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"\",\n      \"stderr\": \"\"\n    }\n  ]\n}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/verify-uifn-pack.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "\"fileCount\": 9,\n      \"unpackedSize\": 778382\n    },\n    {\n      \"package\": \"@uifn/adapter-kit\",\n      \"filename\": \"uifn-adapter-kit-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 100211\n    },\n    {\n      \"package\": \"@uifn/react\",\n      \"filename\": \"uifn-react-0.0.1.tgz\",\n      \"fileCount\": 703,\n      \"unpackedSize\": 2269811\n    },\n    {\n      \"package\": \"@uifn/svelte\",\n      \"filename\": \"uifn-svelte-0.0.1.tgz\",\n      \"fileCount\": 1656,\n      \"unpackedSize\": 1340719\n    },\n    {\n      \"package\": \"@uifn/solid\",\n      \"filename\": \"uifn-solid-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 141059\n    },\n    {\n      \"package\": \"@uifn/tokens\",\n      \"filename\": \"uifn-tokens-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 40981\n    },\n    {\n      \"package\": \"@uifn/theme\",\n      \"filename\": \"uifn-theme-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 55919\n    },\n    {\n      \"package\": \"@uifn/recipes\",\n      \"filename\": \"uifn-recipes-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 16165\n    },\n    {\n      \"package\": \"@uifn/theme-tailwind\",\n      \"filename\": \"uifn-theme-tailwind-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 14671\n    },\n    {\n      \"package\": \"@uifn/components\",\n      \"filename\": \"uifn-components-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 107330\n    },\n    {\n      \"package\": \"@uifn/components-react\",\n      \"filename\": \"uifn-components-react-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 3539\n    },\n    {\n      \"package\": \"@uifn/components-svelte\",\n      \"filename\": \"uifn-components-svelte-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 3455\n    },\n    {\n      \"package\": \"@uifn/components-solid\",\n      \"filename\": \"uifn-components-solid-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 3433\n    },\n    {\n      \"package\": \"@uifn/registry\",\n      \"filename\": \"uifn-registry-0.0.1.tgz\",\n      \"fileCount\": 8,\n      \"unpackedSize\": 252175\n    },\n    {\n      \"package\": \"@uifn/storybook\",\n      \"filename\": \"uifn-storybook-0.0.1.tgz\",\n      \"fileCount\": 6,\n      \"unpackedSize\": 65282\n    }\n  ],\n  \"forbiddenPathClasses\": [\n    \"tests\",\n    \"fixtures\",\n    \"stories\",\n    \"conduct\",\n    \"cache\",\n    \"tool-config\",\n    \"env\",\n    \"logs\"\n  ]\n}",
+      "stderr": ""
+    }
+  ]
+}

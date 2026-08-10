@@ -1,0 +1,350 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "command",
+  "framework": "react",
+  "deliveryMode": "package",
+  "browser": "webkit",
+  "version": "26.0",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-id=\"command--keyboard-focus\" data-uifn-story-framework=\"react\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div class=\"uifn-command uifn-command__root\" data-uifn-component=\"command\" data-uifn-part=\"root\" id=\"command-root-command-r0\" data-state=\"open\"><label data-uifn-story-anatomy=\"label\" class=\"uifn-command uifn-command__label\" data-uifn-component=\"command\" data-uifn-part=\"label\" id=\"command-label-command-r0\" data-state=\"open\">label fixture</label><input data-uifn-story-anatomy=\"input\" class=\"uifn-command uifn-command__input\" data-uifn-component=\"command\" data-uifn-part=\"input\" autocomplete=\"off\" role=\"combobox\" id=\"command-input-command-r0\" tabindex=\"0\" aria-labelledby=\"command-label-command-r0\" aria-expanded=\"true\" aria-controls=\"command-list-command-r0\" aria-activedescendant=\"command-root-command-r0-item-item-1\" aria-autocomplete=\"list\" aria-invalid=\"false\" aria-required=\"false\" data-state=\"open\" value=\"\"><div data-uifn-story-anatomy=\"list\" class=\"uifn-command uifn-command__list\" data-uifn-component=\"command\" data-uifn-part=\"list\" role=\"listbox\" id=\"command-list-command-r0\" aria-labelledby=\"command-label-command-r0\" aria-multiselectable=\"false\" data-state=\"open\"><div data-uifn-story-anatomy=\"group\" class=\"uifn-command uifn-command__group\" data-uifn-component=\"command\" data-uifn-part=\"group\" role=\"group\" id=\"command-root-command-r0-group-item-1\" data-state=\"checked\" data-value=\"item-1\"><div data-uifn-story-anatomy=\"groupHeading\" class=\"uifn-command uifn-command__groupHeading\" data-uifn-component=\"command\" data-uifn-part=\"groupHeading\" role=\"presentation\" id=\"command-root-command-r0-groupHeading-item-1\" data-state=\"checked\" data-value=\"item-1\">groupHeading fixture</div><div data-uifn-story-anatomy=\"item\" class=\"uifn-command uifn-command__item\" data-uifn-component=\"command\" data-uifn-part=\"item\" role=\"option\" id=\"command-root-command-r0-item-item-1\" tabindex=\"0\" aria-selected=\"true\" aria-disabled=\"false\" data-state=\"checked\" data-value=\"item-1\">item fixture<span data-uifn-story-anatomy=\"itemIndicator\" class=\"uifn-command uifn-command__itemIndicator\" data-uifn-component=\"command\" data-uifn-part=\"itemIndicator\" id=\"command-root-command-r0-itemIndicator-item-1\" aria-hidden=\"false\" data-state=\"checked\" data-value=\"item-1\">itemIndicator fixture</span><kbd data-uifn-story-anatomy=\"shortcut\" class=\"uifn-command uifn-command__shortcut\" data-uifn-component=\"command\" data-uifn-part=\"shortcut\" id=\"command-root-command-r0-shortcut-item-1\" data-state=\"checked\" data-value=\"item-1\">shortcut fixture</kbd></div></div></div><div data-uifn-story-anatomy=\"empty\" class=\"uifn-command uifn-command__empty\" data-uifn-component=\"command\" data-uifn-part=\"empty\" role=\"status\" id=\"command-empty-command-r0\" hidden=\"\" aria-live=\"polite\" data-state=\"open\">empty fixture</div><div data-uifn-story-anatomy=\"loading\" class=\"uifn-command uifn-command__loading\" data-uifn-component=\"command\" data-uifn-part=\"loading\" role=\"status\" id=\"command-loading-command-r0\" aria-live=\"polite\" data-state=\"open\">loading fixture</div><div data-uifn-story-anatomy=\"separator\" class=\"uifn-command uifn-command__separator\" data-uifn-component=\"command\" data-uifn-part=\"separator\" role=\"separator\" id=\"command-root-command-r0-separator-item-1\" data-state=\"checked\" data-value=\"item-1\"></div><input data-uifn-story-anatomy=\"hiddenInput\" class=\"uifn-command uifn-command__hiddenInput\" data-uifn-component=\"command\" data-uifn-part=\"hiddenInput\" type=\"hidden\" id=\"command-hiddeninput-command-r0\" hidden=\"\" data-state=\"open\" value=\"item-1\"></div></section>",
+  "semanticTrace": [
+    {
+      "part": "empty",
+      "tag": "div",
+      "role": "status",
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "empty"
+        ]
+      ]
+    },
+    {
+      "part": "group",
+      "tag": "div",
+      "role": "group",
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "group"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "groupHeading",
+      "tag": "div",
+      "role": "presentation",
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "groupHeading"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "input",
+      "tag": "input",
+      "role": "combobox",
+      "aria": [
+        [
+          "aria-activedescendant",
+          "command-root-command-r0-item-item-1"
+        ],
+        [
+          "aria-autocomplete",
+          "list"
+        ],
+        [
+          "aria-controls",
+          "command-list-command-r0"
+        ],
+        [
+          "aria-expanded",
+          "true"
+        ],
+        [
+          "aria-invalid",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "command-label-command-r0"
+        ],
+        [
+          "aria-required",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "input"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "div",
+      "role": "option",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-selected",
+          "true"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "itemIndicator",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-hidden",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemIndicator"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "list",
+      "tag": "div",
+      "role": "listbox",
+      "aria": [
+        [
+          "aria-labelledby",
+          "command-label-command-r0"
+        ],
+        [
+          "aria-multiselectable",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "list"
+        ]
+      ]
+    },
+    {
+      "part": "loading",
+      "tag": "div",
+      "role": "status",
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "loading"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ]
+      ]
+    },
+    {
+      "part": "separator",
+      "tag": "div",
+      "role": "separator",
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "separator"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "shortcut",
+      "tag": "kbd",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "shortcut"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "f5bd412615c6ad109097ba64caab92f35f5031e2c74ebb87663792948921dcc2"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "01ac6f6c96f8a0e5343650151ac4e48b2c34d8514a584134b7dfd83dcf5959fe"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "01ac6f6c96f8a0e5343650151ac4e48b2c34d8514a584134b7dfd83dcf5959fe"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "cd3925854418528e32d84249bf20c7a38e5581592139d0a5824502c93c6f35d8"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "cd3925854418528e32d84249bf20c7a38e5581592139d0a5824502c93c6f35d8"
+    }
+  ],
+  "focusPath": [
+    "input",
+    "input",
+    "input",
+    "input",
+    "input",
+    "input"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:52:55.458Z",
+  "expiresAt": "2026-08-06T16:52:55.458Z"
+}

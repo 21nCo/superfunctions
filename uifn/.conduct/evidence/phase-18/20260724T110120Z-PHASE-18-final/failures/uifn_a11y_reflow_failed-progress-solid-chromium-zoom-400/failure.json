@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_REFLOW_FAILED",
+  "primitive": "progress",
+  "framework": "solid",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "62c58e0555f614a219719504554cf36c5099566f74ce4a0ef22b0ea093f8bfc2",
+  "dom": "<section data-uifn-story-framework=\"solid\" data-uifn-story-id=\"progress--responsive\" data-uifn-story-scenario=\"responsive\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div role=\"progressbar\" id=\"progress-uifn-cl-0-progress-root\" class=\"uifn-progress uifn-progress__root\" aria-labelledby=\"progress-uifn-cl-0-progress-label\" aria-describedby=\"progress-uifn-cl-0-progress-value-text\" data-state=\"indeterminate\" data-uifn-component=\"progress\" data-uifn-part=\"root\"><span id=\"progress-uifn-cl-0-progress-label\" class=\"uifn-progress uifn-progress__label\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"progress\" data-uifn-part=\"label\">label fixture</span><div id=\"progress-uifn-cl-0-progress-track\" class=\"uifn-progress uifn-progress__track\" data-uifn-story-anatomy=\"track\" data-uifn-component=\"progress\" data-uifn-part=\"track\">track fixture</div><div id=\"progress-uifn-cl-0-progress-range\" class=\"uifn-progress uifn-progress__range\" data-state=\"indeterminate\" data-uifn-story-anatomy=\"range\" data-uifn-component=\"progress\" data-uifn-part=\"range\">range fixture</div><svg id=\"progress-uifn-cl-0-progress-circle\" class=\"uifn-progress uifn-progress__circle\" data-state=\"indeterminate\" data-uifn-story-anatomy=\"circle\" data-uifn-component=\"progress\" data-uifn-part=\"circle\">circle fixture</svg><span id=\"progress-uifn-cl-0-progress-value-text\" class=\"uifn-progress uifn-progress__valueText\" data-uifn-story-anatomy=\"valueText\" data-uifn-component=\"progress\" data-uifn-part=\"valueText\">valueText fixture</span></div></section>",
+  "semanticTrace": [
+    {
+      "part": "circle",
+      "tag": "svg",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "indeterminate"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "circle"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "range",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "indeterminate"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "range"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": "progressbar",
+      "aria": [
+        [
+          "aria-describedby",
+          "progress-uifn-cl-0-progress-value-text"
+        ],
+        [
+          "aria-labelledby",
+          "progress-uifn-cl-0-progress-label"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "indeterminate"
+        ]
+      ]
+    },
+    {
+      "part": "track",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "track"
+        ]
+      ]
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [],
+  "focusPath": [],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-24T12:13:22.578Z",
+  "expiresAt": "2026-07-31T12:13:22.578Z"
+}

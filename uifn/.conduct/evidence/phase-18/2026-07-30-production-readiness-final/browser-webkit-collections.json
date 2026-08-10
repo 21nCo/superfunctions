@@ -1,0 +1,6106 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_18",
+  "requirementIds": [
+    "A11Y-001",
+    "A11Y-002"
+  ],
+  "vectorIds": [
+    "TV-A11Y-001-P",
+    "TV-A11Y-002-P",
+    "TV-A11Y-001-N",
+    "TV-A11Y-002-N"
+  ],
+  "status": "passed",
+  "provisionalUntil": [
+    "signed-external-phase-14-compatibility",
+    "signed-phase-19-assistive-technology",
+    "independent-phase-19-review"
+  ],
+  "source": {
+    "definitionSha256": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad"
+  },
+  "timing": {
+    "startedAt": "2026-07-30T17:03:24.267Z",
+    "completedAt": "2026-07-30T17:03:26.945Z",
+    "durationMs": 2678
+  },
+  "counts": {
+    "phase17Stories": 2115,
+    "packageSourceConsumers": 6,
+    "matrixCells": 1,
+    "browserAssertions": 12,
+    "passed": 12,
+    "failed": 0,
+    "axeSeriousCritical": 0,
+    "axeIncomplete": 15,
+    "axeIncompleteReviewed": 15
+  },
+  "upstreamEvidence": {
+    "story": {
+      "path": "uifn/.conduct/evidence/phase-17/2026-07-30-production-readiness/storybook-aggregate.json",
+      "sha256": "d85ccc7cb05d7fc750eb89150b7b294d936842d1b8adf88d4aa006e269de8106"
+    },
+    "docs": {
+      "path": "uifn/.conduct/evidence/phase-17/2026-07-30-production-readiness/docs-aggregate.json",
+      "sha256": "f2f15efe8207d25cad36ae247a0b6951c15253e7deff6b47c1cde0db4c745d3b"
+    }
+  },
+  "staticBuild": {
+    "react": {
+      "index": {
+        "path": "uifn/storybook/storybook-static/react/index.json",
+        "sha256": "c8dbe606e5f33cdfbbb4f62a4d7e7adcf7cd785c091397e1a1c0e782edd19793",
+        "expectedSha256": "c8dbe606e5f33cdfbbb4f62a4d7e7adcf7cd785c091397e1a1c0e782edd19793"
+      },
+      "cssAssets": [
+        {
+          "path": "uifn/storybook/storybook-static/react/assets/iframe-DssDBjgG.css",
+          "sha256": "e700adc7e61358d3f3a503bac9dbed35b6c7fa0e94cc39e63c905f596e1a333a"
+        }
+      ]
+    },
+    "svelte": {
+      "index": {
+        "path": "uifn/storybook/storybook-static/svelte/index.json",
+        "sha256": "d4299e7598d85a480abf2bca2004be0be52c8febf38bdbc52a9256dd929de5a8",
+        "expectedSha256": "d4299e7598d85a480abf2bca2004be0be52c8febf38bdbc52a9256dd929de5a8"
+      },
+      "cssAssets": [
+        {
+          "path": "uifn/storybook/storybook-static/svelte/assets/iframe-DssDBjgG.css",
+          "sha256": "e700adc7e61358d3f3a503bac9dbed35b6c7fa0e94cc39e63c905f596e1a333a"
+        }
+      ]
+    },
+    "solid": {
+      "index": {
+        "path": "uifn/storybook/storybook-static/solid/index.json",
+        "sha256": "d8ca18af4c1295e715209612553ccf2ef7c0f0b2208644359d5efb400d1fcd0b",
+        "expectedSha256": "d8ca18af4c1295e715209612553ccf2ef7c0f0b2208644359d5efb400d1fcd0b"
+      },
+      "cssAssets": [
+        {
+          "path": "uifn/storybook/storybook-static/solid/assets/iframe-DssDBjgG.css",
+          "sha256": "e700adc7e61358d3f3a503bac9dbed35b6c7fa0e94cc39e63c905f596e1a333a"
+        }
+      ]
+    }
+  },
+  "incompleteReviews": [
+    {
+      "id": "bypass",
+      "impact": "serious",
+      "occurrences": 12,
+      "nodes": 12,
+      "samples": [
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "react",
+          "primitive": "autocomplete",
+          "story": "stable-autocomplete--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "react",
+          "primitive": "combobox",
+          "story": "stable-combobox--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "react",
+          "primitive": "command",
+          "story": "stable-command--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "react",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "solid",
+          "primitive": "autocomplete",
+          "story": "stable-autocomplete--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "solid",
+          "primitive": "combobox",
+          "story": "stable-combobox--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "solid",
+          "primitive": "command",
+          "story": "stable-command--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "solid",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "svelte",
+          "primitive": "autocomplete",
+          "story": "stable-autocomplete--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "svelte",
+          "primitive": "combobox",
+          "story": "stable-combobox--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "svelte",
+          "primitive": "command",
+          "story": "stable-command--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "svelte",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "html"
+              ],
+              "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+              "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+            }
+          ]
+        }
+      ],
+      "disposition": "reviewed-outside-component-scope",
+      "releaseBlocking": false,
+      "rationale": "Each Storybook iframe intentionally isolates one component and therefore cannot supply application-level bypass navigation. Bypass behavior belongs to the consuming application, not a primitive."
+    },
+    {
+      "id": "color-contrast",
+      "impact": "serious",
+      "occurrences": 3,
+      "nodes": 3,
+      "samples": [
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "react",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "#select-clear-select-r0"
+              ],
+              "html": "<button data-uifn-story-anatomy=\"clear\" class=\"uifn-select uifn-select__clear\" data-uifn-component=\"select\" data-uifn-part=\"clear\" type=\"button\" role=\"button\" id=\"select-clear-select-r0\" aria-label=\"Clear\" data-state=\"open\">clear fixture</button>",
+              "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "solid",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "#select-clear-select-uifn-cl-0"
+              ],
+              "html": "<button type=\"button\" role=\"button\" id=\"select-clear-select-uifn-cl-0\" class=\"uifn-select uifn-select__clear\" aria-label=\"Clear\" data-state=\"open\" data-uifn-story-anatomy=\"clear\" data-uifn-component=\"select\" data-uifn-part=\"clear\">clear fixture</button>",
+              "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element"
+            }
+          ]
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "framework": "svelte",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "nodes": [
+            {
+              "target": [
+                "#select-clear-select-c1"
+              ],
+              "html": "<button type=\"button\" role=\"button\" id=\"select-clear-select-c1\" class=\"uifn-select uifn-select__clear\" aria-label=\"Clear\" data-state=\"open\" data-uifn-story-anatomy=\"clear\" data-uifn-component=\"select\" data-uifn-part=\"clear\"><!----><!---->clear fixture<!----> <!----><!----><!----> <!----></button>",
+              "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element"
+            }
+          ]
+        }
+      ],
+      "disposition": "reviewed-phase-19-visual-check-required",
+      "releaseBlocking": true,
+      "rationale": "Axe cannot calculate contrast for generated geometry fixtures whose text is overlapped by slider, angle-slider, or signature-pad layers. Phase 19 must visually inspect these named fixtures; Phase 18 remains provisional and cannot support a release claim."
+    }
+  ],
+  "matrix": [
+    {
+      "id": "webkit-keyboard-semantics",
+      "engine": "webkit",
+      "scenario": "keyboard-focus",
+      "allFrameworks": true,
+      "browserVersion": "26.0",
+      "expected": 12,
+      "executed": 12,
+      "passed": 12,
+      "failed": 0,
+      "results": [
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "react",
+          "primitive": "autocomplete",
+          "story": "stable-autocomplete--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "autocomplete-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "5889eba4ce0665c3eeeb0c1847dd5d1f11c3c5fca492230c64303bbc2de24634",
+            "afterSha256": "35add8c85387bd19eba00be012a1c200b5c0fd09018b12e79a3785d81ffce720",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "autocomplete-label-autocomplete-r0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "autocomplete-root-autocomplete-r0-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "autocomplete-content-autocomplete-r0"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "autocomplete-label-autocomplete-r0"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "autocomplete-root-autocomplete-r0-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "autocomplete-content-autocomplete-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "autocomplete-label-autocomplete-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "autocomplete-root-autocomplete-r0-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "autocomplete-label-autocomplete-r0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "react",
+          "primitive": "combobox",
+          "story": "stable-combobox--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "combobox-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "a9f44220f52d15f2853549adef64fa043b3e42e94a43b3265b1e073c0d3ab5f8",
+            "afterSha256": "9588ed74d26705ac466e3fc24f2cc90cb082320f043a0d6e4c2461a52f2dd674",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "combobox-label-combobox-r0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "combobox-root-combobox-r0-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "combobox-content-combobox-r0"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "combobox-label-combobox-r0"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "combobox-root-combobox-r0-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              },
+              {
+                "part": "trigger",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-controls",
+                    "combobox-content-combobox-r0"
+                  ],
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "closed"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "trigger"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "combobox-content-combobox-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "combobox-label-combobox-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "combobox-root-combobox-r0-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-controls",
+                "id": "combobox-content-combobox-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "combobox-label-combobox-r0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "react",
+          "primitive": "command",
+          "story": "stable-command--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "command-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "b9d1ce5ebf6e0ebdd6ef48c16a1d27c1241d2e511c089131b55454a85f8c5ba7",
+            "afterSha256": "1d6ed86a11660e905d809c65c2b05866eb1dfa9e06d6ce460b9c4621d1d84cc8",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "group",
+                "tag": "div",
+                "role": "group",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "group"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "groupHeading",
+                "tag": "div",
+                "role": "presentation",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "groupHeading"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "command-root-command-r0-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "command-list-command-r0"
+                  ],
+                  [
+                    "aria-expanded",
+                    "true"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "command-label-command-r0"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "list",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "command-label-command-r0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "list"
+                  ]
+                ]
+              },
+              {
+                "part": "loading",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "loading"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ]
+                ]
+              },
+              {
+                "part": "separator",
+                "tag": "div",
+                "role": "separator",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "separator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "command-list-command-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "command-label-command-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "command-root-command-r0-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "list",
+                "attribute": "aria-labelledby",
+                "id": "command-label-command-r0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "react",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "select-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "b2696492083c57a4e4e7568fc0823b4fe1d9afe7e94a904a79be9c6114bb6d53",
+            "afterSha256": "6636beefa4625f051d338c9cce6cd2d0d521204a787b480a506b1c373c29a237",
+            "focusBefore": "trigger",
+            "focusAfter": "trigger",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "select-label-select-r0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "group",
+                "tag": "div",
+                "role": "group",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "group"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "groupLabel",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "groupLabel"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "select-root-select-r0-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              },
+              {
+                "part": "trigger",
+                "tag": "button",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-controls",
+                    "select-content-select-r0"
+                  ],
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "select-label-select-r0"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "closed"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "trigger"
+                  ]
+                ]
+              },
+              {
+                "part": "valueText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "valueText"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "trigger",
+              "tag": "button",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-controls",
+                "id": "select-content-select-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-labelledby",
+                "id": "select-label-select-r0",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "select-label-select-r0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              },
+              {
+                "id": "color-contrast",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "#select-clear-select-r0"
+                    ],
+                    "html": "<button data-uifn-story-anatomy=\"clear\" class=\"uifn-select uifn-select__clear\" data-uifn-component=\"select\" data-uifn-part=\"clear\" type=\"button\" role=\"button\" id=\"select-clear-select-r0\" aria-label=\"Clear\" data-state=\"open\">clear fixture</button>",
+                    "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "solid",
+          "primitive": "autocomplete",
+          "story": "stable-autocomplete--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "autocomplete-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "8ed67516b1a1215414b0fae0bd6d0c7ef803422a270e08aed2b6d2c0281121bb",
+            "afterSha256": "a2b2686e21ca96a58e531aa4d034d362dcbbe1a1cedc0e0f8dc419c8dc674bae",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "autocomplete-label-autocomplete-uifn-cl-0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "autocomplete-root-autocomplete-uifn-cl-0-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "autocomplete-content-autocomplete-uifn-cl-0"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "autocomplete-label-autocomplete-uifn-cl-0"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "autocomplete-root-autocomplete-uifn-cl-0-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "autocomplete-content-autocomplete-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "autocomplete-label-autocomplete-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "autocomplete-root-autocomplete-uifn-cl-0-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "autocomplete-label-autocomplete-uifn-cl-0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "solid",
+          "primitive": "combobox",
+          "story": "stable-combobox--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "combobox-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "850831998b49b059e1165e322b6c7d63bca2211f1b90d5e9d966402492b7d821",
+            "afterSha256": "86ac07f1d4330afd3b2123ef4a5d04cb4611eb1eb561da99e3ddf14cf0d10ccc",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "combobox-label-combobox-uifn-cl-0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "combobox-root-combobox-uifn-cl-0-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "combobox-content-combobox-uifn-cl-0"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "combobox-label-combobox-uifn-cl-0"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "combobox-root-combobox-uifn-cl-0-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              },
+              {
+                "part": "trigger",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-controls",
+                    "combobox-content-combobox-uifn-cl-0"
+                  ],
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "closed"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "trigger"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "combobox-content-combobox-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "combobox-label-combobox-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "combobox-root-combobox-uifn-cl-0-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-controls",
+                "id": "combobox-content-combobox-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "combobox-label-combobox-uifn-cl-0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "solid",
+          "primitive": "command",
+          "story": "stable-command--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "command-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "cc06c11bb25d5ecd3e1ad62ffd1dd3b246d1f7e832e7a955e1cce18809b4ffd4",
+            "afterSha256": "db4e5400705432fc8af932ce26a9128e51439ec450b9a9425f3085a8d463bbaf",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "group",
+                "tag": "div",
+                "role": "group",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "group"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "groupHeading",
+                "tag": "div",
+                "role": "presentation",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "groupHeading"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "command-root-command-uifn-cl-0-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "command-list-command-uifn-cl-0"
+                  ],
+                  [
+                    "aria-expanded",
+                    "true"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "command-label-command-uifn-cl-0"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "list",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "command-label-command-uifn-cl-0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "list"
+                  ]
+                ]
+              },
+              {
+                "part": "loading",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "loading"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ]
+                ]
+              },
+              {
+                "part": "separator",
+                "tag": "div",
+                "role": "separator",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "separator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "command-list-command-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "command-label-command-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "command-root-command-uifn-cl-0-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "list",
+                "attribute": "aria-labelledby",
+                "id": "command-label-command-uifn-cl-0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "solid",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "select-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "9990357db79ddd33c74698a9c34ebc6aed8ba00e351ebc96328d4ddade3f234c",
+            "afterSha256": "bbfce374a89a9c55220e80cbdf912c0cdc1e04bce023efdb3c10fad5b4a1a0e5",
+            "focusBefore": "trigger",
+            "focusAfter": "trigger",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "select-label-select-uifn-cl-0"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "group",
+                "tag": "div",
+                "role": "group",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "group"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "groupLabel",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "groupLabel"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "select-root-select-uifn-cl-0-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              },
+              {
+                "part": "trigger",
+                "tag": "button",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-controls",
+                    "select-content-select-uifn-cl-0"
+                  ],
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "select-label-select-uifn-cl-0"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "closed"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "trigger"
+                  ]
+                ]
+              },
+              {
+                "part": "valueText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "valueText"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "trigger",
+              "tag": "button",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-controls",
+                "id": "select-content-select-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-labelledby",
+                "id": "select-label-select-uifn-cl-0",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "select-label-select-uifn-cl-0",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              },
+              {
+                "id": "color-contrast",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "#select-clear-select-uifn-cl-0"
+                    ],
+                    "html": "<button type=\"button\" role=\"button\" id=\"select-clear-select-uifn-cl-0\" class=\"uifn-select uifn-select__clear\" aria-label=\"Clear\" data-state=\"open\" data-uifn-story-anatomy=\"clear\" data-uifn-component=\"select\" data-uifn-part=\"clear\">clear fixture</button>",
+                    "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "svelte",
+          "primitive": "autocomplete",
+          "story": "stable-autocomplete--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "autocomplete-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "fb499ab86a2b53a686dc128a95e3e91b4cfff0b2e5465da12ed6484a46f931ec",
+            "afterSha256": "b687f605baaf51bb3c4520cf6ce093d220ba0eed99265ec5cd8f794b3c926c1e",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "autocomplete-label-autocomplete-c1"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "autocomplete-root-autocomplete-c1-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "autocomplete-content-autocomplete-c1"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "autocomplete-label-autocomplete-c1"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "autocomplete-root-autocomplete-c1-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "autocomplete-content-autocomplete-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "autocomplete-label-autocomplete-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "autocomplete-root-autocomplete-c1-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "autocomplete-label-autocomplete-c1",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "svelte",
+          "primitive": "combobox",
+          "story": "stable-combobox--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "combobox-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "2e68b0fb5da0db914074081e93aaface48baaa7b60a6dfcbe3dc629139d6e0b7",
+            "afterSha256": "a505f1a9dcaa15df36fc105322dc48bf2bc243788005496f922c46a34168df19",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "combobox-label-combobox-c1"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "combobox-root-combobox-c1-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "combobox-content-combobox-c1"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "combobox-label-combobox-c1"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "combobox-root-combobox-c1-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              },
+              {
+                "part": "trigger",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-controls",
+                    "combobox-content-combobox-c1"
+                  ],
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "closed"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "trigger"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "combobox-content-combobox-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "combobox-label-combobox-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "combobox-root-combobox-c1-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-controls",
+                "id": "combobox-content-combobox-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "combobox-label-combobox-c1",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "svelte",
+          "primitive": "command",
+          "story": "stable-command--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "command-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "ef2200b60328eeb9b961fcd7bfaf273ea2187a92bd1c51b97f8f47dde66f9ed6",
+            "afterSha256": "b31cf5dbf160de17ef99a63573c6b10ef511c1982197fb9f1bf27bb0b7255bdc",
+            "focusBefore": "input",
+            "focusAfter": "input",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "empty",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "empty"
+                  ]
+                ]
+              },
+              {
+                "part": "group",
+                "tag": "div",
+                "role": "group",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "group"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "groupHeading",
+                "tag": "div",
+                "role": "presentation",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "groupHeading"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ]
+                ]
+              },
+              {
+                "part": "input",
+                "tag": "input",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-activedescendant",
+                    "command-root-command-c1-item-item-1"
+                  ],
+                  [
+                    "aria-autocomplete",
+                    "list"
+                  ],
+                  [
+                    "aria-controls",
+                    "command-list-command-c1"
+                  ],
+                  [
+                    "aria-expanded",
+                    "true"
+                  ],
+                  [
+                    "aria-invalid",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "command-label-command-c1"
+                  ],
+                  [
+                    "aria-required",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "input"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "list",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "command-label-command-c1"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "list"
+                  ]
+                ]
+              },
+              {
+                "part": "loading",
+                "tag": "div",
+                "role": "status",
+                "aria": [
+                  [
+                    "aria-live",
+                    "polite"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "loading"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ]
+                ]
+              },
+              {
+                "part": "separator",
+                "tag": "div",
+                "role": "separator",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "separator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "shortcut",
+                "tag": "kbd",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "open"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "shortcut"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "input",
+              "tag": "input",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "input",
+                "attribute": "aria-controls",
+                "id": "command-list-command-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-labelledby",
+                "id": "command-label-command-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "input",
+                "attribute": "aria-activedescendant",
+                "id": "command-root-command-c1-item-item-1",
+                "exists": true
+              },
+              {
+                "sourcePart": "list",
+                "attribute": "aria-labelledby",
+                "id": "command-label-command-c1",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        },
+        {
+          "matrix": "webkit-keyboard-semantics",
+          "engine": "webkit",
+          "browserVersion": "26.0",
+          "framework": "svelte",
+          "primitive": "select",
+          "story": "stable-select--keyboard-focus",
+          "scenario": "keyboard-focus",
+          "status": "passed",
+          "assertion": {
+            "id": "select-webkit-keyboard-semantics",
+            "kind": "semantic-transition",
+            "observed": true,
+            "requiresTransition": true,
+            "beforeSha256": "1ecda394e9703dcd8e05d76b029b6a23e2a86f8ac5fdeacb8e434a5c6abc66cb",
+            "afterSha256": "12218da04181dc057a3408a9f7d63348c32e4dd5f434b61393e118fcbfddb9e4",
+            "focusBefore": "trigger",
+            "focusAfter": "trigger",
+            "durationMs": 1,
+            "syntheticAutoPass": false
+          },
+          "semantic": {
+            "root": {
+              "tag": "div",
+              "part": "root",
+              "role": null
+            },
+            "parts": [
+              {
+                "part": "clear",
+                "tag": "button",
+                "role": "button",
+                "aria": [
+                  [
+                    "aria-label",
+                    "Clear"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "clear"
+                  ]
+                ]
+              },
+              {
+                "part": "content",
+                "tag": "div",
+                "role": "listbox",
+                "aria": [
+                  [
+                    "aria-labelledby",
+                    "select-label-select-c1"
+                  ],
+                  [
+                    "aria-multiselectable",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "content"
+                  ]
+                ]
+              },
+              {
+                "part": "control",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "control"
+                  ]
+                ]
+              },
+              {
+                "part": "group",
+                "tag": "div",
+                "role": "group",
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "group"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "groupLabel",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "groupLabel"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "hiddenInput",
+                "tag": "input",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "hiddenInput"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "item",
+                "tag": "div",
+                "role": "option",
+                "aria": [
+                  [
+                    "aria-disabled",
+                    "true"
+                  ],
+                  [
+                    "aria-selected",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "item"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "false"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemIndicator",
+                "tag": "span",
+                "role": null,
+                "aria": [
+                  [
+                    "aria-hidden",
+                    "true"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemIndicator"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "checked"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-1"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-2"
+                  ]
+                ]
+              },
+              {
+                "part": "itemText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-disabled",
+                    ""
+                  ],
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "itemText"
+                  ],
+                  [
+                    "data-value",
+                    "item-3"
+                  ]
+                ]
+              },
+              {
+                "part": "label",
+                "tag": "label",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "label"
+                  ]
+                ]
+              },
+              {
+                "part": "positioner",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-portal-id",
+                    "select-root-select-c1-portal"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "positioner"
+                  ]
+                ]
+              },
+              {
+                "part": "root",
+                "tag": "div",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ]
+                ]
+              },
+              {
+                "part": "trigger",
+                "tag": "button",
+                "role": "combobox",
+                "aria": [
+                  [
+                    "aria-controls",
+                    "select-content-select-c1"
+                  ],
+                  [
+                    "aria-disabled",
+                    "false"
+                  ],
+                  [
+                    "aria-expanded",
+                    "false"
+                  ],
+                  [
+                    "aria-labelledby",
+                    "select-label-select-c1"
+                  ]
+                ],
+                "data": [
+                  [
+                    "data-state",
+                    "closed"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "trigger"
+                  ]
+                ]
+              },
+              {
+                "part": "valueText",
+                "tag": "span",
+                "role": null,
+                "aria": [],
+                "data": [
+                  [
+                    "data-state",
+                    "idle"
+                  ],
+                  [
+                    "data-uifn-story-anatomy",
+                    "valueText"
+                  ]
+                ]
+              }
+            ],
+            "focusable": {
+              "part": "trigger",
+              "tag": "button",
+              "role": "combobox",
+              "name": "label fixture"
+            },
+            "direction": "ltr",
+            "overflow": 0,
+            "idReferences": [
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-controls",
+                "id": "select-content-select-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "trigger",
+                "attribute": "aria-labelledby",
+                "id": "select-label-select-c1",
+                "exists": true
+              },
+              {
+                "sourcePart": "content",
+                "attribute": "aria-labelledby",
+                "id": "select-label-select-c1",
+                "exists": true
+              }
+            ]
+          },
+          "axe": {
+            "seriousCritical": [],
+            "incompletes": [
+              {
+                "id": "bypass",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "html"
+                    ],
+                    "html": "<html lang=\"en\" data-uifn-theme=\"light\" data-uifn-reduced-motion=\"false\" data-uifn-forced-colors=\"false\" dir=\"ltr\">",
+                    "failureSummary": "Fix any of the following:\n  No valid skip link found\n  Page does not have a heading\n  Page does not have a landmark region"
+                  }
+                ]
+              },
+              {
+                "id": "color-contrast",
+                "impact": "serious",
+                "nodeCount": 1,
+                "nodes": [
+                  {
+                    "target": [
+                      "#select-clear-select-c1"
+                    ],
+                    "html": "<button type=\"button\" role=\"button\" id=\"select-clear-select-c1\" class=\"uifn-select uifn-select__clear\" aria-label=\"Clear\" data-state=\"open\" data-uifn-story-anatomy=\"clear\" data-uifn-component=\"select\" data-uifn-part=\"clear\"><!----><!---->clear fixture<!----> <!----><!----><!----> <!----></button>",
+                    "failureSummary": "Fix any of the following:\n  Element's background color could not be determined because it's partially obscured by another element"
+                  }
+                ]
+              }
+            ]
+          },
+          "errors": []
+        }
+      ]
+    }
+  ],
+  "mutationArtifact": {
+    "code": "UIFN_A11Y_FOCUS_ESCAPE",
+    "status": "mutation-detected",
+    "path": "uifn/.conduct/evidence/phase-18/2026-07-30-production-readiness-final/mutation-artifacts/dialog-focus-trap-removed/failure.json",
+    "validation": []
+  },
+  "failures": []
+}
