@@ -1233,6 +1233,7 @@ function RouteContent({ internalPath, route, basePath, navigate }: { internalPat
             <a href={withCatalogBasePath(basePath, `/components/${route.slug}/qa`)}>QA cases</a>
           </div>
           <div id={`preview-${route.slug}`} role="tabpanel" data-catalog-demo-panel="preview">
+            <h2 className="sr-only">{route.title} preview</h2>
             <div className="fixture-grid">
               {routes.map((fixtureRoute) => (
                 <section key={`${route.slug}-${fixtureRoute.fixtureId ?? "default"}`} className="fixture-card">

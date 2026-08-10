@@ -1128,6 +1128,7 @@ function RouteContent(props: { internalPath: string; route: WorkbenchRoute; base
             <a href={withCatalogBasePath(props.basePath, `/components/${props.route.slug}/qa`)}>QA cases</a>
           </div>
           <div id={`preview-${props.route.slug}`} role="tabpanel" data-catalog-demo-panel="preview">
+            <h2 class="sr-only">{props.route.title} preview</h2>
             <div class="fixture-grid">
               <For each={routes}>{(fixtureRoute) => (
                 <section class="fixture-card">

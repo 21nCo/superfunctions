@@ -3390,8 +3390,8 @@
     },
     {
       "path": "uifn/components/styles.css",
-      "sha256": "6f271153075e8f6e100232c57df0f36329eee43e17b5c49e78cd045309b70b0b",
-      "bytes": 84656
+      "sha256": "42a48b07f5861daf70d60b12100e499c7ffacbe8ee218c2a3e4d2d1c5dce9837",
+      "bytes": 84981
     },
     {
       "path": "uifn/registry/generated/templates/react/accordion.ts",
