@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createToolbar } from './toolbar';
+import { createToolbarRuntime } from './toolbar';
 
 describe('toolbar primitive', () => {
   it('tracks orientation navigation and grouping semantics', () => {
-    const toolbar = createToolbar({
+    const toolbar = createToolbarRuntime({
       orientation: 'vertical',
       items: [
         { id: 'cut', group: 'edit' },

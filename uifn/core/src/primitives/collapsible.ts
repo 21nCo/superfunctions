@@ -1,6 +1,7 @@
+import { createStateChannel } from '../internal/runtime/state-channel';
 import { createUIFnError, type UIFnError } from '../errors';
-import { createControllableStateController } from '../state/machine';
-import { type ChangeMeta, createStore } from './shared';
+import { createControlledValue } from '../internal/runtime/controlled';
+import { type ChangeMeta } from './shared';
 
 export interface CollapsibleProps {
   open?: boolean;
@@ -23,22 +24,23 @@ export interface CollapsibleActions {
   syncOpen: (open: boolean) => void;
 }
 
-export interface CollapsibleMachine {
+export interface CollapsibleRuntime {
   readonly state: CollapsibleState;
   readonly actions: CollapsibleActions;
   getState: () => CollapsibleState;
   subscribe: (callback: (state: CollapsibleState, meta?: ChangeMeta<boolean>) => void) => () => void;
+  destroy: () => void;
 }
 
-export function createCollapsible(props: CollapsibleProps = {}): CollapsibleMachine {
+export function createCollapsibleRuntime(props: CollapsibleProps = {}): CollapsibleRuntime {
   const initialOpen = props.open ?? props.defaultOpen ?? false;
   const disabled = props.disabled ?? false;
-  const controlledState = createControllableStateController({
+  const controlledState = createControlledValue({
     value: props.open,
     defaultValue: props.defaultOpen ?? false,
     onChange: props.onOpenChange,
   });
-  const store = createStore<CollapsibleState, boolean>({
+  const store = createStateChannel<CollapsibleState, boolean>({
     open: controlledState.getValue(),
     controlled: controlledState.isControlled(),
     disabled,
@@ -133,16 +135,20 @@ export function createCollapsible(props: CollapsibleProps = {}): CollapsibleMach
     actions,
     getState: store.getState,
     subscribe: store.subscribe,
+    destroy() {
+      controlledState.destroy();
+      store.destroy();
+    },
   };
 }
 
-export type CollapsibleMachineEvent =
+export type CollapsibleTestEvent =
   | { type: 'TOGGLE' }
   | { type: 'OPEN' }
   | { type: 'CLOSE' };
 
-export function createCollapsibleMachine(initialOpen = false, initialDisabled = false) {
-  const machine = createCollapsible({
+export function createCollapsibleTestHarness(initialOpen = false, initialDisabled = false) {
+  const machine = createCollapsibleRuntime({
     defaultOpen: initialOpen,
     disabled: initialDisabled,
   });
@@ -151,7 +157,7 @@ export function createCollapsibleMachine(initialOpen = false, initialDisabled = 
     get state() {
       return machine.state.open ? 'open' : 'closed';
     },
-    send(event: CollapsibleMachineEvent) {
+    send(event: CollapsibleTestEvent) {
       if (event.type === 'TOGGLE') {
         machine.actions.toggle();
       } else if (event.type === 'OPEN') {

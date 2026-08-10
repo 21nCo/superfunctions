@@ -1,15 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { UIFnError } from '../errors';
-import { resetIdCounters } from '../utils/id';
-import { createDialog } from './dialog';
+import { describe, expect, it, vi } from 'vitest';
+import { createDialogController } from './dialog';
 
 describe('dialog primitive', () => {
-  beforeEach(() => {
-    resetIdCounters();
-  });
-
   it('applies modal focus and escape dismissal semantics', () => {
-    const dialog = createDialog({
+    const dialog = createDialogController({
       defaultOpen: false,
       modal: true,
       returnFocusId: 'dialog-trigger',
@@ -18,22 +12,19 @@ describe('dialog primitive', () => {
 
     dialog.actions.open('open-trigger');
     expect(dialog.state.open).toBe(true);
-    expect(dialog.state.focusedElementId).toBe(dialog.state.ids.contentId);
-    expect(dialog.state.scrollLocked).toBe(true);
-    expect(dialog.state.ids.contentId).toBe('uifn-dialog-1-content');
-    expect(dialog.state.ids.titleId).toBe('uifn-dialog-1-title');
-    expect(dialog.state.ids.descriptionId).toBe('uifn-dialog-1-description');
+    expect(dialog.state.policy.initialFocus).toBe('first-tabbable');
+    expect(dialog.state.trapFocus).toBe(true);
+    expect(dialog.state.scrollLock).toBe(false);
+    expect(dialog.parts.content.getProps().aria?.labelledby).toBe(dialog.state.ids.titleId);
 
     const closed = dialog.actions.onEscapeKeyDown();
     expect(closed).toBe(true);
     expect(dialog.state.open).toBe(false);
-    expect(dialog.state.focusedElementId).toBe('dialog-trigger');
     expect(dialog.state.lastChangeReason).toBe('close-escape');
-    expect(dialog.state.scrollLocked).toBe(false);
   });
 
   it('closes on outside interaction when policy allows', () => {
-    const dialog = createDialog({
+    const dialog = createDialogController({
       defaultOpen: true,
       outsideInteractionBehavior: 'close',
       returnFocusId: 'trigger',
@@ -42,12 +33,12 @@ describe('dialog primitive', () => {
     const closed = dialog.actions.onOutsideInteraction();
     expect(closed).toBe(true);
     expect(dialog.state.open).toBe(false);
-    expect(dialog.state.lastChangeReason).toBe('close-outside-click');
+    expect(dialog.state.lastChangeReason).toBe('close-pointer-outside');
   });
 
   it('keeps controlled open state stable until syncOpen is applied', () => {
     const onOpenChange = vi.fn();
-    const dialog = createDialog({
+    const dialog = createDialogController({
       open: false,
       onOpenChange,
       returnFocusId: 'dialog-trigger',
@@ -61,8 +52,9 @@ describe('dialog primitive', () => {
     expect(dialog.state.open).toBe(true);
   });
 
-  it('rejects duplicate fixed dialog id bases', () => {
-    createDialog({ idBase: 'shared-dialog' });
-    expect(() => createDialog({ idBase: 'shared-dialog' })).toThrowError(UIFnError);
+  it('keeps fixed bases isolated to their explicit model scopes', () => {
+    const first = createDialogController({ idBase: 'shared-dialog' });
+    const second = createDialogController({ idBase: 'shared-dialog' });
+    expect(first.state.ids).toEqual(second.state.ids);
   });
 });

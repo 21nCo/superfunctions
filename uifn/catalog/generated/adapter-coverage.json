@@ -1,0 +1,2154 @@
+{
+  "catalogSha256": "0a84df4b8e8415afc9af0e5a1bce312a7a3355ab37d6f1ed2701d6c998acc80a",
+  "catalogVersion": "1.0.0",
+  "frameworks": [
+    "react",
+    "svelte",
+    "solid"
+  ],
+  "generatorVersion": "1.0.0",
+  "implementationEvidence": true,
+  "primitives": [
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Accordion",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Accordion",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Accordion",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "accordion",
+      "name": "Accordion",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "AlertDialog",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "AlertDialog",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "AlertDialog",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "alert-dialog",
+      "name": "AlertDialog",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "AngleSlider",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "AngleSlider",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "AngleSlider",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "angle-slider",
+      "name": "AngleSlider",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Autocomplete",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Autocomplete",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Autocomplete",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "autocomplete",
+      "name": "Autocomplete",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Avatar",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Avatar",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Avatar",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "avatar",
+      "name": "Avatar",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Button",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Button",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Button",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "button",
+      "name": "Button",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Carousel",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Carousel",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Carousel",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "carousel",
+      "name": "Carousel",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Checkbox",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Checkbox",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Checkbox",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "checkbox",
+      "name": "Checkbox",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "CheckboxGroup",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "CheckboxGroup",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "CheckboxGroup",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "checkbox-group",
+      "name": "CheckboxGroup",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Clipboard",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Clipboard",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Clipboard",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "clipboard",
+      "name": "Clipboard",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Collapsible",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Collapsible",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Collapsible",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "collapsible",
+      "name": "Collapsible",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "ColorPicker",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "ColorPicker",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "ColorPicker",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "color-picker",
+      "name": "ColorPicker",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Combobox",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Combobox",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Combobox",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "combobox",
+      "name": "Combobox",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "ContextMenu",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "ContextMenu",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "ContextMenu",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "context-menu",
+      "name": "ContextMenu",
+      "owningPhase": "PHASE_08"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "DateInput",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "DateInput",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "DateInput",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "date-input",
+      "name": "DateInput",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "DatePicker",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "DatePicker",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "DatePicker",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "date-picker",
+      "name": "DatePicker",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Dialog",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Dialog",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Dialog",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "dialog",
+      "name": "Dialog",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Drawer",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Drawer",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Drawer",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "drawer",
+      "name": "Drawer",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Editable",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Editable",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Editable",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "editable",
+      "name": "Editable",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Field",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Field",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Field",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "field",
+      "name": "Field",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Fieldset",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Fieldset",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Fieldset",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "fieldset",
+      "name": "Fieldset",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "FileUpload",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "FileUpload",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "FileUpload",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "file-upload",
+      "name": "FileUpload",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "FloatingPanel",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "FloatingPanel",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "FloatingPanel",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "floating-panel",
+      "name": "FloatingPanel",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Form",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Form",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Form",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "form",
+      "name": "Form",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "HoverCard",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "HoverCard",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "HoverCard",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "hover-card",
+      "name": "HoverCard",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "ImageCropper",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "ImageCropper",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "ImageCropper",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "image-cropper",
+      "name": "ImageCropper",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Input",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Input",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Input",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "input",
+      "name": "Input",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Listbox",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Listbox",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Listbox",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "listbox",
+      "name": "Listbox",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Marquee",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Marquee",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Marquee",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "marquee",
+      "name": "Marquee",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Menu",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Menu",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Menu",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "menu",
+      "name": "Menu",
+      "owningPhase": "PHASE_08"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Menubar",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Menubar",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Menubar",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "menubar",
+      "name": "Menubar",
+      "owningPhase": "PHASE_08"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Meter",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Meter",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Meter",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "meter",
+      "name": "Meter",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "NavigationMenu",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "NavigationMenu",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "NavigationMenu",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "navigation-menu",
+      "name": "NavigationMenu",
+      "owningPhase": "PHASE_08"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "NumberInput",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "NumberInput",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "NumberInput",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "number-input",
+      "name": "NumberInput",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Pagination",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Pagination",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Pagination",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "pagination",
+      "name": "Pagination",
+      "owningPhase": "PHASE_08"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "PasswordInput",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "PasswordInput",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "PasswordInput",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "password-input",
+      "name": "PasswordInput",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "PinInput",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "PinInput",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "PinInput",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "pin-input",
+      "name": "PinInput",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Popover",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Popover",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Popover",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "popover",
+      "name": "Popover",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Progress",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Progress",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Progress",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "progress",
+      "name": "Progress",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "QRCode",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "QRCode",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "QRCode",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "qr-code",
+      "name": "QRCode",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "RadioGroup",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "RadioGroup",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "RadioGroup",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "radio-group",
+      "name": "RadioGroup",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "RatingGroup",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "RatingGroup",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "RatingGroup",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "rating-group",
+      "name": "RatingGroup",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "ScrollArea",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "ScrollArea",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "ScrollArea",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "scroll-area",
+      "name": "ScrollArea",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "SegmentGroup",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "SegmentGroup",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "SegmentGroup",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "segment-group",
+      "name": "SegmentGroup",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Select",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Select",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Select",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "select",
+      "name": "Select",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Separator",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Separator",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Separator",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "separator",
+      "name": "Separator",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "SignaturePad",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "SignaturePad",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "SignaturePad",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "signature-pad",
+      "name": "SignaturePad",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Slider",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Slider",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Slider",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "slider",
+      "name": "Slider",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Splitter",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Splitter",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Splitter",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "splitter",
+      "name": "Splitter",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Steps",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Steps",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Steps",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "steps",
+      "name": "Steps",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Switch",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Switch",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Switch",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "switch",
+      "name": "Switch",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Tabs",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Tabs",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Tabs",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "tabs",
+      "name": "Tabs",
+      "owningPhase": "PHASE_08"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "TagsInput",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "TagsInput",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "TagsInput",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "tags-input",
+      "name": "TagsInput",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Timer",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Timer",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Timer",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "timer",
+      "name": "Timer",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Toast",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Toast",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Toast",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "toast",
+      "name": "Toast",
+      "owningPhase": "PHASE_10"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Toggle",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Toggle",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Toggle",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "toggle",
+      "name": "Toggle",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "ToggleGroup",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "ToggleGroup",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "ToggleGroup",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "toggle-group",
+      "name": "ToggleGroup",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Toolbar",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Toolbar",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Toolbar",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "toolbar",
+      "name": "Toolbar",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Tooltip",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Tooltip",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Tooltip",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "tooltip",
+      "name": "Tooltip",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Tour",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Tour",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Tour",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "tour",
+      "name": "Tour",
+      "owningPhase": "PHASE_07"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "TreeView",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "TreeView",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "TreeView",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "tree-view",
+      "name": "TreeView",
+      "owningPhase": "PHASE_08"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Badge",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Badge",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Badge",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "badge",
+      "name": "Badge",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Breadcrumb",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Breadcrumb",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Breadcrumb",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "breadcrumb",
+      "name": "Breadcrumb",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Card",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Card",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Card",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "card",
+      "name": "Card",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Command",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Command",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Command",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "command",
+      "name": "Command",
+      "owningPhase": "PHASE_09"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "InputGroup",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "InputGroup",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "InputGroup",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "input-group",
+      "name": "InputGroup",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Skeleton",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Skeleton",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Skeleton",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "skeleton",
+      "name": "Skeleton",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Table",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Table",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Table",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "table",
+      "name": "Table",
+      "owningPhase": "PHASE_06"
+    },
+    {
+      "frameworks": {
+        "react": {
+          "compoundRoot": "Textarea",
+          "headlessPackage": "@uifn/react",
+          "implementationPhase": "PHASE_11",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-react",
+          "support": "required"
+        },
+        "solid": {
+          "compoundRoot": "Textarea",
+          "headlessPackage": "@uifn/solid",
+          "implementationPhase": "PHASE_13",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-solid",
+          "support": "required"
+        },
+        "svelte": {
+          "compoundRoot": "Textarea",
+          "headlessPackage": "@uifn/svelte",
+          "implementationPhase": "PHASE_12",
+          "implementationStatus": "implemented",
+          "styledPackage": "@uifn/components-svelte",
+          "support": "required"
+        }
+      },
+      "id": "textarea",
+      "name": "Textarea",
+      "owningPhase": "PHASE_06"
+    }
+  ],
+  "schemaVersion": 1,
+  "sourceSha256": "5ffc3431ecf062d7cbc46545ecbcbda89310d2057701e38c1492ca61c89d16cf"
+}

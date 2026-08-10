@@ -1,41 +1,59 @@
-export type AvatarStatus = 'idle' | 'loading' | 'loaded' | 'error';
+import { createUIFnPartId } from '../algorithms/id';
+import type { UIFnPartProps } from '../parts';
+import { defineUIFnStaticContract, freezeUIFnParts } from './static-contract';
+
+export type AvatarStatus = 'loading' | 'loaded' | 'error';
+
+export interface AvatarProps {
+  readonly src?: string;
+  readonly alt: string;
+  readonly fallbackDelay?: number;
+  readonly status?: AvatarStatus;
+}
 
 export interface AvatarState {
-  status: AvatarStatus;
+  readonly status: AvatarStatus;
+  readonly showImage: boolean;
+  readonly showFallback: boolean;
 }
 
-export interface AvatarActions {
-  setLoading: () => void;
-  setLoaded: () => void;
-  setError: () => void;
+export interface AvatarContractParts {
+  readonly root: UIFnPartProps;
+  readonly image: UIFnPartProps;
+  readonly fallback: UIFnPartProps;
 }
 
-export interface AvatarMachine {
-  state: AvatarState;
-  actions: AvatarActions;
-  subscribe: (callback: (state: AvatarState) => void) => () => void;
-}
+export const AvatarContract = defineUIFnStaticContract<AvatarProps, AvatarState, AvatarContractParts>({
+  kind: 'typed-static-contract',
+  name: 'Avatar',
+  anatomy: [
+    { name: 'root', element: 'span', cardinality: 'one' },
+    { name: 'image', element: 'img', cardinality: 'one' },
+    { name: 'fallback', element: 'span', cardinality: 'one' },
+  ],
+  getState(inputs) {
+    const status = inputs.status ?? (inputs.src ? 'loading' : 'error');
+    return Object.freeze({ status, showImage: status !== 'error', showFallback: status !== 'loaded' });
+  },
+  getParts(inputs, context) {
+    const state = this.getState(inputs);
+    const rootId = createUIFnPartId(context.scopeId, 'avatar', 'root');
+    return freezeUIFnParts({
+      root: { id: rootId, data: { state: state.status } },
+      image: {
+        id: createUIFnPartId(context.scopeId, 'avatar', 'image'),
+        attributes: { src: inputs.src, alt: inputs.alt },
+        data: { state: state.status },
+        hidden: !state.showImage,
+      },
+      fallback: {
+        id: createUIFnPartId(context.scopeId, 'avatar', 'fallback'),
+        aria: { hidden: !state.showFallback },
+        data: { state: state.showFallback ? 'visible' : 'hidden', delay: inputs.fallbackDelay },
+        hidden: !state.showFallback,
+      },
+    });
+  },
+});
 
-export function createAvatar(): AvatarMachine {
-  let state: AvatarState = { status: 'idle' };
-  const listeners = new Set<(state: AvatarState) => void>();
-
-  const notify = () => {
-    listeners.forEach(l => l({ ...state }));
-  };
-
-  const actions: AvatarActions = {
-    setLoading: () => { state.status = 'loading'; notify(); },
-    setLoaded: () => { state.status = 'loaded'; notify(); },
-    setError: () => { state.status = 'error'; notify(); },
-  };
-
-  return {
-    state,
-    actions,
-    subscribe: (callback) => {
-      listeners.add(callback);
-      return () => listeners.delete(callback);
-    }
-  };
-}
+export type AvatarContract = typeof AvatarContract;
