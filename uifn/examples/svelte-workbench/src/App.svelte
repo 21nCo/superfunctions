@@ -234,6 +234,7 @@
             <a href={withCatalogBasePath(basePath, `/components/${route.slug}/qa`)}>QA cases</a>
           </div>
           <div id={`preview-${route.slug}`} role="tabpanel" data-catalog-demo-panel="preview">
+            <h2 class="sr-only">{route.title} preview</h2>
             <div class="fixture-grid">
               {#each componentFixtureRoutes(route) as fixtureRoute}
                 <section class="fixture-card">

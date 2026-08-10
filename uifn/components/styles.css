@@ -63,8 +63,8 @@
     [data-uifn-component][data-uifn-part="control"]:is(button, input),
     [data-uifn-component][data-uifn-part="clear"],
     [data-uifn-component][data-uifn-part="close"],
-    [data-uifn-component][data-uifn-part="action"],
-    [data-uifn-component][data-uifn-part="cancel"],
+    [data-uifn-component][data-uifn-part="action"]:is(button, a[href], [role="button"]),
+    [data-uifn-component][data-uifn-part="cancel"]:is(button, a[href], [role="button"]),
     [data-uifn-component][data-uifn-part="item"]:is(button, [role="button"]),
     [data-uifn-component][data-uifn-part="previous"],
     [data-uifn-component][data-uifn-part="next"]
@@ -86,8 +86,8 @@
     [data-uifn-component][data-uifn-part="control"],
     [data-uifn-component][data-uifn-part="clear"],
     [data-uifn-component][data-uifn-part="close"],
-    [data-uifn-component][data-uifn-part="action"],
-    [data-uifn-component][data-uifn-part="cancel"],
+    [data-uifn-component][data-uifn-part="action"]:is(button, a[href], [role="button"]),
+    [data-uifn-component][data-uifn-part="cancel"]:is(button, a[href], [role="button"]),
     [data-uifn-component][data-uifn-part="item"],
     [data-uifn-component][data-uifn-part="previous"],
     [data-uifn-component][data-uifn-part="next"]
@@ -468,7 +468,12 @@
     [data-uifn-component="menu"][data-uifn-part="submenuTrigger"],
     [data-uifn-component="context-menu"][data-uifn-part="submenuTrigger"]
   )::after {
-    content: "›";
+    content: "";
+    inline-size: .5rem;
+    block-size: .5rem;
+    border-block-start: .125rem solid currentColor;
+    border-inline-end: .125rem solid currentColor;
+    transform: rotate(45deg);
   }
 
   :where(
