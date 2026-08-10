@@ -834,13 +834,13 @@ async function assertFormComponent(page, route, selector) {
   }
   const form = page.locator("[data-uifn-form-harness]").first();
   const controlSelector = [
-    "input:not([type='hidden']):not([aria-hidden='true']):not([tabindex='-1'])",
-    "textarea:not([aria-hidden='true']):not([tabindex='-1'])",
-    "select:not([aria-hidden='true']):not([tabindex='-1'])",
+    "input:not([hidden]):not([type='hidden']):not([aria-hidden='true']):not([tabindex='-1'])",
+    "textarea:not([hidden]):not([aria-hidden='true']):not([tabindex='-1'])",
+    "select:not([hidden]):not([aria-hidden='true']):not([tabindex='-1'])",
   ].join(", ");
   const rootIsControl = await root.evaluate((node, candidateSelector) => node.matches(candidateSelector), controlSelector);
   const ownedControl = page.locator(
-    `:is(input:not([type='hidden']):not([aria-hidden='true']):not([tabindex='-1']), textarea:not([aria-hidden='true']):not([tabindex='-1']), select:not([aria-hidden='true']):not([tabindex='-1']))[data-uifn-component-owner="${route.slug}"]`
+    `:is(input:not([hidden]):not([type='hidden']):not([aria-hidden='true']):not([tabindex='-1']), textarea:not([hidden]):not([aria-hidden='true']):not([tabindex='-1']), select:not([hidden]):not([aria-hidden='true']):not([tabindex='-1']))[data-uifn-component-owner="${route.slug}"]`
   ).first();
   const control = rootIsControl
     ? root
