@@ -1,0 +1,9 @@
+/* Generated detached registry signature. */
+export const REGISTRY_PUBLIC_KEY_PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAXJAFHpxeuWhtzhVxYhZtP3sqoeNHqWL/NrmbKLHGyEA=\n-----END PUBLIC KEY-----\n";
+export const REGISTRY_SIGNATURE = {
+  "schemaVersion": 1,
+  "algorithm": "Ed25519",
+  "keyId": "4bd0e3edd63ac73c57312dcc",
+  "catalogSha256": "bbae65ac738a887b403f576fb85351c9f2b24ad98c59d1306dfea9138bed4586",
+  "signatureBase64": "6U8TjsGKeOG5IM3O3wqAAltG5b03HLtWUp2SqWurH9FOBEsf25Yy9oUsTw0mf71TXZe3r0+a9w6N3YSsucHLAQ=="
+} as const;
