@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "phase18-a11y-20260730T163239988Z",
+  "evidenceClass": "browser-compatibility",
+  "requirementIds": [
+    "A11Y-001",
+    "A11Y-002"
+  ],
+  "vectorIds": [
+    "TV-A11Y-001-P",
+    "TV-A11Y-001-N",
+    "TV-A11Y-002-P",
+    "TV-A11Y-002-N"
+  ],
+  "status": "failed",
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "dirtyReason": "Phase 18 automated evidence is provisional because no clean commit was authorized. Phase 19, Phase 20, release, and any 10/10 claim require a clean committed source identity plus signed external compatibility and assistive-technology evidence.",
+    "lockfileSha256": "670303510a4d9260a1c65af7b02024f1c90a9be84ca9107679ef02cf33fc3358",
+    "definitionSha256": "9b758213846896c4e204ec099eebfd06eb425a1355e144fe1060d2a3f714a9ca",
+    "artifactHashes": [
+      {
+        "path": "uifn/.conduct/evidence/phase-18/2026-07-30-production-readiness/browser.json",
+        "sha256": "551c7c2b2904d52e49d547e2e27c005158b713ba141620949a3e9727802678c1"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-18/2026-07-30-production-readiness/ledger.json",
+        "sha256": "09754266a3cf5eb6a256061c56adbe70764b42b19f13b8dccce3d6f44e8cd4e6"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-17/2026-07-30-production-readiness/storybook.json",
+        "sha256": "d403010a4162a158f1a48746ea005dcc6e89162d561282ff6a68aa9ddf195cc2"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-17/2026-07-30-production-readiness/docs.json",
+        "sha256": "7f4b923044ab89e8ce281a4bd707a58f60afa6307c32fee98d9de80625cd652f"
+      },
+      {
+        "path": "uifn/accessibility/generated/normative-ledger.json",
+        "sha256": "8f742fdeda512ecdf28e1dfb174180505f37c44f03557caf13bf7bb658785e6d"
+      },
+      {
+        "path": "uifn/accessibility/generated/automation-manifest.json",
+        "sha256": "7acefd5537fd0a1eb4fec588cd5cc1d0ad39d3402b7e0e69f526868c7cbd47ed"
+      },
+      {
+        "path": "uifn/accessibility/generated/manual-handoff.json",
+        "sha256": "6d0f68bc145c5ac3c91200221fbf52f9c752b3b51b6b9f963dd72ae0f8a37da6"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/package-react.json",
+        "sha256": "7cfc43292d9f3748a4d17caad406f2f27cbc6e85158ddca447875144b9d1002a"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/package-svelte.json",
+        "sha256": "6a0b03c7d612ed884b5c691a503b3935891bc12f145521f42c832d7b4f3d42a2"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/package-solid.json",
+        "sha256": "bed92785cd696159ca90f451453d8d1d31c515f827d4e9aaeeea0e81699b8cfe"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/source-react.json",
+        "sha256": "36f21a19f48e04a047423b3cfe752868cd67745c4a1ae67521adc17471eedb06"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/source-svelte.json",
+        "sha256": "1f52ec4638eed74b780c99931b5ce5c481d30f65109bc2c0f994cbba45cba1ef"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/source-solid.json",
+        "sha256": "d85cafded1bc55787d078eaf2abad6565a70ab86a184dc368ba0f1571c00c72f"
+      }
+    ]
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "runtime": "v22.22.1",
+    "tools": {
+      "phase18Verifier": "18.0.0",
+      "playwright": "1.57.0",
+      "axeCore": "4.11.1"
+    },
+    "framework": "React, Svelte, Solid",
+    "browser": "chromium 143.0.7499.4, firefox 144.0.2, webkit 26.0",
+    "assistiveTechnology": null
+  },
+  "timing": {
+    "startedAt": "2026-07-30T16:28:30.434Z",
+    "completedAt": "2026-07-30T16:32:39.988Z",
+    "durationMs": 249554
+  },
+  "counts": {
+    "total": 1806,
+    "executed": 1806,
+    "passed": 0,
+    "failed": 1806,
+    "blocked": 0,
+    "skipped": 0,
+    "notApplicable": 0
+  },
+  "artifacts": [
+    "uifn/.conduct/evidence/phase-18/2026-07-30-production-readiness/browser.json",
+    "uifn/.conduct/evidence/phase-18/2026-07-30-production-readiness/ledger.json",
+    "uifn/.conduct/evidence/phase-17/2026-07-30-production-readiness/storybook.json",
+    "uifn/.conduct/evidence/phase-17/2026-07-30-production-readiness/docs.json",
+    "uifn/accessibility/generated/normative-ledger.json",
+    "uifn/accessibility/generated/automation-manifest.json",
+    "uifn/accessibility/generated/manual-handoff.json",
+    "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/package-react.json",
+    "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/package-svelte.json",
+    "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/package-solid.json",
+    "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/source-react.json",
+    "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/source-svelte.json",
+    "uifn/.conduct/evidence/phase-14/2026-07-30T19-00-00-000Z-PHASE-14-69-production-readiness/traces/source-solid.json"
+  ],
+  "defects": [],
+  "signatures": [
+    {
+      "kind": "automation",
+      "signer": "scripts/verify-uifn-phase-18.mjs",
+      "signedAt": "2026-07-30T16:32:39.988Z",
+      "attestation": "Normative rule mappings, package/source/framework semantic parity, clean-package stories, clean package/source consumers, browser accessibility assertions, reviewed axe incompletes, failure artifacts, and negative mutations were verified. This automation signature is provisional and is not an assistive-technology or independent-review signature."
+    }
+  ],
+  "expiresAt": "2026-08-06T16:32:39.988Z",
+  "supersedes": null
+}

@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_15",
+  "vector": "TV-COMP-001-P",
+  "status": "passed",
+  "tarballs": {
+    "@uifn/core": {
+      "filename": "uifn-core-0.0.1.tgz",
+      "sha256": "10152e19d974347ee260a410aefe813828cd3dcecfa8591588b94d6432a9d60f",
+      "fileCount": 135
+    },
+    "@uifn/dom": {
+      "filename": "uifn-dom-0.0.1.tgz",
+      "sha256": "85f8f38d626981d8ef0b165e872b5e1725736162995309578340d4c33650e148",
+      "fileCount": 9
+    },
+    "@uifn/adapter-kit": {
+      "filename": "uifn-adapter-kit-0.0.1.tgz",
+      "sha256": "cecc040efc9d8282c66459104d4de75ca69dac9ae187adb0b95c3e73c163c90a",
+      "fileCount": 6
+    },
+    "@uifn/tokens": {
+      "filename": "uifn-tokens-0.0.1.tgz",
+      "sha256": "c011ee2d5ef4276800c3f0a06942a7e3136437885f5c0b43c3ab183f0680a3b6",
+      "fileCount": 6
+    },
+    "@uifn/theme": {
+      "filename": "uifn-theme-0.0.1.tgz",
+      "sha256": "81a83ff3569b7e1e1c1862d67371cb295ba83828ff06cfe6f6c835a68a4020d7",
+      "fileCount": 6
+    },
+    "@uifn/recipes": {
+      "filename": "uifn-recipes-0.0.1.tgz",
+      "sha256": "33a3477be240a03b6d79e65c3c42e135ca03c04a2406f00353c093cd393f5d24",
+      "fileCount": 6
+    },
+    "@uifn/components": {
+      "filename": "uifn-components-0.0.1.tgz",
+      "sha256": "e70ca898166018567f064b26fa5f8d08f311109d795355b8f76726a505d15817",
+      "fileCount": 7
+    },
+    "@uifn/react": {
+      "filename": "uifn-react-0.0.1.tgz",
+      "sha256": "df2bb66edd34aff6876e71552bb2becbe6387775bcbac7417b0dca1cecbfeef7",
+      "fileCount": 701
+    },
+    "@uifn/components-react": {
+      "filename": "uifn-components-react-0.0.1.tgz",
+      "sha256": "328217c96f3e68108cb2812ac9b321b2109474f740e36672709e4dd342a8bd4a",
+      "fileCount": 251
+    },
+    "@uifn/svelte": {
+      "filename": "uifn-svelte-0.0.1.tgz",
+      "sha256": "b91fbe698efac2f8507a27feca28f79df80d00274e5d589d8ca29d43a06f42b9",
+      "fileCount": 1656
+    },
+    "@uifn/components-svelte": {
+      "filename": "uifn-components-svelte-0.0.1.tgz",
+      "sha256": "dc08a266084f9b1a6ee0509209886c0dd644719aa34003fb7c8d88eac59c7f02",
+      "fileCount": 964
+    },
+    "@uifn/solid": {
+      "filename": "uifn-solid-0.0.1.tgz",
+      "sha256": "2782d959d4c2e778e9909d6fe13cb37bc90f5e208ee72d9d769767cbe71e8ef0",
+      "fileCount": 275
+    },
+    "@uifn/components-solid": {
+      "filename": "uifn-components-solid-0.0.1.tgz",
+      "sha256": "a8f282822ea5aaf7b18221997cd5fb20dae724067e178a601e51f559deb90f15",
+      "fileCount": 251
+    }
+  },
+  "consumers": [
+    {
+      "framework": "react",
+      "package": "@uifn/components-react",
+      "installedUifnPackages": [
+        "@uifn/adapter-kit",
+        "@uifn/components",
+        "@uifn/components-react",
+        "@uifn/core",
+        "@uifn/dom",
+        "@uifn/react",
+        "@uifn/recipes",
+        "@uifn/theme",
+        "@uifn/tokens"
+      ],
+      "forbiddenInstalled": [],
+      "rootEntry": "imported",
+      "primitiveSubpath": "button-imported",
+      "lockfileSha256": "c56478d83adef670f8344331df676be6f47affa64793fae4764dc7430ee23b4f"
+    },
+    {
+      "framework": "svelte",
+      "package": "@uifn/components-svelte",
+      "installedUifnPackages": [
+        "@uifn/adapter-kit",
+        "@uifn/components",
+        "@uifn/components-svelte",
+        "@uifn/core",
+        "@uifn/dom",
+        "@uifn/recipes",
+        "@uifn/svelte",
+        "@uifn/theme",
+        "@uifn/tokens"
+      ],
+      "forbiddenInstalled": [],
+      "rootEntry": "compiled-svelte-entry-validated",
+      "primitiveSubpath": "compiled-button-subpath-validated",
+      "lockfileSha256": "da85b170f578a249f6779520e1c92798deb7846699da002cd775785f1f067966"
+    },
+    {
+      "framework": "solid",
+      "package": "@uifn/components-solid",
+      "installedUifnPackages": [
+        "@uifn/adapter-kit",
+        "@uifn/components",
+        "@uifn/components-solid",
+        "@uifn/core",
+        "@uifn/dom",
+        "@uifn/recipes",
+        "@uifn/solid",
+        "@uifn/theme",
+        "@uifn/tokens"
+      ],
+      "forbiddenInstalled": [],
+      "rootEntry": "compiled-solid-entry-validated",
+      "primitiveSubpath": "compiled-button-subpath-validated",
+      "lockfileSha256": "3efe863dfaa941f988437fedda190b7578e051414d356f2964e777a841725d0c"
+    }
+  ]
+}

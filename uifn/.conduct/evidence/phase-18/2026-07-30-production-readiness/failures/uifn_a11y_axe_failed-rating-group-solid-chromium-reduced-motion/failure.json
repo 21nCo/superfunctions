@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "rating-group",
+  "framework": "solid",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "9b758213846896c4e204ec099eebfd06eb425a1355e144fe1060d2a3f714a9ca",
+  "dom": "<section data-uifn-story-framework=\"solid\" data-uifn-story-id=\"rating-group--reduced-motion\" data-uifn-story-scenario=\"reduced-motion\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"true\" dir=\"ltr\"><div role=\"radiogroup\" id=\"rating-group-root-rating-group-uifn-cl-0-root\" class=\"uifn-rating-group uifn-rating-group__root\" aria-required=\"false\" aria-disabled=\"false\" aria-labelledby=\"rating-group-label-rating-group-uifn-cl-0-label\" data-uifn-component=\"rating-group\" data-uifn-part=\"root\"><label id=\"rating-group-label-rating-group-uifn-cl-0-label\" class=\"uifn-rating-group uifn-rating-group__label\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"rating-group\" data-uifn-part=\"label\">label fixture</label><div id=\"rating-group-control-rating-group-uifn-cl-0-control\" class=\"uifn-rating-group uifn-rating-group__control\" data-uifn-story-anatomy=\"control\" data-uifn-component=\"rating-group\" data-uifn-part=\"control\"><button type=\"button\" role=\"radio\" id=\"rating-group-item-rating-group-uifn-cl-0-item-0\" tabindex=\"0\" class=\"uifn-rating-group uifn-rating-group__item\" aria-checked=\"true\" aria-label=\"0 / 5\" aria-disabled=\"false\" data-state=\"highlighted\" data-uifn-story-anatomy=\"item\" data-uifn-component=\"rating-group\" data-uifn-part=\"item\">item fixture<span id=\"rating-group-indicator-rating-group-uifn-cl-0-indicator-0\" class=\"uifn-rating-group uifn-rating-group__itemIndicator\" data-state=\"filled\" data-uifn-story-anatomy=\"itemIndicator\" data-uifn-component=\"rating-group\" data-uifn-part=\"itemIndicator\">itemIndicator fixture</span></button></div><input type=\"hidden\" value=\"0\" id=\"rating-group-input-rating-group-uifn-cl-0-input\" class=\"uifn-rating-group uifn-rating-group__hiddenInput\" data-uifn-story-anatomy=\"hiddenInput\" data-uifn-component=\"rating-group\" data-uifn-part=\"hiddenInput\"><span id=\"rating-group-value-text-rating-group-uifn-cl-0-value-text\" class=\"uifn-rating-group uifn-rating-group__valueText\" aria-live=\"polite\" data-value=\"0 / 5\" data-uifn-story-anatomy=\"valueText\" data-uifn-component=\"rating-group\" data-uifn-part=\"valueText\">valueText fixture</span></div></section>",
+  "semanticTrace": [
+    {
+      "part": "control",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "control"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "button",
+      "role": "radio",
+      "aria": [
+        [
+          "aria-checked",
+          "true"
+        ],
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-label",
+          "0 / 5"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "highlighted"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ]
+      ]
+    },
+    {
+      "part": "itemIndicator",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "filled"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemIndicator"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": "radiogroup",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "rating-group-label-rating-group-uifn-cl-0-label"
+        ],
+        [
+          "aria-required",
+          "false"
+        ]
+      ],
+      "data": []
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ],
+        [
+          "data-value",
+          "0 / 5"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "b68a3e30f3b40117bb7f242a0a11e9106f5827c347d15726bf492cb1f0501da3"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "b68a3e30f3b40117bb7f242a0a11e9106f5827c347d15726bf492cb1f0501da3"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "8fc3a2b8b9dd6db1a0fd19ca3241d45f92736b95827f70155aa68e061ec9ce88"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "b68a3e30f3b40117bb7f242a0a11e9106f5827c347d15726bf492cb1f0501da3"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "b68a3e30f3b40117bb7f242a0a11e9106f5827c347d15726bf492cb1f0501da3"
+    }
+  ],
+  "focusPath": [
+    "item",
+    "item",
+    "item",
+    "item",
+    "item",
+    "item"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:30:32.397Z",
+  "expiresAt": "2026-08-06T16:30:32.397Z"
+}

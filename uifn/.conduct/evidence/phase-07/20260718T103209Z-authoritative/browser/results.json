@@ -1,0 +1,1327 @@
+{
+  "config": {
+    "configFile": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/playwright.config.ts",
+    "rootDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+    "forbidOnly": true,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "firefox",
+        "name": "firefox",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "webkit",
+        "name": "webkit",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "mobile-chromium",
+        "name": "mobile-chromium",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "/overlay-primitives\\.spec\\.ts/"
+        ],
+        "timeout": 30000
+      },
+      {
+        "outputDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "mobile-webkit",
+        "name": "mobile-webkit",
+        "testDir": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom/browser",
+        "testIgnore": [],
+        "testMatch": [
+          "/overlay-primitives\\.spec\\.ts/"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.57.0",
+    "workers": 1,
+    "webServer": {
+      "command": "npx vite --host 127.0.0.1 --port 4175 --strictPort",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom",
+      "url": "http://127.0.0.1:4175/browser/index.html",
+      "reuseExistingServer": false,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "dom-platform.spec.ts",
+      "file": "dom-platform.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "DOM-001 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 302,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:03.756Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-001-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAxLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDEiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fVEFCQkFCTEVfSU5WQUxJRCIsCiAgICAiVUlGTl9ST09UX0xJU1RFTkVSX0RVUExJQ0FURSIKICBdLAogICJkZXRhaWxzIjogewogICAgInRhYmJhYmxlcyI6IFsKICAgICAgInBvc2l0aXZlLWluZGV4IiwKICAgICAgInBvc2l0aXZlLXRhYiIsCiAgICAgICJzdW1tYXJ5LXRhYiIsCiAgICAgICJyYWRpby1iIiwKICAgICAgImVkaXRhYmxlLXRhYiIsCiAgICAgICJzaGFkb3ctdGFiIgogICAgXSwKICAgICJmcmFtZVRhYmJhYmxlcyI6IFsKICAgICAgImZyYW1lLXRhYiIKICAgIF0sCiAgICAibGlzdGVuZXJTZXRTaXplIjogMwogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-001-posit-d1932-controlled-negative-vectors-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-448da3e06f75479cfba2",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-002 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 144,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:04.255Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAyLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDIiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fTEFZRVJfT1VUU0lERV9DTEFTU0lGSUNBVElPTiIKICBdLAogICJkZXRhaWxzIjogewogICAgInRyYWNlcyI6IFsKICAgICAgIm1lbnU6cG9pbnRlci1vdXRzaWRlIiwKICAgICAgInBvcG92ZXI6ZXNjYXBlIiwKICAgICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgICBdLAogICAgInNlbWFudGljVHJhY2UiOiAxNgogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-002-posit-c3061-controlled-negative-vectors-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-bab3eb054295604e4bbd",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-003 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 142,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:04.408Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAzLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDMiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fRk9DVVNfU0NPUEVfRVNDQVBFIiwKICAgICJVSUZOX0ZPQ1VTX1JFU1RPUkVfRkFJTEVEIgogIF0sCiAgImRldGFpbHMiOiB7CiAgICAicmVzdG9yZWRUbyI6ICJwYXJlbnQtYSIsCiAgICAibmVnYXRpdmVFcnJvcnMiOiBbCiAgICAgICJVSUZOX0ZPQ1VTX1NDT1BFX0VTQ0FQRSIsCiAgICAgICJVSUZOX0ZPQ1VTX1JFU1RPUkVfRkFJTEVEIgogICAgXQogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-003-posit-aacdc-controlled-negative-vectors-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-8d09caa7418178674121",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-004 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 134,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:04.557Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-004-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA0LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDQiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fU0NST0xMX0xPQ0tfTkVTVElORyIsCiAgICAiVUlGTl9NT0RBTF9JU09MQVRJT05fU1RBTEUiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJwcmlvciI6IHsKICAgICAgIm92ZXJmbG93IjogImNsaXAiLAogICAgICAicGFkZGluZ1JpZ2h0IjogIjNweCIKICAgIH0KICB9LAogICJyZXNvdXJjZXMiOiB7CiAgICAibGlzdGVuZXIiOiAwLAogICAgIm9ic2VydmVyIjogMCwKICAgICJ0aW1lciI6IDAsCiAgICAiYW5pbWF0aW9uRnJhbWUiOiAwLAogICAgImxheWVyIjogMCwKICAgICJmb2N1c1Njb3BlIjogMCwKICAgICJtb2RhbExvY2siOiAwLAogICAgInBvc2l0aW9uZXIiOiAwLAogICAgInBvcnRhbCI6IDAsCiAgICAicHJlc2VuY2UiOiAwLAogICAgImZvcm1CcmlkZ2UiOiAwLAogICAgImxpdmVSZWdpb24iOiAwLAogICAgIm1vZGFsaXR5IjogMCwKICAgICJ0b3RhbCI6IDAKICB9Cn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-004-posit-0a685-controlled-negative-vectors-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-c0c608a89f17e895327c",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-005 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 186,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:04.698Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-005-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA1LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDUiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fUE9TSVRJT05fT1VUX09GX0JPVU5EQVJZIiwKICAgICJVSUZOX1BPU0lUSU9OX09CU0VSVkVSX0xFQUsiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJwbGFjZW1lbnQiOiAidG9wLXN0YXJ0IiwKICAgICJ2aXJ0dWFsUGxhY2VtZW50IjogImJvdHRvbS1lbmQiLAogICAgIm1pZGRsZXdhcmUiOiB7CiAgICAgICJhcnJvdyI6IHsKICAgICAgICAieCI6IDIxNiwKICAgICAgICAiY2VudGVyT2Zmc2V0IjogMAogICAgICB9LAogICAgICAiYXZhaWxhYmxlV2lkdGgiOiAzMzYsCiAgICAgICJhdmFpbGFibGVIZWlnaHQiOiAxNzgsCiAgICAgICJyZWZlcmVuY2VIaWRkZW4iOiBmYWxzZSwKICAgICAgImVzY2FwZWQiOiBmYWxzZQogICAgfSwKICAgICJhY3RpdmVPYnNlcnZlclJlc291cmNlIjogMQogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-005-posit-cfde0-controlled-negative-vectors-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-438d07c4f91f12e0c37f",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-006 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 375,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:04.891Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-006-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA2LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDYiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fUE9SVEFMX0hZRFJBVElPTl9EVVBMSUNBVEUiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJzdGF0ZXMiOiBbCiAgICAgICJleGl0aW5nIiwKICAgICAgInVubW91bnRlZCIsCiAgICAgICJlbnRlcmluZyIsCiAgICAgICJlbnRlcmVkIiwKICAgICAgImV4aXRpbmciLAogICAgICAiZW50ZXJpbmciLAogICAgICAiZW50ZXJlZCIsCiAgICAgICJleGl0aW5nIiwKICAgICAgImV4aXRlZCIKICAgIF0KICB9LAogICJyZXNvdXJjZXMiOiB7CiAgICAibGlzdGVuZXIiOiAwLAogICAgIm9ic2VydmVyIjogMCwKICAgICJ0aW1lciI6IDAsCiAgICAiYW5pbWF0aW9uRnJhbWUiOiAwLAogICAgImxheWVyIjogMCwKICAgICJmb2N1c1Njb3BlIjogMCwKICAgICJtb2RhbExvY2siOiAwLAogICAgInBvc2l0aW9uZXIiOiAwLAogICAgInBvcnRhbCI6IDAsCiAgICAicHJlc2VuY2UiOiAwLAogICAgImZvcm1CcmlkZ2UiOiAwLAogICAgImxpdmVSZWdpb24iOiAwLAogICAgIm1vZGFsaXR5IjogMCwKICAgICJ0b3RhbCI6IDAKICB9Cn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-006-posit-73339-controlled-negative-vectors-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-00a32ba88c72c72bc80c",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-007 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 302,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:05.274Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-007-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA3LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDciLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fRk9STV9CUklER0VfRFVQTElDQVRFIiwKICAgICJVSUZOX0xJVkVfUkVHSU9OX1NUQUxFX01FU1NBR0UiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJyZXNldENvdW50IjogMSwKICAgICJzdWJtaXRDb3VudCI6IDEsCiAgICAiZm9ybVZhbHVlcyI6IFsKICAgICAgImFscGhhIiwKICAgICAgImJldGEiCiAgICBdLAogICAgInN0cmVzc0l0ZXJhdGlvbnMiOiAyMAogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-007-posit-b9072-controlled-negative-vectors-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-8a4599ef15b62dbebefd",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-001 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 657,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:06.432Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-001-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAxLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDEiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fVEFCQkFCTEVfSU5WQUxJRCIsCiAgICAiVUlGTl9ST09UX0xJU1RFTkVSX0RVUExJQ0FURSIKICBdLAogICJkZXRhaWxzIjogewogICAgInRhYmJhYmxlcyI6IFsKICAgICAgInBvc2l0aXZlLWluZGV4IiwKICAgICAgInBvc2l0aXZlLXRhYiIsCiAgICAgICJzdW1tYXJ5LXRhYiIsCiAgICAgICJyYWRpby1iIiwKICAgICAgImVkaXRhYmxlLXRhYiIsCiAgICAgICJzaGFkb3ctdGFiIgogICAgXSwKICAgICJmcmFtZVRhYmJhYmxlcyI6IFsKICAgICAgImZyYW1lLXRhYiIKICAgIF0sCiAgICAibGlzdGVuZXJTZXRTaXplIjogMwogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-001-posit-d1932-controlled-negative-vectors-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-83dcc1b162b31b2038c1",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-002 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 189,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:07.547Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAyLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDIiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fTEFZRVJfT1VUU0lERV9DTEFTU0lGSUNBVElPTiIKICBdLAogICJkZXRhaWxzIjogewogICAgInRyYWNlcyI6IFsKICAgICAgIm1lbnU6cG9pbnRlci1vdXRzaWRlIiwKICAgICAgInBvcG92ZXI6ZXNjYXBlIiwKICAgICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgICBdLAogICAgInNlbWFudGljVHJhY2UiOiAxNgogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-002-posit-c3061-controlled-negative-vectors-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-21d664730d78fdd0abde",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-003 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 200,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:07.745Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAzLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDMiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fRk9DVVNfU0NPUEVfRVNDQVBFIiwKICAgICJVSUZOX0ZPQ1VTX1JFU1RPUkVfRkFJTEVEIgogIF0sCiAgImRldGFpbHMiOiB7CiAgICAicmVzdG9yZWRUbyI6ICJwYXJlbnQtYSIsCiAgICAibmVnYXRpdmVFcnJvcnMiOiBbCiAgICAgICJVSUZOX0ZPQ1VTX1NDT1BFX0VTQ0FQRSIsCiAgICAgICJVSUZOX0ZPQ1VTX1JFU1RPUkVfRkFJTEVEIgogICAgXQogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-003-posit-aacdc-controlled-negative-vectors-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-66e2aa969ef4200a66aa",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-004 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 178,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:07.952Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-004-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA0LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDQiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fU0NST0xMX0xPQ0tfTkVTVElORyIsCiAgICAiVUlGTl9NT0RBTF9JU09MQVRJT05fU1RBTEUiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJwcmlvciI6IHsKICAgICAgIm92ZXJmbG93IjogImNsaXAiLAogICAgICAicGFkZGluZ1JpZ2h0IjogIjNweCIKICAgIH0KICB9LAogICJyZXNvdXJjZXMiOiB7CiAgICAibGlzdGVuZXIiOiAwLAogICAgIm9ic2VydmVyIjogMCwKICAgICJ0aW1lciI6IDAsCiAgICAiYW5pbWF0aW9uRnJhbWUiOiAwLAogICAgImxheWVyIjogMCwKICAgICJmb2N1c1Njb3BlIjogMCwKICAgICJtb2RhbExvY2siOiAwLAogICAgInBvc2l0aW9uZXIiOiAwLAogICAgInBvcnRhbCI6IDAsCiAgICAicHJlc2VuY2UiOiAwLAogICAgImZvcm1CcmlkZ2UiOiAwLAogICAgImxpdmVSZWdpb24iOiAwLAogICAgIm1vZGFsaXR5IjogMCwKICAgICJ0b3RhbCI6IDAKICB9Cn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-004-posit-0a685-controlled-negative-vectors-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-9058ca741b5485189e48",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-005 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 258,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:08.138Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-005-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA1LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDUiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fUE9TSVRJT05fT1VUX09GX0JPVU5EQVJZIiwKICAgICJVSUZOX1BPU0lUSU9OX09CU0VSVkVSX0xFQUsiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJwbGFjZW1lbnQiOiAidG9wLXN0YXJ0IiwKICAgICJ2aXJ0dWFsUGxhY2VtZW50IjogImJvdHRvbS1lbmQiLAogICAgIm1pZGRsZXdhcmUiOiB7CiAgICAgICJhcnJvdyI6IHsKICAgICAgICAieCI6IDIxNiwKICAgICAgICAiY2VudGVyT2Zmc2V0IjogMAogICAgICB9LAogICAgICAiYXZhaWxhYmxlV2lkdGgiOiAzMzYsCiAgICAgICJhdmFpbGFibGVIZWlnaHQiOiAxNzgsCiAgICAgICJyZWZlcmVuY2VIaWRkZW4iOiBmYWxzZSwKICAgICAgImVzY2FwZWQiOiBmYWxzZQogICAgfSwKICAgICJhY3RpdmVPYnNlcnZlclJlc291cmNlIjogMQogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-005-posit-cfde0-controlled-negative-vectors-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-bbddbfb48a55972223c1",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-006 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 429,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:08.404Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-006-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA2LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDYiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fUE9SVEFMX0hZRFJBVElPTl9EVVBMSUNBVEUiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJzdGF0ZXMiOiBbCiAgICAgICJleGl0aW5nIiwKICAgICAgInVubW91bnRlZCIsCiAgICAgICJlbnRlcmluZyIsCiAgICAgICJlbnRlcmVkIiwKICAgICAgImV4aXRpbmciLAogICAgICAiZW50ZXJpbmciLAogICAgICAiZW50ZXJlZCIsCiAgICAgICJleGl0aW5nIiwKICAgICAgImV4aXRlZCIKICAgIF0KICB9LAogICJyZXNvdXJjZXMiOiB7CiAgICAibGlzdGVuZXIiOiAwLAogICAgIm9ic2VydmVyIjogMCwKICAgICJ0aW1lciI6IDAsCiAgICAiYW5pbWF0aW9uRnJhbWUiOiAwLAogICAgImxheWVyIjogMCwKICAgICJmb2N1c1Njb3BlIjogMCwKICAgICJtb2RhbExvY2siOiAwLAogICAgInBvc2l0aW9uZXIiOiAwLAogICAgInBvcnRhbCI6IDAsCiAgICAicHJlc2VuY2UiOiAwLAogICAgImZvcm1CcmlkZ2UiOiAwLAogICAgImxpdmVSZWdpb24iOiAwLAogICAgIm1vZGFsaXR5IjogMCwKICAgICJ0b3RhbCI6IDAKICB9Cn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-006-posit-73339-controlled-negative-vectors-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-c3f80914ed7283d7b391",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-007 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 351,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:08.842Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-007-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA3LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDciLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fRk9STV9CUklER0VfRFVQTElDQVRFIiwKICAgICJVSUZOX0xJVkVfUkVHSU9OX1NUQUxFX01FU1NBR0UiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJyZXNldENvdW50IjogMSwKICAgICJzdWJtaXRDb3VudCI6IDEsCiAgICAiZm9ybVZhbHVlcyI6IFsKICAgICAgImFscGhhIiwKICAgICAgImJldGEiCiAgICBdLAogICAgInN0cmVzc0l0ZXJhdGlvbnMiOiAyMAogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-007-posit-b9072-controlled-negative-vectors-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-4c127bc3599013ab921a",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-001 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 650,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:10.424Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-001-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAxLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDEiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fVEFCQkFCTEVfSU5WQUxJRCIsCiAgICAiVUlGTl9ST09UX0xJU1RFTkVSX0RVUExJQ0FURSIKICBdLAogICJkZXRhaWxzIjogewogICAgInRhYmJhYmxlcyI6IFsKICAgICAgInBvc2l0aXZlLWluZGV4IiwKICAgICAgInBvc2l0aXZlLXRhYiIsCiAgICAgICJzdW1tYXJ5LXRhYiIsCiAgICAgICJyYWRpby1iIiwKICAgICAgImVkaXRhYmxlLXRhYiIsCiAgICAgICJzaGFkb3ctdGFiIgogICAgXSwKICAgICJmcmFtZVRhYmJhYmxlcyI6IFsKICAgICAgImZyYW1lLXRhYiIKICAgIF0sCiAgICAibGlzdGVuZXJTZXRTaXplIjogMwogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-001-posit-d1932-controlled-negative-vectors-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-d104bc7e5f58ba49708a",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-002 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 247,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:11.240Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAyLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDIiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fTEFZRVJfT1VUU0lERV9DTEFTU0lGSUNBVElPTiIKICBdLAogICJkZXRhaWxzIjogewogICAgInRyYWNlcyI6IFsKICAgICAgIm1lbnU6cG9pbnRlci1vdXRzaWRlIiwKICAgICAgInBvcG92ZXI6ZXNjYXBlIiwKICAgICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgICBdLAogICAgInNlbWFudGljVHJhY2UiOiAxNgogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-002-posit-c3061-controlled-negative-vectors-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-776884ca2907e85acdc6",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-003 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 231,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:11.495Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-003-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDAzLVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDMiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fRk9DVVNfU0NPUEVfRVNDQVBFIiwKICAgICJVSUZOX0ZPQ1VTX1JFU1RPUkVfRkFJTEVEIgogIF0sCiAgImRldGFpbHMiOiB7CiAgICAicmVzdG9yZWRUbyI6ICJwYXJlbnQtYSIsCiAgICAibmVnYXRpdmVFcnJvcnMiOiBbCiAgICAgICJVSUZOX0ZPQ1VTX1NDT1BFX0VTQ0FQRSIsCiAgICAgICJVSUZOX0ZPQ1VTX1JFU1RPUkVfRkFJTEVEIgogICAgXQogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-003-posit-aacdc-controlled-negative-vectors-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-c92a061bd93e9497cd0b",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-004 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 235,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:11.736Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-004-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA0LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDQiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fU0NST0xMX0xPQ0tfTkVTVElORyIsCiAgICAiVUlGTl9NT0RBTF9JU09MQVRJT05fU1RBTEUiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJwcmlvciI6IHsKICAgICAgIm92ZXJmbG93IjogImNsaXAiLAogICAgICAicGFkZGluZ1JpZ2h0IjogIjNweCIKICAgIH0KICB9LAogICJyZXNvdXJjZXMiOiB7CiAgICAibGlzdGVuZXIiOiAwLAogICAgIm9ic2VydmVyIjogMCwKICAgICJ0aW1lciI6IDAsCiAgICAiYW5pbWF0aW9uRnJhbWUiOiAwLAogICAgImxheWVyIjogMCwKICAgICJmb2N1c1Njb3BlIjogMCwKICAgICJtb2RhbExvY2siOiAwLAogICAgInBvc2l0aW9uZXIiOiAwLAogICAgInBvcnRhbCI6IDAsCiAgICAicHJlc2VuY2UiOiAwLAogICAgImZvcm1CcmlkZ2UiOiAwLAogICAgImxpdmVSZWdpb24iOiAwLAogICAgIm1vZGFsaXR5IjogMCwKICAgICJ0b3RhbCI6IDAKICB9Cn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-004-posit-0a685-controlled-negative-vectors-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-bab1e7beff91b13dc548",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-005 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 283,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:11.978Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-005-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA1LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDUiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fUE9TSVRJT05fT1VUX09GX0JPVU5EQVJZIiwKICAgICJVSUZOX1BPU0lUSU9OX09CU0VSVkVSX0xFQUsiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJwbGFjZW1lbnQiOiAidG9wLXN0YXJ0IiwKICAgICJ2aXJ0dWFsUGxhY2VtZW50IjogImJvdHRvbS1lbmQiLAogICAgIm1pZGRsZXdhcmUiOiB7CiAgICAgICJhcnJvdyI6IHsKICAgICAgICAieCI6IDIxNiwKICAgICAgICAiY2VudGVyT2Zmc2V0IjogMAogICAgICB9LAogICAgICAiYXZhaWxhYmxlV2lkdGgiOiAzMzYsCiAgICAgICJhdmFpbGFibGVIZWlnaHQiOiAxNzgsCiAgICAgICJyZWZlcmVuY2VIaWRkZW4iOiBmYWxzZSwKICAgICAgImVzY2FwZWQiOiBmYWxzZQogICAgfSwKICAgICJhY3RpdmVPYnNlcnZlclJlc291cmNlIjogMQogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-005-posit-cfde0-controlled-negative-vectors-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-abe0ae754737464e7554",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-006 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 454,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:12.269Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-006-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA2LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDYiLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fUE9SVEFMX0hZRFJBVElPTl9EVVBMSUNBVEUiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJzdGF0ZXMiOiBbCiAgICAgICJleGl0aW5nIiwKICAgICAgInVubW91bnRlZCIsCiAgICAgICJlbnRlcmluZyIsCiAgICAgICJlbnRlcmVkIiwKICAgICAgImV4aXRpbmciLAogICAgICAiZW50ZXJpbmciLAogICAgICAiZW50ZXJlZCIsCiAgICAgICJleGl0aW5nIiwKICAgICAgImV4aXRlZCIKICAgIF0KICB9LAogICJyZXNvdXJjZXMiOiB7CiAgICAibGlzdGVuZXIiOiAwLAogICAgIm9ic2VydmVyIjogMCwKICAgICJ0aW1lciI6IDAsCiAgICAiYW5pbWF0aW9uRnJhbWUiOiAwLAogICAgImxheWVyIjogMCwKICAgICJmb2N1c1Njb3BlIjogMCwKICAgICJtb2RhbExvY2siOiAwLAogICAgInBvc2l0aW9uZXIiOiAwLAogICAgInBvcnRhbCI6IDAsCiAgICAicHJlc2VuY2UiOiAwLAogICAgImZvcm1CcmlkZ2UiOiAwLAogICAgImxpdmVSZWdpb24iOiAwLAogICAgIm1vZGFsaXR5IjogMCwKICAgICJ0b3RhbCI6IDAKICB9Cn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-006-posit-73339-controlled-negative-vectors-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-341d7b202f5909616b0c",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        },
+        {
+          "title": "DOM-007 positive and controlled negative vectors",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 385,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:12.730Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "DOM-007-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1ET00tMDA3LVAvTiIsCiAgInJlcXVpcmVtZW50IjogIkRPTS0wMDciLAogICJvdXRjb21lIjogInBhc3MiLAogICJuZWdhdGl2ZUNvZGVzIjogWwogICAgIlVJRk5fRk9STV9CUklER0VfRFVQTElDQVRFIiwKICAgICJVSUZOX0xJVkVfUkVHSU9OX1NUQUxFX01FU1NBR0UiCiAgXSwKICAiZGV0YWlscyI6IHsKICAgICJyZXNldENvdW50IjogMSwKICAgICJzdWJtaXRDb3VudCI6IDEsCiAgICAiZm9ybVZhbHVlcyI6IFsKICAgICAgImFscGhhIiwKICAgICAgImJldGEiCiAgICBdLAogICAgInN0cmVzc0l0ZXJhdGlvbnMiOiAyMAogIH0sCiAgInJlc291cmNlcyI6IHsKICAgICJsaXN0ZW5lciI6IDAsCiAgICAib2JzZXJ2ZXIiOiAwLAogICAgInRpbWVyIjogMCwKICAgICJhbmltYXRpb25GcmFtZSI6IDAsCiAgICAibGF5ZXIiOiAwLAogICAgImZvY3VzU2NvcGUiOiAwLAogICAgIm1vZGFsTG9jayI6IDAsCiAgICAicG9zaXRpb25lciI6IDAsCiAgICAicG9ydGFsIjogMCwKICAgICJwcmVzZW5jZSI6IDAsCiAgICAiZm9ybUJyaWRnZSI6IDAsCiAgICAibGl2ZVJlZ2lvbiI6IDAsCiAgICAibW9kYWxpdHkiOiAwLAogICAgInRvdGFsIjogMAogIH0KfQ=="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/dom-platform-DOM-007-posit-b9072-controlled-negative-vectors-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7b5eb9c1f23d79d64395-ce2033cf26155315daf9",
+          "file": "dom-platform.spec.ts",
+          "line": 14,
+          "column": 7
+        }
+      ]
+    },
+    {
+      "title": "overlay-primitives.spec.ts",
+      "file": "overlay-primitives.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "TV-PRIM-002-P/N overlay and modal browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 576,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:05.585Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMi1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkFsZXJ0RGlhbG9nIiwKICAgICJEaWFsb2ciLAogICAgIkRyYXdlciIsCiAgICAiRmxvYXRpbmdQYW5lbCIsCiAgICAiSG92ZXJDYXJkIiwKICAgICJQb3BvdmVyIiwKICAgICJUb29sdGlwIiwKICAgICJUb3VyIgogIF0sCiAgImZvY3VzIjogewogICAgIkFsZXJ0RGlhbG9nIjogImFsZXJ0LWRpYWxvZy1jYW5jZWwtdWlmbi1yb290LWFsZXJ0LWRpYWxvZy0xIiwKICAgICJEaWFsb2ciOiAiY2FuY2VsIiwKICAgICJEcmF3ZXIiOiAiY2FuY2VsIiwKICAgICJGbG9hdGluZ1BhbmVsIjogImZsb2F0aW5nLXBhbmVsLWNvbnRlbnQtdWlmbi1yb290LWZsb2F0aW5nLXBhbmVsLTEiLAogICAgIlBvcG92ZXIiOiAicG9wb3Zlci1jb250ZW50LXVpZm4tcm9vdC1wb3BvdmVyLTEiLAogICAgIlRvdXIiOiAidG91ci1jb250ZW50LXVpZm4tcm9vdC10b3VyLTEtbmV4dCIsCiAgICAiSG92ZXJDYXJkIjogIm5vbmUiLAogICAgIlRvb2x0aXAiOiAibm9uZSIKICB9LAogICJnZW9tZXRyeSI6IHsKICAgICJGbG9hdGluZ1BhbmVsIjogIjE2cHgsMTA3Ljg3NXB4LGJvdHRvbSIsCiAgICAiUG9wb3ZlciI6ICI0cHgsMTA3Ljg3NXB4LGJvdHRvbSIsCiAgICAiVG91ciI6ICI0cHgsMTA3Ljg3NXB4LGJvdHRvbSIsCiAgICAiSG92ZXJDYXJkIjogIjRweCwxMDcuODc1cHgsYm90dG9tIiwKICAgICJUb29sdGlwIjogIjRweCwxMDcuODc1cHgsYm90dG9tIgogIH0sCiAgIm5lc3RlZERpc21pc3NhbCI6IFsKICAgICJtZW51OnBvaW50ZXItb3V0c2lkZSIsCiAgICAicG9wb3Zlcjpwb2ludGVyLW91dHNpZGUiLAogICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgXSwKICAibmVnYXRpdmVDb2RlcyI6IFsKICAgICJVSUZOX0FMRVJUX0RJQUxPR19ESVNNSVNTQUwiLAogICAgIlVJRk5fQUNDRVNTSUJMRV9OQU1FX01JU1NJTkciCiAgXSwKICAidHJhY2VLaW5kcyI6IFsKICAgICJkb20iLAogICAgImRvbS1mb2N1cy1zY29wZSIsCiAgICAiZG9tLWxheWVyIiwKICAgICJkb20tbW9kYWwiLAogICAgImRvbS1vdmVybGF5IiwKICAgICJkb20tcG9ydGFsIiwKICAgICJkb20tcG9zaXRpb24iLAogICAgImRvbS1wcmVzZW5jZSIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAKICBdCn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/overlay-primitives-TV-PRIM-d7667-ay-and-modal-browser-matrix-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7a6344c0e0ca24b8adf2-50a35be0ed7005ec480e",
+          "file": "overlay-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-002-P/N overlay and modal browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 682,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:09.203Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMi1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkFsZXJ0RGlhbG9nIiwKICAgICJEaWFsb2ciLAogICAgIkRyYXdlciIsCiAgICAiRmxvYXRpbmdQYW5lbCIsCiAgICAiSG92ZXJDYXJkIiwKICAgICJQb3BvdmVyIiwKICAgICJUb29sdGlwIiwKICAgICJUb3VyIgogIF0sCiAgImZvY3VzIjogewogICAgIkFsZXJ0RGlhbG9nIjogImFsZXJ0LWRpYWxvZy1jYW5jZWwtdWlmbi1yb290LWFsZXJ0LWRpYWxvZy0xIiwKICAgICJEaWFsb2ciOiAiY2FuY2VsIiwKICAgICJEcmF3ZXIiOiAiY2FuY2VsIiwKICAgICJGbG9hdGluZ1BhbmVsIjogImZsb2F0aW5nLXBhbmVsLWNvbnRlbnQtdWlmbi1yb290LWZsb2F0aW5nLXBhbmVsLTEiLAogICAgIlBvcG92ZXIiOiAicG9wb3Zlci1jb250ZW50LXVpZm4tcm9vdC1wb3BvdmVyLTEiLAogICAgIlRvdXIiOiAidG91ci1jb250ZW50LXVpZm4tcm9vdC10b3VyLTEtbmV4dCIsCiAgICAiSG92ZXJDYXJkIjogIm5vbmUiLAogICAgIlRvb2x0aXAiOiAibm9uZSIKICB9LAogICJnZW9tZXRyeSI6IHsKICAgICJGbG9hdGluZ1BhbmVsIjogIjE2cHgsMTA4Ljg2N3B4LGJvdHRvbSIsCiAgICAiUG9wb3ZlciI6ICI0cHgsMTA4Ljg2N3B4LGJvdHRvbSIsCiAgICAiVG91ciI6ICI0cHgsMTA4Ljg2N3B4LGJvdHRvbSIsCiAgICAiSG92ZXJDYXJkIjogIjRweCwxMDguODY3cHgsYm90dG9tIiwKICAgICJUb29sdGlwIjogIjRweCwxMDguODY3cHgsYm90dG9tIgogIH0sCiAgIm5lc3RlZERpc21pc3NhbCI6IFsKICAgICJtZW51OnBvaW50ZXItb3V0c2lkZSIsCiAgICAicG9wb3Zlcjpwb2ludGVyLW91dHNpZGUiLAogICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgXSwKICAibmVnYXRpdmVDb2RlcyI6IFsKICAgICJVSUZOX0FMRVJUX0RJQUxPR19ESVNNSVNTQUwiLAogICAgIlVJRk5fQUNDRVNTSUJMRV9OQU1FX01JU1NJTkciCiAgXSwKICAidHJhY2VLaW5kcyI6IFsKICAgICJkb20iLAogICAgImRvbS1mb2N1cy1zY29wZSIsCiAgICAiZG9tLWxheWVyIiwKICAgICJkb20tbW9kYWwiLAogICAgImRvbS1vdmVybGF5IiwKICAgICJkb20tcG9ydGFsIiwKICAgICJkb20tcG9zaXRpb24iLAogICAgImRvbS1wcmVzZW5jZSIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAKICBdCn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/overlay-primitives-TV-PRIM-d7667-ay-and-modal-browser-matrix-firefox/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7a6344c0e0ca24b8adf2-f421ed5baefeef04342b",
+          "file": "overlay-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-002-P/N overlay and modal browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 673,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:13.124Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMi1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkFsZXJ0RGlhbG9nIiwKICAgICJEaWFsb2ciLAogICAgIkRyYXdlciIsCiAgICAiRmxvYXRpbmdQYW5lbCIsCiAgICAiSG92ZXJDYXJkIiwKICAgICJQb3BvdmVyIiwKICAgICJUb29sdGlwIiwKICAgICJUb3VyIgogIF0sCiAgImZvY3VzIjogewogICAgIkFsZXJ0RGlhbG9nIjogImFsZXJ0LWRpYWxvZy1jYW5jZWwtdWlmbi1yb290LWFsZXJ0LWRpYWxvZy0xIiwKICAgICJEaWFsb2ciOiAiY2FuY2VsIiwKICAgICJEcmF3ZXIiOiAiY2FuY2VsIiwKICAgICJGbG9hdGluZ1BhbmVsIjogImZsb2F0aW5nLXBhbmVsLWNvbnRlbnQtdWlmbi1yb290LWZsb2F0aW5nLXBhbmVsLTEiLAogICAgIlBvcG92ZXIiOiAicG9wb3Zlci1jb250ZW50LXVpZm4tcm9vdC1wb3BvdmVyLTEiLAogICAgIlRvdXIiOiAidG91ci1jb250ZW50LXVpZm4tcm9vdC10b3VyLTEtbmV4dCIsCiAgICAiSG92ZXJDYXJkIjogIm5vbmUiLAogICAgIlRvb2x0aXAiOiAibm9uZSIKICB9LAogICJnZW9tZXRyeSI6IHsKICAgICJGbG9hdGluZ1BhbmVsIjogIjE2cHgsMTA2Ljg3NXB4LGJvdHRvbSIsCiAgICAiUG9wb3ZlciI6ICI0cHgsMTA2Ljg3NXB4LGJvdHRvbSIsCiAgICAiVG91ciI6ICI0cHgsMTA2Ljg3NXB4LGJvdHRvbSIsCiAgICAiSG92ZXJDYXJkIjogIjRweCwxMDYuODc1cHgsYm90dG9tIiwKICAgICJUb29sdGlwIjogIjRweCwxMDYuODc1cHgsYm90dG9tIgogIH0sCiAgIm5lc3RlZERpc21pc3NhbCI6IFsKICAgICJtZW51OnBvaW50ZXItb3V0c2lkZSIsCiAgICAicG9wb3Zlcjpwb2ludGVyLW91dHNpZGUiLAogICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgXSwKICAibmVnYXRpdmVDb2RlcyI6IFsKICAgICJVSUZOX0FMRVJUX0RJQUxPR19ESVNNSVNTQUwiLAogICAgIlVJRk5fQUNDRVNTSUJMRV9OQU1FX01JU1NJTkciCiAgXSwKICAidHJhY2VLaW5kcyI6IFsKICAgICJkb20iLAogICAgImRvbS1mb2N1cy1zY29wZSIsCiAgICAiZG9tLWxheWVyIiwKICAgICJkb20tbW9kYWwiLAogICAgImRvbS1vdmVybGF5IiwKICAgICJkb20tcG9ydGFsIiwKICAgICJkb20tcG9zaXRpb24iLAogICAgImRvbS1wcmVzZW5jZSIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAKICBdCn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/overlay-primitives-TV-PRIM-d7667-ay-and-modal-browser-matrix-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7a6344c0e0ca24b8adf2-a277dcc0a4db13ae6b22",
+          "file": "overlay-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-002-P/N overlay and modal browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-chromium",
+              "projectName": "mobile-chromium",
+              "results": [
+                {
+                  "workerIndex": 3,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1037,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:14.080Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMi1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkFsZXJ0RGlhbG9nIiwKICAgICJEaWFsb2ciLAogICAgIkRyYXdlciIsCiAgICAiRmxvYXRpbmdQYW5lbCIsCiAgICAiSG92ZXJDYXJkIiwKICAgICJQb3BvdmVyIiwKICAgICJUb29sdGlwIiwKICAgICJUb3VyIgogIF0sCiAgImZvY3VzIjogewogICAgIkFsZXJ0RGlhbG9nIjogImFsZXJ0LWRpYWxvZy1jYW5jZWwtdWlmbi1yb290LWFsZXJ0LWRpYWxvZy0xIiwKICAgICJEaWFsb2ciOiAiY2FuY2VsIiwKICAgICJEcmF3ZXIiOiAiY2FuY2VsIiwKICAgICJGbG9hdGluZ1BhbmVsIjogImZsb2F0aW5nLXBhbmVsLWNvbnRlbnQtdWlmbi1yb290LWZsb2F0aW5nLXBhbmVsLTEiLAogICAgIlBvcG92ZXIiOiAicG9wb3Zlci1jb250ZW50LXVpZm4tcm9vdC1wb3BvdmVyLTEiLAogICAgIlRvdXIiOiAidG91ci1jb250ZW50LXVpZm4tcm9vdC10b3VyLTEtbmV4dCIsCiAgICAiSG92ZXJDYXJkIjogIm5vbmUiLAogICAgIlRvb2x0aXAiOiAibm9uZSIKICB9LAogICJnZW9tZXRyeSI6IHsKICAgICJGbG9hdGluZ1BhbmVsIjogIjE2cHgsMTQ1Ljg3NXB4LGJvdHRvbSIsCiAgICAiUG9wb3ZlciI6ICI0cHgsMTQ1Ljg3NXB4LGJvdHRvbSIsCiAgICAiVG91ciI6ICI0cHgsMTQ1Ljg3NXB4LGJvdHRvbSIsCiAgICAiSG92ZXJDYXJkIjogIjRweCwxNDUuODc1cHgsYm90dG9tIiwKICAgICJUb29sdGlwIjogIjRweCwxNDUuODc1cHgsYm90dG9tIgogIH0sCiAgIm5lc3RlZERpc21pc3NhbCI6IFsKICAgICJtZW51OnBvaW50ZXItb3V0c2lkZSIsCiAgICAicG9wb3Zlcjpwb2ludGVyLW91dHNpZGUiLAogICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgXSwKICAibmVnYXRpdmVDb2RlcyI6IFsKICAgICJVSUZOX0FMRVJUX0RJQUxPR19ESVNNSVNTQUwiLAogICAgIlVJRk5fQUNDRVNTSUJMRV9OQU1FX01JU1NJTkciCiAgXSwKICAidHJhY2VLaW5kcyI6IFsKICAgICJkb20iLAogICAgImRvbS1mb2N1cy1zY29wZSIsCiAgICAiZG9tLWxheWVyIiwKICAgICJkb20tbW9kYWwiLAogICAgImRvbS1vdmVybGF5IiwKICAgICJkb20tcG9ydGFsIiwKICAgICJkb20tcG9zaXRpb24iLAogICAgImRvbS1wcmVzZW5jZSIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAKICBdCn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/overlay-primitives-TV-PRIM-d7667-ay-and-modal-browser-matrix-mobile-chromium/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7a6344c0e0ca24b8adf2-7ac5e15f1b28f0ed98bf",
+          "file": "overlay-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        },
+        {
+          "title": "TV-PRIM-002-P/N overlay and modal browser matrix",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "mobile-webkit",
+              "projectName": "mobile-webkit",
+              "results": [
+                {
+                  "workerIndex": 4,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 913,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-18T10:33:15.478Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "TV-PRIM-002-result",
+                      "contentType": "application/json",
+                      "body": "ewogICJ2ZWN0b3JJZCI6ICJUVi1QUklNLTAwMi1QL04iLAogICJvdXRjb21lIjogInBhc3MiLAogICJwcmltaXRpdmVzIjogWwogICAgIkFsZXJ0RGlhbG9nIiwKICAgICJEaWFsb2ciLAogICAgIkRyYXdlciIsCiAgICAiRmxvYXRpbmdQYW5lbCIsCiAgICAiSG92ZXJDYXJkIiwKICAgICJQb3BvdmVyIiwKICAgICJUb29sdGlwIiwKICAgICJUb3VyIgogIF0sCiAgImZvY3VzIjogewogICAgIkFsZXJ0RGlhbG9nIjogImFsZXJ0LWRpYWxvZy1jYW5jZWwtdWlmbi1yb290LWFsZXJ0LWRpYWxvZy0xIiwKICAgICJEaWFsb2ciOiAiY2FuY2VsIiwKICAgICJEcmF3ZXIiOiAiY2FuY2VsIiwKICAgICJGbG9hdGluZ1BhbmVsIjogImZsb2F0aW5nLXBhbmVsLWNvbnRlbnQtdWlmbi1yb290LWZsb2F0aW5nLXBhbmVsLTEiLAogICAgIlBvcG92ZXIiOiAicG9wb3Zlci1jb250ZW50LXVpZm4tcm9vdC1wb3BvdmVyLTEiLAogICAgIlRvdXIiOiAidG91ci1jb250ZW50LXVpZm4tcm9vdC10b3VyLTEtbmV4dCIsCiAgICAiSG92ZXJDYXJkIjogIm5vbmUiLAogICAgIlRvb2x0aXAiOiAibm9uZSIKICB9LAogICJnZW9tZXRyeSI6IHsKICAgICJGbG9hdGluZ1BhbmVsIjogIjE2cHgsMTQ0Ljg3NXB4LGJvdHRvbSIsCiAgICAiUG9wb3ZlciI6ICI0cHgsMTQ0Ljg3NXB4LGJvdHRvbSIsCiAgICAiVG91ciI6ICI0cHgsMTQ0Ljg3NXB4LGJvdHRvbSIsCiAgICAiSG92ZXJDYXJkIjogIjRweCwxNDQuODc1cHgsYm90dG9tIiwKICAgICJUb29sdGlwIjogIjRweCwxNDQuODc1cHgsYm90dG9tIgogIH0sCiAgIm5lc3RlZERpc21pc3NhbCI6IFsKICAgICJtZW51OnBvaW50ZXItb3V0c2lkZSIsCiAgICAicG9wb3Zlcjpwb2ludGVyLW91dHNpZGUiLAogICAgImRpYWxvZzpwb2ludGVyLW91dHNpZGUiCiAgXSwKICAibmVnYXRpdmVDb2RlcyI6IFsKICAgICJVSUZOX0FMRVJUX0RJQUxPR19ESVNNSVNTQUwiLAogICAgIlVJRk5fQUNDRVNTSUJMRV9OQU1FX01JU1NJTkciCiAgXSwKICAidHJhY2VLaW5kcyI6IFsKICAgICJkb20iLAogICAgImRvbS1mb2N1cy1zY29wZSIsCiAgICAiZG9tLWxheWVyIiwKICAgICJkb20tbW9kYWwiLAogICAgImRvbS1vdmVybGF5IiwKICAgICJkb20tcG9ydGFsIiwKICAgICJkb20tcG9zaXRpb24iLAogICAgImRvbS1wcmVzZW5jZSIKICBdLAogICJyZXNvdXJjZVRvdGFscyI6IFsKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAsCiAgICAwLAogICAgMCwKICAgIDAKICBdCn0="
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/artifacts/overlay-primitives-TV-PRIM-d7667-ay-and-modal-browser-matrix-mobile-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "7a6344c0e0ca24b8adf2-35903e1f5ce03f810eee",
+          "file": "overlay-primitives.spec.ts",
+          "line": 3,
+          "column": 5
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-07-18T10:33:02.594Z",
+    "duration": 13953.075,
+    "expected": 26,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

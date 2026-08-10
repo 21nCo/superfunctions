@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_16",
+  "status": "passed",
+  "requirements": {
+    "GEN-001": "passed",
+    "REG-001": "passed"
+  },
+  "vectors": {
+    "TV-GEN-001-P/N": {
+      "components": 61,
+      "parts": 419,
+      "templates": 602,
+      "legacyCatalogs": 0,
+      "definitionSha256": "7aa07aa15267491835d48159776045fb7c092ef42149fefb71344caebaa1ed2d",
+      "generatorSha256": "3c56e4dd070fbf99dc0204474931c4b20b33ec5459a509cbc9cc8f5e6eba4937",
+      "deterministicChecks": 2
+    },
+    "TV-REG-001-P/N": {
+      "signature": {
+        "valid": true,
+        "keyId": "52bc9d0afaa99b8671b3e463",
+        "catalogSha256": "12c06c726aef4f742d4babdd7f7af3a9d587f182785f7b444858a55ca3ad21b5"
+      },
+      "adversarialCases": [
+        "dry-run-no-write",
+        "idempotence",
+        "traversal",
+        "symlink",
+        "checksum",
+        "cycle",
+        "unsupported-framework",
+        "dirty-conflict",
+        "interruption",
+        "rollback"
+      ]
+    }
+  },
+  "checks": [
+    {
+      "command": "/opt/homebrew/bin/node scripts/generate-uifn-phase-16.mjs --check",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"command\": \"generate:uifn-phase-16:check\",\n  \"componentCount\": 61,\n  \"partCount\": 419,\n  \"templateCount\": 602,\n  \"definitionSha256\": \"7aa07aa15267491835d48159776045fb7c092ef42149fefb71344caebaa1ed2d\",\n  \"generatorSha256\": \"3c56e4dd070fbf99dc0204474931c4b20b33ec5459a509cbc9cc8f5e6eba4937\",\n  \"catalogSha256\": \"8ca8fbe7da84631c0c893e100ee983e0bdd4dbf417ed40554a8f0d2adc3964c6\"\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/generate-uifn-phase-16.mjs --check",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"command\": \"generate:uifn-phase-16:check\",\n  \"componentCount\": 61,\n  \"partCount\": 419,\n  \"templateCount\": 602,\n  \"definitionSha256\": \"7aa07aa15267491835d48159776045fb7c092ef42149fefb71344caebaa1ed2d\",\n  \"generatorSha256\": \"3c56e4dd070fbf99dc0204474931c4b20b33ec5459a509cbc9cc8f5e6eba4937\",\n  \"catalogSha256\": \"8ca8fbe7da84631c0c893e100ee983e0bdd4dbf417ed40554a8f0d2adc3964c6\"\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/node --test scripts/verify-uifn-phase-16-contract.test.mjs",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "ok 1 - TV-GEN-001-N kills hand-edited generated output\n  ---\n  duration_ms: 1.32425\n  ...\n# Subtest: TV-REG-001-N kills traversal, repository leakage, and checksum mutation\nok 2 - TV-REG-001-N kills traversal, repository leakage, and checksum mutation\n  ---\n  duration_ms: 0.426708\n  ...\n# Subtest: PHASE_16 static contract is complete\nok 3 - PHASE_16 static contract is complete\n  ---\n  duration_ms: 31.066916\n  ...\n1..3\n# tests 3\n# suites 0\n# pass 3\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 69.173833\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/registry run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/registry@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/registry run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "  \"catalogSha256\": \"12c06c726aef4f742d4babdd7f7af3a9d587f182785f7b444858a55ca3ad21b5\",\n  \"signatureKeyId\": \"52bc9d0afaa99b8671b3e463\",\n  \"installedFiles\": 1,\n  \"changed\": [],\n  \"errors\": []\n}\n\nstdout | src/__tests__/registry-cli.test.ts > TV-REG-001-P/N transaction-safe registry > exposes list/info/validate/doctor/add/remove through the CLI\n{\n  \"ok\": true,\n  \"dryRun\": false,\n  \"removed\": [\n    \"component:button\"\n  ]\n}\n\n ✓ src/__tests__/registry-cli.test.ts (8 tests) 211ms\n\n Test Files  3 passed (3)\n      Tests  17 passed (17)\n   Start at  16:12:16\n   Duration  873ms (transform 450ms, setup 0ms, collect 1.33s, tests 333ms, environment 0ms, prepare 170ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/registry run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "CLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/index.js 2.30 MB\nCJS ⚡️ Build success in 79ms\nESM dist/index.mjs 2.30 MB\nESM ⚡️ Build success in 80ms\nDTS Build start\nDTS ⚡️ Build success in 858ms\nDTS dist/index.d.mts 12.86 KB\nDTS dist/index.d.ts  12.86 KB\nCLI Building entry: src/bin.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/bin.js 2.30 MB\nCJS ⚡️ Build success in 54ms\nESM dist/bin.mjs 2.29 MB\nESM ⚡️ Build success in 55ms\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/registry pack --dry-run",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "CLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nESM dist/index.mjs 2.30 MB\nESM ⚡️ Build success in 54ms\nCJS dist/index.js 2.30 MB\nCJS ⚡️ Build success in 54ms\nDTS Build start\nDTS ⚡️ Build success in 854ms\nDTS dist/index.d.mts 12.86 KB\nDTS dist/index.d.ts  12.86 KB\nCLI Building entry: src/bin.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/bin.js 2.30 MB\nCJS ⚡️ Build success in 57ms\nESM dist/bin.mjs 2.29 MB\nESM ⚡️ Build success in 57ms\nuifn-registry-0.0.1.tgz\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\nnpm notice\nnpm notice 📦  @uifn/registry@0.0.1\nnpm notice Tarball Contents\nnpm notice 2.7kB README.md\nnpm notice 2.4MB dist/bin.js\nnpm notice 2.4MB dist/bin.mjs\nnpm notice 13.2kB dist/index.d.mts\nnpm notice 13.2kB dist/index.d.ts\nnpm notice 2.4MB dist/index.js\nnpm notice 2.4MB dist/index.mjs\nnpm notice 1.6kB package.json\nnpm notice Tarball Details\nnpm notice name: @uifn/registry\nnpm notice version: 0.0.1\nnpm notice filename: uifn-registry-0.0.1.tgz\nnpm notice package size: 834.6 kB\nnpm notice unpacked size: 9.7 MB\nnpm notice shasum: a370a3e73f319905b4b8a4ac6dc17ca1ad22592f\nnpm notice integrity: sha512-k0bvkLc69O3Mr[...]HQvkWMOfsTjag==\nnpm notice total files: 8\nnpm notice\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-phase-15.mjs --static-only",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "        {\n          \"id\": \"low-contrast\",\n          \"code\": \"UIFN_CONTRAST_BUDGET\",\n          \"killed\": true\n        },\n        {\n          \"id\": \"required-motion\",\n          \"code\": \"UIFN_REDUCED_MOTION_VIOLATION\",\n          \"killed\": true\n        }\n      ]\n    },\n    \"TV-HOOK-001-P/N\": {\n      \"hookFiles\": 12,\n      \"capabilityCount\": 8\n    }\n  },\n  \"mutationCount\": 8,\n  \"checkCount\": 0,\n  \"failureCount\": 0,\n  \"failures\": [],\n  \"evidence\": null\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-phase-16-consumers.mjs",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"vector\": \"TV-GEN-001-P\",\n  \"consumerCount\": 6,\n  \"equivalence\": [\n    {\n      \"framework\": \"react\",\n      \"equivalent\": true\n    },\n    {\n      \"framework\": \"svelte\",\n      \"equivalent\": true\n    },\n    {\n      \"framework\": \"solid\",\n      \"equivalent\": true\n    }\n  ],\n  \"evidence\": \"/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-16/20260724T010655Z-PHASE-17-revalidation/clean-consumers.json\"\n}\n\n",
+      "stderrTail": "../../../../../../private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase16-consumers-Z2idy5/react-package/node_modules/@uifn/react/dist/index.mjs (1:0): Module level directives cause errors when bundled, \"use client\" in \"../../../../../../private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase16-consumers-Z2idy5/react-package/node_modules/@uifn/react/dist/index.mjs\" was ignored.\n../../../../../../private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase16-consumers-Z2idy5/react-source/node_modules/@uifn/react/dist/index.mjs (1:0): Module level directives cause errors when bundled, \"use client\" in \"../../../../../../private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase16-consumers-Z2idy5/react-source/node_modules/@uifn/react/dist/index.mjs\" was ignored.\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-phase-14-parity.mjs --trace-dir /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-22T05-30-00-000Z-PHASE-14-canonical-35-cell-contract/traces",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "        \"vectorId\": \"phase-14-clipboard-public-tree\"\n      }\n    },\n    {\n      \"id\": \"react-focus-result\",\n      \"framework\": \"react\",\n      \"primitive\": \"AlertDialog\",\n      \"expectedPath\": \"/focus/1/part\",\n      \"caught\": true,\n      \"issue\": {\n        \"code\": \"UIFN_SEMANTIC_TRACE_DIVERGED\",\n        \"path\": \"/focus/1/part\",\n        \"message\": \"Trace value differs.\",\n        \"expected\": \"content\",\n        \"actual\": \"trigger\",\n        \"framework\": \"react\",\n        \"primitive\": \"AlertDialog\",\n        \"vectorId\": \"phase-14-alert-dialog-public-tree\"\n      }\n    }\n  ],\n  \"issues\": []\n}\n",
+      "stderrTail": ""
+    }
+  ],
+  "failures": [],
+  "provisionalUntilSignedPhase14Compatibility": true
+}

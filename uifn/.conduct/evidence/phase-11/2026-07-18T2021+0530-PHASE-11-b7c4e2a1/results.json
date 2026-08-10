@@ -1,0 +1,182 @@
+{
+  "ok": false,
+  "command": "verify:uifn-phase-11",
+  "requirement": "REACT-001",
+  "vectors": [
+    "TV-REACT-001-P",
+    "TV-REACT-001-N"
+  ],
+  "primitiveCount": 61,
+  "runtimes": [
+    "react-18.3.1",
+    "react-19.2.3"
+  ],
+  "browsers": [
+    "chromium",
+    "firefox",
+    "webkit"
+  ],
+  "browserOutput": "uifn/.conduct/evidence/phase-11/2026-07-18T2021+0530-PHASE-11-b7c4e2a1/browser",
+  "checks": [
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/generate-uifn-phase-11.mjs --check",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"generate:uifn-phase-11 --check\",\n  \"primitiveCount\": 61,\n  \"issues\": []\n}",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/core run typecheck",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/core@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/core run test",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/core@0.0.1 test\n> vitest run\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/core\n\n ✓ src/utils/id.test.ts  (8 tests) 2ms\n ✓ src/utils/position.test.ts  (5 tests) 2ms\n ✓ src/internal/runtime/service.test.ts  (16 tests) 26ms\n ✓ src/primitives/dialog.test.ts  (4 tests) 7ms\n ✓ src/primitives/accordion.test.ts  (3 tests) 5ms\n ✓ src/__tests__/phase-06-algorithms.test.ts  (8 tests) 74ms\n ✓ src/utils/roving-focus.test.ts  (6 tests) 2ms\n ✓ src/primitives/scroll-area.test.ts  (3 tests) 3ms\n ✓ src/primitives/popover.test.ts  (4 tests) 7ms\n ✓ src/primitives/switch.test.ts  (3 tests) 5ms\n ✓ src/primitives/tooltip.test.ts  (2 tests) 7ms\n ✓ src/__tests__/primitive-vectors.test.ts  (5 tests) 7ms\n ✓ src/errors.test.ts  (6 tests) 5ms\n ✓ src/__tests__/phase-08-navigation.test.ts  (11 tests) 23ms\n ✓ src/__tests__/phase-06-primitives.test.ts  (9 tests) 14ms\n ✓ src/__tests__/phase-07-overlays.test.ts  (6 tests) 29ms\n ✓ src/__tests__/phase-09-selection-input.test.ts  (10 tests) 32ms\n ✓ src/__tests__/phase-04-contract.test.ts  (8 tests) 50ms\n ✓ src/primitives/collapsible.test.ts  (3 tests) 8ms\n ✓ src/__tests__/controller-contract.test.ts  (10 tests) 106ms\n ✓ src/primitives/toast.test.ts  (1 test) 8ms\n ✓ src/primitives/alert-dialog.test.ts  (2 tests) 5ms\n ✓ src/primitives/avatar.test.ts  (2 tests) 2ms\n ✓ src/primitives/hover-card.test.ts  (1 test) 6ms\n ✓ src/primitives/separator.test.ts  (2 tests) 4ms\n ✓ src/utils/index.test.ts  (1 test) 1ms\n ✓ src/primitives/toolbar.test.ts  (1 test) 3ms\n ✓ src/primitives/slider.test.ts  (2 tests) 6ms\n ✓ src/primitives/progress.test.ts  (1 test) 4ms\n ✓ src/__tests__/phase-10-gesture-date-feedback.test.ts  (13 tests) 291ms\n\n Test Files  30 passed (30)\n      Tests  156 passed (156)\n   Start at  20:22:27\n   Duration  966ms (transform 1.24s, setup 1ms, collect 5.72s, tests 744ms, environment 3ms, prepare 1.65s)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "command": "npm --workspace @uifn/core run build",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "CLI Using tsup config: /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/core/tsup.config.ts\nCLI Target: es2020\nCLI Cleaning output folder\nCJS Build start\nESM Build start\nDTS Build start\nCJS dist/parts.js                   14.62 KB\nCJS dist/environment.js             15.30 KB\nCJS dist/controller.js              20.16 KB\nCJS dist/errors.js                  14.47 KB\nCJS dist/aria/index.js              378.00 B\nCJS dist/aria/keys.js               376.00 B\nCJS dist/utils/id.js                13.26 KB\nCJS dist/utils/position.js          7.40 KB\nCJS dist/utils/portal.js            1.04 KB\nCJS dist/utils/outside-click.js     1.25 KB\nCJS dist/utils/roving-focus.js      2.96 KB\nCJS dist/utils/focus-trap.js        3.96 KB\nCJS dist/utils/escape-key.js        9.81 KB\nCJS dist/utils/index.js             69.77 KB\nCJS dist/utils/presence.js          47.64 KB\nCJS dist/algorithms/index.js        48.46 KB\nCJS dist/index.js                   457.13 KB\nCJS dist/primitives/index.js        407.49 KB\nCJS dist/parts.js.map               36.98 KB\nCJS dist/environment.js.map         38.84 KB\nCJS dist/aria/index.js.map          779.00 B\nCJS dist/errors.js.map              23.34 KB\nCJS dist/controller.js.map          51.26 KB\nCJS dist/aria/keys.js.map           778.00 B\nCJS dist/utils/outside-click.js.map 3.01 KB\nCJS dist/utils/id.js.map            31.51 KB\nCJS dist/utils/portal.js.map        2.27 KB\nCJS dist/utils/escape-key.js.map    22.92 KB\nCJS dist/utils/roving-focus.js.map  18.59 KB\nCJS dist/utils/focus-trap.js.map    9.18 KB\nCJS dist/utils/position.js.map      19.96 KB\nCJS dist/utils/presence.js.map      121.00 KB\nCJS dist/utils/index.js.map         187.96 KB\nCJS dist/algorithms/index.js.map    112.75 KB\nCJS dist/index.js.map               1.11 MB\nCJS dist/primitives/index.js.map    1.03 MB\nCJS ⚡️ Build success in 1023ms\nESM dist/errors.mjs                  14.25 KB\nESM dist/environment.mjs             15.18 KB\nESM dist/controller.mjs              20.13 KB\nESM dist/parts.mjs                   14.54 KB\nESM dist/aria/index.mjs              364.00 B\nESM dist/aria/keys.mjs               362.00 B\nESM dist/utils/id.mjs                13.08 KB\nESM dist/utils/outside-click.mjs     1.21 KB\nESM dist/utils/focus-trap.mjs        3.85 KB\nESM dist/utils/portal.mjs            1007.00 B\nESM dist/utils/roving-focus.mjs      2.86 KB\nESM dist/algorithms/index.mjs        46.82 KB\nESM dist/utils/position.mjs          7.27 KB\nESM dist/utils/presence.mjs          47.49 KB\nESM dist/utils/escape-key.mjs        9.77 KB\nESM dist/utils/index.mjs             68.99 KB\nESM dist/index.mjs                   451.77 KB\nESM dist/primitives/index.mjs        405.02 KB\nESM dist/errors.mjs.map              23.34 KB\nESM dist/environment.mjs.map         38.83 KB\nESM dist/controller.mjs.map          51.26 KB\nESM dist/parts.mjs.map               36.98 KB\nESM dist/aria/index.mjs.map          778.00 B\nESM dist/aria/keys.mjs.map           777.00 B\nESM dist/utils/outside-click.mjs.map 3.01 KB\nESM dist/utils/id.mjs.map            31.51 KB\nESM dist/utils/portal.mjs.map        2.27 KB\nESM dist/utils/roving-focus.mjs.map  18.59 KB\nESM dist/utils/position.mjs.map      19.96 KB\nESM dist/algorithms/index.mjs.map    112.74 KB\nESM dist/utils/focus-trap.mjs.map    9.18 KB\nESM dist/utils/escape-key.mjs.map    22.92 KB\nESM dist/utils/presence.mjs.map      121.00 KB\nESM dist/utils/index.mjs.map         187.96 KB\nESM dist/index.mjs.map               1.11 MB\nESM dist/primitives/index.mjs.map    1.03 MB\nESM ⚡️ Build success in 1023ms\nDTS ⚡️ Build success in 3209ms\nDTS dist/index.d.ts                13.75 KB\nDTS dist/utils/index.d.ts          1.57 KB\nDTS dist/utils/escape-key.d.ts     504.00 B\nDTS dist/utils/focus-trap.d.ts     1.68 KB\nDTS dist/utils/id.d.ts             1.95 KB\nDTS dist/utils/outside-click.d.ts  714.00 B\nDTS dist/utils/portal.d.ts         539.00 B\nDTS dist/utils/position.d.ts       1.53 KB\nDTS dist/utils/presence.d.ts       1.75 KB\nDTS dist/utils/roving-focus.d.ts   1.17 KB\nDTS dist/controller.d.ts           3.79 KB\nDTS dist/environment.d.ts          4.75 KB\nDTS dist/parts.d.ts                3.92 KB\nDTS dist/errors.d.ts               5.56 KB\nDTS dist/algorithms/index.d.ts     5.70 KB\nDTS dist/aria/keys.d.ts            466.00 B\nDTS dist/primitives/index.d.ts     112.27 KB\nDTS dist/aria/index.d.ts           36.00 B\nDTS dist/color-BLYCEZcw.d.ts       12.34 KB\nDTS dist/index.d.mts               13.77 KB\nDTS dist/utils/index.d.mts         1.58 KB\nDTS dist/utils/escape-key.d.mts    504.00 B\nDTS dist/utils/focus-trap.d.mts    1.68 KB\nDTS dist/utils/id.d.mts            1.95 KB\nDTS dist/utils/outside-click.d.mts 714.00 B\nDTS dist/utils/portal.d.mts        539.00 B\nDTS dist/utils/position.d.mts      1.53 KB\nDTS dist/utils/presence.d.mts      1.75 KB\nDTS dist/utils/roving-focus.d.mts  1.17 KB\nDTS dist/controller.d.mts          3.79 KB\nDTS dist/environment.d.mts         4.75 KB\nDTS dist/parts.d.mts               3.92 KB\nDTS dist/errors.d.mts              5.56 KB\nDTS dist/algorithms/index.d.mts    5.70 KB\nDTS dist/aria/keys.d.mts           466.00 B\nDTS dist/primitives/index.d.mts    112.28 KB\nDTS dist/aria/index.d.mts          37.00 B\nDTS dist/color-BLYCEZcw.d.mts      12.34 KB",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/dom run typecheck",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/dom run test",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 test\n> vitest run\n\n\n RUN  v3.2.4 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom\n\n ✓ src/positioning.test.ts (1 test) 1ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  20:22:33\n   Duration  178ms (transform 37ms, setup 0ms, collect 32ms, tests 1ms, environment 0ms, prepare 50ms)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "command": "npm --workspace @uifn/dom run build",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --sourcemap\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/index.js     121.33 KB\nCJS dist/index.js.map 231.77 KB\nCJS ⚡️ Build success in 21ms\nESM dist/index.mjs     117.80 KB\nESM dist/index.mjs.map 231.72 KB\nESM ⚡️ Build success in 21ms\nDTS Build start\nDTS ⚡️ Build success in 888ms\nDTS dist/index.d.mts 25.36 KB\nDTS dist/index.d.ts  25.36 KB",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/adapter-kit run typecheck",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/adapter-kit run test",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": false,
+      "status": 1,
+      "stdout": "> @uifn/adapter-kit@0.0.1 test\n> vitest run --config vitest.config.ts --pool=forks --maxWorkers=1 --minWorkers=1\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/adapter-kit\n\n ❯ src/__tests__/conformance.test.ts  (4 tests | 1 failed) 61ms\n   ❯ src/__tests__/conformance.test.ts > adapter conformance harness > runs primitive vectors across every target framework fixture\n     → expected false to be true // Object.is equality\n ✓ src/__tests__/refs-lifecycle-focus-portal-ssr.test.ts  (6 tests) 3ms\n ✓ src/__tests__/hooks.test.ts  (3 tests) 3ms\n ✓ src/__tests__/merge-props.test.ts  (3 tests) 2ms\n\n Test Files  1 failed | 3 passed (4)\n      Tests  1 failed | 15 passed (16)\n   Start at  20:22:36\n   Duration  777ms (transform 239ms, setup 0ms, collect 357ms, tests 69ms, environment 0ms, prepare 109ms)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  src/__tests__/conformance.test.ts > adapter conformance harness > runs primitive vectors across every target framework fixture\nAssertionError: expected false to be true // Object.is equality\n\n- Expected\n+ Received\n\n- true\n+ false\n\n ❯ src/__tests__/conformance.test.ts:23:23\n     21|     });\n     22| \n     23|     expect(result.ok).toBe(true);\n       |                       ^\n     24|     expect(result.frameworksPassed).toEqual(ADAPTER_CONFORMANCE_FRAMEW…\n     25|     expect(ADAPTER_KIT_PRIMITIVE_INVENTORY).toHaveLength(37);\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\nnpm error Lifecycle script `test` failed with error:\nnpm error code 1\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/adapter-kit\nnpm error workspace @uifn/adapter-kit@0.0.1\nnpm error location /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/adapter-kit\nnpm error command failed\nnpm error command sh -c vitest run --config vitest.config.ts --pool=forks --maxWorkers=1 --minWorkers=1"
+    },
+    {
+      "command": "npm --workspace @uifn/adapter-kit run build",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/index.js 38.59 KB\nCJS ⚡️ Build success in 13ms\nESM dist/index.mjs 36.67 KB\nESM ⚡️ Build success in 13ms\nDTS Build start\nDTS ⚡️ Build success in 1301ms\nDTS dist/index.d.mts 10.27 KB\nDTS dist/index.d.ts  10.27 KB",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/react run typecheck",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/react@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/react run test",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/react@0.0.1 test\n> vitest run\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/react\n\n ✓ src/hooks/use-id.test.tsx  (1 test) 12ms\n ✓ src/__tests__/phase-09-input-events.test.tsx  (2 tests) 20ms\n ✓ src/hooks/use-outside-click.test.tsx  (2 tests) 19ms\n ✓ src/toggle.test.tsx  (1 test) 24ms\n ✓ src/hooks/hooks.behavior.test.tsx  (3 tests) 106ms\n ✓ src/toolbar.test.tsx  (1 test) 88ms\n ✓ src/ssr-hydration.test.tsx  (1 test) 187ms\n ✓ src/__tests__/react-core-adapter.test.tsx  (3 tests) 135ms\n ✓ src/__tests__/react-adapter-matrix.test.tsx  (3 tests) 180ms\n ✓ src/__tests__/phase-11-react-contract.test.tsx  (5 tests) 313ms\n\n Test Files  10 passed (10)\n      Tests  22 passed (22)\n   Start at  20:22:41\n   Duration  1.41s (transform 1.01s, setup 1.26s, collect 3.00s, tests 1.08s, environment 3.99s, prepare 558ms)",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/react run build",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "CJS dist/generated/tooltip.js.map         71.00 B\nCJS dist/generated/slider.js.map          70.00 B\nCJS dist/generated/switch.js.map          70.00 B\nCJS dist/generated/splitter.js.map        72.00 B\nCJS dist/generated/toast.js.map           69.00 B\nCJS dist/generated/timer.js.map           69.00 B\nCJS dist/generated/tabs.js.map            68.00 B\nCJS dist/generated/tags-input.js.map      74.00 B\nCJS dist/generated/signature-pad.js.map   77.00 B\nCJS dist/generated/scroll-area.js.map     75.00 B\nCJS dist/generated/rating-group.js.map    76.00 B\nCJS dist/generated/qr-code.js.map         71.00 B\nCJS dist/generated/segment-group.js.map   77.00 B\nCJS dist/generated/select.js.map          70.00 B\nCJS dist/generated/meter.js.map           69.00 B\nCJS dist/generated/radio-group.js.map     75.00 B\nCJS dist/generated/separator.js.map       73.00 B\nCJS dist/generated/pagination.js.map      74.00 B\nCJS dist/generated/navigation-menu.js.map 79.00 B\nCJS dist/generated/number-input.js.map    76.00 B\nCJS dist/generated/pin-input.js.map       73.00 B\nCJS dist/generated/password-input.js.map  78.00 B\nCJS dist/generated/hover-card.js.map      74.00 B\nCJS dist/generated/popover.js.map         71.00 B\nCJS dist/generated/image-cropper.js.map   77.00 B\nCJS dist/generated/progress.js.map        72.00 B\nCJS dist/generated/form.js.map            68.00 B\nCJS dist/generated/menu.js.map            68.00 B\nCJS dist/generated/date-picker.js.map     75.00 B\nCJS dist/generated/listbox.js.map         71.00 B\nCJS dist/generated/dialog.js.map          70.00 B\nCJS dist/generated/marquee.js.map         71.00 B\nCJS dist/generated/editable.js.map        72.00 B\nCJS dist/generated/menubar.js.map         71.00 B\nCJS dist/generated/input.js.map           69.00 B\nCJS dist/generated/drawer.js.map          70.00 B\nCJS dist/generated/fieldset.js.map        72.00 B\nCJS dist/generated/floating-panel.js.map  78.00 B\nCJS dist/generated/field.js.map           69.00 B\nCJS dist/generated/file-upload.js.map     75.00 B\nCJS dist/generated/checkbox-group.js.map  78.00 B\nCJS dist/generated/color-picker.js.map    76.00 B\nCJS dist/generated/checkbox.js.map        72.00 B\nCJS dist/generated/collapsible.js.map     75.00 B\nCJS dist/generated/combobox.js.map        72.00 B\nCJS dist/generated/context-menu.js.map    76.00 B\nCJS dist/generated/clipboard.js.map       73.00 B\nCJS dist/chunk-6T6OHRPX.js.map            3.30 KB\nCJS dist/generated/date-input.js.map      74.00 B\nCJS dist/chunk-U5OSYWGI.js.map            2.39 KB\nCJS dist/index.js.map                     3.54 KB\nCJS dist/chunk-BMOMMNPH.js.map            5.29 KB\nCJS dist/chunk-VYG5BLQD.js.map            5.28 KB\nCJS dist/chunk-QOS63MV7.js.map            7.48 KB\nCJS dist/chunk-PXCW3RQE.js.map            10.58 KB\nCJS dist/chunk-RINI4WMJ.js.map            4.70 KB\nCJS dist/chunk-KSM4PY2J.js.map            7.20 KB\nCJS dist/chunk-ZVU3Y76Q.js.map            5.22 KB\nCJS dist/chunk-WWACFPBY.js.map            5.77 KB\nCJS dist/chunk-U4EWMY5E.js.map            7.32 KB\nCJS dist/chunk-ZOKOPLOS.js.map            9.11 KB\nCJS dist/chunk-QEHTY634.js.map            7.07 KB\nCJS dist/chunk-VQS5LVDV.js.map            5.82 KB\nCJS dist/chunk-YILC4ELE.js.map            2.46 KB\nCJS dist/chunk-44B7LF3J.js.map            3.76 KB\nCJS dist/chunk-HCQJSVNU.js.map            5.06 KB\nCJS dist/chunk-OJLFIJED.js.map            6.40 KB\nCJS dist/chunk-AVZ4QZN6.js.map            11.66 KB\nCJS dist/chunk-WP4R7HNU.js.map            6.21 KB\nCJS dist/chunk-NK5UJSQL.js.map            7.12 KB\nCJS dist/chunk-MHCHFNKW.js.map            6.91 KB\nCJS dist/chunk-HAPY4JIU.js.map            7.13 KB\nCJS dist/chunk-3ZC55ZXV.js.map            8.62 KB\nCJS dist/chunk-35PLXFJL.js.map            5.03 KB\nCJS dist/chunk-6JXOMCLA.js.map            6.04 KB\nCJS dist/chunk-ANCITDDE.js.map            5.97 KB\nCJS dist/chunk-3V7QPQN7.js.map            8.01 KB\nCJS dist/chunk-6BDPUMFJ.js.map            5.45 KB\nCJS dist/chunk-NHGZFY6B.js.map            3.73 KB\nCJS dist/chunk-HVXBUSCH.js.map            7.11 KB\nCJS dist/chunk-NFYPW3UQ.js.map            7.46 KB\nCJS dist/chunk-CI2UL3BI.js.map            8.15 KB\nCJS dist/chunk-T3Z7HWC5.js.map            2.34 KB\nCJS dist/chunk-6KSYKFAV.js.map            6.50 KB\nCJS dist/chunk-Y4LHBJE6.js.map            8.08 KB\nCJS dist/chunk-ECOIWOJ5.js.map            12.92 KB\nCJS dist/chunk-QE5FAELN.js.map            4.50 KB\nCJS dist/chunk-SV5EBO2P.js.map            6.78 KB\nCJS dist/chunk-LRKJP7F2.js.map            8.79 KB\nCJS dist/chunk-B5JYRUSL.js.map            8.25 KB\nCJS dist/chunk-QUZIV3DL.js.map            5.41 KB\nCJS dist/chunk-4V4K7S6J.js.map            9.44 KB\nCJS dist/chunk-JSOYTV47.js.map            5.88 KB\nCJS dist/chunk-AFDZNARE.js.map            5.33 KB\nCJS dist/chunk-JEV24MIG.js.map            10.95 KB\nCJS dist/chunk-HZEVB6JK.js.map            10.68 KB\nCJS dist/chunk-BANSUZGR.js.map            3.97 KB\nCJS dist/chunk-MQFZRI2C.js.map            9.62 KB\nCJS dist/chunk-TRX3OAYO.js.map            7.32 KB\nCJS dist/chunk-YW43K6QC.js.map            4.07 KB\nCJS dist/generated/accordion.js.map       73.00 B\nCJS dist/chunk-XCINMNR2.js.map            10.43 KB\nCJS dist/generated/alert-dialog.js.map    76.00 B\nCJS dist/generated/autocomplete.js.map    76.00 B\nCJS dist/chunk-7O6DC6OZ.js.map            10.26 KB\nCJS dist/chunk-O3XGIEH6.js.map            10.10 KB\nCJS dist/generated/angle-slider.js.map    76.00 B\nCJS dist/chunk-RL26ZZN3.js.map            5.42 KB\nCJS dist/chunk-H6ZQ7XZP.js.map            5.57 KB\nCJS dist/generated/button.js.map          70.00 B\nCJS dist/chunk-KMK2R6K6.js.map            3.75 KB\nCJS dist/chunk-WZKXIBJ6.js.map            6.11 KB\nCJS dist/generated/avatar.js.map          70.00 B\nCJS dist/chunk-GFZBAVI7.js.map            8.57 KB\nCJS dist/chunk-ZD6PIPF2.js.map            7.59 KB\nCJS dist/chunk-XK7CL7GY.js.map            4.45 KB\nCJS dist/generated/carousel.js.map        72.00 B\nCJS dist/chunk-YCKWLACF.js.map            64.67 KB\nCJS ⚡️ Build success in 350ms",
+      "stderr": ""
+    },
+    {
+      "command": "npm --workspace @uifn/react exec -- vitest run src/__tests__/phase-11-react-contract.test.tsx",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/react\n\n ✓ src/__tests__/phase-11-react-contract.test.tsx  (5 tests) 287ms\n\n Test Files  1 passed (1)\n      Tests  5 passed (5)\n   Start at  20:22:45\n   Duration  1.07s (transform 327ms, setup 63ms, collect 418ms, tests 287ms, environment 183ms, prepare 31ms)",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/verify-uifn-react-18-runtime.mjs",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"verify:uifn-react-18-runtime\",\n  \"react\": \"18.3.1\",\n  \"sourceConsumer\": true,\n  \"rscSafeImport\": true,\n  \"deterministicSsr\": true,\n  \"streamingSsr\": true,\n  \"hydration\": true,\n  \"abruptUnmount\": true,\n  \"warnings\": 0\n}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/verify-uifn-react-19-consumer.mjs",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"command\": \"verify:uifn-react-19-consumer\",\n  \"fixture\": \"clean-temporary-install\",\n  \"ok\": true,\n  \"react\": \"19.2.3\",\n  \"packageConsumer\": true,\n  \"publicCompoundsMounted\": 61,\n  \"directSubpathTreeShaking\": true,\n  \"rscSafeImport\": true,\n  \"strictMode\": true,\n  \"transition\": true,\n  \"suspense\": true,\n  \"deterministicIds\": true,\n  \"streamingSsr\": true,\n  \"ssrHydration\": true,\n  \"portalHydration\": true,\n  \"formReset\": true,\n  \"errorBoundaryCleanup\": true,\n  \"abruptUnmount\": true,\n  \"warnings\": 0\n}",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node --test scripts/verify-uifn-phase-11-contract.test.mjs",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: Phase 11 mutation classifier emits exact stable codes\nok 1 - Phase 11 mutation classifier emits exact stable codes\n  ---\n  duration_ms: 0.790834\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 32.344584",
+      "stderr": ""
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/verify-uifn-phase-11-contract.mjs --require-dist",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"verify:uifn-phase-11-contract\",\n  \"requirement\": \"REACT-001\",\n  \"vectors\": [\n    \"TV-REACT-001-P\",\n    \"TV-REACT-001-N\"\n  ],\n  \"primitiveCount\": 61,\n  \"reactRuntimes\": [\n    \"18.3.1\",\n    \"19.2.3\"\n  ],\n  \"sourceConsumer\": true,\n  \"packageConsumer\": true,\n  \"issues\": []\n}",
+      "stderr": ""
+    },
+    {
+      "command": "npx playwright test browser/phase11-react.spec.ts --config=playwright.config.ts",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom",
+      "ok": true,
+      "status": 0,
+      "stdout": "Running 3 tests using 1 worker\n\n  ✓  1 [chromium] › browser/phase11-react.spec.ts:3:5 › Phase 11 React compounds run controller and DOM services in real browsers (448ms)\n  ✓  2 [firefox] › browser/phase11-react.spec.ts:3:5 › Phase 11 React compounds run controller and DOM services in real browsers (892ms)\n  ✓  3 [webkit] › browser/phase11-react.spec.ts:3:5 › Phase 11 React compounds run controller and DOM services in real browsers (716ms)\n\n  3 passed (4.3s)",
+      "stderr": "\u001b[2m[WebServer] \u001b[22m(node:97564) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n\u001b[2m[WebServer] \u001b[22m(Use `node --trace-warnings ...` to show where the warning was created)"
+    },
+    {
+      "command": "/opt/homebrew/Cellar/node@20/20.20.0/bin/node scripts/verify-uifn-pack.mjs",
+      "cwd": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn",
+      "ok": false,
+      "status": 1,
+      "stdout": "",
+      "stderr": "{\n  \"ok\": false,\n  \"command\": \"verify-uifn-pack\",\n  \"failures\": [\n    {\n      \"code\": \"UIFN_PACK_TEST_LEAK\",\n      \"package\": \"@uifn/react\",\n      \"path\": \"dist/test/setup.d.ts\"\n    },\n    {\n      \"code\": \"UIFN_PACK_TEST_LEAK\",\n      \"package\": \"@uifn/react\",\n      \"path\": \"dist/test/setup.d.ts.map\"\n    }\n  ]\n}"
+    }
+  ]
+}

@@ -1,0 +1,350 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "command",
+  "framework": "svelte",
+  "deliveryMode": "package",
+  "browser": "firefox",
+  "version": "144.0.2",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-framework=\"svelte\" data-uifn-story-id=\"command--keyboard-focus\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><!----><!----><!----><!----><div id=\"command-root-command-c1\" class=\"uifn-command uifn-command__root\" data-state=\"open\" data-uifn-component=\"command\" data-uifn-part=\"root\"><!----><!----><!----><!----><!----><!----><!----><!----><!----><label id=\"command-label-command-c1\" class=\"uifn-command uifn-command__label\" data-state=\"open\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"command\" data-uifn-part=\"label\"><!----><!---->label fixture<!----> <!----><!----><!----> <!----></label><!----><!----><!----><!----><!----><!----><input autocomplete=\"off\" role=\"combobox\" id=\"command-input-command-c1\" tabindex=\"0\" class=\"uifn-command uifn-command__input\" aria-labelledby=\"command-label-command-c1\" aria-expanded=\"true\" aria-controls=\"command-list-command-c1\" aria-activedescendant=\"command-root-command-c1-item-item-1\" aria-autocomplete=\"list\" aria-invalid=\"false\" aria-required=\"false\" data-state=\"open\" data-uifn-story-anatomy=\"input\" data-uifn-component=\"command\" data-uifn-part=\"input\" value=\"\"><!----><!----><!----><!----><!----><!----><div role=\"listbox\" id=\"command-list-command-c1\" class=\"uifn-command uifn-command__list\" aria-labelledby=\"command-label-command-c1\" aria-multiselectable=\"false\" data-state=\"open\" data-uifn-story-anatomy=\"list\" data-uifn-component=\"command\" data-uifn-part=\"list\"><!----><!----><!----> <!----><!----><!----><!----><!----><!----><!----><div role=\"group\" id=\"command-root-command-c1-group-item-1\" class=\"uifn-command uifn-command__group\" data-state=\"checked\" data-value=\"item-1\" data-uifn-story-anatomy=\"group\" data-uifn-component=\"command\" data-uifn-part=\"group\"><!----><!----><!----> <!----><!----><!----><!----><!----><!----><!----><div role=\"presentation\" id=\"command-root-command-c1-groupHeading-item-1\" class=\"uifn-command uifn-command__groupHeading\" data-state=\"checked\" data-value=\"item-1\" data-uifn-story-anatomy=\"groupHeading\" data-uifn-component=\"command\" data-uifn-part=\"groupHeading\"><!----><!----><!----> <!---->groupHeading fixture<!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><div role=\"option\" id=\"command-root-command-c1-item-item-1\" tabindex=\"0\" class=\"uifn-command uifn-command__item\" aria-selected=\"true\" aria-disabled=\"false\" data-state=\"checked\" data-value=\"item-1\" data-uifn-story-anatomy=\"item\" data-uifn-component=\"command\" data-uifn-part=\"item\"><!----><!---->item fixture<!----> <!----><!----><!----><!----><!----><!----><!----><span id=\"command-root-command-c1-itemIndicator-item-1\" class=\"uifn-command uifn-command__itemIndicator\" aria-hidden=\"false\" data-state=\"checked\" data-value=\"item-1\" data-uifn-story-anatomy=\"itemIndicator\" data-uifn-component=\"command\" data-uifn-part=\"itemIndicator\"><!----><!----><!----> <!---->itemIndicator fixture<!----><!----> <!----></span><!----><!----><!----><!----><!----><!----><kbd id=\"command-root-command-c1-shortcut-item-1\" class=\"uifn-command uifn-command__shortcut\" data-state=\"checked\" data-value=\"item-1\" data-uifn-story-anatomy=\"shortcut\" data-uifn-component=\"command\" data-uifn-part=\"shortcut\"><!----><!----><!----> <!---->shortcut fixture<!----><!----> <!----></kbd><!----> <!----><!----><!----> <!----></div><!----> <!----><!----><!----> <!----></div><!----> <!----><!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><div role=\"status\" id=\"command-empty-command-c1\" hidden=\"\" class=\"uifn-command uifn-command__empty\" aria-live=\"polite\" data-state=\"open\" data-uifn-story-anatomy=\"empty\" data-uifn-component=\"command\" data-uifn-part=\"empty\"><!----><!----><!----> <!---->empty fixture<!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><div role=\"status\" id=\"command-loading-command-c1\" class=\"uifn-command uifn-command__loading\" aria-live=\"polite\" data-state=\"open\" data-uifn-story-anatomy=\"loading\" data-uifn-component=\"command\" data-uifn-part=\"loading\"><!----><!----><!----> <!---->loading fixture<!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><div role=\"separator\" id=\"command-root-command-c1-separator-item-1\" class=\"uifn-command uifn-command__separator\" data-state=\"checked\" data-value=\"item-1\" data-uifn-story-anatomy=\"separator\" data-uifn-component=\"command\" data-uifn-part=\"separator\"><!----><!----><!----> <!----><!----><!----> <!----></div><!----><!----><!----><!----><!----><!----><input type=\"hidden\" value=\"item-1\" id=\"command-hiddeninput-command-c1\" hidden=\"\" class=\"uifn-command uifn-command__hiddenInput\" data-state=\"open\" data-uifn-story-anatomy=\"hiddenInput\" data-uifn-component=\"command\" data-uifn-part=\"hiddenInput\"></div><!----></section>",
+  "semanticTrace": [
+    {
+      "part": "empty",
+      "tag": "div",
+      "role": "status",
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "empty"
+        ]
+      ]
+    },
+    {
+      "part": "group",
+      "tag": "div",
+      "role": "group",
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "group"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "groupHeading",
+      "tag": "div",
+      "role": "presentation",
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "groupHeading"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "input",
+      "tag": "input",
+      "role": "combobox",
+      "aria": [
+        [
+          "aria-activedescendant",
+          "command-root-command-c1-item-item-1"
+        ],
+        [
+          "aria-autocomplete",
+          "list"
+        ],
+        [
+          "aria-controls",
+          "command-list-command-c1"
+        ],
+        [
+          "aria-expanded",
+          "true"
+        ],
+        [
+          "aria-invalid",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "command-label-command-c1"
+        ],
+        [
+          "aria-required",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "input"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "div",
+      "role": "option",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-selected",
+          "true"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "itemIndicator",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-hidden",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemIndicator"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "list",
+      "tag": "div",
+      "role": "listbox",
+      "aria": [
+        [
+          "aria-labelledby",
+          "command-label-command-c1"
+        ],
+        [
+          "aria-multiselectable",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "list"
+        ]
+      ]
+    },
+    {
+      "part": "loading",
+      "tag": "div",
+      "role": "status",
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "loading"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "open"
+        ]
+      ]
+    },
+    {
+      "part": "separator",
+      "tag": "div",
+      "role": "separator",
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "separator"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    },
+    {
+      "part": "shortcut",
+      "tag": "kbd",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "checked"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "shortcut"
+        ],
+        [
+          "data-value",
+          "item-1"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "4b3917bed9e4b71a62315a9d63ad29c70e222c31e333ed645732b1723f129c73"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "1bf82c62d515cd54ebbee0f93c34524760349f8fed59ddc8c51efcda0569f46c"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "1bf82c62d515cd54ebbee0f93c34524760349f8fed59ddc8c51efcda0569f46c"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "281de66db44ab9e1d1209ea22a2f1f91c4665e7cb767970f1b83dbd4ad8d6fa6"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "281de66db44ab9e1d1209ea22a2f1f91c4665e7cb767970f1b83dbd4ad8d6fa6"
+    }
+  ],
+  "focusPath": [
+    "input",
+    "input",
+    "input",
+    "input",
+    "input",
+    "input"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:42:14.545Z",
+  "expiresAt": "2026-08-06T16:42:14.545Z"
+}

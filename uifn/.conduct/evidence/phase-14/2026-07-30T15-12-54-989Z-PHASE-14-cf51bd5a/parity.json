@@ -1,0 +1,81 @@
+{
+  "ok": true,
+  "command": "verify:uifn-phase-14-parity",
+  "requirements": [
+    "PARITY-001"
+  ],
+  "vectors": [
+    "TV-PARITY-001-P",
+    "TV-PARITY-001-N"
+  ],
+  "primitiveCount": 69,
+  "frameworkCount": 3,
+  "installModes": [
+    "source",
+    "package"
+  ],
+  "traceCount": 414,
+  "compared": 414,
+  "crossInstallCompared": 207,
+  "golden": {
+    "path": "uifn/parity/golden/phase-14-semantic-traces.json",
+    "reviewedBy": "Codex",
+    "reviewedAt": "2026-07-30T15:12:54.087Z",
+    "reason": "Fresh 69-component source and package consensus after production-readiness remediation",
+    "traceSha256": "da808d972747ff3a36cf01330c45222bfd2115aa53fbf5b25d92022ee30590ff"
+  },
+  "mutations": [
+    {
+      "id": "solid-aria-activedescendant",
+      "framework": "solid",
+      "primitive": "Autocomplete",
+      "expectedPath": "/parts/0/parts/4/aria/activedescendant",
+      "caught": true,
+      "issue": {
+        "code": "UIFN_SEMANTIC_TRACE_DIVERGED",
+        "path": "/parts/0/parts/4/aria/activedescendant",
+        "message": "Trace value differs.",
+        "expected": "id-6",
+        "actual": "id-1",
+        "framework": "solid",
+        "primitive": "Autocomplete",
+        "vectorId": "phase-14-autocomplete-public-tree"
+      }
+    },
+    {
+      "id": "svelte-callback-order",
+      "framework": "svelte",
+      "primitive": "Clipboard",
+      "expectedPath": "/callbacks/0/arguments/0",
+      "caught": true,
+      "issue": {
+        "code": "UIFN_SEMANTIC_TRACE_DIVERGED",
+        "path": "/callbacks/0/arguments/0",
+        "message": "Trace value differs.",
+        "expected": "copying",
+        "actual": "copied",
+        "framework": "svelte",
+        "primitive": "Clipboard",
+        "vectorId": "phase-14-clipboard-public-tree"
+      }
+    },
+    {
+      "id": "react-focus-result",
+      "framework": "react",
+      "primitive": "AlertDialog",
+      "expectedPath": "/focus/1/part",
+      "caught": true,
+      "issue": {
+        "code": "UIFN_SEMANTIC_TRACE_DIVERGED",
+        "path": "/focus/1/part",
+        "message": "Trace value differs.",
+        "expected": "content",
+        "actual": "trigger",
+        "framework": "react",
+        "primitive": "AlertDialog",
+        "vectorId": "phase-14-alert-dialog-public-tree"
+      }
+    }
+  ],
+  "issues": []
+}

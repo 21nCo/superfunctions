@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "rating-group",
+  "framework": "react",
+  "deliveryMode": "package",
+  "browser": "firefox",
+  "version": "144.0.2",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-id=\"rating-group--keyboard-focus\" data-uifn-story-framework=\"react\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div class=\"uifn-rating-group uifn-rating-group__root\" data-uifn-component=\"rating-group\" data-uifn-part=\"root\" role=\"radiogroup\" id=\"rating-group-root-rating-group-r0-root\" aria-required=\"false\" aria-disabled=\"false\" aria-labelledby=\"rating-group-label-rating-group-r0-label\"><label data-uifn-story-anatomy=\"label\" class=\"uifn-rating-group uifn-rating-group__label\" data-uifn-component=\"rating-group\" data-uifn-part=\"label\" id=\"rating-group-label-rating-group-r0-label\">label fixture</label><div data-uifn-story-anatomy=\"control\" class=\"uifn-rating-group uifn-rating-group__control\" data-uifn-component=\"rating-group\" data-uifn-part=\"control\" id=\"rating-group-control-rating-group-r0-control\"><button data-uifn-story-anatomy=\"item\" class=\"uifn-rating-group uifn-rating-group__item\" data-uifn-component=\"rating-group\" data-uifn-part=\"item\" type=\"button\" role=\"radio\" id=\"rating-group-item-rating-group-r0-item-0\" tabindex=\"0\" aria-checked=\"true\" aria-label=\"0 / 5\" aria-disabled=\"false\" data-state=\"highlighted\">item fixture<span data-uifn-story-anatomy=\"itemIndicator\" class=\"uifn-rating-group uifn-rating-group__itemIndicator\" data-uifn-component=\"rating-group\" data-uifn-part=\"itemIndicator\" id=\"rating-group-indicator-rating-group-r0-indicator-0\" data-state=\"filled\">itemIndicator fixture</span></button></div><input data-uifn-story-anatomy=\"hiddenInput\" class=\"uifn-rating-group uifn-rating-group__hiddenInput\" data-uifn-component=\"rating-group\" data-uifn-part=\"hiddenInput\" type=\"hidden\" id=\"rating-group-input-rating-group-r0-input\" value=\"0\"><span data-uifn-story-anatomy=\"valueText\" class=\"uifn-rating-group uifn-rating-group__valueText\" data-uifn-component=\"rating-group\" data-uifn-part=\"valueText\" id=\"rating-group-value-text-rating-group-r0-value-text\" aria-live=\"polite\" data-value=\"0 / 5\">valueText fixture</span></div></section>",
+  "semanticTrace": [
+    {
+      "part": "control",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "control"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "item",
+      "tag": "button",
+      "role": "radio",
+      "aria": [
+        [
+          "aria-checked",
+          "true"
+        ],
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-label",
+          "0 / 5"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "highlighted"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "item"
+        ]
+      ]
+    },
+    {
+      "part": "itemIndicator",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "filled"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "itemIndicator"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": "radiogroup",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "rating-group-label-rating-group-r0-label"
+        ],
+        [
+          "aria-required",
+          "false"
+        ]
+      ],
+      "data": []
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-live",
+          "polite"
+        ]
+      ],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ],
+        [
+          "data-value",
+          "0 / 5"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "5e68956a9b12726ba7107394900ee4abbc6bc3d8b3f722917d910ac0551e8a99"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "5e68956a9b12726ba7107394900ee4abbc6bc3d8b3f722917d910ac0551e8a99"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "c5446407f8da21f25aa2a1629d37474e0991c58e686878c9ca089dabb24b4b41"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "5e68956a9b12726ba7107394900ee4abbc6bc3d8b3f722917d910ac0551e8a99"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "5e68956a9b12726ba7107394900ee4abbc6bc3d8b3f722917d910ac0551e8a99"
+    }
+  ],
+  "focusPath": [
+    "item",
+    "item",
+    "item",
+    "item",
+    "item",
+    "item"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:35:17.864Z",
+  "expiresAt": "2026-08-06T16:35:17.864Z"
+}

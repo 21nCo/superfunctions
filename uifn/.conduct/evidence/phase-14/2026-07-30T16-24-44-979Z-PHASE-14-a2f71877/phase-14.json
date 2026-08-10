@@ -1,0 +1,247 @@
+{
+  "ok": false,
+  "status": "BLOCKED_EXTERNAL_MATRIX",
+  "command": "verify:uifn-phase-14",
+  "requirements": [
+    "ADAPT-001",
+    "PARITY-001",
+    "COMPAT-001"
+  ],
+  "vectors": [
+    "TV-ADAPT-001-P",
+    "TV-ADAPT-001-N",
+    "TV-PARITY-001-P",
+    "TV-PARITY-001-N",
+    "TV-COMPAT-001-P",
+    "TV-COMPAT-001-N"
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877",
+  "implementationChecksOk": true,
+  "compatibilityMatrixOk": false,
+  "checks": [
+    {
+      "id": "vectors",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node scripts/generate-uifn-phase-14.mjs --check",
+      "ok": true,
+      "status": 0,
+      "stdout": "phase 14 public vectors current (69 compounds, 465 parts)",
+      "stderr": ""
+    },
+    {
+      "id": "core-typecheck",
+      "command": "/opt/homebrew/bin/npm run typecheck --workspace=@uifn/core",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/core@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "id": "core-test",
+      "command": "/opt/homebrew/bin/npm run test --workspace=@uifn/core",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/core@0.0.1 test\n> vitest run\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/core\n\n ✓ src/utils/id.test.ts  (8 tests) 3ms\n ✓ src/internal/runtime/service.test.ts  (16 tests) 28ms\n ✓ src/__tests__/phase-06-algorithms.test.ts  (8 tests) 96ms\n ✓ src/primitives/dialog.test.ts  (4 tests) 9ms\n ✓ src/primitives/accordion.test.ts  (3 tests) 5ms\n ✓ src/errors.test.ts  (6 tests) 4ms\n ✓ src/__tests__/primitive-vectors.test.ts  (5 tests) 9ms\n ✓ src/primitives/foundation-extensions.test.ts  (3 tests) 11ms\n ✓ src/__tests__/phase-08-navigation.test.ts  (13 tests) 23ms\n ✓ src/__tests__/phase-17-accessibility.test.ts  (6 tests) 28ms\n ✓ src/__tests__/phase-07-overlays.test.ts  (6 tests) 30ms\n ✓ src/primitives/popover.test.ts  (4 tests) 10ms\n ✓ src/__tests__/phase-06-primitives.test.ts  (9 tests) 43ms\n ✓ src/__tests__/phase-09-selection-input.test.ts  (19 tests) 53ms\n ✓ src/__tests__/phase-04-contract.test.ts  (8 tests) 50ms\n ✓ src/__tests__/controller-contract.test.ts  (10 tests) 137ms\n ✓ src/internal/runtime/state-channel.test.ts  (2 tests) 27ms\n ✓ src/primitives/switch.test.ts  (3 tests) 9ms\n ✓ src/primitives/scroll-area.test.ts  (3 tests) 8ms\n ✓ src/primitives/tooltip.test.ts  (2 tests) 21ms\n ✓ src/primitives/collapsible.test.ts  (3 tests) 21ms\n ✓ src/__tests__/default-content.test.ts  (3 tests) 3ms\n ✓ src/primitives/avatar.test.ts  (2 tests) 3ms\n ✓ src/primitives/hover-card.test.ts  (1 test) 16ms\n ✓ src/primitives/alert-dialog.test.ts  (2 tests) 9ms\n ✓ src/primitives/slider.test.ts  (2 tests) 39ms\n ✓ src/primitives/toast.test.ts  (1 test) 34ms\n ✓ src/primitives/separator.test.ts  (2 tests) 4ms\n ✓ src/utils/index.test.ts  (1 test) 2ms\n ✓ src/primitives/toolbar.test.ts  (1 test) 6ms\n ✓ src/primitives/progress.test.ts  (1 test) 8ms\n ✓ src/__tests__/phase-10-gesture-date-feedback.test.ts  (13 tests) 598ms\n\n Test Files  32 passed (32)\n      Tests  170 passed (170)\n   Start at  21:54:47\n   Duration  1.54s (transform 1.98s, setup 0ms, collect 8.61s, tests 1.35s, environment 4ms, prepare 2.42s)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "id": "core-build",
+      "command": "/opt/homebrew/bin/npm run build --workspace=@uifn/core",
+      "ok": true,
+      "status": 0,
+      "stdout": "CJS dist/environment.js                   15.65 KB\nCJS dist/parts.js                         15.58 KB\nCJS dist/algorithms/async-list.js         1.74 KB\nCJS dist/algorithms/collection.js         12.02 KB\nCJS dist/algorithms/date-time.js          13.78 KB\nCJS dist/algorithms/id.js                 9.51 KB\nCJS dist/algorithms/color.js              11.88 KB\nCJS dist/algorithms/range.js              11.17 KB\nCJS dist/algorithms/locale.js             1.56 KB\nCJS dist/algorithms/selection.js          2.51 KB\nCJS dist/algorithms/gesture.js            14.49 KB\nCJS dist/algorithms/navigation.js         19.20 KB\nCJS dist/algorithms/virtualization.js     1.22 KB\nCJS dist/aria/index.js                    378.00 B\nCJS dist/aria/keys.js                     376.00 B\nCJS dist/utils/id.js                      13.26 KB\nCJS dist/algorithms/typeahead.js          3.34 KB\nCJS dist/algorithms/index.js              48.46 KB\nCJS dist/primitives/overlay.js            83.10 KB\nCJS dist/utils/index.js                   13.27 KB\nCJS dist/primitives/index.js              434.45 KB\nCJS dist/index.js                         464.65 KB\nCJS dist/controller.js.map                51.26 KB\nCJS dist/errors.js.map                    23.34 KB\nCJS dist/algorithms/async-list.js.map     4.36 KB\nCJS dist/environment.js.map               39.49 KB\nCJS dist/parts.js.map                     39.67 KB\nCJS dist/algorithms/id.js.map             21.65 KB\nCJS dist/algorithms/collection.js.map     29.00 KB\nCJS dist/algorithms/color.js.map          31.07 KB\nCJS dist/algorithms/date-time.js.map      31.95 KB\nCJS dist/algorithms/range.js.map          25.31 KB\nCJS dist/algorithms/locale.js.map         3.54 KB\nCJS dist/algorithms/selection.js.map      5.83 KB\nCJS dist/aria/keys.js.map                 778.00 B\nCJS dist/algorithms/navigation.js.map     42.59 KB\nCJS dist/algorithms/virtualization.js.map 3.10 KB\nCJS dist/algorithms/gesture.js.map        34.95 KB\nCJS dist/algorithms/typeahead.js.map      8.27 KB\nCJS dist/aria/index.js.map                779.00 B\nCJS dist/utils/id.js.map                  31.51 KB\nCJS dist/primitives/overlay.js.map        219.80 KB\nCJS dist/utils/index.js.map               31.52 KB\nCJS dist/algorithms/index.js.map          112.75 KB\nCJS dist/primitives/index.js.map          1.09 MB\nCJS dist/index.js.map                     1.13 MB\nCJS ⚡️ Build success in 1404ms\nDTS ⚡️ Build success in 3757ms\nDTS dist/index.d.ts                      13.27 KB\nDTS dist/algorithms/index.d.ts           2.28 KB\nDTS dist/algorithms/async-list.d.ts      807.00 B\nDTS dist/algorithms/id.d.ts              407.00 B\nDTS dist/algorithms/locale.d.ts          561.00 B\nDTS dist/algorithms/selection.d.ts       1.36 KB\nDTS dist/algorithms/virtualization.d.ts  696.00 B\nDTS dist/algorithms/color.d.ts           996.00 B\nDTS dist/algorithms/date-time.d.ts       2.03 KB\nDTS dist/algorithms/gesture.d.ts         2.38 KB\nDTS dist/algorithms/navigation.d.ts      2.80 KB\nDTS dist/algorithms/range.d.ts           860.00 B\nDTS dist/algorithms/typeahead.d.ts       1011.00 B\nDTS dist/algorithms/collection.d.ts      2.17 KB\nDTS dist/controller.d.ts                 3.79 KB\nDTS dist/environment.d.ts                4.75 KB\nDTS dist/parts.d.ts                      4.66 KB\nDTS dist/errors.d.ts                     5.56 KB\nDTS dist/aria/keys.d.ts                  466.00 B\nDTS dist/utils/id.d.ts                   1.95 KB\nDTS dist/primitives/index.d.ts           113.89 KB\nDTS dist/primitives/overlay.d.ts         707.00 B\nDTS dist/aria/index.d.ts                 36.00 B\nDTS dist/utils/index.d.ts                304.00 B\nDTS dist/overlay-BZBhQibr.d.ts           8.67 KB\nDTS dist/index.d.mts                     13.29 KB\nDTS dist/algorithms/index.d.mts          2.29 KB\nDTS dist/algorithms/async-list.d.mts     807.00 B\nDTS dist/algorithms/id.d.mts             407.00 B\nDTS dist/algorithms/locale.d.mts         561.00 B\nDTS dist/algorithms/selection.d.mts      1.36 KB\nDTS dist/algorithms/virtualization.d.mts 696.00 B\nDTS dist/algorithms/color.d.mts          996.00 B\nDTS dist/algorithms/date-time.d.mts      2.03 KB\nDTS dist/algorithms/gesture.d.mts        2.38 KB\nDTS dist/algorithms/navigation.d.mts     2.80 KB\nDTS dist/algorithms/range.d.mts          860.00 B\nDTS dist/algorithms/typeahead.d.mts      1012.00 B\nDTS dist/algorithms/collection.d.mts     2.17 KB\nDTS dist/controller.d.mts                3.79 KB\nDTS dist/environment.d.mts               4.75 KB\nDTS dist/parts.d.mts                     4.66 KB\nDTS dist/errors.d.mts                    5.56 KB\nDTS dist/aria/keys.d.mts                 466.00 B\nDTS dist/utils/id.d.mts                  1.95 KB\nDTS dist/primitives/index.d.mts          113.90 KB\nDTS dist/primitives/overlay.d.mts        712.00 B\nDTS dist/aria/index.d.mts                37.00 B\nDTS dist/utils/index.d.mts               306.00 B\nDTS dist/overlay-rmXw90Sx.d.mts          8.68 KB\nBuilt 69 public primitive entrypoints without publishing private runtime modules.",
+      "stderr": ""
+    },
+    {
+      "id": "dom-typecheck",
+      "command": "/opt/homebrew/bin/npm run typecheck --workspace=@uifn/dom",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "id": "dom-test",
+      "command": "/opt/homebrew/bin/npm run test --workspace=@uifn/dom",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 test\n> vitest run\n\n\n RUN  v3.2.4 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/dom\n\n ✓ src/hooks.test.ts (3 tests) 4ms\n ✓ src/positioning.test.ts (1 test) 2ms\n ✓ src/navigation.test.ts (1 test) 2ms\n\n Test Files  3 passed (3)\n      Tests  5 passed (5)\n   Start at  21:55:03\n   Duration  306ms (transform 115ms, setup 0ms, collect 178ms, tests 8ms, environment 0ms, prepare 204ms)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "id": "dom-build",
+      "command": "/opt/homebrew/bin/npm run build --workspace=@uifn/dom",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/dom@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --sourcemap\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nESM dist/index.mjs     126.27 KB\nESM dist/index.mjs.map 251.18 KB\nESM ⚡️ Build success in 26ms\nCJS dist/index.js     130.02 KB\nCJS dist/index.js.map 251.25 KB\nCJS ⚡️ Build success in 26ms\nDTS Build start\nDTS ⚡️ Build success in 1145ms\nDTS dist/index.d.mts 29.38 KB\nDTS dist/index.d.ts  29.38 KB",
+      "stderr": ""
+    },
+    {
+      "id": "adapter-typecheck",
+      "command": "/opt/homebrew/bin/npm run typecheck --workspace=@uifn/adapter-kit",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "id": "adapter-test",
+      "command": "/opt/homebrew/bin/npm run test --workspace=@uifn/adapter-kit",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 test\n> vitest run --config vitest.config.ts --pool=forks --maxWorkers=1 --minWorkers=1\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/adapter-kit\n\n ✓ src/__tests__/conformance.test.ts  (7 tests) 8ms\n ✓ src/__tests__/merge-props.test.ts  (4 tests) 4ms\n ✓ src/__tests__/refs-lifecycle-focus-portal-ssr.test.ts  (4 tests) 4ms\n\n Test Files  3 passed (3)\n      Tests  15 passed (15)\n   Start at  21:55:06\n   Duration  475ms (transform 56ms, setup 0ms, collect 70ms, tests 16ms, environment 0ms, prepare 111ms)",
+      "stderr": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m"
+    },
+    {
+      "id": "adapter-build",
+      "command": "/opt/homebrew/bin/npm run build --workspace=@uifn/adapter-kit",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/adapter-kit@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/index.js 20.39 KB\nCJS ⚡️ Build success in 18ms\nESM dist/index.mjs 18.44 KB\nESM ⚡️ Build success in 18ms\nDTS Build start\nDTS ⚡️ Build success in 905ms\nDTS dist/index.d.mts 10.53 KB\nDTS dist/index.d.ts  10.53 KB",
+      "stderr": ""
+    },
+    {
+      "id": "adapter-negative",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/verify-uifn-phase-14-adapter.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: TV-ADAPT-001-P keeps adapter-kit translation and trace only\nok 1 - TV-ADAPT-001-P keeps adapter-kit translation and trace only\n  ---\n  duration_ms: 15.423083\n  type: 'test'\n  ...\n# Subtest: TV-ADAPT-001-N rejects primitive behavior and lossy callback normalization\nok 2 - TV-ADAPT-001-N rejects primitive behavior and lossy callback normalization\n  ---\n  duration_ms: 2.529542\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 65.253209",
+      "stderr": ""
+    },
+    {
+      "id": "adapter-static",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node scripts/verify-uifn-phase-14-adapter.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"verify:uifn-phase-14-adapter\",\n  \"requirements\": [\n    \"ADAPT-001\"\n  ],\n  \"vectors\": [\n    \"TV-ADAPT-001-P\",\n    \"TV-ADAPT-001-N\"\n  ],\n  \"runtimeFiles\": [\n    \"uifn/adapter-kit/src/conformance.ts\",\n    \"uifn/adapter-kit/src/index.ts\",\n    \"uifn/adapter-kit/src/lifecycle.ts\",\n    \"uifn/adapter-kit/src/merge-props.ts\",\n    \"uifn/adapter-kit/src/refs.ts\",\n    \"uifn/adapter-kit/src/ssr.ts\"\n  ],\n  \"issues\": []\n}",
+      "stderr": ""
+    },
+    {
+      "id": "react-typecheck",
+      "command": "/opt/homebrew/bin/npm run typecheck --workspace=@uifn/react",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/react@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "id": "svelte-typecheck",
+      "command": "/opt/homebrew/bin/npm run typecheck --workspace=@uifn/svelte",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/svelte@0.0.1 typecheck\n> svelte-check --tsconfig ./tsconfig.json\n\nLoading svelte-check in workspace: /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/svelte\nGetting Svelte diagnostics...\n\nsvelte-check found 0 errors and 0 warnings",
+      "stderr": ""
+    },
+    {
+      "id": "solid-typecheck",
+      "command": "/opt/homebrew/bin/npm run typecheck --workspace=@uifn/solid",
+      "ok": true,
+      "status": 0,
+      "stdout": "> @uifn/solid@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json",
+      "stderr": ""
+    },
+    {
+      "id": "compat-contract",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/verify-uifn-phase-14-compat.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: TV-COMPAT-001-P accepts only a complete per-cell Sigstore-attested exact-artifact matrix\nok 1 - TV-COMPAT-001-P accepts only a complete per-cell Sigstore-attested exact-artifact matrix\n  ---\n  duration_ms: 11.562334\n  type: 'test'\n  ...\n# Subtest: TV-COMPAT-001-N fails previous iOS Safari and untested React 18.3 peer range\nok 2 - TV-COMPAT-001-N fails previous iOS Safari and untested React 18.3 peer range\n  ---\n  duration_ms: 1.890541\n  type: 'test'\n  ...\n# Subtest: TV-COMPAT-001-N rejects Playwright WebKit as Safari and emulated mobile devices\nok 3 - TV-COMPAT-001-N rejects Playwright WebKit as Safari and emulated mobile devices\n  ---\n  duration_ms: 1.925625\n  type: 'test'\n  ...\n# Subtest: TV-COMPAT-001-N rejects a content-valid document without a verified cryptographic attestation\nok 4 - TV-COMPAT-001-N rejects a content-valid document without a verified cryptographic attestation\n  ---\n  duration_ms: 1.588375\n  type: 'test'\n  ...\n# Subtest: TV-COMPAT-001-N rejects cross-repository and untrusted-workflow provenance\nok 5 - TV-COMPAT-001-N rejects cross-repository and untrusted-workflow provenance\n  ---\n  duration_ms: 1.350958\n  type: 'test'\n  ...\n# Subtest: TV-COMPAT-001-N rejects batch-scoped attestations and incomplete raw observations\nok 6 - TV-COMPAT-001-N rejects batch-scoped attestations and incomplete raw observations\n  ---\n  duration_ms: 1.477834\n  type: 'test'\n  ...\n# Subtest: TV-COMPAT-001-N rejects a cell produced by a different browser consumer kit\nok 7 - TV-COMPAT-001-N rejects a cell produced by a different browser consumer kit\n  ---\n  duration_ms: 1.445791\n  type: 'test'\n  ...\n# Subtest: TV-COMPAT-001-N rejects missing raw-result subject metadata\nok 8 - TV-COMPAT-001-N rejects missing raw-result subject metadata\n  ---\n  duration_ms: 1.474917\n  type: 'test'\n  ...\n# Subtest: binds the downloaded raw result and detects tampering before Sigstore verification\nok 9 - binds the downloaded raw result and detects tampering before Sigstore verification\n  ---\n  duration_ms: 2.292208\n  type: 'test'\n  ...\n1..9\n# tests 9\n# suites 0\n# pass 9\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 75.835583",
+      "stderr": ""
+    },
+    {
+      "id": "compat-evidence-producer",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/create-uifn-phase-14-compat-evidence.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: creates one-cell clean-source evidence bound to an immutable GitHub run\nok 1 - creates one-cell clean-source evidence bound to an immutable GitHub run\n  ---\n  duration_ms: 2.154792\n  type: 'test'\n  ...\n# Subtest: rejects dirty source and mismatched cell payloads\nok 2 - rejects dirty source and mismatched cell payloads\n  ---\n  duration_ms: 0.328583\n  type: 'test'\n  ...\n# Subtest: rejects browser evidence when the embedded raw observation does not match its hash\nok 3 - rejects browser evidence when the embedded raw observation does not match its hash\n  ---\n  duration_ms: 0.492875\n  type: 'test'\n  ...\n1..3\n# tests 3\n# suites 0\n# pass 3\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 66.263833",
+      "stderr": ""
+    },
+    {
+      "id": "compat-frozen-bundle",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/run-uifn-phase-14-node-cell.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: validates every frozen tarball byte and the consumer kit\nok 1 - validates every frozen tarball byte and the consumer kit\n  ---\n  duration_ms: 13.055625\n  type: 'test'\n  ...\n# Subtest: rejects a tarball changed after the manifest was frozen\nok 2 - rejects a tarball changed after the manifest was frozen\n  ---\n  duration_ms: 3.44075\n  type: 'test'\n  ...\n# Subtest: rejects a browser harness changed after the consumer kit was frozen\nok 3 - rejects a browser harness changed after the consumer kit was frozen\n  ---\n  duration_ms: 3.127875\n  type: 'test'\n  ...\n1..3\n# tests 3\n# suites 0\n# pass 3\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 67.9705",
+      "stderr": ""
+    },
+    {
+      "id": "compat-react-rsc-runner",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/run-uifn-phase-14-react-rsc-cell.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: accepts 62 explicit client-boundary entries with no browser globals\nok 1 - accepts 62 explicit client-boundary entries with no browser globals\n  ---\n  duration_ms: 31.504542\n  type: 'test'\n  ...\n# Subtest: rejects a direct entry that loses its use-client boundary\nok 2 - rejects a direct entry that loses its use-client boundary\n  ---\n  duration_ms: 12.405709\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 88.05525",
+      "stderr": ""
+    },
+    {
+      "id": "compat-browser-runner",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/run-uifn-phase-14-browser-cell.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: accepts exact installed Chrome and Edge product probes without confusing generic Chromium\nok 1 - accepts exact installed Chrome and Edge product probes without confusing generic Chromium\n  ---\n  duration_ms: 0.864417\n  type: 'test'\n  ...\n# Subtest: rejects Playwright substitution for Safari and all physical-device cells\nok 2 - rejects Playwright substitution for Safari and all physical-device cells\n  ---\n  duration_ms: 0.258708\n  type: 'test'\n  ...\n# Subtest: maps each rendering profile to an observable browser precondition\nok 3 - maps each rendering profile to an observable browser precondition\n  ---\n  duration_ms: 0.381292\n  type: 'test'\n  ...\n# Subtest: accepts the complete unique packed public-tree manifest and rejects incomplete or profile-free payloads\nok 4 - accepts the complete unique packed public-tree manifest and rejects incomplete or profile-free payloads\n  ---\n  duration_ms: 0.639333\n  type: 'test'\n  ...\n1..4\n# tests 4\n# suites 0\n# pass 4\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 51.41425",
+      "stderr": ""
+    },
+    {
+      "id": "compat-framework-extractor",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/extract-uifn-phase-14-framework-cell.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: extracts only a byte-matched complete packed framework run\nok 1 - extracts only a byte-matched complete packed framework run\n  ---\n  duration_ms: 1.294208\n  type: 'test'\n  ...\n# Subtest: rejects an unexecuted mode and changed trace bytes\nok 2 - rejects an unexecuted mode and changed trace bytes\n  ---\n  duration_ms: 0.71125\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 46.158042",
+      "stderr": ""
+    },
+    {
+      "id": "compat-workflow-negative",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/verify-uifn-phase-14-workflow.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: accepts the fail-closed attested exact 35-cell workflow\nok 1 - accepts the fail-closed attested exact 35-cell workflow\n  ---\n  duration_ms: 16.450125\n  type: 'test'\n  ...\n# Subtest: rejects a fail-open lane and cross-workflow trust\nok 2 - rejects a fail-open lane and cross-workflow trust\n  ---\n  duration_ms: 9.268458\n  type: 'test'\n  ...\n# Subtest: rejects a cell attestation or upload that drops the raw result subject\nok 3 - rejects a cell attestation or upload that drops the raw result subject\n  ---\n  duration_ms: 14.221125\n  type: 'test'\n  ...\n# Subtest: rejects malformed YAML before token-level contract checks\nok 4 - rejects malformed YAML before token-level contract checks\n  ---\n  duration_ms: 5.449084\n  type: 'test'\n  ...\n1..4\n# tests 4\n# suites 0\n# pass 4\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 129.216417",
+      "stderr": ""
+    },
+    {
+      "id": "compat-workflow-contract",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node scripts/verify-uifn-phase-14-workflow.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"verify:uifn-phase-14-workflow\",\n  \"nodeCellCount\": 3,\n  \"frameworkCellCount\": 12,\n  \"browserCellCount\": 8,\n  \"deviceCellCount\": 3,\n  \"renderingCellCount\": 9,\n  \"signedCellCount\": 35,\n  \"issues\": []\n}",
+      "stderr": ""
+    },
+    {
+      "id": "actual-source-packed-traces",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node scripts/run-uifn-phase-14-traces.mjs --output-dir /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces",
+      "ok": true,
+      "status": 0,
+      "stdout": "},\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node solid-ssr-hydration.mjs --root . --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/compat-solid-1-ssr-hydration-package.json --install-mode package\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Toolbar\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Tooltip\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Tooltip\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Tour\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Tour\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"TreeView\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"TreeView\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Badge\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Badge\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Breadcrumb\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Breadcrumb\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Card\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Card\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Command\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Command\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"InputGroup\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"InputGroup\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Skeleton\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Skeleton\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Table\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Table\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Textarea\\\",\\\"status\\\":\\\"running\\\"}\\n{\\\"framework\\\":\\\"solid\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"primitive\\\":\\\"Textarea\\\",\\\"status\\\":\\\"passed\\\"}\\n{\\\"ok\\\":true,\\\"framework\\\":\\\"solid\\\",\\\"frameworkVersion\\\":\\\"1.9.13\\\",\\\"installMode\\\":\\\"package\\\",\\\"mode\\\":\\\"ssr-hydration\\\",\\\"publicTreeCount\\\":69}\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\\n\\n ✓ react.test.tsx (1 test) 922ms\\n   ✓ TV-PARITY-001-P: actual React public compound traces > mounts, operates, traces, and cleans every catalog public tree  921ms\\n\\n Test Files  1 passed (1)\\n      Tests  1 passed (1)\\n   Start at  21:57:46\\n   Duration  1.78s (transform 55ms, setup 0ms, collect 291ms, tests 922ms, environment 381ms, prepare 49ms)\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer/node_modules/vitest/vitest.mjs run --config react-ssr.vitest.mjs\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\\n\\n ✓ react-ssr.test.tsx (1 test) 586ms\\n   ✓ TV-REACT-001-P: packed all-compound SSR and hydration > server-renders and hydrates every public compound without mismatch or duplicate IDs  586ms\\n\\n Test Files  1 passed (1)\\n      Tests  1 passed (1)\\n   Start at  21:57:48\\n   Duration  1.23s (transform 55ms, setup 0ms, collect 207ms, tests 586ms, environment 239ms, prepare 46ms)\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/scripts/run-uifn-phase-14-react-rsc-cell.mjs --cell react-18.3-rsc-import --consumer /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer --vectors /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer/vectors.json --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/compat-react-18-rsc-import-package.json\",\n      \"cwd\": \"/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"{\\\"ok\\\":true,\\\"cellId\\\":\\\"react-18.3-rsc-import\\\",\\\"framework\\\":\\\"react\\\",\\\"frameworkVersion\\\":\\\"18.3.1\\\",\\\"mode\\\":\\\"rsc-import\\\",\\\"publicTreeCount\\\":69,\\\"clientBoundaryEntrypoints\\\":70}\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/opt/homebrew/bin/npm install --ignore-scripts --no-audit --no-fund\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"added 124 packages in 3s\",\n      \"stderr\": \"npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation\"\n    },\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer\\n\\n ✓ react.test.tsx (1 test) 824ms\\n   ✓ TV-PARITY-001-P: actual React public compound traces > mounts, operates, traces, and cleans every catalog public tree  823ms\\n\\n Test Files  1 passed (1)\\n      Tests  1 passed (1)\\n   Start at  21:57:54\\n   Duration  1.49s (transform 55ms, setup 0ms, collect 216ms, tests 824ms, environment 241ms, prepare 36ms)\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer/node_modules/vitest/vitest.mjs run --config react.vitest.mjs\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer\\n\\n ✓ react.test.tsx (1 test) 895ms\\n   ✓ TV-PARITY-001-P: actual React public compound traces > mounts, operates, traces, and cleans every catalog public tree  894ms\\n\\n Test Files  1 passed (1)\\n      Tests  1 passed (1)\\n   Start at  21:57:56\\n   Duration  1.54s (transform 53ms, setup 0ms, collect 210ms, tests 895ms, environment 239ms, prepare 35ms)\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer/node_modules/vitest/vitest.mjs run --config react-ssr.vitest.mjs\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"RUN  v3.2.4 /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer\\n\\n ✓ react-ssr.test.tsx (1 test) 618ms\\n   ✓ TV-REACT-001-P: packed all-compound SSR and hydration > server-renders and hydrates every public compound without mismatch or duplicate IDs  617ms\\n\\n Test Files  1 passed (1)\\n      Tests  1 passed (1)\\n   Start at  21:57:57\\n   Duration  1.30s (transform 59ms, setup 0ms, collect 221ms, tests 618ms, environment 252ms, prepare 44ms)\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/Users/serro/.nvm/versions/node/v22.22.1/bin/node /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/scripts/run-uifn-phase-14-react-rsc-cell.mjs --cell react-19-rsc-import --consumer /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer --vectors /private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/react19-consumer/vectors.json --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/compat-react-19-rsc-import-package.json\",\n      \"cwd\": \"/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"{\\\"ok\\\":true,\\\"cellId\\\":\\\"react-19-rsc-import\\\",\\\"framework\\\":\\\"react\\\",\\\"frameworkVersion\\\":\\\"19.2.3\\\",\\\"mode\\\":\\\"rsc-import\\\",\\\"publicTreeCount\\\":69,\\\"clientBoundaryEntrypoints\\\":70}\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/opt/homebrew/bin/npm exec --yes --package=node@20 -- node node-smoke.mjs (attempt 1)\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"{\\\"ok\\\":true,\\\"node\\\":\\\"v20.20.2\\\",\\\"packages\\\":[\\\"@uifn/core\\\",\\\"@uifn/dom\\\",\\\"@uifn/adapter-kit\\\"]}\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/opt/homebrew/bin/npm exec --yes --package=node@22 -- node node-smoke.mjs (attempt 1)\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"{\\\"ok\\\":true,\\\"node\\\":\\\"v22.23.2\\\",\\\"packages\\\":[\\\"@uifn/core\\\",\\\"@uifn/dom\\\",\\\"@uifn/adapter-kit\\\"]}\",\n      \"stderr\": \"\"\n    },\n    {\n      \"command\": \"/opt/homebrew/bin/npm exec --yes --package=node@24 -- node node-smoke.mjs (attempt 1)\",\n      \"cwd\": \"/private/var/folders/cy/t2l5q3kn0wq2zjr9ljyqhwzc0000gn/T/uifn-phase-14-package-F2wUMZ/consumer\",\n      \"ok\": true,\n      \"status\": 0,\n      \"stdout\": \"{\\\"ok\\\":true,\\\"node\\\":\\\"v24.18.1\\\",\\\"packages\\\":[\\\"@uifn/core\\\",\\\"@uifn/dom\\\",\\\"@uifn/adapter-kit\\\"]}\",\n      \"stderr\": \"\"\n    }\n  ]\n}",
+      "stderr": ""
+    },
+    {
+      "id": "parity-golden",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node scripts/verify-uifn-phase-14-parity.mjs --trace-dir /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/parity.json",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"verify:uifn-phase-14-parity\",\n  \"requirements\": [\n    \"PARITY-001\"\n  ],\n  \"vectors\": [\n    \"TV-PARITY-001-P\",\n    \"TV-PARITY-001-N\"\n  ],\n  \"primitiveCount\": 69,\n  \"frameworkCount\": 3,\n  \"installModes\": [\n    \"source\",\n    \"package\"\n  ],\n  \"traceCount\": 414,\n  \"compared\": 414,\n  \"crossInstallCompared\": 207,\n  \"golden\": {\n    \"path\": \"uifn/parity/golden/phase-14-semantic-traces.json\",\n    \"reviewedBy\": \"Codex\",\n    \"reviewedAt\": \"2026-07-30T16:24:38.471Z\",\n    \"reason\": \"Fresh 69-component source and package consensus after production-readiness remediation\",\n    \"traceSha256\": \"f3e665863e4fe44cd89a5b531d7ba4d549ef33f1d1ed631a79c2c3375a866a0f\"\n  },\n  \"mutations\": [\n    {\n      \"id\": \"solid-aria-activedescendant\",\n      \"framework\": \"solid\",\n      \"primitive\": \"Autocomplete\",\n      \"expectedPath\": \"/parts/0/parts/4/aria/activedescendant\",\n      \"caught\": true,\n      \"issue\": {\n        \"code\": \"UIFN_SEMANTIC_TRACE_DIVERGED\",\n        \"path\": \"/parts/0/parts/4/aria/activedescendant\",\n        \"message\": \"Trace value differs.\",\n        \"expected\": \"id-6\",\n        \"actual\": \"id-1\",\n        \"framework\": \"solid\",\n        \"primitive\": \"Autocomplete\",\n        \"vectorId\": \"phase-14-autocomplete-public-tree\"\n      }\n    },\n    {\n      \"id\": \"svelte-callback-order\",\n      \"framework\": \"svelte\",\n      \"primitive\": \"Clipboard\",\n      \"expectedPath\": \"/callbacks/0/arguments/0\",\n      \"caught\": true,\n      \"issue\": {\n        \"code\": \"UIFN_SEMANTIC_TRACE_DIVERGED\",\n        \"path\": \"/callbacks/0/arguments/0\",\n        \"message\": \"Trace value differs.\",\n        \"expected\": \"copying\",\n        \"actual\": \"copied\",\n        \"framework\": \"svelte\",\n        \"primitive\": \"Clipboard\",\n        \"vectorId\": \"phase-14-clipboard-public-tree\"\n      }\n    },\n    {\n      \"id\": \"react-focus-result\",\n      \"framework\": \"react\",\n      \"primitive\": \"AlertDialog\",\n      \"expectedPath\": \"/focus/1/part\",\n      \"caught\": true,\n      \"issue\": {\n        \"code\": \"UIFN_SEMANTIC_TRACE_DIVERGED\",\n        \"path\": \"/focus/1/part\",\n        \"message\": \"Trace value differs.\",\n        \"expected\": \"content\",\n        \"actual\": \"trigger\",\n        \"framework\": \"react\",\n        \"primitive\": \"AlertDialog\",\n        \"vectorId\": \"phase-14-alert-dialog-public-tree\"\n      }\n    }\n  ],\n  \"issues\": []\n}",
+      "stderr": ""
+    },
+    {
+      "id": "parity-mutations",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node --test scripts/verify-uifn-phase-14-parity.test.mjs",
+      "ok": true,
+      "status": 0,
+      "stdout": "TAP version 13\n# Subtest: TV-PARITY-001-P compares every actual source and packed public tree\nok 1 - TV-PARITY-001-P compares every actual source and packed public tree\n  ---\n  duration_ms: 916.33625\n  type: 'test'\n  ...\n# Subtest: TV-PARITY-001-N reports precise ARIA, callback-order, and focus paths\nok 2 - TV-PARITY-001-N reports precise ARIA, callback-order, and focus paths\n  ---\n  duration_ms: 628.178708\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 1601.925167",
+      "stderr": ""
+    },
+    {
+      "id": "signed-compatibility-matrix",
+      "command": "/Users/serro/.nvm/versions/node/v22.22.1/bin/node scripts/verify-uifn-phase-14-compat.mjs --trace-run /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/trace-run.json --evidence-dir /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/compatibility-input --output /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/compatibility.json",
+      "ok": false,
+      "status": 1,
+      "stdout": "",
+      "stderr": "\"path\": \"/cells\",\n      \"message\": \"Required compatibility cell safari-current is missing or invalid.\",\n      \"cell\": \"safari-current\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell safari-previous is missing or invalid.\",\n      \"cell\": \"safari-previous\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell ios-safari-current is missing or invalid.\",\n      \"cell\": \"ios-safari-current\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell ios-safari-previous is missing or invalid.\",\n      \"cell\": \"ios-safari-previous\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell android-chrome-current is missing or invalid.\",\n      \"cell\": \"android-chrome-current\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-ltr is missing or invalid.\",\n      \"cell\": \"render-ltr\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-rtl is missing or invalid.\",\n      \"cell\": \"render-rtl\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-forced-colors is missing or invalid.\",\n      \"cell\": \"render-forced-colors\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-reduced-motion is missing or invalid.\",\n      \"cell\": \"render-reduced-motion\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-zoom-200 is missing or invalid.\",\n      \"cell\": \"render-zoom-200\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-zoom-400 is missing or invalid.\",\n      \"cell\": \"render-zoom-400\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-theme-light is missing or invalid.\",\n      \"cell\": \"render-theme-light\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-theme-dark is missing or invalid.\",\n      \"cell\": \"render-theme-dark\"\n    },\n    {\n      \"code\": \"UIFN_COMPAT_MATRIX_MISSING\",\n      \"path\": \"/cells\",\n      \"message\": \"Required compatibility cell render-high-contrast is missing or invalid.\",\n      \"cell\": \"render-high-contrast\"\n    },\n    {\n      \"code\": \"UIFN_PEER_RANGE_UNVERIFIED\",\n      \"path\": \"/peerDependencies/react\",\n      \"message\": \"React peer range MUST be backed by passing 18.3 and 19 cells.\"\n    },\n    {\n      \"code\": \"UIFN_PEER_RANGE_UNVERIFIED\",\n      \"path\": \"/peerDependencies/svelte\",\n      \"message\": \"Svelte peer range MUST be backed by a passing Svelte 5 cell.\"\n    },\n    {\n      \"code\": \"UIFN_PEER_RANGE_UNVERIFIED\",\n      \"path\": \"/peerDependencies/solid-js\",\n      \"message\": \"Solid peer range MUST be backed by a passing Solid 1.x cell.\"\n    }\n  ]\n}"
+    },
+    {
+      "id": "diff-check",
+      "command": "git diff --check",
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

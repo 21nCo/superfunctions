@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "PHASE-02-2026-07-18-e03d70cd",
+  "evidenceClass": "automated-unit-contract",
+  "requirementIds": ["CAT-001"],
+  "vectorIds": ["TV-CAT-001-P", "TV-CAT-001-N"],
+  "status": "passed",
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "dirtyReason": "PHASE_02 and earlier phase work are present in an uncommitted working tree; this is phase evidence and not immutable release-candidate evidence.",
+    "lockfileSha256": "e1e72217e16a00c01d4efbd41e1b7ab4b0e9cc6867557d7f9d6f375ddbb117d5",
+    "definitionSha256": "e03d70cd0054aa38aef4d4e97d6f3c6e395b89eb70500c96b507a94a85bc1e5c",
+    "artifactHashes": [
+      {
+        "path": "uifn/catalog/src/catalog-source.mjs",
+        "sha256": "907df3fe3ede45d040da87284580e4f928d7606a030f1dffe4a66c092cf1b658"
+      },
+      {
+        "path": "uifn/catalog/src/profiles.mjs",
+        "sha256": "101feb9ee6065c5121eae07a86beeaf4524df6bf28ad67421d9f5ebca05ea441"
+      },
+      {
+        "path": "uifn/catalog/src/compiler.mjs",
+        "sha256": "e65da6f6c0a5f9068d858b5b3d787a74a13653bc2ba53b955fad6bdfcadb4e61"
+      },
+      {
+        "path": "uifn/catalog/schema/primitive.schema.json",
+        "sha256": "7f11f5ab52ad0ba03d2d6457965bb4edd3f9a11b72ed93ad4cc34648d387f6ff"
+      },
+      {
+        "path": "uifn/catalog/schema/catalog.schema.json",
+        "sha256": "90348ccc0d9a24e85ce716640d43363319fde7932682ce2a996aac3c911afef7"
+      },
+      {
+        "path": "uifn/catalog/schema/generation-manifest.schema.json",
+        "sha256": "3551d565e07ca7d05b0b535a195faef29cbaff05107709e8b0994b5224bee063"
+      },
+      {
+        "path": "uifn/catalog/schema/migration.schema.json",
+        "sha256": "ebafd9b39214e6d6855ab7b45ec360349d65f616ee969964310bc974a479d82d"
+      },
+      {
+        "path": "uifn/catalog/migrations/index.json",
+        "sha256": "dec06b65740da58bd5ea2515c325a6cc3cd10d29f6ff92878c4d1d93a0b513e4"
+      },
+      {
+        "path": "uifn/catalog/migrations/v0-to-v1.mjs",
+        "sha256": "ed65c80080406db459cc77dc096b8c04ec71206bed053dce2cfec82f9ebfa14b"
+      },
+      {
+        "path": "uifn/catalog/generated/catalog.json",
+        "sha256": "1bb108a84aa865030f16542bf67b0c16b2fcfeb72371ea2fcc49eda79a2c8e04"
+      },
+      {
+        "path": "uifn/catalog/generated/generation-manifest.json",
+        "sha256": "ef9bc46a321bf07c4b016d1ef66e36a5f8687a7ea57a6eb7a4a4a17ccc567c6d"
+      },
+      {
+        "path": "scripts/verify-uifn-catalog.mjs",
+        "sha256": "2edf559fa2ab31d94ec73be9177b76d9fd497172c56b29691162f9a6e2c43e7d"
+      },
+      {
+        "path": "scripts/verify-uifn-catalog.test.mjs",
+        "sha256": "f2f33710775573e7abf2400c6f366ec5cab69b8e34421542a4a600196369e987"
+      },
+      {
+        "path": "scripts/verify-uifn-phase-02.mjs",
+        "sha256": "d2dae73e3e00474c7c4bef56d90e213cf83563ea152eb3d0dc4b7bae57225de6"
+      },
+      {
+        "path": "uifn/package-graph.json",
+        "sha256": "2d48b9240e18712a63134956dde0ef28d26baf55278c65dcf0a4ab8e9091d788"
+      }
+    ]
+  },
+  "environment": {
+    "os": "Darwin",
+    "arch": "arm64",
+    "runtime": "Node v20.20.0",
+    "tools": {
+      "npm": "10.8.2",
+      "catalogSchema": "1",
+      "catalogGenerator": "1.0.0",
+      "phaseGate": "2"
+    },
+    "framework": "React, Svelte, Solid",
+    "browser": null,
+    "assistiveTechnology": null
+  },
+  "timing": {
+    "startedAt": "2026-07-18T05:20:00Z",
+    "completedAt": "2026-07-18T05:49:58Z",
+    "durationMs": 1798000
+  },
+  "counts": {
+    "total": 2,
+    "executed": 2,
+    "passed": 2,
+    "failed": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "notApplicable": 0
+  },
+  "artifacts": [
+    "uifn/catalog/package.json",
+    "uifn/catalog/README.md",
+    "uifn/catalog/src/profiles.mjs",
+    "uifn/catalog/src/catalog-source.mjs",
+    "uifn/catalog/src/compiler.mjs",
+    "uifn/catalog/src/migrations.mjs",
+    "uifn/catalog/schema/primitive.schema.json",
+    "uifn/catalog/schema/catalog.schema.json",
+    "uifn/catalog/schema/generation-manifest.schema.json",
+    "uifn/catalog/schema/migration.schema.json",
+    "uifn/catalog/migrations/index.json",
+    "uifn/catalog/migrations/v0-to-v1.mjs",
+    "uifn/catalog/fixtures/negative/missing-tooltip-accessibility.json",
+    "uifn/catalog/fixtures/negative/duplicate-primitive-id.json",
+    "uifn/catalog/fixtures/negative/unsupported-family.json",
+    "uifn/catalog/fixtures/negative/undocumented-export.json",
+    "uifn/catalog/fixtures/negative/hand-edited-output.json",
+    "uifn/catalog/generated/generation-manifest.json",
+    "scripts/generate-uifn-catalog.mjs",
+    "scripts/verify-uifn-catalog.mjs",
+    "scripts/verify-uifn-catalog.test.mjs",
+    "scripts/verify-uifn-phase-02.mjs"
+  ],
+  "defects": [],
+  "signatures": [
+    {
+      "kind": "automation",
+      "signer": "scripts/verify-uifn-phase-02.mjs",
+      "signedAt": "2026-07-18T05:49:58Z",
+      "attestation": "CAT-001 positive and negative vectors passed; two independent compiler runs were byte-identical, checked-in outputs had no drift, and the full stable lane passed."
+    }
+  ],
+  "expiresAt": "2026-08-17T05:49:58Z",
+  "supersedes": null
+}

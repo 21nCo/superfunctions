@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_FOCUS_ESCAPE",
+  "primitive": "dialog",
+  "framework": "react",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "62c58e0555f614a219719504554cf36c5099566f74ce4a0ef22b0ea093f8bfc2",
+  "dom": "<section data-uifn-story-id=\"dialog--keyboard-focus\" data-uifn-story-framework=\"react\" data-uifn-story-scenario=\"keyboard-focus\" data-uifn-theme=\"light\" data-uifn-forced-colors=\"false\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div class=\"uifn-dialog uifn-dialog__root\" data-uifn-component=\"dialog\" data-uifn-part=\"root\" id=\"dialog-root-dialog-r0\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\"><button data-uifn-story-anatomy=\"trigger\" class=\"uifn-dialog uifn-dialog__trigger\" data-uifn-component=\"dialog\" data-uifn-part=\"trigger\" type=\"button\" role=\"button\" id=\"dialog-trigger-dialog-r0\" tabindex=\"0\" aria-haspopup=\"dialog\" aria-expanded=\"false\" aria-controls=\"dialog-content-dialog-r0\" data-state=\"closed\" data-modal=\"\" data-placement=\"bottom\">trigger fixture</button></div></section>",
+  "semanticTrace": [
+    {
+      "mutation": "focus-containment-removed",
+      "observed": true
+    }
+  ],
+  "eventTrace": [
+    {
+      "mutation": "replace-dialog-content-with-listener-free-clone"
+    },
+    {
+      "action": "focus-outside"
+    }
+  ],
+  "focusPath": [
+    "dialog-content",
+    "outside"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-24T12:13:36.711Z",
+  "expiresAt": "2026-07-31T12:13:36.711Z"
+}

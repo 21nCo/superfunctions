@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "PHASE-06-2026-07-18-b9a41bc3",
+  "evidenceClass": "algorithm-and-primitive-conformance",
+  "requirementIds": ["CAT-002", "PRIM-001"],
+  "vectorIds": ["TV-CAT-002-P", "TV-CAT-002-N", "TV-PRIM-001-P", "TV-PRIM-001-N"],
+  "status": "passed",
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "dirtyReason": "PHASE_06 and earlier program phases are present in an uncommitted working tree; this is development-phase evidence and not immutable release-candidate evidence.",
+    "lockfileSha256": "9a78346e07fc1dcc9418d2adb7172ceb81c0dde7cbac9112045f8d3a9d85b6c7",
+    "artifactHashes": [
+      { "path": "uifn/core/src/algorithms/index.ts", "sha256": "37d4e3cee99ad6b5379e7cba58a72cc2fc2c31253e3b2436754ba528c9df1bba" },
+      { "path": "uifn/core/src/algorithms/collection.ts", "sha256": "149237bebca9543783253542f8806a546b230da854c8b9ce0a396c5a44e1f261" },
+      { "path": "uifn/core/src/algorithms/typeahead.ts", "sha256": "e1a8a57311734d4389de78fdd4c2eb69481175c75fa9e43a19c4709646ccff54" },
+      { "path": "uifn/core/src/primitives/static-contract.ts", "sha256": "afce44b9c027abd52b546f967d8af026d54742c686eec310a35d9375876d1244" },
+      { "path": "uifn/core/src/primitives/image-cropper.ts", "sha256": "48d40c4d47158063e7b93a19a91915da8fa99bb3db8f385b52b22b53ba11c6f8" },
+      { "path": "uifn/core/src/primitives/qr-code.ts", "sha256": "0e6f8fc9114b56d77b84028a8dd815e4b54ad18201ec4dffbdf1a0930819fafb" },
+      { "path": "uifn/core/src/__tests__/phase-06-primitives.test.ts", "sha256": "4d4cda179663679a2e77dc64b59975aa5b51fe4989884c292c4ef4c2d1ce75e2" },
+      { "path": "uifn/core/generated/phase-06-exports.json", "sha256": "c626ced45259ffbedb4b9c7d5b442337366ca1161b63279c1c65fa3a80a21975" },
+      { "path": "uifn/core/generated/phase-06-test-manifest.json", "sha256": "b141634582cdf19e6f33358c045558669af0a8bf0ef5efc470a3d595f55a9080" },
+      { "path": "uifn/core/dist/index.mjs", "sha256": "29239d69a595553c2bafda10b517ddf3722c3f32e044353d8e8ea629de1e9854" },
+      { "path": "uifn/core/tsup.config.ts", "sha256": "36106fd095cedfbbed64483ac90a213bad0d2fe80e9cb30f35f4ddc82a02237a" },
+      { "path": "scripts/verify-uifn-phase-06.mjs", "sha256": "246fcacf621d295d152cb7db8369b701f2b13d7859d05d1f8da11674486cf5cb" },
+      { "path": "scripts/verify-uifn-phase-06-contract.mjs", "sha256": "6e9179397b6b5b44deb9fa1d46046b88d4d8a15b57764e3e86052f1dd941408d" },
+      { "path": "scripts/verify-uifn-foundation-pack.mjs", "sha256": "eef41ea26cc6e5a3d7de73f5dc1b5983ae113deebf04af18b399f5c5b5598ee2" },
+      { "path": "scripts/verify-uifn-core-reproducible.mjs", "sha256": "ad3d3e2a59583ef114455c66291d732c6fda5814450bfcc6994cf34fcf72b444" },
+      { "path": "scripts/verify-uifn-core-node-import.mjs", "sha256": "84258d7f72765f37886b2054451efc21e9c0b0809c1e2421e623da8ecffaeaef" },
+      { "path": "scripts/benchmark-uifn-core-runtime.mjs", "sha256": "c8c7ef5c099876186bc70053375588281bfa8bf41302f35fbed4a3e40de127e8" },
+      { "path": "uifn/react/src/hooks/use-primitive.ts", "sha256": "b4a9d664d7212c2e98e5d6de8b091c710b72990d09716be7390fb514943c6a9f" },
+      { "path": "uifn/.conduct/contracts/ownership.json", "sha256": "e10ff8daf328b1c37641559fa65e3244366c8281513eac5b003be8dfc223d219" }
+    ]
+  },
+  "environment": {
+    "os": "Darwin",
+    "arch": "arm64",
+    "runtime": "Node v20.20.0",
+    "tools": { "npm": "10.8.2", "vitest": "1.6.1", "tsup": "8.5.1", "phaseGate": "6" },
+    "framework": "framework-neutral @uifn/core with React, Svelte, and Solid thin package/source fixtures",
+    "browser": null,
+    "assistiveTechnology": null
+  },
+  "timing": {
+    "startedAt": "2026-07-18T09:34:00Z",
+    "completedAt": "2026-07-18T09:54:32Z",
+    "durationMs": 1232000
+  },
+  "counts": { "total": 4, "executed": 4, "passed": 4, "failed": 0, "blocked": 0, "skipped": 0, "notApplicable": 0 },
+  "algorithmEvidence": {
+    "canonicalAlgorithms": 9,
+    "generatedSequenceSeeds": { "first": 1, "last": 64 },
+    "generatedMutationStepsPerSeed": 80,
+    "covered": ["insert", "remove", "reorder", "disable", "duplicate-key rejection", "Unicode normalization", "locale collation", "RTL", "range", "tree cycles", "async cancellation", "virtualization"]
+  },
+  "primitiveEvidence": {
+    "primitiveCount": 14,
+    "staticContractCount": 9,
+    "interactiveControllerCount": 5,
+    "coreTests": { "files": 36, "tests": 149, "passed": 149 },
+    "mutationClassifierTests": 3,
+    "packageSourceFixtureExercises": 84,
+    "staticSubscriptionsOrEffects": 0
+  },
+  "packageEvidence": {
+    "coreTarballSha256": "dd97bfc4d31d7caf9b80a46bb4e1d244610e0780a3ba6b551f19f4dd21eb7ef1",
+    "localDistSha256": "29239d69a595553c2bafda10b517ddf3722c3f32e044353d8e8ea629de1e9854",
+    "packedDistSha256": "29239d69a595553c2bafda10b517ddf3722c3f32e044353d8e8ea629de1e9854",
+    "distDirectorySha256First": "ed4c5a6c3c834169db559f941093e8d36bc7ae5027f9cd921775172446f9fdd6",
+    "distDirectorySha256Second": "ed4c5a6c3c834169db559f941093e8d36bc7ae5027f9cd921775172446f9fdd6",
+    "byteReproducible": true,
+    "cleanConsumerImport": true,
+    "modes": ["package", "source"],
+    "frameworks": ["react", "svelte", "solid"]
+  },
+  "negativeEvidence": {
+    "codes": ["UIFN_SHARED_ALGORITHM_FORK", "UIFN_COLLECTION_INVARIANT", "UIFN_NATIVE_SEMANTIC_LOST", "UIFN_STATIC_RUNTIME_COST"],
+    "allDetected": true
+  },
+  "defects": [],
+  "signatures": [
+    {
+      "kind": "automation",
+      "signer": "scripts/verify-uifn-phase-06.mjs",
+      "signedAt": "2026-07-18T09:54:32Z",
+      "attestation": "CAT-002 and PRIM-001 positive and controlled-negative vectors passed; canonical algorithms matched generated mutation models; all 14 primitives exercised public contracts; static primitives exposed no controller lifecycle; package/source fixtures passed for React, Svelte, and Solid; Node 20, 22, and 24 import smokes passed; prior controller/runtime, catalog, governance, consumer, pack, and stable gates passed."
+    }
+  ],
+  "expiresAt": "2026-08-17T09:54:32Z",
+  "supersedes": null
+}

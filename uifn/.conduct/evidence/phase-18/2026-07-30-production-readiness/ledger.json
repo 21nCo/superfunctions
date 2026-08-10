@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_18",
+  "requirementIds": [
+    "A11Y-001",
+    "A11Y-002"
+  ],
+  "vectorIds": [
+    "TV-A11Y-001-P",
+    "TV-A11Y-001-N",
+    "TV-A11Y-002-P",
+    "TV-A11Y-002-N"
+  ],
+  "status": "passed",
+  "definitionSha256": "9b758213846896c4e204ec099eebfd06eb425a1355e144fe1060d2a3f714a9ca",
+  "timing": {
+    "startedAt": "2026-07-30T16:28:42.804Z",
+    "completedAt": "2026-07-30T16:28:44.392Z",
+    "durationMs": 1588
+  },
+  "counts": {
+    "primitives": 69,
+    "modes": 705,
+    "rules": 897,
+    "canonicalTraces": 414,
+    "manualScripts": 276,
+    "matrixCells": 11,
+    "mutations": 12
+  },
+  "coverage": {
+    "rules": [
+      "normative-semantics",
+      "accessible-name",
+      "description",
+      "role-state",
+      "keyboard",
+      "focus",
+      "pointer-touch",
+      "form",
+      "announcement",
+      "forced-colors",
+      "reduced-motion",
+      "rtl-bidi",
+      "zoom-reflow"
+    ],
+    "everyRuleMapped": true,
+    "everyModeMapped": true,
+    "unjustifiedNotApplicable": 0
+  },
+  "artifacts": {
+    "ledger": {
+      "path": "uifn/accessibility/generated/normative-ledger.json",
+      "sha256": "8f742fdeda512ecdf28e1dfb174180505f37c44f03557caf13bf7bb658785e6d"
+    },
+    "automation": {
+      "path": "uifn/accessibility/generated/automation-manifest.json",
+      "sha256": "7acefd5537fd0a1eb4fec588cd5cc1d0ad39d3402b7e0e69f526868c7cbd47ed"
+    },
+    "handoff": {
+      "path": "uifn/accessibility/generated/manual-handoff.json",
+      "sha256": "6d0f68bc145c5ac3c91200221fbf52f9c752b3b51b6b9f963dd72ae0f8a37da6"
+    }
+  },
+  "mutations": [
+    {
+      "mutation": "menu-keyboard-na-without-rationale",
+      "expected": "UIFN_A11Y_NA_UNJUSTIFIED",
+      "observed": "UIFN_A11Y_NA_UNJUSTIFIED"
+    },
+    {
+      "mutation": "tooltip-accessible-name-rule-removed",
+      "expected": "UIFN_A11Y_RULE_MISSING",
+      "observed": "UIFN_A11Y_RULE_MISSING"
+    },
+    {
+      "mutation": "dialog-focus-trap-removed",
+      "expected": "UIFN_A11Y_FOCUS_ESCAPE",
+      "observed": "UIFN_A11Y_FOCUS_ESCAPE"
+    },
+    {
+      "mutation": "irrelevant-zero-duration-assertion",
+      "expected": "UIFN_ASSERTION_NOT_OBSERVED",
+      "observed": "UIFN_ASSERTION_NOT_OBSERVED"
+    },
+    {
+      "mutation": "menu-aria-expanded-corrupted",
+      "expected": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "observed": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "issueCount": 2
+    },
+    {
+      "mutation": "clipboard-callback-order-reversed",
+      "expected": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "observed": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "issueCount": 2
+    },
+    {
+      "mutation": "toast-announcement-politeness-corrupted",
+      "expected": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "observed": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "issueCount": 2
+    },
+    {
+      "mutation": "dialog-cleanup-listener-leak",
+      "expected": "UIFN_A11Y_CLEANUP_LEAK",
+      "observed": "UIFN_A11Y_CLEANUP_LEAK",
+      "issueCount": 4
+    },
+    {
+      "mutation": "button-source-package-drift",
+      "expected": "UIFN_A11Y_PACKAGE_SOURCE_DRIFT",
+      "observed": "UIFN_A11Y_PACKAGE_SOURCE_DRIFT",
+      "issueCount": 3
+    },
+    {
+      "mutation": "button-solid-framework-divergence",
+      "expected": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "observed": "UIFN_A11Y_FRAMEWORK_DIVERGENCE",
+      "issueCount": 2
+    }
+  ],
+  "provisionalUntil": [
+    "signed-external-phase-14-compatibility",
+    "signed-phase-19-assistive-technology",
+    "independent-phase-19-review"
+  ],
+  "failures": []
+}

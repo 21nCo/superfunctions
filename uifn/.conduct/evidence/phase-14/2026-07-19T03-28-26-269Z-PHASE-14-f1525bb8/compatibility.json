@@ -1,0 +1,277 @@
+{
+  "ok": false,
+  "command": "verify:uifn-phase-14-compat",
+  "requirement": "COMPAT-001",
+  "vectors": [
+    "TV-COMPAT-001-P",
+    "TV-COMPAT-001-N"
+  ],
+  "expectedCommit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+  "artifactSetSha256": "aa00b42ccca72f189ec391def6dacf1d7e2ca4587754b77895f22a6f6c26993a",
+  "requiredCellCount": 35,
+  "passedCellCount": 0,
+  "missingCells": [
+    "node-20",
+    "node-22",
+    "node-24",
+    "react-18.3-client",
+    "react-19-client",
+    "react-18.3-strictmode",
+    "react-19-strictmode",
+    "react-18.3-ssr-hydration",
+    "react-19-ssr-hydration",
+    "react-18.3-rsc-import",
+    "react-19-rsc-import",
+    "svelte-5-csr",
+    "svelte-5-ssr-hydration",
+    "solid-1-csr",
+    "solid-1-ssr-hydration",
+    "chrome-latest",
+    "chrome-previous",
+    "firefox-latest",
+    "firefox-previous",
+    "edge-latest",
+    "edge-previous",
+    "safari-current",
+    "safari-previous",
+    "ios-safari-current",
+    "ios-safari-previous",
+    "android-chrome-current",
+    "render-ltr",
+    "render-rtl",
+    "render-forced-colors",
+    "render-reduced-motion",
+    "render-zoom-200",
+    "render-zoom-400",
+    "render-theme-light",
+    "render-theme-dark",
+    "render-high-contrast"
+  ],
+  "issues": [
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell node-20 is missing or invalid.",
+      "cell": "node-20"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell node-22 is missing or invalid.",
+      "cell": "node-22"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell node-24 is missing or invalid.",
+      "cell": "node-24"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-18.3-client is missing or invalid.",
+      "cell": "react-18.3-client"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-19-client is missing or invalid.",
+      "cell": "react-19-client"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-18.3-strictmode is missing or invalid.",
+      "cell": "react-18.3-strictmode"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-19-strictmode is missing or invalid.",
+      "cell": "react-19-strictmode"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-18.3-ssr-hydration is missing or invalid.",
+      "cell": "react-18.3-ssr-hydration"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-19-ssr-hydration is missing or invalid.",
+      "cell": "react-19-ssr-hydration"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-18.3-rsc-import is missing or invalid.",
+      "cell": "react-18.3-rsc-import"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell react-19-rsc-import is missing or invalid.",
+      "cell": "react-19-rsc-import"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell svelte-5-csr is missing or invalid.",
+      "cell": "svelte-5-csr"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell svelte-5-ssr-hydration is missing or invalid.",
+      "cell": "svelte-5-ssr-hydration"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell solid-1-csr is missing or invalid.",
+      "cell": "solid-1-csr"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell solid-1-ssr-hydration is missing or invalid.",
+      "cell": "solid-1-ssr-hydration"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell chrome-latest is missing or invalid.",
+      "cell": "chrome-latest"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell chrome-previous is missing or invalid.",
+      "cell": "chrome-previous"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell firefox-latest is missing or invalid.",
+      "cell": "firefox-latest"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell firefox-previous is missing or invalid.",
+      "cell": "firefox-previous"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell edge-latest is missing or invalid.",
+      "cell": "edge-latest"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell edge-previous is missing or invalid.",
+      "cell": "edge-previous"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell safari-current is missing or invalid.",
+      "cell": "safari-current"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell safari-previous is missing or invalid.",
+      "cell": "safari-previous"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell ios-safari-current is missing or invalid.",
+      "cell": "ios-safari-current"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell ios-safari-previous is missing or invalid.",
+      "cell": "ios-safari-previous"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell android-chrome-current is missing or invalid.",
+      "cell": "android-chrome-current"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-ltr is missing or invalid.",
+      "cell": "render-ltr"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-rtl is missing or invalid.",
+      "cell": "render-rtl"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-forced-colors is missing or invalid.",
+      "cell": "render-forced-colors"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-reduced-motion is missing or invalid.",
+      "cell": "render-reduced-motion"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-zoom-200 is missing or invalid.",
+      "cell": "render-zoom-200"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-zoom-400 is missing or invalid.",
+      "cell": "render-zoom-400"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-theme-light is missing or invalid.",
+      "cell": "render-theme-light"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-theme-dark is missing or invalid.",
+      "cell": "render-theme-dark"
+    },
+    {
+      "code": "UIFN_COMPAT_MATRIX_MISSING",
+      "path": "/cells",
+      "message": "Required compatibility cell render-high-contrast is missing or invalid.",
+      "cell": "render-high-contrast"
+    },
+    {
+      "code": "UIFN_PEER_RANGE_UNVERIFIED",
+      "path": "/peerDependencies/react",
+      "message": "React peer range MUST be backed by passing 18.3 and 19 cells."
+    },
+    {
+      "code": "UIFN_PEER_RANGE_UNVERIFIED",
+      "path": "/peerDependencies/svelte",
+      "message": "Svelte peer range MUST be backed by a passing Svelte 5 cell."
+    },
+    {
+      "code": "UIFN_PEER_RANGE_UNVERIFIED",
+      "path": "/peerDependencies/solid-js",
+      "message": "Solid peer range MUST be backed by a passing Solid 1.x cell."
+    }
+  ]
+}
