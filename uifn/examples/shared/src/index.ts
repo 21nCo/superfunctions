@@ -15,3 +15,4 @@ export * from "./browser-fixtures.js";
 export * from "./catalog-hooks.js";
 export * from "./catalog-routing.js";
 export * from "./catalog-presentation.js";
+export * from "./catalog-theme.js";

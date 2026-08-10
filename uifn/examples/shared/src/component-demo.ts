@@ -1,4 +1,4 @@
-import { STYLED_COMPONENT_CATALOG } from '@uifn/components';
+import { STYLED_COMPONENT_CATALOG, getStyledPilotDemo } from '@uifn/components';
 import type { ComponentSlug } from './component-inventory.js';
 import type { WorkbenchRoute } from './routes.js';
 
@@ -34,6 +34,10 @@ const demoBySlug = new Map(
 );
 
 const catalogCropperImage = '/components/crop-landscape.svg';
+
+export function catalogDemoFixtureIds(slug: ComponentSlug, fallback: readonly string[]): readonly string[] {
+  return getStyledPilotDemo(slug) ?? fallback;
+}
 
 const partText: Readonly<Record<string, string>> = Object.freeze({
   action: 'Confirm',
@@ -727,8 +731,15 @@ export function catalogDemoRootPropsForRoute(
 ): Record<string, unknown> {
   const demo = getCatalogComponentDemo(slug);
   const fixture = route.fixtureId ?? 'default';
+  const variant = fixture.startsWith('variant-') ? fixture.slice('variant-'.length) : undefined;
+  const size = fixture.startsWith('size-') ? fixture.slice('size-'.length) : undefined;
+  const density = fixture.startsWith('density-') ? fixture.slice('density-'.length) : undefined;
   return {
     ...demo.rootProps,
+    environment: {
+      scopeId: `uifn-catalog-${slug}-${fixture}`,
+      hydrationSeed: `${slug}-${fixture}`,
+    },
     ...(curatedSelectionItems[slug] ? { items: curatedSelectionItems[slug] } : {}),
     ...(slug === 'angle-slider'
       ? {
@@ -801,8 +812,6 @@ export function catalogDemoRootPropsForRoute(
           defaultPage: 2,
         }
       : {}),
-    ...(slug === 'card' ? { elevated: true } : {}),
-    ...(slug === 'table' ? { striped: true } : {}),
     ...(slug === 'textarea'
       ? {
           name: 'message',
@@ -853,11 +862,18 @@ export function catalogDemoRootPropsForRoute(
         }
       : {}),
     ...(fixture === 'open' ? { defaultOpen: true } : {}),
+    ...(fixture === 'checked' ? { defaultChecked: true } : {}),
+    ...(fixture === 'unchecked' ? { defaultChecked: false } : {}),
+    ...(fixture === 'mixed' ? { defaultChecked: 'mixed' } : {}),
+    ...(fixture === 'read-only' ? { readOnly: true } : {}),
+    ...(fixture === 'elevated' ? { elevated: true } : {}),
+    ...(fixture === 'striped' ? { striped: true } : {}),
     ...(fixture === 'disabled' ? { disabled: true } : {}),
     ...(fixture === 'invalid' ? { invalid: true } : {}),
     ...(fixture === 'rtl' ? { dir: 'rtl' } : {}),
-    'data-catalog-preview': 'true',
-    'data-uifn-catalog-composition': 'complete',
+    ...(variant ? { variant } : {}),
+    ...(size ? { size } : {}),
+    ...(density ? { density } : {}),
   };
 }
 
@@ -873,8 +889,7 @@ export function catalogDemoSnippetRootProps(
   });
   const {
     capability: _capability,
-    ['data-catalog-preview']: _catalogPreview,
-    ['data-uifn-catalog-composition']: _catalogComposition,
+    environment: _environment,
     ...publicProps
   } = props;
   return publicProps;
