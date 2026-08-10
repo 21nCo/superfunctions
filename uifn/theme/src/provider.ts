@@ -1,0 +1,51 @@
+import lightTheme from './themes/uifn-light.json';
+import darkTheme from './themes/uifn-dark.json';
+import highContrastLightTheme from './themes/uifn-high-contrast-light.json';
+import highContrastDarkTheme from './themes/uifn-high-contrast-dark.json';
+import { validateTokenTheme, type DesignTokenTheme } from '@uifn/tokens';
+
+export type FirstPartyThemeName =
+  | 'uifn-light'
+  | 'uifn-dark'
+  | 'uifn-high-contrast-light'
+  | 'uifn-high-contrast-dark';
+
+export interface ThemeProviderState {
+  theme: DesignTokenTheme;
+  setTheme: (theme: FirstPartyThemeName | DesignTokenTheme) => DesignTokenTheme;
+  getTheme: () => DesignTokenTheme;
+}
+
+export const FIRST_PARTY_THEMES: Record<FirstPartyThemeName, DesignTokenTheme> = {
+  'uifn-light': lightTheme as DesignTokenTheme,
+  'uifn-dark': darkTheme as DesignTokenTheme,
+  'uifn-high-contrast-light': highContrastLightTheme as DesignTokenTheme,
+  'uifn-high-contrast-dark': highContrastDarkTheme as DesignTokenTheme,
+};
+
+export function getTheme(theme: FirstPartyThemeName | DesignTokenTheme): DesignTokenTheme {
+  return typeof theme === 'string' ? FIRST_PARTY_THEMES[theme] : theme;
+}
+
+export function listFirstPartyThemes(): FirstPartyThemeName[] {
+  return Object.keys(FIRST_PARTY_THEMES) as FirstPartyThemeName[];
+}
+
+export function createThemeProvider(initialTheme: FirstPartyThemeName | DesignTokenTheme = 'uifn-light'): ThemeProviderState {
+  let currentTheme = getTheme(initialTheme);
+  validateTokenTheme(currentTheme);
+
+  return {
+    get theme() {
+      return currentTheme;
+    },
+    setTheme(nextTheme) {
+      currentTheme = getTheme(nextTheme);
+      validateTokenTheme(currentTheme);
+      return currentTheme;
+    },
+    getTheme() {
+      return currentTheme;
+    },
+  };
+}
