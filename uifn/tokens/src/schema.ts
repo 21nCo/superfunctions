@@ -81,6 +81,29 @@ export const PUBLIC_TOKEN_GROUPS = {
   radius: {
     value: ['sm', 'md', 'lg', 'xl', 'full'],
   },
+  typography: {
+    family: ['sans', 'mono'],
+    size: ['xs', 'sm', 'md', 'lg', 'xl'],
+    lineHeight: ['tight', 'normal', 'relaxed'],
+    weight: ['regular', 'medium', 'semibold', 'bold'],
+  },
+  space: {
+    value: ['1', '2', '3', '4', '5', '6', '8', '12'],
+  },
+  control: {
+    size: ['sm', 'md', 'lg'],
+    gap: ['sm', 'md', 'lg'],
+  },
+  border: {
+    width: ['hairline', 'default', 'strong'],
+  },
+  elevation: {
+    shadow: ['sm', 'md', 'lg', 'overlay'],
+  },
+  icon: {
+    size: ['sm', 'md', 'lg'],
+    stroke: ['regular', 'strong'],
+  },
   density: {
     value: ['compact', 'comfortable', 'spacious'],
   },

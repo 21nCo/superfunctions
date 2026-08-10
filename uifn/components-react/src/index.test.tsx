@@ -19,4 +19,30 @@ describe('@uifn/components-react', () => {
       styling: 'styled-open-compounds',
     });
   });
+
+  it('consumes public recipes for variants, sizing, density, overrides, and unstyled escape hatches', () => {
+    const html = renderToStaticMarkup(React.createElement(ButtonRoot, {
+      variant: 'danger',
+      size: 'lg',
+      density: 'compact',
+      classes: { root: 'consumer-root' },
+      styles: { root: { paddingInline: '1rem' } },
+      children: 'Delete',
+    }));
+    expect(html).toContain('data-uifn-variant="danger"');
+    expect(html).toContain('data-uifn-size="lg"');
+    expect(html).toContain('data-uifn-density="compact"');
+    expect(html).toContain('uifn-button--danger');
+    expect(html).toContain('consumer-root');
+    expect(html).toContain('padding-inline:1rem');
+
+    const unstyled = renderToStaticMarkup(React.createElement(ButtonRoot, {
+      unstyled: true,
+      className: 'consumer-only',
+      children: 'Own styles',
+    }));
+    expect(unstyled).toContain('data-uifn-unstyled="true"');
+    expect(unstyled).toContain('class="consumer-only"');
+    expect(unstyled).not.toContain('uifn-button__root');
+  });
 });

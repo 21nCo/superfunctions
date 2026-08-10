@@ -6,7 +6,7 @@ import {
   type SurfaceHoverEffect,
 } from './surface';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export interface ButtonRecipeOptions {
@@ -17,7 +17,7 @@ export interface ButtonRecipeOptions {
   hoverEffect?: SurfaceHoverEffect;
 }
 
-const BUTTON_VARIANTS = new Set<ButtonVariant>(['primary', 'secondary', 'ghost', 'danger']);
+const BUTTON_VARIANTS = new Set<ButtonVariant>(['primary', 'secondary', 'outline', 'ghost', 'danger']);
 const BUTTON_SIZES = new Set<ButtonSize>(['sm', 'md', 'lg']);
 const HOVER_CLASSES: Record<SurfaceHoverEffect, string> = {
   tint: 'uifn-hover--tint',

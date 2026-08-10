@@ -24,7 +24,7 @@ function assertAllowedPublicPath(path: string[]): void {
     });
   }
 
-  if (path[0] !== 'color' && path[0] !== 'radius' && path[0] !== 'density' && path[0] !== 'motion') {
+  if (!(path[0] in PUBLIC_TOKEN_GROUPS)) {
     throw new UIFnTokenError('UIFN_TOKEN_GROUP_UNKNOWN', 'Unknown public token group.', {
       group: path[0],
       publicName,
@@ -52,6 +52,22 @@ function assertAllowedPublicPath(path: string[]): void {
     return;
   }
 
+  if (path[0] === 'space') {
+    if (path.length !== 2 || !PUBLIC_TOKEN_GROUPS.space.value.includes(path[1] as never)) {
+      throw new UIFnTokenError('UIFN_TOKEN_PUBLIC_NAME_INVALID', 'Unknown semantic spacing token name.', { publicName });
+    }
+    return;
+  }
+
+  if (path[0] === 'typography' || path[0] === 'control' || path[0] === 'border' || path[0] === 'elevation' || path[0] === 'icon') {
+    const groupRecord = PUBLIC_TOKEN_GROUPS[path[0]] as Record<string, readonly string[]>;
+    const allowed = groupRecord[path[1]];
+    if (path.length !== 3 || !allowed?.includes(path[2])) {
+      throw new UIFnTokenError('UIFN_TOKEN_PUBLIC_NAME_INVALID', 'Unknown semantic foundation token name.', { publicName });
+    }
+    return;
+  }
+
   if (path[0] === 'density') {
     if (path.length !== 2 || !PUBLIC_TOKEN_GROUPS.density.value.includes(path[1] as never)) {
       throw new UIFnTokenError('UIFN_TOKEN_PUBLIC_NAME_INVALID', 'Unknown semantic density token name.', {
@@ -70,12 +86,22 @@ function assertAllowedPublicPath(path: string[]): void {
         publicName,
       });
     }
+    return;
   }
 }
 
 function expectedTypeForPath(path: string[]): TokenType {
   if (path[0] === 'color') return 'color';
   if (path[0] === 'radius') return 'dimension';
+  if (path[0] === 'space') return 'dimension';
+  if (path[0] === 'typography' && path[1] === 'family') return 'fontFamily';
+  if (path[0] === 'typography' && path[1] === 'size') return 'dimension';
+  if (path[0] === 'typography' && (path[1] === 'lineHeight' || path[1] === 'weight')) return 'number';
+  if (path[0] === 'control') return 'dimension';
+  if (path[0] === 'border') return 'dimension';
+  if (path[0] === 'elevation') return 'shadow';
+  if (path[0] === 'icon' && path[1] === 'size') return 'dimension';
+  if (path[0] === 'icon' && path[1] === 'stroke') return 'number';
   if (path[0] === 'density') return 'number';
   if (path[0] === 'motion' && path[1] === 'duration') return 'duration';
   if (path[0] === 'motion' && path[1] === 'easing') return 'cubicBezier';

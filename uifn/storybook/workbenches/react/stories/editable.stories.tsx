@@ -9,7 +9,7 @@ const meta = {
   title: 'Stable/Editable',
   component: StoryHarness,
   tags: ['autodocs'],
-  parameters: { controls: { disable: true }, uifnCompatibility: {"primitive":"editable","canonicalVersion":"1.0.0","registryVersion":"0.0.1","frameworks":["react","svelte","solid"],"sourcePolicy":"clean-room","definitionSha256":"001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4","registryCatalogSha256":"f02bb6f2efbced2890ba411b5704d71bca50ffb5c13a0e054cd24cae39268b75","certification":"semantic-parity-complete-external-compatibility-pending"} },
+  parameters: { controls: { disable: true }, uifnCompatibility: {"primitive":"editable","canonicalVersion":"1.0.0","registryVersion":"0.0.1","frameworks":["react","svelte","solid"],"sourcePolicy":"clean-room","definitionSha256":"001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4","registryCatalogSha256":"5a4371c6007791ce2807c66d60ff977c1f48e1422ab05992abd3c81a186cc86b","certification":"semantic-parity-complete-external-compatibility-pending"} },
 };
 export default meta;
 

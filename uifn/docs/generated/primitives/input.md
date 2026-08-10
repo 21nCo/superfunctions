@@ -129,6 +129,8 @@ CSS variables:
 - `--uifn-component-shadow` (shared)
 - `--uifn-control-block-size` (shared)
 - `--uifn-control-gap` (shared)
+- `--uifn-control-padding-block` (shared)
+- `--uifn-control-padding-inline` (shared)
 
 ## Package install
 

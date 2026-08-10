@@ -19,6 +19,14 @@ describe('runtime theme mounting', () => {
         warning: expect.any(Object),
         success: expect.any(Object),
       });
+      expect(theme.tokens).toMatchObject({
+        typography: expect.any(Object),
+        space: expect.any(Object),
+        control: expect.any(Object),
+        border: expect.any(Object),
+        elevation: expect.any(Object),
+        icon: expect.any(Object),
+      });
     });
   });
 
@@ -56,6 +64,12 @@ describe('runtime theme mounting', () => {
     expect(css).toContain('--uifn-color-text-primary:oklch(');
     expect(css).toContain('--uifn-radius-md:6px;');
     expect(css).toContain('--uifn-motion-easing-standard:cubic-bezier');
+    expect(css).toContain('--uifn-typography-family-sans:Inter');
+    expect(css).toContain('--uifn-space-4:1rem;');
+    expect(css).toContain('--uifn-control-size-md:2.5rem;');
+    expect(css).toContain('--uifn-border-width-default:1px;');
+    expect(css).toContain('--uifn-elevation-shadow-overlay:');
+    expect(css).toContain('--uifn-icon-size-md:1rem;');
   });
 
   it('TV-STYLE-002 supports runtime root mounting and cleanup', () => {

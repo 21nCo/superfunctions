@@ -3,6 +3,7 @@ import darkTheme from './themes/uifn-dark.json';
 import highContrastLightTheme from './themes/uifn-high-contrast-light.json';
 import highContrastDarkTheme from './themes/uifn-high-contrast-dark.json';
 import { validateTokenTheme, type DesignTokenTheme } from '@uifn/tokens';
+import { createFoundationalTokens } from './foundations';
 
 export type FirstPartyThemeName =
   | 'uifn-light'
@@ -16,11 +17,21 @@ export interface ThemeProviderState {
   getTheme: () => DesignTokenTheme;
 }
 
+function withFoundations(theme: DesignTokenTheme): DesignTokenTheme {
+  return {
+    ...theme,
+    tokens: {
+      ...createFoundationalTokens(),
+      ...theme.tokens,
+    },
+  };
+}
+
 export const FIRST_PARTY_THEMES: Record<FirstPartyThemeName, DesignTokenTheme> = {
-  'uifn-light': lightTheme as DesignTokenTheme,
-  'uifn-dark': darkTheme as DesignTokenTheme,
-  'uifn-high-contrast-light': highContrastLightTheme as DesignTokenTheme,
-  'uifn-high-contrast-dark': highContrastDarkTheme as DesignTokenTheme,
+  'uifn-light': withFoundations(lightTheme as DesignTokenTheme),
+  'uifn-dark': withFoundations(darkTheme as DesignTokenTheme),
+  'uifn-high-contrast-light': withFoundations(highContrastLightTheme as DesignTokenTheme),
+  'uifn-high-contrast-dark': withFoundations(highContrastDarkTheme as DesignTokenTheme),
 };
 
 export function getTheme(theme: FirstPartyThemeName | DesignTokenTheme): DesignTokenTheme {
