@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_00",
+  "observedAt": "2026-06-27T15:15:00Z",
+  "summary": {
+    "keepPackageIdentities": ["@uifn/core", "@uifn/react", "@uifn/svelte", "@uifn/vue"],
+    "rewriteInPlace": ["@uifn/core", "@uifn/react", "@uifn/svelte", "@uifn/vue"],
+    "foldOrRemove": ["@uifn/files", "@uifn/examples", "@uifn/examples-shared", "@uifn/example-react-playground", "@uifn/example-svelte-playground", "@uifn/example-vue-playground"],
+    "createMissingTargetPackages": ["@uifn/adapter-kit", "@uifn/solid", "@uifn/angular", "@uifn/tokens", "@uifn/theme", "@uifn/theme-tailwind", "@uifn/recipes", "@uifn/components", "@uifn/patterns", "@uifn/sf", "@uifn/registry", "@uifn/storybook"]
+  },
+  "currentSurfaceDisposition": [
+    {
+      "surface": "@uifn/core primitive factories named createX",
+      "decision": "rewrite",
+      "reason": "SFN-15 requires createXController style behavior controllers with state/actions/parts/getState/subscribe/destroy and part prop getters."
+    },
+    {
+      "surface": "@uifn/core utilities for ids, focus, positioning, roving focus, portal, presence, errors, state",
+      "decision": "keep-and-adapt",
+      "reason": "These utilities align with SFN-15 needs if moved behind stable controller and adapter-kit contracts."
+    },
+    {
+      "surface": "@uifn/react components",
+      "decision": "rewrite",
+      "reason": "Current React adapter has useful breadth but must become controller-backed and conformance-tested, with hook and headless prop getter APIs."
+    },
+    {
+      "surface": "@uifn/svelte components",
+      "decision": "rewrite",
+      "reason": "Current Svelte adapter has useful breadth but must expose actions/snippets and pass the shared conformance harness."
+    },
+    {
+      "surface": "@uifn/vue components",
+      "decision": "rewrite",
+      "reason": "Current Vue adapter is experimental and must become first-class with composables, typed props/emits, SSR/hydration, and full conformance."
+    },
+    {
+      "surface": "@uifn/files helper aliases",
+      "decision": "fold-or-remove",
+      "reason": "SFN-15 does not include a public @uifn/files package; useful file UX concepts belong in @uifn/patterns and @uifn/sf."
+    },
+    {
+      "surface": "private playground examples",
+      "decision": "replace",
+      "reason": "Scenario ideas should move into Storybook stories, registry fixtures, and manifest-backed examples."
+    },
+    {
+      "surface": "current verify-uifn-release.mjs",
+      "decision": "replace",
+      "reason": "Current gate is too narrow for SFN-15 production readiness and omits target packages, a11y, visual, SSR, docs, manifest, registry, Tailwind, and redaction checks."
+    }
+  ],
+  "conflictsWithSfn15": [
+    {
+      "conflict": "Missing packages",
+      "details": "adapter-kit, solid, angular, tokens, theme, theme-tailwind, recipes, components, patterns, sf, registry, and storybook do not exist yet."
+    },
+    {
+      "conflict": "Package metadata gap",
+      "details": "Existing packages lack unified uifn.status, layer, schemaVersion, and sourcePolicy metadata required by SFN-15."
+    },
+    {
+      "conflict": "Adapter parity gap",
+      "details": "Adapters do not yet share a conformance harness across React, Svelte, Vue, Solid, and Angular."
+    },
+    {
+      "conflict": "Styling gap",
+      "details": "No public semantic token, runtime theme, Tailwind generation, or recipe packages exist."
+    },
+    {
+      "conflict": "Catalog gap",
+      "details": "Current component coverage is primitive-oriented and does not include all Coss target components such as Calendar, Date Picker, Data Table, Sidebar, Resizable, Form, Input OTP, Breadcrumb, Sheet, Skeleton, Typography, and hooks."
+    },
+    {
+      "conflict": "Distribution gap",
+      "details": "No registry, source install CLI, lockfile, or drift detection exists."
+    },
+    {
+      "conflict": "Workshop gap",
+      "details": "No Storybook package, decorators, compatibility panel, or story-driven release gate exists."
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+timestamp,model,launcher,command,agent_name,phase(s),path
+2026-06-27T14:49:46Z,GPT-5 Codex,Codex Desktop,spec,Codex,,uifn/.conduct/SFN-15
+2026-06-27T15:09:43Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_00,uifn/.conduct/SFN-15/phase-reports/PHASE_00-2026-06-27-p0b7x2-report.md
+2026-06-27T15:17:03Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_01,uifn/.conduct/SFN-15/phase-reports/PHASE_01-2026-06-27-k4m9qp-report.md
+2026-06-27T15:33:15Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_02,uifn/.conduct/SFN-15/phase-reports/PHASE_02-2026-06-27-h8c2qx-report.md
+2026-06-27T15:40:06Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_03,uifn/.conduct/SFN-15/phase-reports/PHASE_03-2026-06-27-m7q9vz-report.md
+2026-06-27T15:46:42Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_04,uifn/.conduct/SFN-15/phase-reports/PHASE_04-2026-06-27-r4k8wm-report.md
+2026-06-27T16:07:36Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_05,uifn/.conduct/SFN-15/phase-reports/PHASE_05-2026-06-27-q7n4ad-report.md
+2026-06-27T16:19:50Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_06,uifn/.conduct/SFN-15/phase-reports/PHASE_06-2026-06-27-s8v2ka-report.md
+2026-06-27T16:26:23Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_07,uifn/.conduct/SFN-15/phase-reports/PHASE_07-2026-06-27-v3m8tz-report.md
+2026-06-27T16:35:02Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_08,uifn/.conduct/SFN-15/phase-reports/PHASE_08-2026-06-27-n6p4sd-report.md
+2026-06-27T16:45:03Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_09,uifn/.conduct/SFN-15/phase-reports/PHASE_09-2026-06-27-p9x7ra-report.md
+2026-06-27T16:49:30Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_10,uifn/.conduct/SFN-15/phase-reports/PHASE_10-2026-06-27-c7m2vk-report.md
+2026-06-27T16:53:40Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_11,uifn/.conduct/SFN-15/phase-reports/PHASE_11-2026-06-27-b8n5qz-report.md
+2026-06-27T16:56:57Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_12,uifn/.conduct/SFN-15/phase-reports/PHASE_12-2026-06-27-k2d9rm-report.md
+2026-06-27T17:02:10Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_13,uifn/.conduct/SFN-15/phase-reports/PHASE_13-2026-06-27-z6p9tx-report.md
+2026-06-27T17:11:08Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_14,uifn/.conduct/SFN-15/phase-reports/PHASE_14-2026-06-27-r8h3nv-report.md
+2026-06-27T17:16:01Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_15,uifn/.conduct/SFN-15/phase-reports/PHASE_15-2026-06-27-m4q8sd-report.md
+2026-06-27T17:22:50Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_16,uifn/.conduct/SFN-15/phase-reports/PHASE_16-2026-06-27-v7n2qa-report.md
+2026-06-27T17:31:54Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_17,uifn/.conduct/SFN-15/phase-reports/PHASE_17-2026-06-27-n5r7kx-report.md
+2026-06-27T17:36:26Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_18,uifn/.conduct/SFN-15/phase-reports/PHASE_18-2026-06-27-p8q4vn-report.md
+2026-06-27T17:49:40Z,GPT-5 Codex,Codex Desktop,execute,Codex,PHASE_19,uifn/.conduct/SFN-15/phase-reports/PHASE_19-2026-06-27-w9k2md-report.md
+2026-06-28T12:09:06Z,GPT-5 Codex,Codex Desktop,execute-issue,Codex,reaudit-r7p6n4qw,uifn/.conduct/SFN-15/fix-logs/2026-06-28-reaudit-r7p6n4qw-closure.md

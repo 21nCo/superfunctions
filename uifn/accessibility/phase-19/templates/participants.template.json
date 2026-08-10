@@ -1,0 +1,78 @@
+{
+  "templateStatus": "template-not-evidence",
+  "warning": "This file is not accepted as evidence. An independently authorized accessibility-program authority must verify identities and qualifications, replace every placeholder, and sign the registry with the externally safeguarded root key.",
+  "schemaVersion": 1,
+  "registryId": "uifn-phase-19-human-trust-v1",
+  "status": "active",
+  "issuedBy": "uifn-accessibility-program-authority",
+  "issuedAt": "<ISO-8601>",
+  "expiresAt": "<at most 90 days>",
+  "participants": [
+    {
+      "id": "<unique tester participant id>",
+      "displayName": "<verified human name>",
+      "kind": "human",
+      "automation": false,
+      "roles": [
+        "manual-at-tester"
+      ],
+      "qualifiedAtProfiles": [
+        "<one or more exact AT profile ids>"
+      ],
+      "independentOfImplementation": false,
+      "implementationPrincipalIds": [],
+      "identityEvidence": {
+        "type": "<external identity evidence type>",
+        "reference": "<unique external identity reference>",
+        "verifiedBy": "uifn-accessibility-program-authority",
+        "verifiedAt": "<ISO-8601 at or before issuedAt>"
+      },
+      "keyId": "<ed25519 public-key id>",
+      "publicKeyPem": "<PEM public key only>",
+      "qualifications": [
+        {
+          "issuer": "<qualification issuer>",
+          "subject": "<exact displayName>",
+          "evidence": "<credential and practical assessment evidence>",
+          "validUntil": "<after registry expiry>"
+        }
+      ]
+    },
+    {
+      "id": "<unique reviewer participant id>",
+      "displayName": "<verified independent reviewer name>",
+      "kind": "human",
+      "automation": false,
+      "roles": [
+        "independent-accessibility-reviewer"
+      ],
+      "qualifiedAtProfiles": [],
+      "independentOfImplementation": true,
+      "implementationPrincipalIds": [],
+      "identityEvidence": {
+        "type": "<external identity evidence type>",
+        "reference": "<different unique external identity reference>",
+        "verifiedBy": "uifn-accessibility-program-authority",
+        "verifiedAt": "<ISO-8601 at or before issuedAt>"
+      },
+      "keyId": "<different ed25519 public-key id>",
+      "publicKeyPem": "<different PEM public key only>",
+      "qualifications": [
+        {
+          "issuer": "<qualification issuer>",
+          "subject": "<exact displayName>",
+          "evidence": "<independent review qualification evidence>",
+          "validUntil": "<after registry expiry>"
+        }
+      ]
+    }
+  ],
+  "signature": {
+    "scheme": "ed25519",
+    "keyId": "<pinned root public-key id>",
+    "signedBy": "uifn-accessibility-program-authority",
+    "signedAt": "<same as issuedAt>",
+    "payloadSha256": "<canonical unsigned payload SHA-256>",
+    "value": "<base64 Ed25519 signature>"
+  }
+}

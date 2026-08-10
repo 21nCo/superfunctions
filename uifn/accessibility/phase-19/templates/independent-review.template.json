@@ -1,0 +1,119 @@
+{
+  "templateStatus": "template-not-evidence",
+  "warning": "This file is not accepted as evidence. It must be completed and signed by a qualified reviewer independent of implementation and all manual testers.",
+  "schemaVersion": 1,
+  "evidenceId": "EVID-P19-INDEPENDENT-<id>",
+  "evidenceClass": "independentAccessibilityReview",
+  "status": "passed",
+  "source": {
+    "commit": "<clean 40-char release-candidate commit>",
+    "dirty": false,
+    "definitionSha256": "<Phase 18 definition SHA-256>",
+    "artifactSetSha256": "<Phase 14 tarball-set SHA-256>",
+    "phase18EvidenceSha256": "<Phase 18 evidence SHA-256>",
+    "matrixDefinitionSha256": "164e6e73fd9f1bb6f33569ec2500f00edc20a1e6cf3f4232b66f95333103d184",
+    "artifacts": []
+  },
+  "reviewer": {
+    "participantId": "<trusted independent human participant id>"
+  },
+  "independence": {
+    "implementedRelevantWave": false,
+    "reviewerIsImplementationOwner": false,
+    "conflicts": [],
+    "statement": "<documented independence statement>"
+  },
+  "scope": [
+    "normative-ledger",
+    "representative-code-every-family",
+    "automation-and-negative-mutations",
+    "manual-scripts-and-signed-evidence",
+    "matrix-completeness",
+    "defect-disposition-and-retests",
+    "support-claims",
+    "jaws-deferment"
+  ],
+  "methods": [],
+  "familySamples": [],
+  "manualEvidenceSetSha256": "<canonical signed manual evidence set hash>",
+  "defectSetSha256": "<canonical defect set hash>",
+  "matrixDefinitionSha256": "164e6e73fd9f1bb6f33569ec2500f00edc20a1e6cf3f4232b66f95333103d184",
+  "findings": [],
+  "retests": [],
+  "defectDispositions": [],
+  "assessment": {
+    "qualification": "unqualified",
+    "score": 10,
+    "claim": "accessibility-confidence-10-of-10",
+    "confidenceGates": [
+      {
+        "id": 1,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 2,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 3,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 4,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 5,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 6,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 7,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 8,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 9,
+        "status": "passed",
+        "evidence": []
+      },
+      {
+        "id": 10,
+        "status": "passed",
+        "evidence": []
+      }
+    ]
+  },
+  "supportStatement": {
+    "jaws": "not-tested-user-deferred",
+    "claimsUntestedSupport": false,
+    "requiredAssistiveTechnologiesPassed": true
+  },
+  "timing": {
+    "startedAt": "<ISO-8601>",
+    "completedAt": "<ISO-8601>",
+    "expiresAt": "<at most 90 days>"
+  },
+  "signature": {
+    "scheme": "ed25519",
+    "keyId": "<registered key id>",
+    "signedBy": "<participant id>",
+    "signedAt": "<same as completedAt>",
+    "payloadSha256": "<canonical unsigned payload SHA-256>",
+    "value": "<base64 Ed25519 signature>"
+  }
+}
