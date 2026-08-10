@@ -23,6 +23,8 @@ export interface UIFnSubmenuDomElements {
 export interface UIFnMenuDomBindingOptions {
   readonly platform: UIFnDomPlatform;
   readonly controller: Pick<MenuController, 'state' | 'actions' | 'getState' | 'subscribe'>;
+  /** Stable per-instance prefix used by DOM-owned layers and portals. */
+  readonly id?: string;
   readonly trigger: ResolveElement;
   readonly content: ResolveElement;
   readonly positioner?: ResolveElement;
@@ -145,13 +147,14 @@ export function createUIFnMenuDomBinding(options: UIFnMenuDomBindingOptions): UI
   const trigger = () => resolve(options.trigger);
   const content = () => resolve(options.content);
   const positioner = () => resolve(options.positioner) ?? content();
+  const bindingId = options.id?.trim() || controller.getState().primitive.toLowerCase();
   const itemElement = (id: string) => options.getItemElement?.(id)
     ?? content()?.querySelector<HTMLElement>(`[data-value="${escaped(id)}"]`)
     ?? scope.document.getElementById(id);
   const submenuFor = (id: string) => submenus.find((submenu) => submenu.id === id);
 
   const layer: UIFnDismissableLayerHandle = platform.layers.register({
-    id: `${controller.getState().primitive.toLowerCase()}-root-layer`,
+    id: `${bindingId}-root-layer`,
     element: content,
     enabled: false,
     dismissOnPointerOutside: true,
@@ -165,7 +168,7 @@ export function createUIFnMenuDomBinding(options: UIFnMenuDomBindingOptions): UI
   const submenuBranchReleases: Array<() => void> = [];
   for (const submenu of submenus) {
     const submenuLayer = platform.layers.register({
-      id: `${controller.getState().primitive.toLowerCase()}-${submenu.id}-layer`,
+      id: `${bindingId}-${submenu.id}-layer`,
       element: () => resolve(submenu.content),
       enabled: false,
       dismissOnPointerOutside: true,
@@ -184,7 +187,7 @@ export function createUIFnMenuDomBinding(options: UIFnMenuDomBindingOptions): UI
   if (!rootContent) throw new TypeError('Menu DOM binding requires a content element.');
   rootPresence = createUIFnPresence(scope, { element: content, present: controller.getState().open, initialAnimation: false });
   const portalNode = options.portalNode ?? positioner();
-  if (portalNode && !options.portalManagedExternally) portal = createUIFnPortal(scope, { id: `${controller.getState().primitive.toLowerCase()}-portal`, node: portalNode, target: options.portalTarget, disabled: options.portalDisabled });
+  if (portalNode && !options.portalManagedExternally) portal = createUIFnPortal(scope, { id: `${bindingId}-portal`, node: portalNode, target: options.portalTarget, disabled: options.portalDisabled });
 
   const rootReference = () => virtualAnchor(controller.getState()) ?? trigger();
   if (rootReference() && positioner()) {

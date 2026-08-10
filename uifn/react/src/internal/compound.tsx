@@ -475,6 +475,7 @@ function useDomOwnership<TInputs extends object>(bridge: ReactPrimitiveBridge<TI
         bindings.push(createUIFnMenuDomBinding({
           platform: lease.platform,
           controller: controller as never,
+          id: content.id,
           trigger,
           content,
           positioner: () => bridge.getElement('positioner'),
