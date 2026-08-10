@@ -19,6 +19,7 @@ const SelectDefinition: ReactPrimitiveDefinition<SelectProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","items","multiple","name","disabled","readOnly","required"],
   context: SelectContext,
   createController: createSelectController as never,
 };

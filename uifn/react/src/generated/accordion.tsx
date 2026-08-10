@@ -19,6 +19,7 @@ const AccordionDefinition: ReactPrimitiveDefinition<AccordionProps> = {
   family: 'disclosure',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","multiple","collapsible","disabled","type"],
   context: AccordionContext,
   createController: createAccordionController as never,
 };

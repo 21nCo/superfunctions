@@ -2,6 +2,7 @@ import { createUIFnController, type UIFnController } from '../controller';
 import { createUIFnEnvironment, type UIFnEnvironment } from '../environment';
 import { createControlledValue } from '../internal/runtime/controlled';
 import { createStateChannel } from '../internal/runtime/state-channel';
+import { focusUIFnPart } from '../internal/runtime/focus';
 import { mergePartProps, type UIFnPartProps } from '../parts';
 import type { TypeaheadState } from '../algorithms';
 import type { ChangeMeta } from './shared';
@@ -269,13 +270,35 @@ export function createMenubarController(
         role: 'menuitem', id: ids.id('trigger', item), tabIndex: state.focusedMenu === item ? 0 : -1,
         aria: { haspopup: 'menu', expanded: open, controls: ids.id('content', item), disabled },
         data: { state: open ? 'open' : 'closed', value: item }, disabled,
-        on: { focus: () => actions.focusMenu(item), click: () => actions.openMenu(item), keydown: (event) => actions.handleTriggerKeyDown(event?.key ?? '', item) },
+        on: {
+          focus: () => actions.focusMenu(item),
+          click: () => actions.openMenu(item),
+          keydown: (event) => {
+            const key = event?.key ?? '';
+            const next = actions.handleTriggerKeyDown(key, item);
+            if (!next) return;
+            const opensContent = key === 'Enter' || key === ' ' || key === 'ArrowDown' || key === 'ArrowUp';
+            focusUIFnPart(event, opensContent ? ids.id('item', next) : ids.id('trigger', next), { deferred: opensContent });
+          },
+        },
       };
     }),
     content: valuePart('content', (state, item) => ({
       role: 'menu', id: ids.id('content', item), tabIndex: -1,
       aria: { labelledby: ids.id('trigger', item) }, data: { state: state.value === item ? 'open' : 'closed' }, hidden: state.value !== item,
-      on: { keydown: (event) => actions.handleContentKeyDown(event?.key ?? '') },
+      on: { keydown: (event) => {
+        const key = event?.key ?? '';
+        const next = actions.handleContentKeyDown(key);
+        if (!next) return;
+        if (key === 'Escape' && store.getState().value === '') {
+          focusUIFnPart(event, ids.id('trigger', next), { deferred: true });
+          return;
+        }
+        const target = hasUIFnChildren(store.getState().items, next)
+          ? ids.id('submenu-trigger', next)
+          : ids.id('item', next);
+        focusUIFnPart(event, target, { deferred: true });
+      } },
     })),
     item: valuePart('item', (state, item) => {
       const disabled = state.items.find((entry) => entry.id === item)?.disabled ?? false;
@@ -294,7 +317,14 @@ export function createMenubarController(
     submenuContent: valuePart('submenuContent', (state, item) => ({
       role: 'menu', id: ids.id('submenu-content', item), tabIndex: -1,
       aria: { labelledby: ids.id('submenu-trigger', item) }, data: { state: state.submenuPath.includes(item) ? 'open' : 'closed' }, hidden: !state.submenuPath.includes(item),
-      on: { keydown: (event) => actions.handleContentKeyDown(event?.key ?? '') },
+      on: { keydown: (event) => {
+        const next = actions.handleContentKeyDown(event?.key ?? '');
+        if (!next) return;
+        const target = hasUIFnChildren(store.getState().items, next)
+          ? ids.id('submenu-trigger', next)
+          : ids.id('item', next);
+        focusUIFnPart(event, target, { deferred: true });
+      } },
     })),
   };
 

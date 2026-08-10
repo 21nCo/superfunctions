@@ -19,6 +19,7 @@ const ToggleGroupDefinition: ReactPrimitiveDefinition<ToggleGroupProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","type","orientation","loop","disabled"],
   context: ToggleGroupContext,
   createController: createToggleGroupController as never,
 };

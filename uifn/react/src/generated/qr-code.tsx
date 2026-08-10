@@ -19,6 +19,7 @@ const QRCodeDefinition: ReactPrimitiveDefinition<QRCodeProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["value","errorCorrection","size","label"],
   context: QRCodeContext,
   contract: QRCodeContract as never,
 };

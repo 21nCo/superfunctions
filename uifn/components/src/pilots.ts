@@ -1,5 +1,5 @@
 export const STYLED_PILOT_DEMOS = {
-  button: ['default', 'variant-primary', 'variant-secondary', 'variant-outline', 'variant-ghost', 'variant-danger', 'size-sm', 'size-lg', 'loading', 'disabled'],
+  button: ['default', 'variant-secondary', 'variant-outline', 'variant-ghost', 'variant-danger', 'variant-danger-outline', 'variant-link', 'size-sm', 'size-lg', 'icon-sm', 'icon-md', 'icon-lg', 'loading', 'disabled'],
   field: ['default', 'invalid', 'disabled', 'read-only', 'density-compact'],
   input: ['default', 'invalid', 'disabled', 'read-only', 'size-sm', 'size-lg'],
   checkbox: ['unchecked', 'checked', 'mixed', 'invalid', 'disabled'],

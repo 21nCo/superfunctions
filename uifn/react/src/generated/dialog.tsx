@@ -19,6 +19,7 @@ const DialogDefinition: ReactPrimitiveDefinition<DialogProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","modal","initialFocus","restoreFocus"],
   context: DialogContext,
   createController: createDialogController as never,
 };

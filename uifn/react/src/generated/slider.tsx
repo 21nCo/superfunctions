@@ -19,6 +19,7 @@ const SliderDefinition: ReactPrimitiveDefinition<SliderProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","min","max","step","minStepsBetweenThumbs","orientation","dir","name","disabled","readOnly"],
   context: SliderContext,
   createController: createSliderController as never,
 };

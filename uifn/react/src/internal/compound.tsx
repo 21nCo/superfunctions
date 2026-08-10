@@ -38,6 +38,7 @@ export interface ReactPrimitiveDefinition<TInputs extends object = AnyRecord> {
   readonly family: string;
   readonly kind: 'interactive-controller' | 'typed-static-contract';
   readonly rootPart: string;
+  readonly inputNames: readonly string[];
   readonly context: React.Context<ReactPrimitiveBridge<TInputs> | null>;
   readonly createController?: (inputs: TInputs, environment: UIFnEnvironment) => AnyController;
   readonly contract?: AnyStaticContract;
@@ -107,7 +108,7 @@ interface StaticProjection {
   readonly parts: AnyRecord;
 }
 
-const ROOT_DOM_PROP = /^(?:aria-|data-)|^(?:id|className|style|title|role|tabIndex|hidden|dir|lang|slot|inert|draggable|spellCheck|translate)$/;
+const ROOT_DOM_PROP = /^(?:aria-|data-)|^(?:id|class|className|style|title|role|tabindex|tabIndex|hidden|dir|lang|slot|inert|draggable|spellcheck|spellCheck|translate|name|type|value|checked|required|readonly|readOnly|multiple|placeholder|autocomplete|autoComplete|autofocus|autoFocus|inputmode|inputMode|maxlength|maxLength|minlength|minLength|pattern|min|max|step|accept|rows|cols|for|htmlFor|href|target|rel|src|alt|width|height|viewBox)$/;
 const ROOT_EVENT_PROP = /^on(?:Click|DoubleClick|AuxClick|ContextMenu|KeyDown|KeyUp|KeyPress|Focus|Blur|Input|Change|BeforeInput|CompositionStart|CompositionUpdate|CompositionEnd|Copy|Cut|Paste|PointerDown|PointerMove|PointerUp|PointerCancel|PointerEnter|PointerLeave|PointerOver|PointerOut|MouseDown|MouseMove|MouseUp|MouseEnter|MouseLeave|MouseOver|MouseOut|TouchStart|TouchMove|TouchEnd|TouchCancel|Drag|DragStart|DragEnd|DragEnter|DragLeave|DragOver|Drop|Scroll|Wheel|Select|Submit|Reset|Invalid|Load|Error|AnimationStart|AnimationEnd|AnimationIteration|TransitionEnd|Toggle|BeforeToggle|GotPointerCapture|LostPointerCapture)(?:Capture)?$/;
 
 const EMPTY_DOM_RESOURCES: UIFnDomResourceSnapshot = Object.freeze({
@@ -127,11 +128,13 @@ const EMPTY_DOM_RESOURCES: UIFnDomResourceSnapshot = Object.freeze({
   total: 0,
 });
 
-function splitRootProps(props: AnyRecord): { inputs: AnyRecord; dom: AnyRecord } {
+function splitRootProps(props: AnyRecord, inputNames: readonly string[] = []): { inputs: AnyRecord; dom: AnyRecord } {
   const inputs: AnyRecord = {};
   const dom: AnyRecord = {};
+  const declaredInputs = new Set(inputNames);
   for (const [key, value] of Object.entries(props)) {
-    if (ROOT_DOM_PROP.test(key) || ROOT_EVENT_PROP.test(key)) dom[key] = value;
+    if (declaredInputs.has(key)) inputs[key] = value;
+    else if (ROOT_DOM_PROP.test(key) || ROOT_EVENT_PROP.test(key)) dom[key] = value;
     else inputs[key] = value;
   }
   return { inputs, dom };
@@ -666,7 +669,7 @@ export function ReactPrimitiveRoot<TInputs extends object>({
   props,
 }: ReactPrimitiveRootRuntimeProps<TInputs>): React.ReactElement {
   const { asChild, render, children, environment, ...rest } = props as ReactPrimitiveRootProps<TInputs, ElementName> & AnyRecord;
-  const split = splitRootProps(rest);
+  const split = splitRootProps(rest, definition.inputNames);
   const bridge = useBridge(definition, split.inputs as TInputs, environment);
   useDomOwnership(bridge);
   const coreProps = bridge.getPartProps(definition.rootPart, undefined, split.dom);

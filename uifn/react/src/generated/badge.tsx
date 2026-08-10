@@ -19,6 +19,7 @@ const BadgeDefinition: ReactPrimitiveDefinition<BadgeProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["variant"],
   context: BadgeContext,
   contract: BadgeContract as never,
 };

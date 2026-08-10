@@ -19,6 +19,7 @@ const ToolbarDefinition: ReactPrimitiveDefinition<ToolbarProps> = {
   family: 'menu-navigation',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["orientation","loop","dir","disabled"],
   context: ToolbarContext,
   createController: createToolbarController as never,
 };

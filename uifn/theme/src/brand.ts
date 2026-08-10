@@ -137,7 +137,7 @@ function createTextTokens(neutral: OklchColor, mode: 'light' | 'dark') {
     primary: colorToken(shift(neutral, { l: 0.2, c: Math.min(neutral.c, 0.024) }), 'color.surface.canvas'),
     secondary: colorToken(shift(neutral, { l: 0.35, c: Math.min(neutral.c, 0.024) }), 'color.surface.canvas'),
     muted: colorToken(shift(neutral, { l: 0.5, c: Math.min(neutral.c, 0.018) })),
-    disabled: colorToken(shift(neutral, { l: 0.64, c: Math.min(neutral.c, 0.012) })),
+    disabled: colorToken(shift(neutral, { l: 0.55, c: Math.min(neutral.c, 0.012) })),
   };
 }
 

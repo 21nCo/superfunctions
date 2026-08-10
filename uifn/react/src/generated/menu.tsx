@@ -19,6 +19,7 @@ const MenuDefinition: ReactPrimitiveDefinition<MenuProps> = {
   family: 'menu-navigation',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","orientation","loop","dir"],
   context: MenuContext,
   createController: createMenuController as never,
 };

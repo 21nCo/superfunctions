@@ -19,6 +19,7 @@ const ToggleDefinition: ReactPrimitiveDefinition<ToggleProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["pressed","defaultPressed","disabled"],
   context: ToggleContext,
   createController: createToggleController as never,
 };

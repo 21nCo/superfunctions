@@ -19,6 +19,7 @@ const RatingGroupDefinition: ReactPrimitiveDefinition<RatingGroupProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","count","allowHalf","name","disabled","readOnly","required"],
   context: RatingGroupContext,
   createController: createRatingGroupController as never,
 };

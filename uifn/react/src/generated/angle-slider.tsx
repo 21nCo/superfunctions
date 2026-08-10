@@ -19,6 +19,7 @@ const AngleSliderDefinition: ReactPrimitiveDefinition<AngleSliderProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","min","max","step","disabled","readOnly"],
   context: AngleSliderContext,
   createController: createAngleSliderController as never,
 };

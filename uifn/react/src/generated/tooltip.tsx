@@ -19,6 +19,7 @@ const TooltipDefinition: ReactPrimitiveDefinition<TooltipProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","openDelay","closeDelay","placement","disabled"],
   context: TooltipContext,
   createController: createTooltipController as never,
 };

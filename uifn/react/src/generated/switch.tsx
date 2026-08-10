@@ -19,6 +19,7 @@ const SwitchDefinition: ReactPrimitiveDefinition<SwitchProps> = {
   family: 'forms-input',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["checked","defaultChecked","name","value","disabled","readOnly","required"],
   context: SwitchContext,
   createController: createSwitchController as never,
 };

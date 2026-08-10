@@ -3,6 +3,7 @@ import { createUIFnEnvironment, type UIFnEnvironment } from '../environment';
 import { createUIFnError } from '../errors';
 import { createControlledValue } from '../internal/runtime/controlled';
 import { createStateChannel } from '../internal/runtime/state-channel';
+import { focusUIFnPart } from '../internal/runtime/focus';
 import { mergePartProps, type UIFnPartProps } from '../parts';
 import type { TypeaheadState } from '../algorithms';
 import type { ChangeMeta } from './shared';
@@ -197,7 +198,10 @@ export function createTreeViewController(props: TreeViewProps, env: UIFnEnvironm
   const parts: TreeViewControllerParts = {
     root: { name: 'root', getProps(userProps) { return mergePartProps({ id: ids.rootId, data: { dir: store.getState().dir } }, userProps, { component: 'TreeView', part: 'root', required: { id: true } }); } },
     label: { name: 'label', getProps(userProps) { return mergePartProps({ id: ids.id('label') }, userProps, { component: 'TreeView', part: 'label', required: { id: true } }); } },
-    tree: { name: 'tree', getProps(userProps) { const state = store.getState(); return mergePartProps({ role: 'tree', id: ids.id('tree'), tabIndex: state.focusedItem ? -1 : 0, aria: { labelledby: ids.id('label'), multiselectable: state.selectionMode === 'multiple' }, data: { selectionMode: state.selectionMode }, on: { keydown: (event) => actions.handleKeyDown(event?.key ?? '') } }, userProps, { component: 'TreeView', part: 'tree', required: { role: true, id: true, aria: ['labelledby'] } }); } },
+    tree: { name: 'tree', getProps(userProps) { const state = store.getState(); return mergePartProps({ role: 'tree', id: ids.id('tree'), tabIndex: state.focusedItem ? -1 : 0, aria: { labelledby: ids.id('label'), multiselectable: state.selectionMode === 'multiple' }, data: { selectionMode: state.selectionMode }, on: { keydown: (event) => {
+      const next = actions.handleKeyDown(event?.key ?? '');
+      if (next) focusUIFnPart(event, ids.id('item', next), { deferred: true });
+    } } }, userProps, { component: 'TreeView', part: 'tree', required: { role: true, id: true, aria: ['labelledby'] } }); } },
     item: valuePart('item', (state, item) => { const node = state.visibleItems.find((entry) => entry.id === item); const selected = state.selection.includes(item); const expandedValue = node?.expandable ? state.expanded.includes(item) : undefined; const workflow = state.statuses[item] ?? 'pending'; return { role: 'treeitem', id: ids.id('item', item), tabIndex: state.focusedItem === item ? 0 : -1, aria: { selected: state.selectionMode === 'none' ? undefined : selected, expanded: expandedValue, disabled: node?.disabled ?? false, current: workflow === 'current' ? 'step' : undefined, invalid: workflow === 'error' ? true : undefined, level: node?.depth, posinset: node?.posInSet, setsize: node?.setSize }, data: { selected, state: expandedValue === undefined ? 'leaf' : expandedValue ? 'open' : 'closed', status: workflow, loading: state.loading.includes(item) }, disabled: node?.disabled ?? false, on: { focus: () => actions.focusItem(item), click: () => actions.select(item, { toggle: true }) } }; }),
     itemTrigger: valuePart('itemTrigger', (state, item) => ({ id: ids.id('trigger', item), tabIndex: -1, aria: { controls: ids.id('branch', item), expanded: state.expanded.includes(item) }, data: { state: state.expanded.includes(item) ? 'open' : 'closed' }, on: { click: () => actions.toggleExpanded(item) } })),
     itemText: valuePart('itemText', (_state, item) => ({ id: ids.id('text', item) })),

@@ -19,6 +19,7 @@ const SkeletonDefinition: ReactPrimitiveDefinition<SkeletonProps> = {
   family: 'status-feedback',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["visible"],
   context: SkeletonContext,
   contract: SkeletonContract as never,
 };

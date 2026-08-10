@@ -19,6 +19,7 @@ const StepsDefinition: ReactPrimitiveDefinition<StepsProps> = {
   family: 'status-feedback',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["step","defaultStep","count","orientation","linear"],
   context: StepsContext,
   createController: createStepsController as never,
 };

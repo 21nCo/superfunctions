@@ -19,6 +19,7 @@ const TreeViewDefinition: ReactPrimitiveDefinition<TreeViewProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["expanded","defaultExpanded","selection","defaultSelection","items","selectionMode","dir"],
   context: TreeViewContext,
   createController: createTreeViewController as never,
 };

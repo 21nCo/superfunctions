@@ -19,6 +19,7 @@ const CollapsibleDefinition: ReactPrimitiveDefinition<CollapsibleProps> = {
   family: 'disclosure',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","disabled"],
   context: CollapsibleContext,
   createController: createCollapsibleController as never,
 };

@@ -19,6 +19,7 @@ const PopoverDefinition: ReactPrimitiveDefinition<PopoverProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","modal","placement","closeOnEscape","closeOnInteractOutside"],
   context: PopoverContext,
   createController: createPopoverController as never,
 };

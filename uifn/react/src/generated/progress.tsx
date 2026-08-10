@@ -19,6 +19,7 @@ const ProgressDefinition: ReactPrimitiveDefinition<ProgressProps> = {
   family: 'status-feedback',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["value","min","max","indeterminate","formatValue"],
   context: ProgressContext,
   contract: ProgressContract as never,
 };

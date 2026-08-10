@@ -57,6 +57,7 @@ describe('extended component foundations', () => {
   it('provides a keyboard-driven command selection controller', () => {
     const onValueChange = vi.fn();
     const command = createCommandController({
+      placeholder: 'Type a command or search…',
       items: [
         { value: 'open', label: 'Open file' },
         { value: 'search', label: 'Search workspace' },
@@ -65,6 +66,9 @@ describe('extended component foundations', () => {
     });
 
     expect(command.state.open).toBe(true);
+    expect(command.parts.input.getProps().attributes?.placeholder).toBe('Type a command or search…');
+    command.update({ placeholder: 'Search workspace…' });
+    expect(command.parts.input.getProps().attributes?.placeholder).toBe('Search workspace…');
     command.parts.input.getProps().on?.input?.({ type: 'input', value: 'search' });
     expect(command.state.inputValue).toBe('search');
     expect(command.parts.item.getProps('open').hidden).toBe(true);
@@ -76,10 +80,12 @@ describe('extended component foundations', () => {
     expect(onValueChange).toHaveBeenCalledWith('search');
     expect(command.parts.list.getProps().role).toBe('listbox');
     expect(command.parts.item.getProps('search').aria?.selected).toBe(true);
-    expect(command.parts.empty.getProps().role).toBe('status');
+    expect(command.parts.empty.getProps().role).toBeUndefined();
     expect(command.parts.empty.getProps().aria?.live).toBe('polite');
-    expect(command.parts.loading.getProps().role).toBe('status');
-    expect(command.parts.separator.getProps().role).toBe('separator');
+    expect(command.parts.loading.getProps().role).toBeUndefined();
+    expect(command.parts.loading.getProps().aria?.live).toBe('polite');
+    expect(command.parts.separator.getProps().role).toBe('presentation');
+    expect(command.parts.separator.getProps().aria?.hidden).toBe(true);
 
     command.destroy();
   });

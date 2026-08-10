@@ -19,6 +19,7 @@ const FileUploadDefinition: ReactPrimitiveDefinition<FileUploadProps> = {
   family: 'forms-input',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["files","defaultFiles","accept","multiple","maxFiles","maxSize","name","disabled","required"],
   context: FileUploadContext,
   createController: createFileUploadController as never,
 };

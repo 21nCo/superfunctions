@@ -19,6 +19,7 @@ const FieldsetDefinition: ReactPrimitiveDefinition<FieldsetProps> = {
   family: 'forms-input',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["disabled","invalid"],
   context: FieldsetContext,
   contract: FieldsetContract as never,
 };

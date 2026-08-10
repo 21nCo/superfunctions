@@ -3,7 +3,7 @@ import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it } from 'vitest';
 import catalog from '../../../catalog/generated/catalog.json';
 import manifest from '../../generated/phase-13-solid-compounds.json';
-import { Accordion, Checkbox, Dialog } from '../index.js';
+import { Accordion, Checkbox, Command, Dialog, Input } from '../index.js';
 import type { SolidPrimitiveBridge } from '../internal/compound.jsx';
 import { createSolidPartPropsBinding, toSolidUserPartProps } from '../props.js';
 import { AllRootsHarness } from './fixtures/AllRootsHarness.jsx';
@@ -33,6 +33,22 @@ afterEach(() => {
 });
 
 describe('TV-SOLID-001-P: catalog-complete native Solid compounds', () => {
+  it('separates declared component inputs from intrinsic root props', async () => {
+    const host = mount(() => (
+      <>
+        <Input aria-label="Work email" placeholder="you@company.com" />
+        <Command placeholder="Type a command or search…">
+          <Command.Label>Commands</Command.Label>
+          <Command.Input />
+          <Command.List />
+        </Command>
+      </>
+    ));
+    await settle();
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Work email"]')?.placeholder).toBe('you@company.com');
+    expect(host.querySelector<HTMLInputElement>('[role="combobox"]')?.placeholder).toBe('Type a command or search…');
+  });
+
   it('reconciles live part attributes without blurring the focused element', () => {
     const trigger = document.createElement('div');
     document.body.append(trigger);

@@ -19,6 +19,7 @@ const TimerDefinition: ReactPrimitiveDefinition<TimerProps> = {
   family: 'status-feedback',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["duration","remaining","defaultRemaining","direction","autoStart","announceInterval"],
   context: TimerContext,
   createController: createTimerController as never,
 };

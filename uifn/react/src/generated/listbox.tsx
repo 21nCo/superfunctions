@@ -19,6 +19,7 @@ const ListboxDefinition: ReactPrimitiveDefinition<ListboxProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","items","multiple","orientation","name","disabled","readOnly","required"],
   context: ListboxContext,
   createController: createListboxController as never,
 };

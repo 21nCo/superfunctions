@@ -50,6 +50,33 @@ describe('TV-PRIM-003-P canonical keyboard tables', () => {
     tabs.destroy();
   });
 
+  it('activates navigation-menu triggers by default while preserving explicit link-only items', () => {
+    const navigation = createNavigationMenuController({
+      items: [{ id: 'products' }, { id: 'company', hasContent: true }, { id: 'docs', hasContent: false }],
+    }, env('navigation-menu-activation'));
+
+    expect(navigation.actions.handleKeyDown('Enter', 'products')).toBe('products');
+    expect(navigation.state.value).toBe('products');
+    expect(navigation.actions.handleKeyDown(' ', 'company')).toBe('company');
+    expect(navigation.state.value).toBe('company');
+    expect(navigation.actions.handleKeyDown('Enter', 'docs')).toBe('docs');
+    expect(navigation.state.value).toBe('company');
+
+    navigation.destroy();
+  });
+
+  it('prevents native button click synthesis after keyboard trigger activation', () => {
+    const navigation = createNavigationMenuController({ items: [{ id: 'products' }] }, env('navigation-menu-native-click'));
+    const trigger = navigation.parts.trigger.getProps('products');
+    let prevented = false;
+
+    trigger.on?.keydown?.({ key: 'Enter', preventDefault: () => { prevented = true; } });
+
+    expect(prevented).toBe(true);
+    expect(navigation.state.value).toBe('products');
+    navigation.destroy();
+  });
+
   it('throws the required negative-vector error for a seeded keyboard divergence', () => {
     expect(() => assertUIFnKeyboardCommand('previous', 'open-first', {
       vector: 'TV-PRIM-003-N', primitive: 'Menubar', key: 'ArrowDown', dir: 'rtl',

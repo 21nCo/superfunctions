@@ -19,6 +19,7 @@ const TableDefinition: ReactPrimitiveDefinition<TableProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["striped"],
   context: TableContext,
   contract: TableContract as never,
 };

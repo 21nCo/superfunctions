@@ -19,6 +19,7 @@ const CarouselDefinition: ReactPrimitiveDefinition<CarouselProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["index","defaultIndex","itemCount","loop","orientation","autoplayDelay"],
   context: CarouselContext,
   createController: createCarouselController as never,
 };

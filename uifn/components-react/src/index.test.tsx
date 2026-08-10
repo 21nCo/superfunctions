@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { Button, ButtonRoot, componentsReactPackageBoundary } from './index';
+import { BadgeRoot, Button, ButtonRoot, QRCodeImage, QRCodeRoot, componentsReactPackageBoundary } from './index';
 
 describe('@uifn/components-react', () => {
   it('TV-COMP-001-P wraps public headless parts without owning behavior', () => {
@@ -44,5 +44,23 @@ describe('@uifn/components-react', () => {
     expect(unstyled).toContain('data-uifn-unstyled="true"');
     expect(unstyled).toContain('class="consumer-only"');
     expect(unstyled).not.toContain('uifn-button__root');
+  });
+
+  it('forwards styled props that are also semantic headless inputs', () => {
+    const badge = renderToStaticMarkup(React.createElement(BadgeRoot, {
+      variant: 'success',
+      children: 'Healthy',
+    }));
+    expect(badge).toContain('data-variant="success"');
+    expect(badge).toContain('data-uifn-variant="success"');
+
+    const qrCode = renderToStaticMarkup(React.createElement(QRCodeRoot, {
+      value: 'https://uifn.dev',
+      label: 'UIFn website',
+      size: 176,
+      children: React.createElement(QRCodeImage),
+    }));
+    expect(qrCode).toContain('width="176"');
+    expect(qrCode).toContain('height="176"');
   });
 });

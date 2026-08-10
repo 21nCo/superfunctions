@@ -57,6 +57,10 @@ ${component}.displayName = '${component}';`;
   const namespaceEntries = primitive.anatomy.map((part) => `${pascal(part.id)}: ${name}${pascal(part.id)}`).join(', ');
   const hookState = interactive ? `${controller}['state']` : `ReturnType<typeof ${contract}.getState>`;
   const hookActions = interactive ? `${controller}['actions']` : 'Record<string, never>';
+  const inputNames = [
+    ...primitive.inputs.map((entry) => entry.name),
+    ...(primitive.name === 'Accordion' ? ['type'] : []),
+  ];
   return `'use client';
 
 import * as React from 'react';
@@ -78,6 +82,7 @@ const ${name}Definition: ReactPrimitiveDefinition<${input}> = {
   family: '${primitive.behaviorFamily}',
   kind: '${primitive.implementationKind}',
   rootPart: '${rootPart.id}',
+  inputNames: ${JSON.stringify(inputNames)},
   context: ${name}Context,
   ${definitionRuntime}
 };

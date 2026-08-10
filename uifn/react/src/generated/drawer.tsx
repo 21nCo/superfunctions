@@ -19,6 +19,7 @@ const DrawerDefinition: ReactPrimitiveDefinition<DrawerProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","side","modal","dismissThreshold"],
   context: DrawerContext,
   createController: createDrawerController as never,
 };

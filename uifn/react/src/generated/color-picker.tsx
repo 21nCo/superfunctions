@@ -19,6 +19,7 @@ const ColorPickerDefinition: ReactPrimitiveDefinition<ColorPickerProps> = {
   family: 'date-color',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","open","defaultOpen","colorSpace","alpha","name","disabled","readOnly"],
   context: ColorPickerContext,
   createController: createColorPickerController as never,
 };

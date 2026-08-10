@@ -19,6 +19,7 @@ const ImageCropperDefinition: ReactPrimitiveDefinition<ImageCropperProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["src","crop","defaultCrop","aspectRatio","minSize","maxSize","disabled"],
   context: ImageCropperContext,
   createController: createImageCropperController as never,
 };

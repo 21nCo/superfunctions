@@ -19,6 +19,7 @@ const EditableDefinition: ReactPrimitiveDefinition<EditableProps> = {
   family: 'forms-input',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","editing","defaultEditing","name","disabled","readOnly","required"],
   context: EditableContext,
   createController: createEditableController as never,
 };

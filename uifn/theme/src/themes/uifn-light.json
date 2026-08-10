@@ -20,7 +20,7 @@
         "primary": { "$type": "color", "$value": "oklch(20% 0.02 250)" },
         "secondary": { "$type": "color", "$value": "oklch(35% 0.02 250)" },
         "muted": { "$type": "color", "$value": "oklch(50% 0.015 250)" },
-        "disabled": { "$type": "color", "$value": "oklch(64% 0.01 250)" }
+        "disabled": { "$type": "color", "$value": "oklch(55% 0.01 250)" }
       },
       "border": {
         "subtle": { "$type": "color", "$value": "oklch(88% 0.01 250)" },

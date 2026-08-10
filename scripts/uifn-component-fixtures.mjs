@@ -127,7 +127,6 @@ const NUMERIC_COMPONENT_PARTS = new Set([
 ]);
 
 const NAMEABLE_ROOT_PRIMITIVES = new Set([
-  'button',
   'carousel',
   'date-input',
   'input',
