@@ -587,6 +587,7 @@ export class SveltePrimitiveBridge<TInputs extends object = AnyRecord> {
           bindings.push(createUIFnMenuDomBinding({
             platform: lease.platform,
             controller: controller as never,
+            id: content.id,
             trigger,
             content,
             positioner: () => this.getElement('positioner'),
