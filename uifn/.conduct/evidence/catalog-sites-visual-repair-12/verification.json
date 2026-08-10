@@ -1,0 +1,2124 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "delivery-contract",
+      "status": "passed",
+      "evidence": {
+        "manifest": {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-29T08:25:16.394Z",
+          "basePath": "/components",
+          "frameworks": [
+            {
+              "id": "react",
+              "path": "/components/react/"
+            },
+            {
+              "id": "svelte",
+              "path": "/components/svelte/"
+            },
+            {
+              "id": "solid",
+              "path": "/components/solid/"
+            }
+          ],
+          "inventory": {
+            "components": 61,
+            "hooks": 2,
+            "patterns": 14,
+            "sfPanels": 14
+          },
+          "routes": {
+            "perFramework": 935,
+            "publicPerFramework": 104,
+            "staticallyAddressable": 2805
+          },
+          "resources": [
+            "/robots.txt",
+            "/sitemap.xml",
+            "/components/llms.txt",
+            "/components/llms-full.txt",
+            "/components/og.png",
+            "/components/crop-landscape.svg"
+          ]
+        },
+        "resources": {
+          "/robots.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 61
+          },
+          "/sitemap.xml": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 25131
+          },
+          "/components/llms.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 11872
+          },
+          "/components/llms-full.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 19637
+          },
+          "/components/og.png": {
+            "status": 200,
+            "contentType": "image/png",
+            "byteLength": 876600
+          },
+          "/catalog-manifest.json": {
+            "status": 200,
+            "inventory": {
+              "components": 61,
+              "hooks": 2,
+              "patterns": 14,
+              "sfPanels": 14
+            },
+            "routes": {
+              "perFramework": 935,
+              "publicPerFramework": 104,
+              "staticallyAddressable": 2805
+            }
+          }
+        },
+        "metadata": {
+          "react": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "svelte": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "solid": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          }
+        },
+        "redirects": {
+          "components": {
+            "status": 308,
+            "location": "/components/"
+          }
+        },
+        "notFound": {
+          "status": 404,
+          "hasNoindex": true,
+          "hasRecoveryLink": true
+        },
+        "security": {}
+      }
+    },
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 831,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9387,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2832,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2535,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2958,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2481,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 5054,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "checked",
+          "defaultChecked",
+          "name",
+          "value",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 5,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Checkbox catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  CheckboxRoot,\n  CheckboxControl,\n  CheckboxIndicator,\n  CheckboxLabel,\n  CheckboxHiddenInput,\n} from '@uifn/components-react/checkbox'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <CheckboxRoot defaultChecked name=\"notifications\">\n      <CheckboxControl type=\"button\">\n        <CheckboxIndicator>✓</CheckboxIndicator>\n      </CheckboxControl>\n      <CheckboxLabel>Email notifications</CheckboxLabel>\n      <CheckboxHiddenInput />\n    </CheckboxRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "control": 1,
+          "indicator": 1,
+          "label": 1,
+          "hiddenInput": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 789.84375,
+            "y": 569.796875,
+            "width": 156.296875,
+            "height": 44
+          },
+          "visibleText": "Email notifications",
+          "placeholderMatches": [],
+          "visibleParts": 3
+        },
+        "component": {
+          "ok": true,
+          "controlBox": {
+            "x": 789.84375,
+            "y": 580.796875,
+            "width": 22,
+            "height": 22
+          },
+          "labelBox": {
+            "x": 821.84375,
+            "y": 581.640625,
+            "width": 124.296875,
+            "height": 20.296875
+          },
+          "overlap": 0
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "true",
+        "after": "false"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 116.84375,
+          "y": 510.53125,
+          "width": 156.296875,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 7091,
+      "componentCount": 20,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 10,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "items",
+          "multiple",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 14,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Select catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  SelectRoot,\n  SelectLabel,\n  SelectControl,\n  SelectTrigger,\n  SelectValueText,\n  SelectClear,\n  SelectPositioner,\n  SelectContent,\n  SelectItem,\n  SelectItemText,\n  SelectItemIndicator,\n  SelectGroup,\n  SelectGroupLabel,\n  SelectHiddenInput,\n} from '@uifn/components-react/select'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <SelectRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Member\",\"textValue\":\"Member\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Administrator\",\"textValue\":\"Administrator\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Viewer\",\"textValue\":\"Viewer\",\"disabled\":true}]} defaultValue=\"item-1\" name=\"select\">\n      <SelectLabel>Workspace role</SelectLabel>\n      <SelectControl>\n        <SelectTrigger type=\"button\">\n          <SelectValueText />\n        </SelectTrigger>\n        <SelectClear type=\"button\">×</SelectClear>\n      </SelectControl>\n      <SelectPositioner>\n        <SelectContent>\n          <SelectItem value=\"item-1\">\n            <SelectItemText value=\"item-1\">Member</SelectItemText>\n            <SelectItemIndicator value=\"item-1\">✓</SelectItemIndicator>\n          </SelectItem>\n          <SelectItem value=\"item-2\">\n            <SelectItemText value=\"item-2\">Administrator</SelectItemText>\n            <SelectItemIndicator value=\"item-2\">✓</SelectItemIndicator>\n          </SelectItem>\n          <SelectItem value=\"item-3\">\n            <SelectItemText value=\"item-3\">Viewer</SelectItemText>\n            <SelectItemIndicator value=\"item-3\">✓</SelectItemIndicator>\n          </SelectItem>\n          <SelectGroup value=\"item-1\">\n            <SelectGroupLabel value=\"item-1\">Available roles</SelectGroupLabel>\n          </SelectGroup>\n        </SelectContent>\n      </SelectPositioner>\n      <SelectHiddenInput />\n    </SelectRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "valueText": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemText": 3,
+          "itemIndicator": 3,
+          "group": 1,
+          "groupLabel": 1,
+          "hiddenInput": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 692,
+            "y": 555.875,
+            "width": 352,
+            "height": 71.84375
+          },
+          "visibleText": "Workspace role Member ×",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-keyboard-dismiss-and-pointer-select",
+        "contentOwnedByRoot": true,
+        "optionActive": true,
+        "focusReturned": true,
+        "selectedText": "Administrator✓",
+        "triggerText": "Administrator",
+        "activeBeforeEscape": {
+          "component": "select",
+          "part": "trigger",
+          "role": "combobox",
+          "text": "Member"
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 496.609375,
+          "width": 320,
+          "height": 71.84375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 6475,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 7,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Menubar catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  MenubarRoot,\n  MenubarMenu,\n  MenubarTrigger,\n  MenubarContent,\n  MenubarItem,\n  MenubarSubmenuTrigger,\n  MenubarSubmenuContent,\n} from '@uifn/components-react/menubar'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <MenubarRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"File\",\"textValue\":\"File\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Edit\",\"textValue\":\"Edit\"},{\"id\":\"item-1-action\",\"value\":\"item-1-action\",\"label\":\"New project\",\"textValue\":\"New project\",\"parentId\":\"item-1\"},{\"id\":\"item-2-action\",\"value\":\"item-2-action\",\"label\":\"Undo change\",\"textValue\":\"Undo change\",\"parentId\":\"item-2\"},{\"id\":\"item-1-submenu\",\"value\":\"item-1-submenu\",\"label\":\"Recent\",\"textValue\":\"Recent\",\"parentId\":\"item-1\"},{\"id\":\"item-2-submenu\",\"value\":\"item-2-submenu\",\"label\":\"Transform\",\"textValue\":\"Transform\",\"parentId\":\"item-2\"},{\"id\":\"item-1-submenu-action\",\"value\":\"item-1-submenu-action\",\"label\":\"Roadmap\",\"textValue\":\"Roadmap\",\"parentId\":\"item-1-submenu\"},{\"id\":\"item-2-submenu-action\",\"value\":\"item-2-submenu-action\",\"label\":\"Uppercase\",\"textValue\":\"Uppercase\",\"parentId\":\"item-2-submenu\"}]} aria-label=\"Menubar example\">\n      <MenubarMenu value=\"item-1\">\n        <MenubarTrigger type=\"button\" value=\"item-1\">File</MenubarTrigger>\n        <MenubarContent value=\"item-1\">\n          <MenubarItem value=\"item-1-action\">New project</MenubarItem>\n          <MenubarSubmenuTrigger value=\"item-1-submenu\">Export</MenubarSubmenuTrigger>\n          <MenubarSubmenuContent value=\"item-1-submenu\" />\n        </MenubarContent>\n      </MenubarMenu>\n      <MenubarMenu value=\"item-2\">\n        <MenubarTrigger type=\"button\" value=\"item-2\">Edit</MenubarTrigger>\n        <MenubarContent value=\"item-2\">\n          <MenubarItem value=\"item-2-action\">New project</MenubarItem>\n          <MenubarSubmenuTrigger value=\"item-2-submenu\">Export</MenubarSubmenuTrigger>\n          <MenubarSubmenuContent value=\"item-2-submenu\" />\n        </MenubarContent>\n      </MenubarMenu>\n    </MenubarRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "menu": 2,
+          "trigger": 2,
+          "content": 2,
+          "item": 2,
+          "submenuTrigger": 2,
+          "submenuContent": 2
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 796.65625,
+            "y": 590.84375,
+            "width": 142.6875,
+            "height": 58
+          },
+          "visibleText": "File Edit",
+          "placeholderMatches": [],
+          "visibleParts": 5
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-roving-open-escape",
+        "triggerCount": 2,
+        "rovingFocusWorked": true,
+        "itemCount": 2,
+        "contentOwnedByRoot": true,
+        "itemFocused": true,
+        "focusReturned": true,
+        "activeBeforeEscape": {
+          "component": "menubar",
+          "part": "item",
+          "role": "menuitem",
+          "text": "New project"
+        },
+        "itemFocusEvidence": []
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 123.65625,
+          "y": 528.28125,
+          "width": 142.6875,
+          "height": 58
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/navigation-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Navigation Menu",
+      "bodyLength": 6560,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "orientation",
+          "delayDuration",
+          "skipDelayDuration",
+          "dir"
+        ],
+        "anatomyParts": 8,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Navigation Menu catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  NavigationMenuRoot,\n  NavigationMenuList,\n  NavigationMenuItem,\n  NavigationMenuTrigger,\n  NavigationMenuContent,\n  NavigationMenuLink,\n  NavigationMenuViewport,\n  NavigationMenuIndicator,\n} from '@uifn/components-react/navigation-menu'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <NavigationMenuRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Products\",\"textValue\":\"Products\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Resources\",\"textValue\":\"Resources\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Company\",\"textValue\":\"Company\",\"disabled\":true}]} aria-label=\"NavigationMenu example\">\n      <NavigationMenuList>\n        <NavigationMenuItem value=\"item-1\">\n          <NavigationMenuTrigger type=\"button\" value=\"item-1\">Products</NavigationMenuTrigger>\n          <NavigationMenuContent value=\"item-1\" />\n          <NavigationMenuLink href=\"#preview\" value=\"item-1\">Overview</NavigationMenuLink>\n        </NavigationMenuItem>\n        <NavigationMenuItem value=\"item-2\">\n          <NavigationMenuTrigger type=\"button\" value=\"item-2\">Resources</NavigationMenuTrigger>\n          <NavigationMenuContent value=\"item-2\" />\n          <NavigationMenuLink href=\"#preview\" value=\"item-2\">Documentation</NavigationMenuLink>\n        </NavigationMenuItem>\n        <NavigationMenuItem value=\"item-3\">\n          <NavigationMenuTrigger type=\"button\" value=\"item-3\">Company</NavigationMenuTrigger>\n          <NavigationMenuContent value=\"item-3\" />\n          <NavigationMenuLink href=\"#preview\" value=\"item-3\">About</NavigationMenuLink>\n        </NavigationMenuItem>\n      </NavigationMenuList>\n      <NavigationMenuViewport />\n      <NavigationMenuIndicator>✓</NavigationMenuIndicator>\n    </NavigationMenuRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "list": 1,
+          "item": 3,
+          "trigger": 3,
+          "content": 3,
+          "link": 3,
+          "viewport": 1,
+          "indicator": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 548,
+            "y": 574.84375,
+            "width": 640,
+            "height": 90
+          },
+          "visibleText": "Products Overview Resources Documentation Company About",
+          "placeholderMatches": [],
+          "visibleParts": 11
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "navigation-menu-roving-open-escape",
+        "triggerCount": 3,
+        "secondFocused": true,
+        "expanded": "true",
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 512.28125,
+          "width": 320,
+          "height": 90
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tags-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tags Input",
+      "bodyLength": 6342,
+      "componentCount": 14,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 11,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "allowDuplicates",
+          "max",
+          "delimiter",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 10,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Tags Input catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TagsInputRoot,\n  TagsInputLabel,\n  TagsInputControl,\n  TagsInputItem,\n  TagsInputItemText,\n  TagsInputItemDelete,\n  TagsInputInput,\n  TagsInputClear,\n  TagsInputHiddenInput,\n  TagsInputError,\n} from '@uifn/components-react/tags-input'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TagsInputRoot defaultValue={[\"item-1\",\"item-2\"]} name=\"tags-input\">\n      <TagsInputLabel>Release tags</TagsInputLabel>\n      <TagsInputControl>\n        <TagsInputItem value=\"item-1\">\n          <TagsInputItemText value=\"item-1\">item-1</TagsInputItemText>\n          <TagsInputItemDelete type=\"button\" value=\"item-1\">Remove item-1</TagsInputItemDelete>\n        </TagsInputItem>\n        <TagsInputItem value=\"item-2\">\n          <TagsInputItemText value=\"item-2\">item-2</TagsInputItemText>\n          <TagsInputItemDelete type=\"button\" value=\"item-2\">Remove item-2</TagsInputItemDelete>\n        </TagsInputItem>\n        <TagsInputInput />\n        <TagsInputClear type=\"button\">Clear all tags</TagsInputClear>\n      </TagsInputControl>\n      <TagsInputHiddenInput value=\"item-1\" />\n      <TagsInputError />\n    </TagsInputRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "item": 2,
+          "itemText": 2,
+          "itemDelete": 2,
+          "input": 1,
+          "clear": 1,
+          "hiddenInput": 2,
+          "error": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 644,
+            "y": 561.6875,
+            "width": 448,
+            "height": 116.296875
+          },
+          "visibleText": "Release tags Frontend × Stable × Clear all tags",
+          "placeholderMatches": [],
+          "visibleParts": 11
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tags-input-create-tag",
+        "selectedValues": [
+          "item-1",
+          "item-2",
+          "release"
+        ],
+        "itemTexts": [
+          "Frontend",
+          "Stable",
+          "release"
+        ]
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 499.125,
+          "width": 320,
+          "height": 116.296875
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/field",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Field",
+      "bodyLength": 5201,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "name",
+          "disabled",
+          "readOnly",
+          "required",
+          "invalid"
+        ],
+        "anatomyParts": 6,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nPrefer native form controls and preserve labels, descriptions, errors, disabled fieldsets, reset, and validation.\n\nKEYBOARD\n\nTab, Shift+Tab, Enter, Space, ArrowUp, ArrowDown, Home, End, composition\n\nFOCUS\n\nVisible Input Focus, Error Focus Policy, Caret And Selection Preservation\n\nWCAG REFERENCES\n\n1.3.1, 1.3.5, 2.1.1, 2.4.3, 2.4.7, 2.5.8, 3.3.1, 3.3.2, 3.3.3, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Field catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import { FieldRoot, FieldLabel, FieldControl, FieldDescription, FieldError, FieldRequiredIndicator } from '@uifn/components-react/field'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <FieldRoot required>\n      <FieldLabel htmlFor=\"work-email\">\n        Work email <FieldRequiredIndicator>*</FieldRequiredIndicator>\n      </FieldLabel>\n      <FieldControl>\n        <input\n          id=\"work-email\"\n          name=\"email\"\n          type=\"email\"\n          placeholder=\"you@company.com\"\n          autoComplete=\"email\"\n          required\n        />\n      </FieldControl>\n      <FieldDescription>We will only use this for account notifications.</FieldDescription>\n      <FieldError />\n    </FieldRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "requiredIndicator": 1,
+          "control": 1,
+          "description": 1,
+          "error": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 644,
+            "y": 545.5,
+            "width": 448,
+            "height": 92.59375
+          },
+          "visibleText": "Work email * We will only use this for account notifications.",
+          "placeholderMatches": [],
+          "visibleParts": 5
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "field-label-description-contract",
+        "labelFor": "field-r-0-field-control",
+        "controlId": "field-r-0-field-control",
+        "describedBy": "field-r-0-field-description",
+        "descriptionId": "field-r-0-field-description",
+        "errorHidden": ""
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 486.234375,
+          "width": 320,
+          "height": 92.59375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/fieldset",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Fieldset",
+      "bodyLength": 4808,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 4,
+        "propNames": [
+          "className",
+          "children",
+          "disabled",
+          "invalid"
+        ],
+        "anatomyParts": 5,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nPrefer native form controls and preserve labels, descriptions, errors, disabled fieldsets, reset, and validation.\n\nKEYBOARD\n\nTab, Shift+Tab, Enter, Space, ArrowUp, ArrowDown, Home, End, composition\n\nFOCUS\n\nVisible Input Focus, Error Focus Policy, Caret And Selection Preservation\n\nWCAG REFERENCES\n\n1.3.1, 1.3.5, 2.1.1, 2.4.3, 2.4.7, 2.5.8, 3.3.1, 3.3.2, 3.3.3, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Fieldset catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import { FieldsetRoot, FieldsetLegend, FieldsetContent, FieldsetDescription, FieldsetError } from '@uifn/components-react/fieldset'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <FieldsetRoot>\n      <FieldsetLegend>Workspace notifications</FieldsetLegend>\n      <FieldsetDescription>Choose which updates your team should receive.</FieldsetDescription>\n      <FieldsetContent>\n        <label><input type=\"checkbox\" defaultChecked /> Product updates</label>\n        <label><input type=\"checkbox\" /> Security alerts</label>\n      </FieldsetContent>\n      <FieldsetError />\n    </FieldsetRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "legend": 1,
+          "description": 1,
+          "content": 1,
+          "error": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 644,
+            "y": 501,
+            "width": 448,
+            "height": 181.59375
+          },
+          "visibleText": "Workspace notifications Choose which updates your team should receive. Product updates Security alerts",
+          "placeholderMatches": [],
+          "visibleParts": 4
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "fieldset-native-semantics",
+        "tagName": "FIELDSET",
+        "legendIsChild": true,
+        "describedBy": "fieldset-r-0-fieldset-description",
+        "descriptionId": "fieldset-r-0-fieldset-description"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 431.578125,
+          "width": 320,
+          "height": 201.890625
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/timer",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Timer",
+      "bodyLength": 5013,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "duration",
+          "remaining",
+          "defaultRemaining",
+          "direction",
+          "autoStart",
+          "announceInterval"
+        ],
+        "anatomyParts": 6,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse meter, progressbar, status, timer, step, or alert semantics only as declared for each state.\n\nKEYBOARD\n\nTab, Shift+Tab, Enter, Space, Escape\n\nFOCUS\n\nDo Not Steal Focus For Passive Status, Restore Focus For Dismissed Workflow\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.2.1, 2.4.3, 3.2.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Timer catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TimerRoot,\n  TimerValue,\n  TimerStart,\n  TimerPause,\n  TimerReset,\n  TimerStatus,\n} from '@uifn/components-react/timer'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TimerRoot duration={60000} defaultRemaining={42000} aria-label=\"Timer example\">\n      <TimerValue>05:00</TimerValue>\n      <TimerStart type=\"button\">Start</TimerStart>\n      <TimerPause type=\"button\">Pause</TimerPause>\n      <TimerReset type=\"button\">Reset</TimerReset>\n      <TimerStatus>Ready</TimerStatus>\n    </TimerRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "value": 1,
+          "start": 1,
+          "pause": 1,
+          "reset": 1,
+          "status": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 692,
+            "y": 553.6875,
+            "width": 352,
+            "height": 132.296875
+          },
+          "visibleText": "05:00 Start Pause Reset Ready",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "timer-start-pause",
+        "before": 42,
+        "during": 41.8,
+        "runningState": "running",
+        "pausedState": "paused",
+        "pausedAt": 41.7,
+        "stillPausedAt": 41.7
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 491.125,
+          "width": 320,
+          "height": 132.296875
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toolbar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toolbar",
+      "bodyLength": 5073,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "orientation",
+          "loop",
+          "dir",
+          "disabled"
+        ],
+        "anatomyParts": 5,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Toolbar catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  ToolbarRoot,\n  ToolbarButton,\n  ToolbarLink,\n  ToolbarToggleGroup,\n  ToolbarSeparator,\n} from '@uifn/components-react/toolbar'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <ToolbarRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Bold\",\"textValue\":\"Bold\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Insert link\",\"textValue\":\"Insert link\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Alignment\",\"textValue\":\"Alignment\",\"disabled\":true}]} aria-label=\"Toolbar example\">\n      <ToolbarButton type=\"button\" value=\"item-1\">Bold</ToolbarButton>\n      <ToolbarLink href=\"#preview\" value=\"item-2\">Insert link</ToolbarLink>\n      <ToolbarToggleGroup value=\"item-1\">Alignment</ToolbarToggleGroup>\n      <ToolbarSeparator value=\"item-1\" />\n    </ToolbarRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "button": 1,
+          "link": 1,
+          "toggleGroup": 1,
+          "separator": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 740.046875,
+            "y": 596.84375,
+            "width": 255.890625,
+            "height": 46
+          },
+          "visibleText": "Bold Insert link Alignment",
+          "placeholderMatches": [],
+          "visibleParts": 5
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toolbar-roving-focus",
+        "controlCount": 2,
+        "secondFocused": true,
+        "firstTabIndex": "-1",
+        "secondTabIndex": "0"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 67.046875,
+          "y": 534.28125,
+          "width": 255.890625,
+          "height": 46
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/signature-pad",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Signature Pad",
+      "bodyLength": 5337,
+      "componentCount": 7,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 7,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nExpose declared range or group semantics with keyboard alternatives for every pointer/touch gesture.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown\n\nFOCUS\n\nFocusable Operable Handle, Multi Handle Order, Visible Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.7, 2.5.1, 2.5.7, 2.5.8, 4.1.2\n\nThese requirements come from the canonical Signature Pad catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  SignaturePadRoot,\n  SignaturePadLabel,\n  SignaturePadCanvas,\n  SignaturePadClear,\n  SignaturePadUndo,\n  SignaturePadStatus,\n  SignaturePadHiddenInput,\n} from '@uifn/components-react/signature-pad'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <SignaturePadRoot name=\"signature-pad\">\n      <SignaturePadLabel>Signature</SignaturePadLabel>\n      <SignaturePadCanvas>canvas example</SignaturePadCanvas>\n      <SignaturePadClear type=\"button\">Clear</SignaturePadClear>\n      <SignaturePadUndo type=\"button\">Undo</SignaturePadUndo>\n      <SignaturePadStatus>Ready to sign</SignaturePadStatus>\n      <SignaturePadHiddenInput />\n    </SignaturePadRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "canvas": 1,
+          "clear": 1,
+          "undo": 1,
+          "status": 1,
+          "hiddenInput": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 644,
+            "y": 454.546875,
+            "width": 448,
+            "height": 330.59375
+          },
+          "visibleText": "Signature Clear Undo Ready to sign",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "signature-pad-draw-undo",
+        "drawnState": "complete",
+        "drawnValueLength": 284,
+        "undoEnabled": true,
+        "undoneValue": "[]"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 409.28125,
+          "width": 320,
+          "height": 330.59375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/number-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Number Input",
+      "bodyLength": 6011,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 12,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "min",
+          "max",
+          "step",
+          "locale",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nPrefer native form controls and preserve labels, descriptions, errors, disabled fieldsets, reset, and validation.\n\nKEYBOARD\n\nTab, Shift+Tab, Enter, Space, ArrowUp, ArrowDown, Home, End, composition\n\nFOCUS\n\nVisible Input Focus, Error Focus Policy, Caret And Selection Preservation\n\nWCAG REFERENCES\n\n1.3.1, 1.3.5, 2.1.1, 2.4.3, 2.4.7, 2.5.8, 3.3.1, 3.3.2, 3.3.3, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Number Input catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  NumberInputRoot,\n  NumberInputLabel,\n  NumberInputControl,\n  NumberInputInput,\n  NumberInputIncrement,\n  NumberInputDecrement,\n  NumberInputScrubber,\n  NumberInputHiddenInput,\n  NumberInputError,\n} from '@uifn/components-react/number-input'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <NumberInputRoot name=\"number-input\">\n      <NumberInputLabel>Team seats</NumberInputLabel>\n      <NumberInputControl>\n        <NumberInputInput />\n        <NumberInputIncrement type=\"button\">Increase</NumberInputIncrement>\n        <NumberInputDecrement type=\"button\">Decrease</NumberInputDecrement>\n        <NumberInputScrubber>Drag to adjust</NumberInputScrubber>\n      </NumberInputControl>\n      <NumberInputHiddenInput />\n      <NumberInputError>Please check this value.</NumberInputError>\n    </NumberInputRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "increment": 1,
+          "decrement": 1,
+          "scrubber": 1,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 692,
+            "y": 585.6875,
+            "width": 352,
+            "height": 68.296875
+          },
+          "visibleText": "Team seats Increase Decrease Drag to adjust",
+          "placeholderMatches": [],
+          "visibleParts": 7
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "number-input-step-controls",
+        "before": 0,
+        "after": 1,
+        "hiddenValue": 1,
+        "restored": 0
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 523.125,
+          "width": 320,
+          "height": 68.296875
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/password-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Password Input",
+      "bodyLength": 5509,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 10,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "visible",
+          "name",
+          "autocomplete",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 6,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nPrefer native form controls and preserve labels, descriptions, errors, disabled fieldsets, reset, and validation.\n\nKEYBOARD\n\nTab, Shift+Tab, Enter, Space, ArrowUp, ArrowDown, Home, End, composition\n\nFOCUS\n\nVisible Input Focus, Error Focus Policy, Caret And Selection Preservation\n\nWCAG REFERENCES\n\n1.3.1, 1.3.5, 2.1.1, 2.4.3, 2.4.7, 2.5.8, 3.3.1, 3.3.2, 3.3.3, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Password Input catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  PasswordInputRoot,\n  PasswordInputLabel,\n  PasswordInputInput,\n  PasswordInputVisibilityTrigger,\n  PasswordInputStrength,\n  PasswordInputError,\n} from '@uifn/components-react/password-input'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <PasswordInputRoot name=\"password-input\">\n      <PasswordInputLabel>Password</PasswordInputLabel>\n      <PasswordInputInput />\n      <PasswordInputVisibilityTrigger type=\"button\">Show password</PasswordInputVisibilityTrigger>\n      <PasswordInputStrength>Strong password</PasswordInputStrength>\n      <PasswordInputError>Please check this value.</PasswordInputError>\n    </PasswordInputRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "input": 1,
+          "visibilityTrigger": 1,
+          "strength": 1,
+          "error": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 692,
+            "y": 547.546875,
+            "width": 352,
+            "height": 144.59375
+          },
+          "visibleText": "Password Show password Strong password",
+          "placeholderMatches": [],
+          "visibleParts": 5
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "password-input-visibility-toggle",
+        "beforeType": "password",
+        "afterType": "text",
+        "valueLength": 28
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 484.984375,
+          "width": 320,
+          "height": 144.59375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tour",
+      "bodyLength": 6129,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "step",
+          "defaultStep",
+          "steps",
+          "modal"
+        ],
+        "anatomyParts": 13,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Tour catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TourRoot,\n  TourPortal,\n  TourBackdrop,\n  TourSpotlight,\n  TourPositioner,\n  TourContent,\n  TourTitle,\n  TourDescription,\n  TourPrevious,\n  TourNext,\n  TourSkip,\n  TourClose,\n  TourProgress,\n} from '@uifn/components-react/tour'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TourRoot steps={[{\"id\":\"intro\",\"title\":\"Introduction\",\"target\":\"#uifn-tour-target\"},{\"id\":\"details\",\"title\":\"Component details\",\"target\":\"#uifn-tour-target\"},{\"id\":\"finish\",\"title\":\"Ready to build\",\"target\":\"#uifn-tour-target\"}]} defaultStep={0} defaultOpen>\n      <TourPortal />\n      <TourBackdrop />\n      <TourSpotlight />\n      <TourPositioner>\n        <TourContent>\n          <TourTitle>Invite your team</TourTitle>\n          <TourDescription>Add teammates and assign workspace roles.</TourDescription>\n          <TourPrevious type=\"button\">Previous</TourPrevious>\n          <TourNext type=\"button\">Next</TourNext>\n          <TourClose type=\"button\">Close</TourClose>\n        </TourContent>\n      </TourPositioner>\n      <TourSkip type=\"button\">Skip tour</TourSkip>\n      <TourProgress>Step 1 of 3</TourProgress>\n    </TourRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "backdrop": 1,
+          "spotlight": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "previous": 1,
+          "next": 1,
+          "close": 1,
+          "skip": 1,
+          "progress": 1,
+          "portal": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 884.921875,
+            "y": 596.546875,
+            "width": 73.875,
+            "height": 46.59375
+          },
+          "visibleText": "Invite your team Add teammates and assign workspace roles. PreviousNextClose Skip tour Step 1 of 3",
+          "placeholderMatches": [],
+          "visibleParts": 12
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tour-next-close-restore",
+        "before": "Step 1 of 3",
+        "after": "Step 2 of 3",
+        "step": "1",
+        "targetFocused": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": false,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 211.921875,
+          "y": 533.984375,
+          "width": 73.875,
+          "height": 46.59375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1414,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1272,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1381,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1409,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "code": "UIFN_PUBLIC_COMPONENT_RESPONSIVE_FAILED",
+      "evidence": {
+        "ok": false,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 211.921875,
+          "y": 533.984375,
+          "width": 73.875,
+          "height": 46.59375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": false
+        }
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "code": "UIFN_PUBLIC_COMPONENT_RESPONSIVE_FAILED",
+      "evidence": {
+        "ok": false,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 211.921875,
+          "y": 533.984375,
+          "width": 73.875,
+          "height": 46.59375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": false
+        }
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tour",
+      "bodyLength": 6129,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "step",
+          "defaultStep",
+          "steps",
+          "modal"
+        ],
+        "anatomyParts": 13,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Tour catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TourRoot,\n  TourPortal,\n  TourBackdrop,\n  TourSpotlight,\n  TourPositioner,\n  TourContent,\n  TourTitle,\n  TourDescription,\n  TourPrevious,\n  TourNext,\n  TourSkip,\n  TourClose,\n  TourProgress,\n} from '@uifn/components-react/tour'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TourRoot steps={[{\"id\":\"intro\",\"title\":\"Introduction\",\"target\":\"#uifn-tour-target\"},{\"id\":\"details\",\"title\":\"Component details\",\"target\":\"#uifn-tour-target\"},{\"id\":\"finish\",\"title\":\"Ready to build\",\"target\":\"#uifn-tour-target\"}]} defaultStep={0} defaultOpen>\n      <TourPortal />\n      <TourBackdrop />\n      <TourSpotlight />\n      <TourPositioner>\n        <TourContent>\n          <TourTitle>Invite your team</TourTitle>\n          <TourDescription>Add teammates and assign workspace roles.</TourDescription>\n          <TourPrevious type=\"button\">Previous</TourPrevious>\n          <TourNext type=\"button\">Next</TourNext>\n          <TourClose type=\"button\">Close</TourClose>\n        </TourContent>\n      </TourPositioner>\n      <TourSkip type=\"button\">Skip tour</TourSkip>\n      <TourProgress>Step 1 of 3</TourProgress>\n    </TourRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "backdrop": 1,
+          "spotlight": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "previous": 1,
+          "next": 1,
+          "close": 1,
+          "skip": 1,
+          "progress": 1,
+          "portal": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 884.921875,
+            "y": 596.546875,
+            "width": 73.875,
+            "height": 46.59375
+          },
+          "visibleText": "Invite your team Add teammates and assign workspace roles. PreviousNextClose Skip tour Step 1 of 3",
+          "placeholderMatches": [],
+          "visibleParts": 12
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tour-next-close-restore",
+        "before": "Step 1 of 3",
+        "after": "Step 2 of 3",
+        "step": "1",
+        "targetFocused": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": false,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 211.921875,
+          "y": 533.984375,
+          "width": 73.875,
+          "height": 46.59375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": false
+        }
+      }
+    }
+  ],
+  "navigationRetries": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-visual-repair-12"
+}

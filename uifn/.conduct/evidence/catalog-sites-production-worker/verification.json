@@ -1,0 +1,320 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "baseUrl": "https://uifn-components.21n.workers.dev",
+  "checks": [
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Workbench Home",
+      "bodyLength": 8805,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 458,
+      "componentCount": 1,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 608,
+      "componentCount": 3,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 565,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 787,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 806,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Workbench Home",
+      "bodyLength": 8651,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 463,
+      "componentCount": 1,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 613,
+      "componentCount": 3,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 570,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 792,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 811,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Workbench Home",
+      "bodyLength": 8796,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 449,
+      "componentCount": 1,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 599,
+      "componentCount": 3,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 556,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 778,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 797,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Workbench Home",
+      "bodyLength": 8808,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 461,
+      "componentCount": 1,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 611,
+      "componentCount": 3,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 568,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 790,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 809,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Workbench Home",
+      "bodyLength": 8774,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 433,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 532,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 534,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 756,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 775,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "angular",
+      "route": "/components/angular/components/button",
+      "code": "UIFN_CATALOG_COMPONENT_ROOT_MISSING",
+      "evidence": {
+        "angularHostCount": 1
+      }
+    }
+  ],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-production-worker"
+}

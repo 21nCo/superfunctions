@@ -1,0 +1,131 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5758,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 961,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 2259,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1482,
+        "scrollTop": 1214
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 583,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 379,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 493,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 632,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-vue-fixes"
+}

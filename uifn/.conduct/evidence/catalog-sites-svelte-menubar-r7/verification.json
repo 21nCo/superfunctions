@@ -1,0 +1,319 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7593,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/menubar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3364,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "menubar-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": null,
+          "part": null,
+          "role": null,
+          "text": "{\n\t\t\t\t\t__sveltekit_frbkj6 = {\n\t\t\t\t\t\tbase: \"/components/svelte\",\n\t\t\t\t\t\tassets: \"/components/svelte\"\n\t\t\t\t\t};\n\n\t\t\t\t\tconst element = document.currentScript.parentElement;\n\n\t\t\t\t\tPromise.all([\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/start.BeOJ1ZKU.js\"),\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/app._I2MRCbC.js\")\n\t\t\t\t\t]).then(([kit, app]) => {\n\t\t\t\t\t\tkit.start(app, element);\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\n\t\tui uifncomponent catalog Svelte + SvelteKit OverviewComponentsHooksExamplesPatternsSuperfunction UI Developer tools Component QA ↗ 61 components · 2 hooks Svelte + SvelteKit · uifn Menubar Menubar is a overlays component with framework-native state, accessibility, and token-based styling.  Live preview Code States QA cases default File  New file Save   Edit  Undo Redo    \n    \n      \n        On this page\n        Installation\n        Usage\n        API reference\n        Examples\n      \n\n      \n        \n          Get startedInstallation\n        \n        \n          npmSvelte + SvelteKit\n          npm install @uifn/components-svelte\n        \n        Import the compound from @uifn/components-svelte, and import @uifn/components/styles.css once at your application root. Your application supplies the compatible svelte peer dependency.\n      \n\n      \n        \n          Framework-nativeUsage\n          View statesOpen QA cases\n        \n        \n          Menubar.svelteCopy-ready\n          <script lang=\"ts\">\n  import { Menubar } from '@uifn/components-svelte'\n  import '@uifn/components/styles.css'\n</script>\n\n<Menubar items={[{ id: 'file' }, { id: 'new', label: 'New file', parentId: 'file' }]}>\n  <Menubar.Menu value=\"file\">\n    <Menubar.Trigger value=\"file\">File</Menubar.Trigger>\n    <Menubar.Content value=\"file\">\n      <Menubar.Item value=\"new\">New file</Menubar.Item>\n    </Menubar.Content>\n  </Menubar.Menu>\n</Menubar>\n\n        \n      \n\n      \n        ContractAPI reference\n        \n          CategoryOverlay\n          States4\n          CompositionOpen compound\n          Anatomy parts7\n        \n        Props\n        \n          \n            PropTypeDefaultDescription\n            classstringundefinedAdds a consumer class to this anatomy part.childrenframework contentundefinedComposes the documented compound parts without replacing their behavior.activebooleanfalseApplies the active or pressed presentation.openbooleanundefinedControls the open state.defaultOpenbooleanfalseSets the initial open state when uncontrolled.onOpenChange(open: boolean) => voidundefinedRuns whenever the open state changes.valuestringundefinedControls the current value.defaultValuestringundefinedSets the initial value when uncontrolled.onValueChange(value: string) => voidundefinedRuns whenever the value changes.itemsArray<{ value, label, disabled? }>[]Supplies the collection rendered by the component.\n          \n        \n        Anatomy\n        \n          rootTop-level element that owns component state and data attributes.menuMenu part exposed for composition and styling.triggerInteractive control that opens, closes, or toggles the component.contentPrimary content region associated with the component.itemIndividual collection or navigation item.submenuTriggerSubmenuTrigger part exposed for composition and styling.submenuContentSubmenuContent part exposed for composition and styling.\n        \n      \n\n      \n        ExploreExamples and states\n        \n          Live exampleDefault interactionUse the real component rendered above and inspect its visual and keyboard behavior.\n          State matrixclosed, open, default, activeInspect supported visual and semantic states using the same framework package.\n          Behavior casesClick Or Hover Trigger, Escape Key, Outside Click, Tab, Keyboard, Route LinkOpen collision, focus, responsive, and regression fixtures for this component.\n        \n      \n\n      \n        AccessibilityKeyboard and ARIA contractSemantic anatomy, focus behavior, and state attributes are exercised in a real browser.\n        StylingTokens and recipe variantsTheme values flow through CSS variables so product teams can brand without rewriting behavior.\n        FrameworkNative Svelte + SvelteKitThe preview is the real framework export, not a screenshot or simulated DOM."
+        },
+        "itemFocusEvidence": [
+          {
+            "id": "menubar-root-menubar-c1-item-new",
+            "tabIndex": 0,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "New file"
+          },
+          {
+            "id": "menubar-root-menubar-c1-item-save",
+            "tabIndex": -1,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "Save"
+          }
+        ],
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 86.78125,
+          "y": 557.328125,
+          "width": 216.4375,
+          "height": 66
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 463,
+      "componentCount": 33,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "svelte",
+      "route": "/components/svelte/components/menubar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "menubar-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": null,
+          "part": null,
+          "role": null,
+          "text": "{\n\t\t\t\t\t__sveltekit_frbkj6 = {\n\t\t\t\t\t\tbase: \"/components/svelte\",\n\t\t\t\t\t\tassets: \"/components/svelte\"\n\t\t\t\t\t};\n\n\t\t\t\t\tconst element = document.currentScript.parentElement;\n\n\t\t\t\t\tPromise.all([\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/start.BeOJ1ZKU.js\"),\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/app._I2MRCbC.js\")\n\t\t\t\t\t]).then(([kit, app]) => {\n\t\t\t\t\t\tkit.start(app, element);\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\n\t\tui uifncomponent catalog Svelte + SvelteKit OverviewComponentsHooksExamplesPatternsSuperfunction UI Developer tools Component QA ↗ 61 components · 2 hooks Svelte + SvelteKit · uifn Menubar Menubar is a overlays component with framework-native state, accessibility, and token-based styling.  Live preview Code States QA cases default File  New file Save   Edit  Undo Redo    \n    \n      \n        On this page\n        Installation\n        Usage\n        API reference\n        Examples\n      \n\n      \n        \n          Get startedInstallation\n        \n        \n          npmSvelte + SvelteKit\n          npm install @uifn/components-svelte\n        \n        Import the compound from @uifn/components-svelte, and import @uifn/components/styles.css once at your application root. Your application supplies the compatible svelte peer dependency.\n      \n\n      \n        \n          Framework-nativeUsage\n          View statesOpen QA cases\n        \n        \n          Menubar.svelteCopy-ready\n          <script lang=\"ts\">\n  import { Menubar } from '@uifn/components-svelte'\n  import '@uifn/components/styles.css'\n</script>\n\n<Menubar items={[{ id: 'file' }, { id: 'new', label: 'New file', parentId: 'file' }]}>\n  <Menubar.Menu value=\"file\">\n    <Menubar.Trigger value=\"file\">File</Menubar.Trigger>\n    <Menubar.Content value=\"file\">\n      <Menubar.Item value=\"new\">New file</Menubar.Item>\n    </Menubar.Content>\n  </Menubar.Menu>\n</Menubar>\n\n        \n      \n\n      \n        ContractAPI reference\n        \n          CategoryOverlay\n          States4\n          CompositionOpen compound\n          Anatomy parts7\n        \n        Props\n        \n          \n            PropTypeDefaultDescription\n            classstringundefinedAdds a consumer class to this anatomy part.childrenframework contentundefinedComposes the documented compound parts without replacing their behavior.activebooleanfalseApplies the active or pressed presentation.openbooleanundefinedControls the open state.defaultOpenbooleanfalseSets the initial open state when uncontrolled.onOpenChange(open: boolean) => voidundefinedRuns whenever the open state changes.valuestringundefinedControls the current value.defaultValuestringundefinedSets the initial value when uncontrolled.onValueChange(value: string) => voidundefinedRuns whenever the value changes.itemsArray<{ value, label, disabled? }>[]Supplies the collection rendered by the component.\n          \n        \n        Anatomy\n        \n          rootTop-level element that owns component state and data attributes.menuMenu part exposed for composition and styling.triggerInteractive control that opens, closes, or toggles the component.contentPrimary content region associated with the component.itemIndividual collection or navigation item.submenuTriggerSubmenuTrigger part exposed for composition and styling.submenuContentSubmenuContent part exposed for composition and styling.\n        \n      \n\n      \n        ExploreExamples and states\n        \n          Live exampleDefault interactionUse the real component rendered above and inspect its visual and keyboard behavior.\n          State matrixclosed, open, default, activeInspect supported visual and semantic states using the same framework package.\n          Behavior casesClick Or Hover Trigger, Escape Key, Outside Click, Tab, Keyboard, Route LinkOpen collision, focus, responsive, and regression fixtures for this component.\n        \n      \n\n      \n        AccessibilityKeyboard and ARIA contractSemantic anatomy, focus behavior, and state attributes are exercised in a real browser.\n        StylingTokens and recipe variantsTheme values flow through CSS variables so product teams can brand without rewriting behavior.\n        FrameworkNative Svelte + SvelteKitThe preview is the real framework export, not a screenshot or simulated DOM."
+        },
+        "itemFocusEvidence": [
+          {
+            "id": "menubar-root-menubar-c1-item-new",
+            "tabIndex": 0,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "New file"
+          },
+          {
+            "id": "menubar-root-menubar-c1-item-save",
+            "tabIndex": -1,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "Save"
+          }
+        ],
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "svelte",
+      "route": "/components/svelte/components/menubar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "menubar-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": null,
+          "part": null,
+          "role": null,
+          "text": "{\n\t\t\t\t\t__sveltekit_frbkj6 = {\n\t\t\t\t\t\tbase: \"/components/svelte\",\n\t\t\t\t\t\tassets: \"/components/svelte\"\n\t\t\t\t\t};\n\n\t\t\t\t\tconst element = document.currentScript.parentElement;\n\n\t\t\t\t\tPromise.all([\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/start.BeOJ1ZKU.js\"),\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/app._I2MRCbC.js\")\n\t\t\t\t\t]).then(([kit, app]) => {\n\t\t\t\t\t\tkit.start(app, element);\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\n\t\tui uifncomponent catalog Svelte + SvelteKit OverviewComponentsHooksExamplesPatternsSuperfunction UI Developer tools Component QA ↗ 61 components · 2 hooks Svelte + SvelteKit · uifn Menubar Menubar is a overlays component with framework-native state, accessibility, and token-based styling.  Live preview Code States QA cases default File  New file Save   Edit  Undo Redo    \n    \n      \n        On this page\n        Installation\n        Usage\n        API reference\n        Examples\n      \n\n      \n        \n          Get startedInstallation\n        \n        \n          npmSvelte + SvelteKit\n          npm install @uifn/components-svelte\n        \n        Import the compound from @uifn/components-svelte, and import @uifn/components/styles.css once at your application root. Your application supplies the compatible svelte peer dependency.\n      \n\n      \n        \n          Framework-nativeUsage\n          View statesOpen QA cases\n        \n        \n          Menubar.svelteCopy-ready\n          <script lang=\"ts\">\n  import { Menubar } from '@uifn/components-svelte'\n  import '@uifn/components/styles.css'\n</script>\n\n<Menubar items={[{ id: 'file' }, { id: 'new', label: 'New file', parentId: 'file' }]}>\n  <Menubar.Menu value=\"file\">\n    <Menubar.Trigger value=\"file\">File</Menubar.Trigger>\n    <Menubar.Content value=\"file\">\n      <Menubar.Item value=\"new\">New file</Menubar.Item>\n    </Menubar.Content>\n  </Menubar.Menu>\n</Menubar>\n\n        \n      \n\n      \n        ContractAPI reference\n        \n          CategoryOverlay\n          States4\n          CompositionOpen compound\n          Anatomy parts7\n        \n        Props\n        \n          \n            PropTypeDefaultDescription\n            classstringundefinedAdds a consumer class to this anatomy part.childrenframework contentundefinedComposes the documented compound parts without replacing their behavior.activebooleanfalseApplies the active or pressed presentation.openbooleanundefinedControls the open state.defaultOpenbooleanfalseSets the initial open state when uncontrolled.onOpenChange(open: boolean) => voidundefinedRuns whenever the open state changes.valuestringundefinedControls the current value.defaultValuestringundefinedSets the initial value when uncontrolled.onValueChange(value: string) => voidundefinedRuns whenever the value changes.itemsArray<{ value, label, disabled? }>[]Supplies the collection rendered by the component.\n          \n        \n        Anatomy\n        \n          rootTop-level element that owns component state and data attributes.menuMenu part exposed for composition and styling.triggerInteractive control that opens, closes, or toggles the component.contentPrimary content region associated with the component.itemIndividual collection or navigation item.submenuTriggerSubmenuTrigger part exposed for composition and styling.submenuContentSubmenuContent part exposed for composition and styling.\n        \n      \n\n      \n        ExploreExamples and states\n        \n          Live exampleDefault interactionUse the real component rendered above and inspect its visual and keyboard behavior.\n          State matrixclosed, open, default, activeInspect supported visual and semantic states using the same framework package.\n          Behavior casesClick Or Hover Trigger, Escape Key, Outside Click, Tab, Keyboard, Route LinkOpen collision, focus, responsive, and regression fixtures for this component.\n        \n      \n\n      \n        AccessibilityKeyboard and ARIA contractSemantic anatomy, focus behavior, and state attributes are exercised in a real browser.\n        StylingTokens and recipe variantsTheme values flow through CSS variables so product teams can brand without rewriting behavior.\n        FrameworkNative Svelte + SvelteKitThe preview is the real framework export, not a screenshot or simulated DOM."
+        },
+        "itemFocusEvidence": [
+          {
+            "id": "menubar-root-menubar-c1-item-new",
+            "tabIndex": 0,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "New file"
+          },
+          {
+            "id": "menubar-root-menubar-c1-item-save",
+            "tabIndex": -1,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "Save"
+          }
+        ],
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/menubar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3364,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "menubar-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": null,
+          "part": null,
+          "role": null,
+          "text": "{\n\t\t\t\t\t__sveltekit_frbkj6 = {\n\t\t\t\t\t\tbase: \"/components/svelte\",\n\t\t\t\t\t\tassets: \"/components/svelte\"\n\t\t\t\t\t};\n\n\t\t\t\t\tconst element = document.currentScript.parentElement;\n\n\t\t\t\t\tPromise.all([\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/start.BeOJ1ZKU.js\"),\n\t\t\t\t\t\timport(\"/components/svelte/_app/immutable/entry/app._I2MRCbC.js\")\n\t\t\t\t\t]).then(([kit, app]) => {\n\t\t\t\t\t\tkit.start(app, element);\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\n\t\tui uifncomponent catalog Svelte + SvelteKit OverviewComponentsHooksExamplesPatternsSuperfunction UI Developer tools Component QA ↗ 61 components · 2 hooks Svelte + SvelteKit · uifn Menubar Menubar is a overlays component with framework-native state, accessibility, and token-based styling.  Live preview Code States QA cases default File  New file Save   Edit  Undo Redo    \n    \n      \n        On this page\n        Installation\n        Usage\n        API reference\n        Examples\n      \n\n      \n        \n          Get startedInstallation\n        \n        \n          npmSvelte + SvelteKit\n          npm install @uifn/components-svelte\n        \n        Import the compound from @uifn/components-svelte, and import @uifn/components/styles.css once at your application root. Your application supplies the compatible svelte peer dependency.\n      \n\n      \n        \n          Framework-nativeUsage\n          View statesOpen QA cases\n        \n        \n          Menubar.svelteCopy-ready\n          <script lang=\"ts\">\n  import { Menubar } from '@uifn/components-svelte'\n  import '@uifn/components/styles.css'\n</script>\n\n<Menubar items={[{ id: 'file' }, { id: 'new', label: 'New file', parentId: 'file' }]}>\n  <Menubar.Menu value=\"file\">\n    <Menubar.Trigger value=\"file\">File</Menubar.Trigger>\n    <Menubar.Content value=\"file\">\n      <Menubar.Item value=\"new\">New file</Menubar.Item>\n    </Menubar.Content>\n  </Menubar.Menu>\n</Menubar>\n\n        \n      \n\n      \n        ContractAPI reference\n        \n          CategoryOverlay\n          States4\n          CompositionOpen compound\n          Anatomy parts7\n        \n        Props\n        \n          \n            PropTypeDefaultDescription\n            classstringundefinedAdds a consumer class to this anatomy part.childrenframework contentundefinedComposes the documented compound parts without replacing their behavior.activebooleanfalseApplies the active or pressed presentation.openbooleanundefinedControls the open state.defaultOpenbooleanfalseSets the initial open state when uncontrolled.onOpenChange(open: boolean) => voidundefinedRuns whenever the open state changes.valuestringundefinedControls the current value.defaultValuestringundefinedSets the initial value when uncontrolled.onValueChange(value: string) => voidundefinedRuns whenever the value changes.itemsArray<{ value, label, disabled? }>[]Supplies the collection rendered by the component.\n          \n        \n        Anatomy\n        \n          rootTop-level element that owns component state and data attributes.menuMenu part exposed for composition and styling.triggerInteractive control that opens, closes, or toggles the component.contentPrimary content region associated with the component.itemIndividual collection or navigation item.submenuTriggerSubmenuTrigger part exposed for composition and styling.submenuContentSubmenuContent part exposed for composition and styling.\n        \n      \n\n      \n        ExploreExamples and states\n        \n          Live exampleDefault interactionUse the real component rendered above and inspect its visual and keyboard behavior.\n          State matrixclosed, open, default, activeInspect supported visual and semantic states using the same framework package.\n          Behavior casesClick Or Hover Trigger, Escape Key, Outside Click, Tab, Keyboard, Route LinkOpen collision, focus, responsive, and regression fixtures for this component.\n        \n      \n\n      \n        AccessibilityKeyboard and ARIA contractSemantic anatomy, focus behavior, and state attributes are exercised in a real browser.\n        StylingTokens and recipe variantsTheme values flow through CSS variables so product teams can brand without rewriting behavior.\n        FrameworkNative Svelte + SvelteKitThe preview is the real framework export, not a screenshot or simulated DOM."
+        },
+        "itemFocusEvidence": [
+          {
+            "id": "menubar-root-menubar-c1-item-new",
+            "tabIndex": 0,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "New file"
+          },
+          {
+            "id": "menubar-root-menubar-c1-item-save",
+            "tabIndex": -1,
+            "hidden": false,
+            "connected": true,
+            "part": "item",
+            "text": "Save"
+          }
+        ],
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 86.78125,
+          "y": 557.328125,
+          "width": 216.4375,
+          "height": 66
+        }
+      }
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-svelte-menubar-r7"
+}
