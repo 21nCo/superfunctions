@@ -41,9 +41,9 @@ function componentRoot(box: HTMLElement): HTMLElement | null {
 
 function ensureEditableControl(box: HTMLElement, root: HTMLElement, slug: string, formId: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
   const editableSelector = [
-    'input:not([type="hidden"]):not([aria-hidden="true"]):not([tabindex="-1"])',
-    'textarea:not([aria-hidden="true"]):not([tabindex="-1"])',
-    'select:not([aria-hidden="true"]):not([tabindex="-1"])',
+    'input:not([hidden]):not([type="hidden"]):not([aria-hidden="true"]):not([tabindex="-1"])',
+    'textarea:not([hidden]):not([aria-hidden="true"]):not([tabindex="-1"])',
+    'select:not([hidden]):not([aria-hidden="true"]):not([tabindex="-1"])',
   ].join(', ');
   let control = root.matches(editableSelector)
     ? root as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
