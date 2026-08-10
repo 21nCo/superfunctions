@@ -15,7 +15,7 @@
       "status": "passed",
       "problems": [],
       "evidence": {
-        "htmlBytes": 8643,
+        "htmlBytes": 9203,
         "jsCssRequests": 13,
         "decodedJsCssBytes": 1475683,
         "brotliJsCssBytes": 274284,
@@ -23,9 +23,9 @@
         "missingAssets": [],
         "consoleErrors": [],
         "metrics": {
-          "domContentLoadedMs": 89,
-          "loadMs": 156,
-          "firstContentfulPaintMs": 96
+          "domContentLoadedMs": 23,
+          "loadMs": 104,
+          "firstContentfulPaintMs": 44
         },
         "assets": [
           {
@@ -64,14 +64,14 @@
             "brotliBytes": 3742
           },
           {
-            "path": "components/react/_next/static/chunks/3wv3kj7ptqn12.js",
-            "decodedBytes": 57898,
-            "brotliBytes": 12089
-          },
-          {
             "path": "components/react/_next/static/chunks/0qsu4ybzqs8ph.js",
             "decodedBytes": 203384,
             "brotliBytes": 54741
+          },
+          {
+            "path": "components/react/_next/static/chunks/3wv3kj7ptqn12.js",
+            "decodedBytes": 57898,
+            "brotliBytes": 12089
           },
           {
             "path": "components/react/_next/static/chunks/3riez39dqmeqz.js",
@@ -102,28 +102,28 @@
       "status": "passed",
       "problems": [],
       "evidence": {
-        "htmlBytes": 3585,
+        "htmlBytes": 3584,
         "jsCssRequests": 19,
-        "decodedJsCssBytes": 1086779,
-        "brotliJsCssBytes": 188578,
+        "decodedJsCssBytes": 1086775,
+        "brotliJsCssBytes": 188585,
         "largestBrotliAssetBytes": 72250,
         "missingAssets": [],
         "consoleErrors": [],
         "metrics": {
           "domContentLoadedMs": 6,
           "loadMs": 6,
-          "firstContentfulPaintMs": 112
+          "firstContentfulPaintMs": 116
         },
         "assets": [
           {
-            "path": "components/svelte/_app/immutable/entry/start.DiSEecb2.js",
+            "path": "components/svelte/_app/immutable/entry/start.B53TPwyO.js",
             "decodedBytes": 83,
             "brotliBytes": 87
           },
           {
-            "path": "components/svelte/_app/immutable/chunks/nCBBl8xW.js",
-            "decodedBytes": 27133,
-            "brotliBytes": 9542
+            "path": "components/svelte/_app/immutable/chunks/Cj_T0y3E.js",
+            "decodedBytes": 27129,
+            "brotliBytes": 9547
           },
           {
             "path": "components/svelte/_app/immutable/chunks/C3ehGCV8.js",
@@ -136,9 +136,9 @@
             "brotliBytes": 7718
           },
           {
-            "path": "components/svelte/_app/immutable/entry/app.B9n32Df-.js",
+            "path": "components/svelte/_app/immutable/entry/app.CmlmgEaP.js",
             "decodedBytes": 4892,
-            "brotliBytes": 1804
+            "brotliBytes": 1807
           },
           {
             "path": "components/svelte/_app/immutable/chunks/CO8euXg2.js",
@@ -151,14 +151,19 @@
             "brotliBytes": 592
           },
           {
+            "path": "components/svelte/_app/immutable/chunks/DFgazpd3.js",
+            "decodedBytes": 7054,
+            "brotliBytes": 2813
+          },
+          {
             "path": "components/svelte/_app/immutable/chunks/BN-Y5p4m.js",
             "decodedBytes": 1495,
             "brotliBytes": 690
           },
           {
-            "path": "components/svelte/_app/immutable/chunks/DFgazpd3.js",
-            "decodedBytes": 7054,
-            "brotliBytes": 2813
+            "path": "components/svelte/_app/immutable/nodes/2.BoncPIlQ.js",
+            "decodedBytes": 425,
+            "brotliBytes": 233
           },
           {
             "path": "components/svelte/_app/immutable/nodes/0.BgEmp7LE.js",
@@ -171,19 +176,9 @@
             "brotliBytes": 180
           },
           {
-            "path": "components/svelte/_app/immutable/nodes/2.BoncPIlQ.js",
-            "decodedBytes": 425,
-            "brotliBytes": 233
-          },
-          {
             "path": "components/svelte/_app/immutable/chunks/CXFMMiZP.js",
             "decodedBytes": 309045,
             "brotliBytes": 72250
-          },
-          {
-            "path": "components/svelte/_app/immutable/chunks/BvHI1ipV.js",
-            "decodedBytes": 233527,
-            "brotliBytes": 16374
           },
           {
             "path": "components/svelte/_app/immutable/chunks/F48hdYIc.js",
@@ -191,14 +186,19 @@
             "brotliBytes": 37899
           },
           {
+            "path": "components/svelte/_app/immutable/chunks/BvHI1ipV.js",
+            "decodedBytes": 233527,
+            "brotliBytes": 16374
+          },
+          {
             "path": "components/svelte/_app/immutable/assets/0.DplhlZUf.css",
             "decodedBytes": 138138,
             "brotliBytes": 17659
           },
           {
-            "path": "components/svelte/_app/immutable/nodes/1.DyqQdD31.js",
+            "path": "components/svelte/_app/immutable/nodes/1.D0VsG51F.js",
             "decodedBytes": 510,
-            "brotliBytes": 283
+            "brotliBytes": 282
           },
           {
             "path": "components/svelte/_app/immutable/nodes/3.Ym32pjpT.js",
@@ -227,8 +227,8 @@
         "missingAssets": [],
         "consoleErrors": [],
         "metrics": {
-          "domContentLoadedMs": 35,
-          "loadMs": 78,
+          "domContentLoadedMs": 33,
+          "loadMs": 77,
           "firstContentfulPaintMs": 100
         },
         "assets": [
@@ -243,14 +243,14 @@
             "brotliBytes": 16122
           },
           {
-            "path": "components/solid/_build/assets/client-BollNzKG.js",
-            "decodedBytes": 156,
-            "brotliBytes": 105
-          },
-          {
             "path": "components/solid/_build/assets/uifn-catalog-presentation-58XLN13V.js",
             "decodedBytes": 260940,
             "brotliBytes": 37961
+          },
+          {
+            "path": "components/solid/_build/assets/client-BollNzKG.js",
+            "decodedBytes": 156,
+            "brotliBytes": 105
           },
           {
             "path": "components/solid/_build/assets/client-CrCt-ryF.js",
