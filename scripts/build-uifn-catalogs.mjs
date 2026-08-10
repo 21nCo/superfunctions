@@ -115,10 +115,14 @@ for (const catalog of catalogs) {
     const outputDirectory = route.path === "/"
       ? frameworkRoot
       : path.join(frameworkRoot, route.path.replace(/^\/+/, ""));
+    const routeIndex = path.join(outputDirectory, "index.html");
+    const routeTemplateHtml = fs.existsSync(routeIndex)
+      ? fs.readFileSync(routeIndex, "utf8")
+      : templateHtml;
     fs.mkdirSync(outputDirectory, { recursive: true });
     fs.writeFileSync(
-      path.join(outputDirectory, "index.html"),
-      decorateRouteHtml(templateHtml, metadata)
+      routeIndex,
+      decorateRouteHtml(routeTemplateHtml, metadata)
     );
   }
   fs.copyFileSync(

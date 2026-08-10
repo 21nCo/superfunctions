@@ -263,6 +263,9 @@ try {
         continue;
       }
       const title = (await page.locator("#route-title").textContent())?.trim() ?? "";
+      const documentTitle = await page.title();
+      const expectedDocumentTitle = `${title} – uifn ${framework[0].toUpperCase()}${framework.slice(1)}`;
+      const documentTitleMatches = documentTitle === expectedDocumentTitle;
       const bodyText = (await page.locator("body").innerText()).trim();
       const componentCount = await page.locator("[data-uifn-component]").count();
       const catalogCardCount = await page.locator("[data-catalog-component-card]").count();
@@ -417,6 +420,15 @@ try {
           evidence: { expectedTitle: route.expectedTitle, title },
         });
       }
+      if (!documentTitleMatches) {
+        findings.push({
+          severity: "high",
+          framework,
+          route: route.path,
+          code: "UIFN_CATALOG_HYDRATED_TITLE_MISMATCH",
+          evidence: { expectedDocumentTitle, documentTitle },
+        });
+      }
       if (componentId === "button" && componentCount === 0) {
         findings.push({
           severity: "high",
@@ -538,9 +550,10 @@ try {
       checks.push({
         framework,
         route: route.path,
-        status: response?.ok() && bodyText.length > 0 && title.length > 0 && titleMatches && behavior.ok && shellComplete && guideComplete && documentationComplete && (composition?.ok ?? true) && (visualQuality?.ok ?? true) && (openStateVisual?.ok ?? true) && (catalogChrome?.ok ?? true) && (accessibility?.ok ?? true) && (responsive?.ok ?? true) && (navigationContinuity?.ok ?? true) ? "passed" : "failed",
+        status: response?.ok() && bodyText.length > 0 && title.length > 0 && titleMatches && documentTitleMatches && behavior.ok && shellComplete && guideComplete && documentationComplete && (composition?.ok ?? true) && (visualQuality?.ok ?? true) && (openStateVisual?.ok ?? true) && (catalogChrome?.ok ?? true) && (accessibility?.ok ?? true) && (responsive?.ok ?? true) && (navigationContinuity?.ok ?? true) ? "passed" : "failed",
         statusCode: response?.status(),
         title,
+        documentTitle,
         bodyLength: bodyText.length,
         componentCount,
         catalogCardCount,

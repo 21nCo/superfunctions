@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import "../../../examples/react-workbench/src/styles.css";
 
 export const metadata: Metadata = {
-  title: "uifn React component catalog",
+  title: {
+    default: "Components – uifn React",
+    template: "%s – uifn React",
+  },
   description: "Actual uifn React components and behavior rendered through Next.js.",
 };
 
