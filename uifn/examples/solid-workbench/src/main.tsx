@@ -11,6 +11,7 @@ import {
   activateCatalogUi,
   activateWorkbenchRoute,
   catalogDemoChildren,
+  catalogDemoFixtureIds,
   catalogDemoPartInstances,
   catalogDemoPartProps,
   catalogDemoPartText,
@@ -28,6 +29,7 @@ import {
   catalogPageTitle,
   catalogSidebarHtml,
   catalogTopbarHtml,
+  catalogThemeStyle,
   getCatalogHookBySlug,
   getCatalogComponentDemo,
   getComponentBySlug,
@@ -56,6 +58,7 @@ import {
 } from "@uifn/examples-shared";
 import type { PatternName, PatternRenderModel } from "@uifn/patterns";
 import { solidComponentLoaders } from "./component-loaders";
+import "@uifn/components/styles.css";
 import "./styles.css";
 
 type PatternMap = Record<string, (props: Record<string, unknown>) => PatternRenderModel>;
@@ -1109,7 +1112,7 @@ function RouteContent(props: { internalPath: string; route: WorkbenchRoute; base
     const component = getComponentBySlug(props.route.slug);
     if (!component && props.route.slug !== "combobox") return <Unsupported family="component" slug={props.route.slug} reason="Unknown component route" />;
     const routes = props.route.path.endsWith("/states")
-      ? (component ? component.states.slice(0, 8) : ["default", "open", "disabled", "invalid"]).map((state) => ({ ...props.route, fixtureId: state }))
+      ? catalogDemoFixtureIds((component?.slug ?? "combobox") as ComponentSlug, component ? component.states.slice(0, 8) : ["default", "open", "disabled", "invalid"]).map((state) => ({ ...props.route, fixtureId: state }))
       : props.route.path.endsWith("/qa") && props.route.contract
         ? props.route.contract.fixtures.map((fixture) => ({ ...props.route, path: fixture.route, fixtureId: fixture.id }))
         : [props.route];
@@ -1188,7 +1191,7 @@ export function App(props: { basePath?: string } = {}) {
   });
   onCleanup(() => deactivate?.());
   return (
-    <div ref={shellElement} class="workbench-shell" data-uifn-workbench="solid" data-uifn-loaded="true" data-uifn-theme={theme()}>
+    <div ref={shellElement} class="workbench-shell" style={catalogThemeStyle(theme())} data-uifn-workbench="solid" data-uifn-loaded="true" data-uifn-theme={theme()}>
       <Nav basePath={basePath} />
       <main class="workbench-main" aria-labelledby="route-title" data-catalog-page={pageKind()}>
         <div class="catalog-topbar-host" innerHTML={catalogTopbarHtml(basePath, "solid", internalPath())} />

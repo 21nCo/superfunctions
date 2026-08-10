@@ -16,6 +16,7 @@
     activateWorkbenchRoute,
     catalogComponentDetailsHtml,
     catalogDemoCodeHtml,
+    catalogDemoFixtureIds,
     catalogComponentGalleryHtml,
     catalogDemoRootPropsForRoute,
     catalogFrameworkLabel,
@@ -26,6 +27,7 @@
     catalogPageTitle,
     catalogSidebarHtml,
     catalogTopbarHtml,
+    catalogThemeStyle,
     getCatalogHookBySlug,
     getComponentBySlug,
     getPatternBySlug,
@@ -114,7 +116,7 @@
     const component = current.slug ? getComponentBySlug(current.slug) : undefined;
     if (!component && current.slug !== "combobox") return [];
     if (current.path.endsWith("/states")) {
-      const states = component ? component.states.slice(0, 8) : ["default", "open", "disabled", "invalid"];
+      const states = catalogDemoFixtureIds((component?.slug ?? "combobox") as ComponentSlug, component ? component.states.slice(0, 8) : ["default", "open", "disabled", "invalid"]);
       return states.map((state) => ({ ...current, fixtureId: state }));
     }
     if (current.path.endsWith("/qa") && current.contract) {
@@ -182,7 +184,7 @@
   }
 </script>
 
-<div bind:this={shellElement} class="workbench-shell" data-uifn-workbench="svelte" data-uifn-loaded="true" data-uifn-theme={theme}>
+<div bind:this={shellElement} class="workbench-shell" style={catalogThemeStyle(theme)} data-uifn-workbench="svelte" data-uifn-loaded="true" data-uifn-theme={theme}>
   <div class="catalog-sidebar-host">{@html sidebarHtml}</div>
 
   <main class="workbench-main" aria-labelledby="route-title" data-catalog-page={pageKind}>

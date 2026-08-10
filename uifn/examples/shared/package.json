@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@uifn/components": "*",
+    "@uifn/theme": "*",
     "@uifn/patterns": "*",
     "@uifn/sf": "*"
   },

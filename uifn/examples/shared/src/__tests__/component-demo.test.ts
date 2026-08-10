@@ -123,7 +123,7 @@ describe('catalog component demos', () => {
     expect(colorProps).toMatchObject({ defaultValue: '#635bff', alpha: true });
     expect(colorProps).not.toHaveProperty('defaultOpen');
     expect(cropperProps.src).toBe('/components/crop-landscape.svg');
-    expect(cropperProps['data-catalog-preview']).toBe('true');
+    expect(cropperProps).not.toHaveProperty('data-catalog-preview');
     expect(catalogDemoPartText(
       'checkbox',
       checkbox.parts.find((part) => part.id === 'label')!,
@@ -132,7 +132,13 @@ describe('catalog component demos', () => {
       'color-picker',
       colorPicker.parts.find((part) => part.id === 'content')!,
     )).toBe('');
-    expect(catalogDemoSnippetRootProps('image-cropper')).not.toHaveProperty('data-catalog-preview');
+    expect(cropperProps.environment).toEqual({
+      scopeId: 'uifn-catalog-image-cropper-default',
+      hydrationSeed: 'image-cropper-default',
+    });
+    expect(catalogDemoSnippetRootProps('image-cropper')).toEqual(
+      Object.fromEntries(Object.entries(cropperProps).filter(([key]) => key !== 'environment')),
+    );
   });
 
   it('keeps published snippets free of generator placeholder copy', () => {

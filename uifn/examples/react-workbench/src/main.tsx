@@ -10,6 +10,7 @@ import {
   activateCatalogUi,
   activateWorkbenchRoute,
   catalogDemoChildren,
+  catalogDemoFixtureIds,
   catalogDemoPartInstances,
   catalogDemoPartProps,
   catalogDemoPartText,
@@ -27,6 +28,7 @@ import {
   catalogPageTitle,
   catalogSidebarHtml,
   catalogTopbarHtml,
+  catalogThemeStyle,
   getCatalogHookBySlug,
   getCatalogComponentDemo,
   getComponentBySlug,
@@ -55,6 +57,7 @@ import {
 } from "@uifn/examples-shared";
 import type { PatternName, PatternRenderModel } from "@uifn/patterns";
 import { reactComponentLoaders } from "./component-loaders";
+import "@uifn/components/styles.css";
 import "./styles.css";
 import "./catalog.css";
 
@@ -1214,7 +1217,7 @@ function RouteContent({ internalPath, route, basePath, navigate }: { internalPat
     const component = getComponentBySlug(route.slug);
     if (!component && route.slug !== "combobox") return <Unsupported family="component" slug={route.slug} reason="Unknown component route" />;
     const routes = route.path.endsWith("/states")
-      ? (component ? component.states.slice(0, 8) : ["default", "open", "disabled", "invalid"]).map((state) => ({ ...route, fixtureId: state }))
+      ? catalogDemoFixtureIds((component?.slug ?? "combobox") as ComponentSlug, component ? component.states.slice(0, 8) : ["default", "open", "disabled", "invalid"]).map((state) => ({ ...route, fixtureId: state }))
       : route.path.endsWith("/qa") && route.contract
         ? route.contract.fixtures.map((fixture) => ({ ...route, path: fixture.route, fixtureId: fixture.id }))
         : [route];
@@ -1278,7 +1281,7 @@ export function App({ basePath = "" }: { basePath?: string }) {
     return activateWorkbenchRoute(shellRef.current, route, { framework: "react" });
   }, [description, internalPath, route, title]);
   return (
-    <div ref={shellRef} className="workbench-shell" data-uifn-workbench="react" data-uifn-loaded="true" data-uifn-theme={theme}>
+    <div ref={shellRef} className="workbench-shell" style={catalogThemeStyle(theme) as React.CSSProperties} data-uifn-workbench="react" data-uifn-loaded="true" data-uifn-theme={theme}>
       <Nav basePath={basePath} />
       <main className="workbench-main" aria-labelledby="route-title" data-catalog-page={catalogPageKind(internalPath, route)}>
         <div className="catalog-topbar-host" dangerouslySetInnerHTML={{ __html: catalogTopbarHtml(basePath, "react", internalPath) }} />

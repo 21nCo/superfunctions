@@ -10,9 +10,11 @@ import {
 } from './catalog-routing.js';
 import { workbenchComponents, type ComponentSlug } from './component-inventory.js';
 import type { WorkbenchRoute } from './routes.js';
+import { catalogThemeStyle } from './catalog-theme.js';
 import { CATALOG_ACCESSIBILITY } from './catalog-accessibility.generated.js';
 import {
   catalogDemoChildren,
+  catalogDemoFixtureIds,
   catalogDemoPartInstances,
   catalogDemoPartProps,
   catalogDemoPartText,
@@ -898,6 +900,7 @@ export function catalogComponentDetailsHtml(slug: string, framework: CatalogFram
   const packageCommand = `npm install ${packagePath}`;
   const sourceCommand = `npx @uifn/registry add ${component.slug} --framework ${framework} --cwd .`;
   const accessibility = catalogAccessibilitySummary(component.slug);
+  const demoStates = catalogDemoFixtureIds(component.slug, component.states);
   const contract = STYLED_COMPONENT_CATALOG.find((candidate) => candidate.id === component.slug);
   if (!contract) return '';
   const api = contract.api;
@@ -1050,7 +1053,7 @@ export function catalogComponentDetailsHtml(slug: string, framework: CatalogFram
         <div class="catalog-doc-heading"><div><p class="catalog-kicker">Explore</p><h2>Examples and states</h2></div></div>
         <div class="catalog-example-grid">
           <a href="#preview"><span>Live example</span><strong>Default interaction</strong><p>Use the real component rendered above and inspect its visual and keyboard behavior.</p></a>
-          <a href="${statesHref}"><span>State matrix</span><strong>${escapeHtml(component.states.join(', '))}</strong><p>Inspect supported visual and semantic states using the same framework package.</p></a>
+          <a href="${statesHref}"><span>State matrix</span><strong>${escapeHtml(demoStates.join(', '))}</strong><p>Inspect supported visual and semantic states using the same framework package.</p></a>
           <a href="${qaHref}"><span>Behavior cases</span><strong>${escapeHtml(behaviors.map(humanize).join(', '))}</strong><p>Open collision, focus, responsive, and regression fixtures for this component.</p></a>
         </div>
       </section>
@@ -1320,8 +1323,6 @@ export function decorateCatalogPreview(scope: ParentNode, route: WorkbenchRoute)
   if (route.family !== 'component' || !route.slug || route.path !== `/components/${route.slug}`) return;
   const root = scope.querySelector<HTMLElement>(`[data-uifn-component="${route.slug}"]`);
   if (!root) return;
-  if (root.dataset.catalogPreview === 'true') return;
-  root.dataset.catalogPreview = 'true';
   const copy = partCopy[route.slug] ?? {};
   for (const [part, text] of Object.entries(copy)) {
     const node = root.querySelector<HTMLElement>(`[data-uifn-part="${part}"]`);
@@ -1668,6 +1669,9 @@ function applyCatalogTheme(shell: HTMLElement, theme: string): void {
   const accepted = ['light', 'dark', 'high-contrast-light', 'high-contrast-dark'];
   const next = accepted.includes(theme) ? theme : 'light';
   shell.dataset.uifnTheme = next;
+  for (const [name, value] of Object.entries(catalogThemeStyle(next))) {
+    shell.style.setProperty(name, value);
+  }
   document.documentElement.dataset.uifnTheme = next;
   const button = shell.querySelector<HTMLButtonElement>('[data-catalog-theme-toggle]');
   const icon = button?.querySelector<HTMLElement>('[data-catalog-theme-icon]');
