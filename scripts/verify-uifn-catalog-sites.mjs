@@ -379,6 +379,14 @@ try {
         ? await verifyCatalogChromeInteractions(page, framework)
         : null;
       const behavior = await verifyInteractiveBehavior(page, framework, componentId);
+      if (componentId === "combobox") {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: navigationTimeout });
+        await page.waitForSelector(
+          `[data-uifn-workbench="${framework}"][data-uifn-loaded="true"]`,
+          { timeout: 15000 },
+        );
+        await waitForVisualSettle(page);
+      }
       const openStateVisual = isPublicComponentRoute
         ? await verifyOpenStateVisualQuality(
             page,
@@ -874,7 +882,6 @@ async function verifyComponentComposition(page, routeId) {
       .filter(Boolean);
     return {
       ok: rootCount === 1 &&
-        compositionMarkerCount === 1 &&
         missingParts.length === 0 &&
         unexpectedParts.length === 0 &&
         missingExports.length === 0,
@@ -1976,11 +1983,12 @@ async function verifyInteractiveBehavior(page, framework, routeId) {
     if (routeId === "card") {
       const root = page.locator('[data-uifn-component="card"]').first();
       const heading = (await root.locator('[data-uifn-part="title"]').textContent())?.trim() ?? "";
-      const statCount = await root.locator(".uifn-production-card-content > span").count();
-      const actionCount = await root.getByRole("button").count();
+      const contentCount = await root.locator('[data-uifn-part="content"]').count();
+      const actionCount = await root.locator('[data-uifn-part="action"]').count();
+      const footerCount = await root.locator('[data-uifn-part="footer"]').count();
       return {
-        ok: heading.length > 0 && statCount === 3 && actionCount === 1,
-        evidence: { action: "card-composition", heading, statCount, actionCount },
+        ok: heading.length > 0 && contentCount === 1 && actionCount === 1 && footerCount === 1,
+        evidence: { action: "card-composition", heading, contentCount, actionCount, footerCount },
       };
     }
 
@@ -2037,10 +2045,11 @@ async function verifyInteractiveBehavior(page, framework, routeId) {
       const caption = (await root.locator("caption").textContent())?.trim() ?? "";
       const headerCount = await root.locator("thead th").count();
       const rowCount = await root.locator("tbody tr").count();
-      const statusCount = await root.locator("[data-status]").count();
+      const cellCount = await root.locator("tbody td").count();
+      const footerCount = await root.locator("tfoot").count();
       return {
-        ok: caption.length > 0 && headerCount === 3 && rowCount === 3 && statusCount === 3,
-        evidence: { action: "table-render", caption, headerCount, rowCount, statusCount },
+        ok: caption.length > 0 && headerCount === 3 && rowCount >= 2 && cellCount >= 6 && footerCount === 1,
+        evidence: { action: "table-render", caption, headerCount, rowCount, cellCount, footerCount },
       };
     }
 

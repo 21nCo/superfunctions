@@ -110,6 +110,12 @@ for (const framework of ['react', 'svelte', 'solid']) {
     'import "@uifn/components/styles.css";',
   ], 'UIFN_PUBLIC_STYLESHEET_IMPORT_MISSING');
 }
+requireText('uifn/catalogs/svelte/src/routes/+layout.ts', [
+  'import "@uifn/components/styles.css";',
+], 'UIFN_PUBLIC_STYLESHEET_IMPORT_MISSING');
+requireText('uifn/components/src/styles.css', [
+  'border-inline-end: .125rem solid currentColor;',
+], 'UIFN_STYLED_CSS_ENCODING_UNSAFE');
 requireText('uifn/examples/shared/src/catalog-theme.ts', ['themeToVars', 'getTheme', 'uifn-light', 'uifn-dark'], 'UIFN_CATALOG_PUBLIC_THEME_MISSING');
 
 const pilotSource = read('uifn/components/src/pilots.ts');
