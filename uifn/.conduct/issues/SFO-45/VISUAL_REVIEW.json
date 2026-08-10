@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "issue": "SFO-45",
+  "reviewStatus": "accepted",
+  "reviewer": "Codex implementation review",
+  "reviewedAt": "2026-08-10T18:05:27Z",
+  "requiredThemes": ["light", "dark"],
+  "requiredFrameworks": ["react", "svelte", "solid"],
+  "requiredPilots": ["button", "field", "input", "checkbox", "switch", "select", "combobox", "dialog", "menu", "tabs", "card", "table"],
+  "requiredStates": ["default", "hover", "focus-visible", "active", "disabled", "invalid", "open", "checked", "selected"],
+  "baselinePolicy": "Any changed baseline must include image diff artifacts and an accepted reviewStatus.",
+  "artifacts": [
+    { "kind": "browser-review", "path": "uifn/.conduct/issues/SFO-45/BROWSER_REVIEW.json", "status": "passed" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/react-light-pilots-1.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/react-light-pilots-2.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/react-dark-pilots-1.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/react-dark-pilots-2.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/svelte-light-pilots-1.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/svelte-light-pilots-2.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/svelte-dark-pilots-1.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/svelte-dark-pilots-2.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/solid-light-pilots-1.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/solid-light-pilots-2.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/solid-dark-pilots-1.png", "status": "accepted" },
+    { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/solid-dark-pilots-2.png", "status": "accepted" }
+  ],
+  "notes": [
+    "Reviewed all twelve contact sheets covering React, Svelte, and Solid in light and dark themes.",
+    "The 72-page browser matrix passed catalog-versus-clean-consumer computed-style parity and cross-framework recipe parity with no failures.",
+    "This accepted review establishes the initial SFO-45 visual baseline; later baseline changes must include regenerated evidence and a new accepted review."
+  ]
+}

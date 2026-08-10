@@ -108,6 +108,8 @@
     "verify:uifn-stories": "node scripts/verify-uifn-phase-17-storybook.mjs",
     "verify:uifn-a11y": "node scripts/verify-uifn-phase-18.mjs",
     "verify:uifn-visual": "node scripts/verify-uifn-visual.mjs",
+    "verify:uifn-styled-comparability": "node scripts/verify-uifn-styled-comparability.mjs",
+    "capture:uifn-styled-pilots": "node scripts/capture-uifn-styled-pilots.mjs",
     "verify:uifn-hooks": "node scripts/verify-uifn-hooks.mjs",
     "verify:uifn-patterns": "node scripts/verify-uifn-patterns.mjs",
     "verify:uifn-sf": "node scripts/verify-uifn-sf.mjs",
