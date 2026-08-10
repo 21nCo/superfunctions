@@ -1,63 +1,78 @@
 # @uifn/svelte
 
-Unstyled, accessible Svelte primitives built on `@uifn/core`.
+Catalog-complete, permanently headless Svelte 5 compounds for uifn. The package exposes all 69 stable primitives and all 465 catalog anatomy parts as concrete typed Svelte components.
 
-## Status
+This package never ships visual CSS, tokens, themes, or component styling. Use
+it to build a design system; use `@uifn/components-svelte` plus
+`@uifn/components/styles.css` for the maintained styled compounds.
 
-GA. This package is release-blocking together with `@uifn/core` and `@uifn/react`.
+The components are adapters over `@uifn/core` controllers and static contracts. Browser behavior—focus, layers, portals, positioning, gestures, native form reset, and presence—remains owned by `@uifn/dom`. Components do not contain a second framework-local state machine.
 
-The canonical package matrix and compatibility matrix live in the root `uifn/README.md`.
-
-## Installation
+## Install
 
 ```bash
-npm install @uifn/core @uifn/svelte
+npm install @uifn/svelte @uifn/core @uifn/dom @uifn/adapter-kit svelte
 ```
 
-## Usage
+Svelte `>=5.20 <6` and Node `20` through `24` are supported.
+
+## Compound API
+
+Import the complete package or a tree-shakeable primitive subpath:
 
 ```svelte
 <script lang="ts">
-  import { Checkbox, CheckboxIndicator } from "@uifn/svelte";
+  import { Accordion } from '@uifn/svelte/accordion';
+
+  let value = $state<string | string[]>([]);
 </script>
 
-<Checkbox>
-  <CheckboxIndicator>✓</CheckboxIndicator>
-</Checkbox>
+<Accordion.Root type="multiple" bind:value>
+  <Accordion.Item value="billing">
+    <Accordion.Header value="billing">
+      <Accordion.Trigger value="billing">Billing</Accordion.Trigger>
+    </Accordion.Header>
+    <Accordion.Content value="billing">Billing details</Accordion.Content>
+  </Accordion.Item>
+</Accordion.Root>
 ```
 
-## Public Surface
+Every catalog part is also a named export, such as `AccordionRoot` and `AccordionTrigger`. Parts whose anatomy cardinality is `many` require a typed `value` that identifies the corresponding core part.
 
-`@uifn/svelte` currently ships the family names Accordion, AlertDialog, Avatar, Badge, Checkbox, Collapsible, Combobox, ContextMenu, Dialog, DropdownMenu, HoverCard, Label, MenuBar, Popover, Progress, RadioGroup, ScrollArea, Select, Separator, Slider, Switch, Tabs, Toast, Toggle, ToggleGroup, Toolbar, Tooltip, and VirtualizedList.
+## Svelte 5 contracts
 
-The root Svelte entry point is the authoritative source for the exact currently shipped symbols. This README intentionally names family roots only; it does not imply unsupported extras such as `TooltipProvider`, `TooltipArrow`, `ComboboxEmpty`, combobox multiple selection, or unshipped ContextMenu checkbox/radio/submenu parts.
+- Root inputs are reactive and update the existing controller through `controller.update`; prop changes do not recreate the behavior service.
+- Controlled values are bindable where the catalog defines them: `bind:value`, `bind:open`, `bind:checked`, and the corresponding primitive-specific bindings.
+- Every component supports `bind:ref`, a `children` snippet, and a typed `render` snippet.
+- A render snippet receives merged props, the Svelte action and its parameters, the current state/actions/status, and the bridge. Apply the supplied action when replacing the default element.
+- User event callbacks run before internal behavior. `event.preventDefault()` cancels cancelable internal behavior while protected accessibility invariants remain intact.
+- Components use `$props.id()` plus the injected environment to keep IDs stable across SSR and hydration.
 
-Display-helper contract:
+## SSR and packaging
 
-- `Avatar`, `Badge`, `Label`, `Separator`, and `VirtualizedList` are part of the GA Svelte adapter surface.
-- `AvatarFallback` rendering is deterministic: fallback remains visible until avatar status becomes `loaded`, and optional `delayMs` postpones fallback visibility until that delay elapses.
-- `VirtualizedList` is adapter-only and not part of `@uifn/core`.
-- `VirtualizedList` defaults `overscan` to `3`.
+The npm package exports only `dist` entries. JavaScript helpers and declarations are compiled, component sources are preprocessed by the standard Svelte library packager, and no repository TypeScript path is an npm entrypoint.
 
-Packaging note:
+SSR renders deterministic semantic HTML. Hydration activates the live controller and DOM services once, preserves server IDs, and synchronously tears down controller subscriptions, actions, portals, and DOM leases on unmount.
 
-- `@uifn/svelte` intentionally ships `src/index.ts`, `src/*.svelte`, and supporting `src/internal/*.ts` implementation files because the public Svelte entry point compiles from source.
-- Those supporting files are not stable public subpath APIs.
+## Forms and portals
 
-## Release Policy
+Render the catalog's `HiddenInput` parts for form primitives. Checkbox and radio families use native checked controls; other value families serialize through hidden inputs. Form reset is delegated to the shared DOM platform.
 
-See the root `uifn/README.md` for the compatibility matrix, the release-blocking package matrix, and the `verify:uifn-release` contract.
+Portal parts render in place during SSR and move through `@uifn/dom` after mount. Pass `container` to target an element, shadow root, selector, or target function.
 
-## Example Playground
+## Workbench
 
-The Svelte playground lives in [`uifn/examples/svelte-playground`](../examples/svelte-playground) and is documented from the shared example hub at [`uifn/examples/README.md`](../examples/README.md).
-
-Run it from the repository root with:
+The Svelte Workbench app is `@uifn/example-svelte-workbench` under `uifn/examples/svelte-workbench`.
 
 ```bash
 npm --workspace @uifn/examples run dev:svelte
+npm run verify:uifn-browser -- --framework svelte
 ```
 
-## License
+## Verification
 
-MIT
+```bash
+npm run verify:uifn-phase-12
+```
+
+The phase gate covers the full catalog inventory, Svelte diagnostics, source and packed production builds, SSR/hydration equivalence, Chromium/Firefox/WebKit behavior, lifecycle counters, forms, portals, exact negative mutation codes, and clean npm tarballs.

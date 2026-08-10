@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createTooltip } from './tooltip';
+import { createTooltipController } from './tooltip';
 
 describe('tooltip primitive', () => {
-  it('opens after deterministic delay and cleans up resources on close', () => {
-    const tooltip = createTooltip({
+  it('opens after deterministic hover delay while focus is immediate and touch is ignored', () => {
+    const tooltip = createTooltipController({
       delayDuration: 700,
       defaultOpen: false,
     });
@@ -11,7 +11,6 @@ describe('tooltip primitive', () => {
     tooltip.actions.openWithDelay();
     expect(tooltip.state.open).toBe(false);
     expect(tooltip.state.pendingOpenMs).toBe(700);
-    expect(tooltip.state.cleanup.timers).toBe(1);
 
     tooltip.actions.advanceTime(699);
     expect(tooltip.state.open).toBe(false);
@@ -20,41 +19,24 @@ describe('tooltip primitive', () => {
     tooltip.actions.advanceTime(1);
     expect(tooltip.state.open).toBe(true);
     expect(tooltip.state.pendingOpenMs).toBe(null);
-    expect(tooltip.state.cleanup.timers).toBe(0);
-
-    tooltip.actions.registerListener();
-    expect(tooltip.state.cleanup.listeners).toBe(1);
     tooltip.actions.close();
     expect(tooltip.state.open).toBe(false);
-    expect(tooltip.state.cleanup.listeners).toBe(0);
-    expect(tooltip.state.cleanup.complete).toBe(true);
+    tooltip.actions.onTriggerPointerEnter('touch');
+    tooltip.actions.advanceTime(700);
+    expect(tooltip.state.open).toBe(false);
+    tooltip.actions.onTriggerFocus();
+    expect(tooltip.state.open).toBe(true);
+    expect(tooltip.parts.trigger.getProps().aria?.describedby).toBe(tooltip.state.ids.contentId);
   });
 
-  it('uses shared popup positioning with bottom preference', () => {
-    const tooltip = createTooltip({
+  it('declares bottom positioning for the shared DOM positioner', () => {
+    const tooltip = createTooltipController({
       side: 'bottom',
       delayDuration: 700,
     });
 
-    const position = tooltip.actions.computePosition(
-      {
-        top: 10,
-        left: 10,
-        width: 40,
-        height: 20,
-      },
-      {
-        top: 0,
-        left: 0,
-        width: 100,
-        height: 40,
-      },
-      {
-        width: 320,
-        height: 200,
-      }
-    );
-
-    expect(position.side).toBe('bottom');
+    expect(tooltip.state.policy.position).toBe('anchor');
+    expect(tooltip.state.placement).toBe('bottom');
+    expect('computePosition' in tooltip.actions).toBe(false);
   });
 });

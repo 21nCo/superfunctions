@@ -1,19 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { createProgress } from './progress';
+import { ProgressContract, createProgressController } from './progress';
 
 describe('progress primitive', () => {
-  it('supports indeterminate mode with null aria values', () => {
-    const progress = createProgress({ value: null, max: 100 });
-    expect(progress.state.mode).toBe('indeterminate');
-    expect(progress.state.ariaValueMin).toBe(0);
-    expect(progress.state.ariaValueMax).toBe(100);
-    expect(progress.state.ariaValueNow).toBeNull();
-  });
-
-  it('clamps determinate values to range', () => {
-    const progress = createProgress({ value: 40, max: 100 });
-    progress.setValue(135);
+  it('omits value ARIA in indeterminate mode and clamps determinate values', () => {
+    const indeterminate = ProgressContract.getParts({ value: null }, { scopeId: 'test' });
+    expect(indeterminate.root.aria?.valuenow).toBeUndefined();
+    const progress = createProgressController({ defaultValue: 40, max: 100 });
+    progress.actions.setValue(135);
     expect(progress.state.value).toBe(100);
-    expect(progress.state.mode).toBe('determinate');
+    expect(progress.state.mode).toBe('complete');
+    progress.destroy();
   });
 });

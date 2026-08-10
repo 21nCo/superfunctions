@@ -1,14 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { resetIdCounters } from '../utils/id';
-import { createAlertDialog } from './alert-dialog';
+import { describe, expect, it } from 'vitest';
+import { createAlertDialogController } from './alert-dialog';
 
 describe('alert-dialog primitive', () => {
-  beforeEach(() => {
-    resetIdCounters();
-  });
-
   it('disallows outside click and records documented error', () => {
-    const alertDialog = createAlertDialog({
+    const alertDialog = createAlertDialogController({
       defaultOpen: true,
       returnFocusId: 'alert-trigger',
     });
@@ -16,19 +11,20 @@ describe('alert-dialog primitive', () => {
     const handled = alertDialog.actions.onOutsideInteraction();
     expect(handled).toBe(false);
     expect(alertDialog.state.open).toBe(true);
-    expect(alertDialog.state.lastError?.code).toBe('UIFN_ERR_INVALID_VALUE');
+    expect(alertDialog.state.lastError?.code).toBe('UIFN_ALERT_DIALOG_DISMISSAL');
+    expect(alertDialog.state.policy.preventOutsideInteraction).toBe(true);
   });
 
   it('supports escape dismissal and focus return', () => {
-    const alertDialog = createAlertDialog({
+    const alertDialog = createAlertDialogController({
       defaultOpen: true,
       returnFocusId: 'alert-trigger',
     });
 
-    expect(alertDialog.state.scrollLocked).toBe(true);
+    expect(alertDialog.state.scrollLock).toBe(true);
+    expect(alertDialog.state.leastDestructiveFocusId).toBe(alertDialog.state.ids.cancelId);
     alertDialog.actions.onEscapeKeyDown();
     expect(alertDialog.state.open).toBe(false);
-    expect(alertDialog.state.focusedElementId).toBe('alert-trigger');
     expect(alertDialog.state.lastChangeReason).toBe('close-escape');
   });
 });

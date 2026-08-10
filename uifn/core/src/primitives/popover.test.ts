@@ -1,65 +1,37 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { UIFnError } from '../errors';
-import { resetIdCounters } from '../utils/id';
-import { createPopover } from './popover';
+import { describe, expect, it, vi } from 'vitest';
+import { createPopoverController } from './popover';
 
 describe('popover primitive', () => {
-  beforeEach(() => {
-    resetIdCounters();
-  });
-
-  it('derives collision-aware position from shared utility', () => {
-    const popover = createPopover({
+  it('declares positioning policy without calculating DOM geometry in core', () => {
+    const popover = createPopoverController({
       defaultOpen: true,
       side: 'bottom',
       align: 'center',
       sideOffset: 8,
     });
 
-    const position = popover.actions.computePosition(
-      {
-        top: 140,
-        left: 100,
-        width: 40,
-        height: 20,
-      },
-      {
-        top: 0,
-        left: 0,
-        width: 120,
-        height: 60,
-      },
-      {
-        width: 320,
-        height: 180,
-      }
-    );
-
-    expect(position.side).toBe('top');
-    expect(popover.state.position?.side).toBe('top');
-    expect(popover.state.ids.contentId).toBe('uifn-popover-1-content');
+    expect(popover.state.policy.position).toBe('anchor');
+    expect(popover.state.side).toBe('bottom');
+    expect(popover.state.sideOffset).toBe(8);
+    expect('computePosition' in popover.actions).toBe(false);
+    expect(popover.parts.positioner.getProps().data?.placement).toBe('bottom');
   });
 
-  it('cleans up listeners and timers when dismissed', () => {
-    const popover = createPopover({
+  it('leaves listener, timer, focus, and presence resources to the DOM platform', () => {
+    const popover = createPopoverController({
       defaultOpen: true,
     });
 
-    popover.actions.registerTimer();
-    popover.actions.registerListener();
-    expect(popover.state.cleanup.timers).toBe(1);
-    expect(popover.state.cleanup.listeners).toBe(1);
-
     popover.actions.setOpen(false, 'close-outside-click');
     expect(popover.state.open).toBe(false);
-    expect(popover.state.cleanup.timers).toBe(0);
-    expect(popover.state.cleanup.listeners).toBe(0);
-    expect(popover.state.cleanup.complete).toBe(true);
+    expect('cleanup' in popover.state).toBe(false);
+    expect('registerTimer' in popover.actions).toBe(false);
+    expect('registerListener' in popover.actions).toBe(false);
   });
 
   it('keeps controlled open state stable until syncOpen is applied', () => {
     const onOpenChange = vi.fn();
-    const popover = createPopover({
+    const popover = createPopoverController({
       open: false,
       onOpenChange,
     });
@@ -72,8 +44,9 @@ describe('popover primitive', () => {
     expect(popover.state.open).toBe(true);
   });
 
-  it('rejects duplicate fixed popover id bases', () => {
-    createPopover({ idBase: 'shared-popover' });
-    expect(() => createPopover({ idBase: 'shared-popover' })).toThrowError(UIFnError);
+  it('keeps fixed bases isolated to their explicit model scopes', () => {
+    const first = createPopoverController({ idBase: 'shared-popover' });
+    const second = createPopoverController({ idBase: 'shared-popover' });
+    expect(first.state.ids).toEqual(second.state.ids);
   });
 });

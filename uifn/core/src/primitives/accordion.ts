@@ -1,7 +1,9 @@
+import { createStateChannel } from '../internal/runtime/state-channel';
 import { createUIFnError, type UIFnError } from '../errors';
-import { createControllableStateController } from '../state/machine';
-import { getNextRovingFocusIndex } from '../utils/roving-focus';
-import { type ChangeMeta, createStore, shallowArrayEqual, uniqueStrings } from './shared';
+import { createControlledValue } from '../internal/runtime/controlled';
+import { createListCollection } from '../algorithms/collection';
+import { getNextCollectionKey } from '../algorithms/navigation';
+import { type ChangeMeta, shallowArrayEqual, uniqueStrings } from './shared';
 
 export type AccordionType = 'single' | 'multiple';
 
@@ -32,6 +34,7 @@ export interface AccordionState {
 export interface AccordionActions {
   setValue: (value: string | string[]) => void;
   toggleItem: (itemValue: string) => void;
+  setItems: (items: string[]) => void;
   registerItem: (itemValue: string) => void;
   unregisterItem: (itemValue: string) => void;
   focusItem: (itemValue: string) => void;
@@ -39,13 +42,14 @@ export interface AccordionActions {
   syncValue: (value: string | string[]) => void;
 }
 
-export interface AccordionMachine {
+export interface AccordionRuntime {
   readonly state: AccordionState;
   readonly actions: AccordionActions;
   getState: () => AccordionState;
   subscribe: (
     callback: (state: AccordionState, meta?: ChangeMeta<string | string[]>) => void
   ) => () => void;
+  destroy: () => void;
 }
 
 function normalizeAccordionValue(value: string | string[] | undefined, type: AccordionType): string | string[] {
@@ -94,17 +98,17 @@ function validateAccordionValue(
   }
 }
 
-export function createAccordion(props: AccordionProps): AccordionMachine {
+export function createAccordionRuntime(props: AccordionProps): AccordionRuntime {
   const type = props.type ?? 'single';
   const collapsible = props.collapsible ?? false;
   const disabled = props.disabled ?? false;
   const orientation = props.orientation ?? 'vertical';
-  const items = uniqueStrings(props.items ?? []);
+  const items = [...createListCollection({ items: props.items ?? [], getKey: (item) => item }).keys];
   const initialValue = normalizeAccordionValue(
     props.value ?? props.defaultValue,
     type
   );
-  const controlledState = createControllableStateController<string | string[]>({
+  const controlledState = createControlledValue<string | string[]>({
     value: props.value === undefined ? undefined : normalizeAccordionValue(props.value, type),
     defaultValue: normalizeAccordionValue(props.defaultValue, type),
     onChange: props.onValueChange,
@@ -116,7 +120,7 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
 
   validateAccordionValue(initialValue, items, type);
 
-  const store = createStore<AccordionState, string | string[]>({
+  const store = createStateChannel<AccordionState, string | string[]>({
     value: controlledState.getValue(),
     type,
     collapsible,
@@ -223,6 +227,26 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
         inputModality: 'pointer',
       });
     },
+    setItems(nextInput) {
+      const state = store.getState();
+      const nextItems = [...createListCollection({ items: nextInput, getKey: (item) => item }).keys];
+      const nextFocusedItem = state.focusedItem && nextItems.includes(state.focusedItem)
+        ? state.focusedItem
+        : nextItems[0] ?? null;
+      const nextValue = type === 'single'
+        ? (typeof state.value === 'string' && nextItems.includes(state.value) ? state.value : '')
+        : (state.value as string[]).filter((value) => nextItems.includes(value));
+      if (
+        (type === 'single' && nextValue !== state.value)
+        || (type === 'multiple' && !shallowArrayEqual(nextValue as string[], state.value as string[]))
+      ) controlledState.syncValue(nextValue);
+      store.patchState({
+        items: nextItems,
+        focusedItem: nextFocusedItem,
+        value: nextValue,
+        lastError: null,
+      });
+    },
     registerItem(itemValue) {
       const state = store.getState();
       if (state.items.includes(itemValue)) {
@@ -282,20 +306,14 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
         return null;
       }
 
-      const currentIndex = Math.max(0, state.items.indexOf(currentItem));
-      const nextIndex = getNextRovingFocusIndex({
+      const collection = createListCollection({ items: state.items, getKey: (item) => item });
+      const nextItem = getNextCollectionKey({
+        collection,
         key,
-        itemCount: state.items.length,
-        currentIndex,
+        currentKey: currentItem,
         orientation: orientation,
       });
-
-      if (nextIndex < 0 || nextIndex === currentIndex) {
-        return null;
-      }
-
-      const nextItem = state.items[nextIndex] ?? null;
-      if (!nextItem) {
+      if (!nextItem || nextItem === currentItem) {
         return null;
       }
 
@@ -339,5 +357,9 @@ export function createAccordion(props: AccordionProps): AccordionMachine {
     actions,
     getState: store.getState,
     subscribe: store.subscribe,
+    destroy() {
+      controlledState.destroy();
+      store.destroy();
+    },
   };
 }

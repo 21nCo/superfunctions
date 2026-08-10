@@ -1,45 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { createSlider } from './slider';
+import { createSliderController } from './slider';
 
 describe('slider primitive', () => {
-  it('supports multi-thumb stepping with stable ordering', () => {
-    const slider = createSlider({
-      defaultValue: [20, 80],
-      min: 0,
-      max: 100,
-      step: 10,
-    });
-
-    slider.actions.stepThumb(0, 'ArrowRight');
-    expect(slider.state.value).toEqual([30, 80]);
-
-    slider.actions.setValue([90, 10]);
-    expect(slider.state.value).toEqual([10, 90]);
+  it('uses exact multi-thumb collision and keyboard rules', () => {
+    const slider = createSliderController({ defaultValue: [20, 80], min: 0, max: 100, step: 10, minStepsBetweenThumbs: 2 });
+    slider.actions.keyStep(0, 'PageUp');
+    expect(slider.state.value).toEqual([60, 80]);
+    slider.actions.keyStep(0, 'End');
+    expect(slider.state.value).toEqual([60, 80]);
+    slider.actions.keyStep(1, 'Home');
+    expect(slider.state.value).toEqual([60, 80]);
+    slider.destroy();
   });
 
-  it('clamps out-of-bounds values deterministically', () => {
-    const slider = createSlider({
-      defaultValue: [20, 80],
-      min: 0,
-      max: 100,
-      step: 10,
+  it('terminates cancelled and lost-capture pointers', () => {
+    const slider = createSliderController({ defaultValue: [20] });
+    expect(slider.parts.range.getProps().style).toMatchObject({
+      insetInlineStart: '0%',
+      width: '20%',
     });
-
-    slider.actions.setValue([-5, 135]);
-    expect(slider.state.value).toEqual([0, 100]);
-    expect(slider.state.lastError?.code).toBe('UIFN_ERR_RANGE_OUT_OF_BOUNDS');
-  });
-
-  it('supports Home and End keyboard stepping', () => {
-    const slider = createSlider({
-      defaultValue: [20, 80],
-      min: 0,
-      max: 100,
-      step: 10,
-    });
-
-    slider.actions.stepThumb(0, 'Home');
-    slider.actions.stepThumb(1, 'End');
-    expect(slider.state.value).toEqual([0, 100]);
+    slider.actions.pointerStart(1, 40, 'mouse');
+    slider.actions.lostPointerCapture(1);
+    const cancelled = slider.state.value;
+    slider.actions.pointerMove(1, 90);
+    expect(slider.state.value).toEqual(cancelled);
+    expect(slider.state.interaction).toBe('idle');
+    slider.destroy();
   });
 });

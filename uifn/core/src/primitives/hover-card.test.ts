@@ -1,14 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { resetIdCounters } from '../utils/id';
-import { createHoverCard } from './hover-card';
+import { describe, expect, it } from 'vitest';
+import { createHoverCardController } from './hover-card';
 
 describe('hover-card primitive', () => {
-  beforeEach(() => {
-    resetIdCounters();
-  });
-
   it('applies open/close delays deterministically', () => {
-    const hoverCard = createHoverCard({
+    const hoverCard = createHoverCardController({
       openDelay: 200,
       closeDelay: 100,
     });
@@ -24,10 +19,10 @@ describe('hover-card primitive', () => {
     hoverCard.actions.advanceTime(100);
     expect(hoverCard.state.open).toBe(true);
 
-    hoverCard.actions.closeWithDelay();
+    hoverCard.actions.onContentPointerLeave();
     hoverCard.actions.advanceTime(100);
     expect(hoverCard.state.open).toBe(false);
-    expect(hoverCard.state.cleanup.complete).toBe(true);
-    expect(hoverCard.state.ids.contentId).toBe('uifn-hover-card-1-content');
+    expect(hoverCard.state.policy.hoverableContent).toBe(true);
+    expect(hoverCard.state.policy.touchOpens).toBe(false);
   });
 });

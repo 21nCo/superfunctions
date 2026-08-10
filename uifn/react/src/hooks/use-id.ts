@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { generateId } from '@uifn/core/utils/id';
 
 export interface UseIdOptions {
   prefix?: string;
@@ -29,21 +28,12 @@ function composeIdBase(options: UseIdOptions): string {
 }
 
 export const useId = (id?: string, options: UseIdOptions = {}): string => {
-  const reactId = typeof React.useId === 'function' ? React.useId() : undefined;
+  const reactId = React.useId();
   const baseId = React.useMemo(() => composeIdBase(options), [options.prefix, options.slot]);
-  const fallbackRef = React.useRef<string | undefined>(undefined);
-
-  if (!id && !reactId && !fallbackRef.current) {
-    fallbackRef.current = generateId(baseId);
-  }
 
   if (id) {
     return id;
   }
 
-  if (reactId) {
-    return `${baseId}-${normalizeReactIdSegment(reactId)}`;
-  }
-
-  return fallbackRef.current!;
+  return `${baseId}-${normalizeReactIdSegment(reactId)}`;
 };

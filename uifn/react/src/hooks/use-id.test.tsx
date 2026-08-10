@@ -1,27 +1,19 @@
 import { render, screen } from '@testing-library/react';
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { generateId } from '@uifn/core/utils/id';
+import { describe, expect, it } from 'vitest';
 import { useId } from './use-id';
 
-vi.mock('@uifn/core/utils/id', () => ({
-  generateId: vi.fn(() => 'fallback-id'),
-}));
-
-function UseIdHarness() {
+function UseIdHarness({ testId }: { testId: string }) {
   const id = useId(undefined, { prefix: 'dialog', slot: 'content' });
-  return <div data-testid="target" id={id} />;
+  return <div data-testid={testId} id={id} />;
 }
 
 describe('useId', () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  it('uses React-owned hydration-safe ids without process-global fallback state', () => {
+    render(<><UseIdHarness testId="first" /><UseIdHarness testId="second" /></>);
 
-  it('does not generate a fallback id when React.useId is available', () => {
-    render(<UseIdHarness />);
-
-    expect(generateId).not.toHaveBeenCalled();
-    expect(screen.getByTestId('target').id).toMatch(/^uifn-dialog-content-/);
+    expect(screen.getByTestId('first').id).toMatch(/^uifn-dialog-content-/);
+    expect(screen.getByTestId('second').id).toMatch(/^uifn-dialog-content-/);
+    expect(screen.getByTestId('first').id).not.toBe(screen.getByTestId('second').id);
   });
 });

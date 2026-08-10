@@ -7,7 +7,7 @@ import { defineConfig } from "vite";
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const svelteSrc = path.resolve(dirname, "../../docsfn/svelte/src");
 const coreSrc = path.resolve(dirname, "../../docsfn/core/src");
-const uifnSvelteSrc = path.resolve(dirname, "../../uifn/svelte/src/index.ts");
+const uifnSvelteSrc = path.resolve(dirname, "../../uifn/svelte/lib/index.ts");
 const uifnCoreSrc = path.resolve(dirname, "../../uifn/core/src");
 const searchfnRoot = path.resolve(dirname, "../../searchfn");
 
