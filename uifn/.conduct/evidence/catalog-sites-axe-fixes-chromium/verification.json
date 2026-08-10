@@ -1,0 +1,1297 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5783,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2801,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour changes are now live.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 106.078125,
+          "y": 542.828125,
+          "width": 165.828125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3281,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 41.125,
+          "y": 500.328125,
+          "width": 307.734375,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 3010,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 148.15625,
+          "y": 580.171875,
+          "width": 93.6875,
+          "height": 20.296875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2981,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.5625,
+          "y": 541.28125,
+          "width": 18.859375,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 433,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2793,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes saved Your changes are now live.  Undo ×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 106.078125,
+          "y": 542.828125,
+          "width": 165.828125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3273,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 41.125,
+          "y": 500.328125,
+          "width": 307.734375,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 3002,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 148.15625,
+          "y": 580.171875,
+          "width": 93.6875,
+          "height": 20.296875
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2973,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.5625,
+          "y": 541.28125,
+          "width": 18.859375,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 439,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5758,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2782,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour changes are now live.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 106.078125,
+          "y": 542.828125,
+          "width": 165.828125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3262,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 41.125,
+          "y": 500.328125,
+          "width": 307.734375,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 2991,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 148.15625,
+          "y": 580.171875,
+          "width": 93.6875,
+          "height": 20.296875
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2962,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.5625,
+          "y": 541.28125,
+          "width": 18.859375,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 423,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 379,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 493,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 521,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2816,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour changes are now live.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 106.078125,
+          "y": 542.828125,
+          "width": 165.828125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3296,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 41.125,
+          "y": 500.328125,
+          "width": 307.734375,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 3025,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 148.15625,
+          "y": 580.171875,
+          "width": 93.6875,
+          "height": 20.296875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2996,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.5625,
+          "y": 541.28125,
+          "width": 18.859375,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 439,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5743,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2840,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour project settings were updated successfully.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 91.171875,
+          "y": 542.328125,
+          "width": 169.640625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3369,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 25.984375,
+          "y": 500.328125,
+          "width": 338.046875,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 3096,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 142.234375,
+          "y": 581.328125,
+          "width": 105.515625,
+          "height": 18
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 3063,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.5625,
+          "y": 541.28125,
+          "width": 18.859375,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 417,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 370,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 487,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 515,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-axe-fixes-chromium"
+}

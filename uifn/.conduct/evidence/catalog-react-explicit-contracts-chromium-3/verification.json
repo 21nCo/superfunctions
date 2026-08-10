@@ -1,0 +1,480 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7578,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/autocomplete",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Autocomplete",
+      "bodyLength": 3226,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "items",
+          "filter",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "empty": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "autocomplete-filter-pointer-select",
+        "value": "Second option",
+        "expanded": "false",
+        "selected": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 557.90625,
+          "width": 316,
+          "height": 64.84375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/combobox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Combobox",
+      "bodyLength": 3685,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "inputValue",
+          "items",
+          "multiple",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 12
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "trigger": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "empty": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "combobox-pointer-select",
+        "value": "item-2",
+        "selected": "true",
+        "inputValue": "Second option"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 548.609375,
+          "width": 316,
+          "height": 83.4375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/editable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Editable",
+      "bodyLength": 3336,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "editing",
+          "defaultEditing",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "preview": 1,
+          "control": 1,
+          "input": 1,
+          "submit": 1,
+          "cancel": 1,
+          "error": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "editable-edit-submit",
+        "focused": true,
+        "hiddenValue": "Published value",
+        "state": "idle"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 539.75,
+          "width": 316,
+          "height": 101.140625
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/floating-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Floating Panel",
+      "bodyLength": 3293,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "placement",
+          "draggable",
+          "resizable"
+        ],
+        "anatomyParts": 10
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "title": 1,
+          "description": 1,
+          "dragHandle": 1,
+          "resizeHandle": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "floating-panel-open-resize-close",
+        "before": 320,
+        "after": 321,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/pin-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pin Input",
+      "bodyLength": 3202,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "length",
+          "mask",
+          "otp",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 6,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pin-input-six-digit-entry",
+        "inputCount": 6,
+        "value": "123456"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 533.90625,
+          "width": 316,
+          "height": 112.84375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 772,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-react-explicit-contracts-chromium-3"
+}

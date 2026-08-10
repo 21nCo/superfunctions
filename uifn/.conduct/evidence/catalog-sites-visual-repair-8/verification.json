@@ -1,0 +1,1494 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "delivery-contract",
+      "status": "passed",
+      "evidence": {
+        "manifest": {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-29T08:03:15.123Z",
+          "basePath": "/components",
+          "frameworks": [
+            {
+              "id": "react",
+              "path": "/components/react/"
+            },
+            {
+              "id": "svelte",
+              "path": "/components/svelte/"
+            },
+            {
+              "id": "solid",
+              "path": "/components/solid/"
+            }
+          ],
+          "inventory": {
+            "components": 61,
+            "hooks": 2,
+            "patterns": 14,
+            "sfPanels": 14
+          },
+          "routes": {
+            "perFramework": 935,
+            "publicPerFramework": 104,
+            "staticallyAddressable": 2805
+          },
+          "resources": [
+            "/robots.txt",
+            "/sitemap.xml",
+            "/components/llms.txt",
+            "/components/llms-full.txt",
+            "/components/og.png",
+            "/components/crop-landscape.svg"
+          ]
+        },
+        "resources": {
+          "/robots.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 61
+          },
+          "/sitemap.xml": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 25131
+          },
+          "/components/llms.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 11872
+          },
+          "/components/llms-full.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 19637
+          },
+          "/components/og.png": {
+            "status": 200,
+            "contentType": "image/png",
+            "byteLength": 876600
+          },
+          "/catalog-manifest.json": {
+            "status": 200,
+            "inventory": {
+              "components": 61,
+              "hooks": 2,
+              "patterns": 14,
+              "sfPanels": 14
+            },
+            "routes": {
+              "perFramework": 935,
+              "publicPerFramework": 104,
+              "staticallyAddressable": 2805
+            }
+          }
+        },
+        "metadata": {
+          "react": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "svelte": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "solid": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          }
+        },
+        "redirects": {
+          "components": {
+            "status": 308,
+            "location": "/components/"
+          }
+        },
+        "notFound": {
+          "status": 404,
+          "hasNoindex": true,
+          "hasRecoveryLink": true
+        },
+        "security": {}
+      }
+    },
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 831,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9387,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2832,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2535,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2958,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2481,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tree-view",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tree View",
+      "bodyLength": 6119,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "expanded",
+          "defaultExpanded",
+          "selection",
+          "defaultSelection",
+          "items",
+          "selectionMode",
+          "dir"
+        ],
+        "anatomyParts": 8,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Tree View catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TreeViewRoot,\n  TreeViewLabel,\n  TreeViewTree,\n  TreeViewItem,\n  TreeViewItemTrigger,\n  TreeViewItemText,\n  TreeViewBranch,\n  TreeViewIndicator,\n} from '@uifn/components-react/tree-view'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TreeViewRoot items={[{ id: 'workspace', textValue: 'Workspace', children: [{ id: 'projects', textValue: 'Projects' }] }]}>\n      <TreeViewLabel>Project files</TreeViewLabel>\n      <TreeViewTree>\n        <TreeViewItem value=\"workspace\">\n          <TreeViewItemTrigger type=\"button\" value=\"workspace\" aria-label=\"Toggle Workspace\">›</TreeViewItemTrigger>\n          <TreeViewItemText value=\"workspace\">Workspace</TreeViewItemText>\n          <TreeViewBranch value=\"workspace\">\n            <TreeViewItem value=\"projects\">\n              <TreeViewItemTrigger type=\"button\" value=\"projects\" aria-label=\"Projects\">›</TreeViewItemTrigger>\n              <TreeViewItemText value=\"projects\">Projects</TreeViewItemText>\n              <TreeViewBranch value=\"projects\" />\n              <TreeViewIndicator value=\"projects\">⌄</TreeViewIndicator>\n            </TreeViewItem>\n          </TreeViewBranch>\n          <TreeViewIndicator value=\"workspace\">⌄</TreeViewIndicator>\n        </TreeViewItem>\n      </TreeViewTree>\n    </TreeViewRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "tree": 1,
+          "item": 2,
+          "itemTrigger": 2,
+          "itemText": 2,
+          "branch": 2,
+          "indicator": 2
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 676,
+            "y": 580.6875,
+            "width": 384,
+            "height": 78.296875
+          },
+          "visibleText": "Project files › Workspace",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tree-view-expand-focus-child",
+        "itemCount": 2,
+        "expanded": "true",
+        "branchVisible": true,
+        "childFocused": false
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 518.125,
+          "width": 320,
+          "height": 78.296875
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1414,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1272,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1381,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1409,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9403,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2822,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2542,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2965,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2493,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/tree-view",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tree View",
+      "bodyLength": 6069,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "expanded",
+          "defaultExpanded",
+          "selection",
+          "defaultSelection",
+          "items",
+          "selectionMode",
+          "dir"
+        ],
+        "anatomyParts": 8,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Tree View catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "<script lang=\"ts\">\n  import {\n    TreeViewRoot,\n    TreeViewLabel,\n    TreeViewTree,\n    TreeViewItem,\n    TreeViewItemTrigger,\n    TreeViewItemText,\n    TreeViewBranch,\n    TreeViewIndicator,\n  } from '@uifn/components-svelte/tree-view'\n  import '@uifn/components/styles.css'\n</script>\n\n<TreeViewRoot items={[{ id: 'workspace', textValue: 'Workspace', children: [{ id: 'projects', textValue: 'Projects' }] }]}>\n  <TreeViewLabel>Project files</TreeViewLabel>\n  <TreeViewTree>\n    <TreeViewItem value=\"workspace\">\n      <TreeViewItemTrigger type=\"button\" value=\"workspace\" aria-label=\"Toggle Workspace\">›</TreeViewItemTrigger>\n      <TreeViewItemText value=\"workspace\">Workspace</TreeViewItemText>\n      <TreeViewBranch value=\"workspace\">\n        <TreeViewItem value=\"projects\">\n          <TreeViewItemTrigger type=\"button\" value=\"projects\" aria-label=\"Projects\">›</TreeViewItemTrigger>\n          <TreeViewItemText value=\"projects\">Projects</TreeViewItemText>\n          <TreeViewBranch value=\"projects\" />\n          <TreeViewIndicator value=\"projects\">⌄</TreeViewIndicator>\n        </TreeViewItem>\n      </TreeViewBranch>\n      <TreeViewIndicator value=\"workspace\">⌄</TreeViewIndicator>\n    </TreeViewItem>\n  </TreeViewTree>\n</TreeViewRoot>"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "tree": 1,
+          "item": 2,
+          "itemTrigger": 2,
+          "itemText": 2,
+          "branch": 2,
+          "indicator": 2
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 676,
+            "y": 580.6875,
+            "width": 384,
+            "height": 78.296875
+          },
+          "visibleText": "Project files › Workspace",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tree-view-expand-focus-child",
+        "itemCount": 2,
+        "expanded": "true",
+        "branchVisible": true,
+        "childFocused": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 518.125,
+          "width": 320,
+          "height": 78.296875
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1421,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1282,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1388,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1416,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9402,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2841,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2541,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2964,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2487,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tree-view",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tree View",
+      "bodyLength": 6130,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "expanded",
+          "defaultExpanded",
+          "selection",
+          "defaultSelection",
+          "items",
+          "selectionMode",
+          "dir"
+        ],
+        "anatomyParts": 8,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Tree View catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TreeViewRoot,\n  TreeViewLabel,\n  TreeViewTree,\n  TreeViewItem,\n  TreeViewItemTrigger,\n  TreeViewItemText,\n  TreeViewBranch,\n  TreeViewIndicator,\n} from '@uifn/components-solid/tree-view'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TreeViewRoot items={[{ id: 'workspace', textValue: 'Workspace', children: [{ id: 'projects', textValue: 'Projects' }] }]}>\n      <TreeViewLabel>Project files</TreeViewLabel>\n      <TreeViewTree>\n        <TreeViewItem value=\"workspace\">\n          <TreeViewItemTrigger type=\"button\" value=\"workspace\" aria-label=\"Toggle Workspace\">›</TreeViewItemTrigger>\n          <TreeViewItemText value=\"workspace\">Workspace</TreeViewItemText>\n          <TreeViewBranch value=\"workspace\">\n            <TreeViewItem value=\"projects\">\n              <TreeViewItemTrigger type=\"button\" value=\"projects\" aria-label=\"Projects\">›</TreeViewItemTrigger>\n              <TreeViewItemText value=\"projects\">Projects</TreeViewItemText>\n              <TreeViewBranch value=\"projects\" />\n              <TreeViewIndicator value=\"projects\">⌄</TreeViewIndicator>\n            </TreeViewItem>\n          </TreeViewBranch>\n          <TreeViewIndicator value=\"workspace\">⌄</TreeViewIndicator>\n        </TreeViewItem>\n      </TreeViewTree>\n    </TreeViewRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "tree": 1,
+          "item": 2,
+          "itemTrigger": 2,
+          "itemText": 2,
+          "branch": 2,
+          "indicator": 2
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 676,
+            "y": 580.6875,
+            "width": 384,
+            "height": 78.296875
+          },
+          "visibleText": "Project files › Workspace",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tree-view-expand-focus-child",
+        "itemCount": 2,
+        "expanded": "true",
+        "branchVisible": true,
+        "childFocused": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 518.125,
+          "width": 320,
+          "height": 78.296875
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1420,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1281,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1387,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1415,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tree-view",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "tree-view-expand-focus-child",
+        "itemCount": 2,
+        "expanded": "true",
+        "branchVisible": true,
+        "childFocused": false
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tree-view",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "tree-view-expand-focus-child",
+        "itemCount": 2,
+        "expanded": "true",
+        "branchVisible": true,
+        "childFocused": false
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/tree-view",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tree View",
+      "bodyLength": 6119,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "expanded",
+          "defaultExpanded",
+          "selection",
+          "defaultSelection",
+          "items",
+          "selectionMode",
+          "dir"
+        ],
+        "anatomyParts": 8,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Tree View catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TreeViewRoot,\n  TreeViewLabel,\n  TreeViewTree,\n  TreeViewItem,\n  TreeViewItemTrigger,\n  TreeViewItemText,\n  TreeViewBranch,\n  TreeViewIndicator,\n} from '@uifn/components-react/tree-view'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TreeViewRoot items={[{ id: 'workspace', textValue: 'Workspace', children: [{ id: 'projects', textValue: 'Projects' }] }]}>\n      <TreeViewLabel>Project files</TreeViewLabel>\n      <TreeViewTree>\n        <TreeViewItem value=\"workspace\">\n          <TreeViewItemTrigger type=\"button\" value=\"workspace\" aria-label=\"Toggle Workspace\">›</TreeViewItemTrigger>\n          <TreeViewItemText value=\"workspace\">Workspace</TreeViewItemText>\n          <TreeViewBranch value=\"workspace\">\n            <TreeViewItem value=\"projects\">\n              <TreeViewItemTrigger type=\"button\" value=\"projects\" aria-label=\"Projects\">›</TreeViewItemTrigger>\n              <TreeViewItemText value=\"projects\">Projects</TreeViewItemText>\n              <TreeViewBranch value=\"projects\" />\n              <TreeViewIndicator value=\"projects\">⌄</TreeViewIndicator>\n            </TreeViewItem>\n          </TreeViewBranch>\n          <TreeViewIndicator value=\"workspace\">⌄</TreeViewIndicator>\n        </TreeViewItem>\n      </TreeViewTree>\n    </TreeViewRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "tree": 1,
+          "item": 2,
+          "itemTrigger": 2,
+          "itemText": 2,
+          "branch": 2,
+          "indicator": 2
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 676,
+            "y": 580.6875,
+            "width": 384,
+            "height": 78.296875
+          },
+          "visibleText": "Project files › Workspace",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tree-view-expand-focus-child",
+        "itemCount": 2,
+        "expanded": "true",
+        "branchVisible": true,
+        "childFocused": false
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 518.125,
+          "width": 320,
+          "height": 78.296875
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true
+        }
+      }
+    }
+  ],
+  "navigationRetries": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-visual-repair-8"
+}

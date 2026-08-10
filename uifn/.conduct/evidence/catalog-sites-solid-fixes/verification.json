@@ -1,0 +1,131 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "baseUrl": "http://127.0.0.1:6311",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 957,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 2286,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1482,
+        "scrollTop": 1214
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 599,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 648,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-solid-fixes"
+}

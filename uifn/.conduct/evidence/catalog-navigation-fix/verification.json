@@ -1,0 +1,2238 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "delivery-contract",
+      "status": "passed",
+      "evidence": {
+        "manifest": {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-30T02:27:02.335Z",
+          "basePath": "/components",
+          "frameworks": [
+            {
+              "id": "react",
+              "path": "/components/react/"
+            },
+            {
+              "id": "svelte",
+              "path": "/components/svelte/"
+            },
+            {
+              "id": "solid",
+              "path": "/components/solid/"
+            }
+          ],
+          "inventory": {
+            "components": 61,
+            "hooks": 2,
+            "patterns": 14,
+            "sfPanels": 14
+          },
+          "routes": {
+            "perFramework": 935,
+            "publicPerFramework": 104,
+            "staticallyAddressable": 2805
+          },
+          "resources": [
+            "/robots.txt",
+            "/sitemap.xml",
+            "/components/llms.txt",
+            "/components/llms-full.txt",
+            "/components/og.png",
+            "/components/crop-landscape.svg"
+          ]
+        },
+        "resources": {
+          "/robots.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 61
+          },
+          "/sitemap.xml": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 25131
+          },
+          "/components/llms.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 11872
+          },
+          "/components/llms-full.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 19637
+          },
+          "/components/og.png": {
+            "status": 200,
+            "contentType": "image/png",
+            "byteLength": 876600
+          },
+          "/catalog-manifest.json": {
+            "status": 200,
+            "inventory": {
+              "components": 61,
+              "hooks": 2,
+              "patterns": 14,
+              "sfPanels": 14
+            },
+            "routes": {
+              "perFramework": 935,
+              "publicPerFramework": 104,
+              "staticallyAddressable": 2805
+            }
+          }
+        },
+        "metadata": {
+          "react": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "svelte": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "solid": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          }
+        },
+        "redirects": {
+          "components": {
+            "status": 308,
+            "location": "/components/"
+          }
+        },
+        "notFound": {
+          "status": 404,
+          "hasNoindex": true,
+          "hasRecoveryLink": true
+        },
+        "security": {}
+      }
+    },
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 831,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9387,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2832,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2535,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2958,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2481,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5369,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-react/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            <DialogTitle>Edit profile</DialogTitle>\n            <DialogDescription>Update your display name and contact information.</DialogDescription>\n            <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(31, 41, 55)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close Dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 477.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 195.890625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-navigation-fix/react-dialog-open.png"
+      },
+      "catalogChrome": {
+        "ok": true,
+        "codeState": {
+          "codeSelected": "true",
+          "previewSelected": "false",
+          "codeVisible": true,
+          "previewVisible": false
+        },
+        "previewState": {
+          "codeSelected": "false",
+          "previewSelected": "true",
+          "codeVisible": false,
+          "previewVisible": true
+        },
+        "sourcePanelVisible": true,
+        "sourceCommand": "pnpm dlx @uifn/registry add dialog --framework react --cwd .",
+        "visibleSearchResults": 1,
+        "searchResultText": "Tree View\n      Selection",
+        "searchClosed": true,
+        "themeBefore": "light",
+        "themeAfter": "dark"
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      },
+      "navigationContinuity": {
+        "ok": true,
+        "startPath": "/components/react/components/dialog",
+        "targetPath": "/components/react/components/tags-input",
+        "before": {
+          "scrollTop": 1200,
+          "sidebarConnected": true
+        },
+        "target": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        },
+        "back": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        },
+        "forward": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5369,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-react/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            <DialogTitle>Edit profile</DialogTitle>\n            <DialogDescription>Update your display name and contact information.</DialogDescription>\n            <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close Dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 76.1875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-navigation-fix/react-dialog-trailing-slash-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      },
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1414,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1272,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1381,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1409,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9403,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2822,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2542,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2965,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2493,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5341,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "<script lang=\"ts\">\n  import {\n    DialogRoot,\n    DialogTrigger,\n    DialogPortal,\n    DialogBackdrop,\n    DialogPositioner,\n    DialogContent,\n    DialogTitle,\n    DialogDescription,\n    DialogClose,\n  } from '@uifn/components-svelte/dialog'\n  import '@uifn/components/styles.css'\n</script>\n\n<DialogRoot>\n  <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n  <DialogPortal>\n    <DialogBackdrop />\n    <DialogPositioner>\n      <DialogContent>\n        <DialogTitle>Edit profile</DialogTitle>\n        <DialogDescription>Update your display name and contact information.</DialogDescription>\n        <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n      </DialogContent>\n    </DialogPositioner>\n  </DialogPortal>\n</DialogRoot>"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(31, 41, 55)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profile Update the details teammates see across your workspace. Display name Work email Cancel Save changes ×",
+          "accessibleLabelText": "Close dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 477.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 195.890625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-navigation-fix/svelte-dialog-open.png"
+      },
+      "catalogChrome": {
+        "ok": true,
+        "codeState": {
+          "codeSelected": "true",
+          "previewSelected": "false",
+          "codeVisible": true,
+          "previewVisible": false
+        },
+        "previewState": {
+          "codeSelected": "false",
+          "previewSelected": "true",
+          "codeVisible": false,
+          "previewVisible": true
+        },
+        "sourcePanelVisible": true,
+        "sourceCommand": "pnpm dlx @uifn/registry add dialog --framework svelte --cwd .",
+        "visibleSearchResults": 1,
+        "searchResultText": "Tree View\n      Selection",
+        "searchClosed": true,
+        "themeBefore": "light",
+        "themeAfter": "dark"
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      },
+      "navigationContinuity": {
+        "ok": true,
+        "startPath": "/components/svelte/components/dialog",
+        "targetPath": "/components/svelte/components/tags-input",
+        "before": {
+          "scrollTop": 1200,
+          "sidebarConnected": true
+        },
+        "target": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        },
+        "back": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        },
+        "forward": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/dialog/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5341,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "<script lang=\"ts\">\n  import {\n    DialogRoot,\n    DialogTrigger,\n    DialogPortal,\n    DialogBackdrop,\n    DialogPositioner,\n    DialogContent,\n    DialogTitle,\n    DialogDescription,\n    DialogClose,\n  } from '@uifn/components-svelte/dialog'\n  import '@uifn/components/styles.css'\n</script>\n\n<DialogRoot>\n  <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n  <DialogPortal>\n    <DialogBackdrop />\n    <DialogPositioner>\n      <DialogContent>\n        <DialogTitle>Edit profile</DialogTitle>\n        <DialogDescription>Update your display name and contact information.</DialogDescription>\n        <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n      </DialogContent>\n    </DialogPositioner>\n  </DialogPortal>\n</DialogRoot>"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profile Update the details teammates see across your workspace. Display name Work email Cancel Save changes ×",
+          "accessibleLabelText": "Close dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 76.1875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-navigation-fix/svelte-dialog-trailing-slash-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      },
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1421,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1282,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1388,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1416,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9402,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2841,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2541,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2964,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2487,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5380,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-solid/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            <DialogTitle>Edit profile</DialogTitle>\n            <DialogDescription>Update your display name and contact information.</DialogDescription>\n            <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(31, 41, 55)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 477.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 195.890625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-navigation-fix/solid-dialog-open.png"
+      },
+      "catalogChrome": {
+        "ok": true,
+        "codeState": {
+          "codeSelected": "true",
+          "previewSelected": "false",
+          "codeVisible": true,
+          "previewVisible": false
+        },
+        "previewState": {
+          "codeSelected": "false",
+          "previewSelected": "true",
+          "codeVisible": false,
+          "previewVisible": true
+        },
+        "sourcePanelVisible": true,
+        "sourceCommand": "pnpm dlx @uifn/registry add dialog --framework solid --cwd .",
+        "visibleSearchResults": 1,
+        "searchResultText": "Tree View\n      Selection",
+        "searchClosed": true,
+        "themeBefore": "light",
+        "themeAfter": "dark"
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      },
+      "navigationContinuity": {
+        "ok": true,
+        "startPath": "/components/solid/components/dialog",
+        "targetPath": "/components/solid/components/tags-input",
+        "before": {
+          "scrollTop": 1200,
+          "sidebarConnected": true
+        },
+        "target": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        },
+        "back": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        },
+        "forward": {
+          "sameDocument": true,
+          "sameSidebar": true,
+          "scrollTop": 1200,
+          "activeLink": true
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dialog/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5380,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-solid/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            <DialogTitle>Edit profile</DialogTitle>\n            <DialogDescription>Update your display name and contact information.</DialogDescription>\n            <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 76.1875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-navigation-fix/solid-dialog-trailing-slash-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      },
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1420,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1281,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1387,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1415,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null,
+      "navigationContinuity": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "navigationRetries": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-navigation-fix"
+}

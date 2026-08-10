@@ -1,0 +1,351 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7578,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 4153,
+      "componentCount": 18,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "anatomyParts": 14
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "select-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": "select",
+          "part": "trigger",
+          "role": "combobox",
+          "text": "⌄"
+        },
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 557.90625,
+          "width": 316,
+          "height": 64.84375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3392,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"menubar\"][data-uifn-part=\"content\"][data-value=\"file\"]') to be visible\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 47.296875,
+          "y": 557.328125,
+          "width": 295.390625,
+          "height": 66
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 547,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "select-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": "select",
+          "part": "trigger",
+          "role": "combobox",
+          "text": "⌄"
+        },
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"menubar\"][data-uifn-part=\"content\"][data-value=\"file\"]') to be visible\u001b[22m\n"
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "select-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": "select",
+          "part": "trigger",
+          "role": "combobox",
+          "text": "⌄"
+        },
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"menubar\"][data-uifn-part=\"content\"][data-value=\"file\"]') to be visible\u001b[22m\n"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 4153,
+      "componentCount": 18,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "anatomyParts": 14
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "select-did-not-close-on-escape",
+        "activeBeforeEscape": {
+          "component": "select",
+          "part": "trigger",
+          "role": "combobox",
+          "text": "⌄"
+        },
+        "expandedAfterEscape": "true",
+        "stateAfterEscape": "open",
+        "hiddenAfterEscape": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 557.90625,
+          "width": 316,
+          "height": 64.84375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3392,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"menubar\"][data-uifn-part=\"content\"][data-value=\"file\"]') to be visible\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 47.296875,
+          "y": 557.328125,
+          "width": 295.390625,
+          "height": 66
+        }
+      }
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-escape-probe"
+}

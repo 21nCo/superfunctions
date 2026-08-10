@@ -1,0 +1,155 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5783,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 3616,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 9
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-keyboard-dismiss-and-pointer-select",
+        "portalled": true,
+        "optionFocused": true,
+        "focusReturned": true,
+        "triggerText": "Administrator⌄"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 75,
+          "y": 542.328125,
+          "width": 240,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 433,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-react-select-focus-fixed"
+}

@@ -1,0 +1,1304 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6313",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7578,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tabs",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "",
+      "bodyLength": 70,
+      "componentCount": 0,
+      "consoleErrorCount": 1
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tags-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tags Input",
+      "bodyLength": 3265,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 10
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "item": 2,
+          "itemText": 2,
+          "itemDelete": 2,
+          "input": 1,
+          "clear": 1,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tags-input-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 10,
+        "partCount": 13,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "accessibleName": "Remove",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 488.453125,
+          "width": 316,
+          "height": 203.734375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/timer",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Timer",
+      "bodyLength": 2465,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 3,
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "value": 1,
+          "start": 1,
+          "pause": 1,
+          "reset": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "timer-status-feedback-adapter-contract",
+        "behaviorFamily": "status-feedback",
+        "rootVisible": true,
+        "expectedPartCount": 6,
+        "partCount": 6,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "accessibleName": "Start",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 514.578125,
+          "width": 316,
+          "height": 151.484375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 2554,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 3,
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": false,
+        "rootCount": 1,
+        "compositionMarkerCount": 0,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "viewport": 1,
+          "root": 1,
+          "title": 1,
+          "description": 1,
+          "action": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "feedback-visible-before-trigger"
+      },
+      "accessibility": {
+        "ok": false,
+        "violations": [
+          {
+            "id": "aria-allowed-role",
+            "impact": "minor",
+            "help": "ARIA role should be appropriate for the element",
+            "nodes": [
+              {
+                "target": [
+                  "#toast-viewport-toast-r-0-viewport"
+                ],
+                "summary": "Fix any of the following:\n  ARIA role region is not allowed for given element"
+              },
+              {
+                "target": [
+                  "#toast-root-toast-r-0-root-item-1"
+                ],
+                "summary": "Fix any of the following:\n  ARIA role status is not allowed for given element"
+              }
+            ]
+          }
+        ]
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 512.734375,
+          "width": 316,
+          "height": 155.1875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 2415,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "anatomyParts": 1
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 126.546875,
+          "y": 570.328125,
+          "width": 136.890625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toggle-group",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 2613,
+      "componentCount": 4,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 2
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "item": 3
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group",
+        "framework": "react",
+        "message": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"toggle-group\"]').first().getByRole('radio', { name: /Align right/i })\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 556.03125,
+          "width": 316,
+          "height": 68.59375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toolbar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toolbar",
+      "bodyLength": 2614,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "button": 1,
+          "link": 1,
+          "toggleGroup": 1,
+          "separator": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toolbar-menu-navigation-adapter-contract",
+        "behaviorFamily": "menu-navigation",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "accessibleName": "button example",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "active",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "inactive",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 562.03125,
+          "width": 316,
+          "height": 56.59375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tooltip",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2551,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "tooltip-visible-before-hover"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 542.28125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tour",
+      "bodyLength": 3213,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 13
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "backdrop": 1,
+          "spotlight": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "previous": 1,
+          "next": 1,
+          "close": 1,
+          "skip": 1,
+          "progress": 1,
+          "portal": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tour-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 13,
+        "partCount": 13,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "accessibleName": "Next",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "open",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "open",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 211.921875,
+          "y": 567.03125,
+          "width": 73.875,
+          "height": 46.59375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tree-view",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tree View",
+      "bodyLength": 3118,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "tree": 1,
+          "item": 2,
+          "itemTrigger": 2,
+          "itemText": 2,
+          "branch": 2,
+          "indicator": 2
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tree-view-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 8,
+        "partCount": 13,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "accessibleName": "First optionitem trigger exampleFirst optionbranch example✓",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "leaf",
+            "expanded": null,
+            "checked": null,
+            "selected": "false",
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "leaf",
+            "expanded": null,
+            "checked": null,
+            "selected": "false",
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 114.078125,
+          "y": 499.140625,
+          "width": 161.828125,
+          "height": 182.375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 772,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tabs",
+      "code": "UIFN_CATALOG_SHELL_NOT_LOADED",
+      "evidence": {
+        "message": "page.waitForSelector: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-workbench=\"react\"][data-uifn-loaded=\"true\"]') to be visible\u001b[22m\n",
+        "consoleErrors": [
+          "Navigation collection identity or nesting is invalid."
+        ],
+        "bodyText": "This page couldn’t load\n\nReload to try again, or go back.\n\nReload\nBack"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/timer",
+      "code": "UIFN_PUBLIC_COMPONENT_DOCUMENTATION_MISSING",
+      "evidence": {
+        "componentDetailsCount": 1,
+        "documentation": {
+          "installation": 1,
+          "usage": 1,
+          "api": 1,
+          "examples": 1,
+          "propRows": 3,
+          "anatomyParts": 6
+        }
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_DOCUMENTATION_MISSING",
+      "evidence": {
+        "componentDetailsCount": 1,
+        "documentation": {
+          "installation": 1,
+          "usage": 1,
+          "api": 1,
+          "examples": 1,
+          "propRows": 3,
+          "anatomyParts": 6
+        }
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_COMPOSITION_INCOMPLETE",
+      "evidence": {
+        "ok": false,
+        "rootCount": 1,
+        "compositionMarkerCount": 0,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "viewport": 1,
+          "root": 1,
+          "title": 1,
+          "description": 1,
+          "action": 1,
+          "close": 1
+        }
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "feedback-visible-before-trigger"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_ACCESSIBILITY_FAILED",
+      "evidence": [
+        {
+          "id": "aria-allowed-role",
+          "impact": "minor",
+          "help": "ARIA role should be appropriate for the element",
+          "nodes": [
+            {
+              "target": [
+                "#toast-viewport-toast-r-0-viewport"
+              ],
+              "summary": "Fix any of the following:\n  ARIA role region is not allowed for given element"
+            },
+            {
+              "target": [
+                "#toast-root-toast-r-0-root-item-1"
+              ],
+              "summary": "Fix any of the following:\n  ARIA role status is not allowed for given element"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toggle-group",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "toggle-group",
+        "framework": "react",
+        "message": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"toggle-group\"]').first().getByRole('radio', { name: /Align right/i })\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tooltip",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "tooltip-visible-before-hover"
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tabs",
+      "code": "UIFN_CATALOG_SHELL_NOT_LOADED",
+      "evidence": {
+        "message": "page.waitForSelector: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-workbench=\"react\"][data-uifn-loaded=\"true\"]') to be visible\u001b[22m\n",
+        "consoleErrors": [
+          "Navigation collection identity or nesting is invalid."
+        ],
+        "bodyText": "This page couldn’t load\n\nReload to try again, or go back.\n\nReload\nBack"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/timer",
+      "code": "UIFN_PUBLIC_COMPONENT_DOCUMENTATION_MISSING",
+      "evidence": {
+        "componentDetailsCount": 1,
+        "documentation": {
+          "installation": 1,
+          "usage": 1,
+          "api": 1,
+          "examples": 1,
+          "propRows": 3,
+          "anatomyParts": 6
+        }
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_DOCUMENTATION_MISSING",
+      "evidence": {
+        "componentDetailsCount": 1,
+        "documentation": {
+          "installation": 1,
+          "usage": 1,
+          "api": 1,
+          "examples": 1,
+          "propRows": 3,
+          "anatomyParts": 6
+        }
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_COMPOSITION_INCOMPLETE",
+      "evidence": {
+        "ok": false,
+        "rootCount": 1,
+        "compositionMarkerCount": 0,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "viewport": 1,
+          "root": 1,
+          "title": 1,
+          "description": 1,
+          "action": 1,
+          "close": 1
+        }
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "feedback-visible-before-trigger"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "code": "UIFN_PUBLIC_COMPONENT_ACCESSIBILITY_FAILED",
+      "evidence": [
+        {
+          "id": "aria-allowed-role",
+          "impact": "minor",
+          "help": "ARIA role should be appropriate for the element",
+          "nodes": [
+            {
+              "target": [
+                "#toast-viewport-toast-r-0-viewport"
+              ],
+              "summary": "Fix any of the following:\n  ARIA role region is not allowed for given element"
+            },
+            {
+              "target": [
+                "#toast-root-toast-r-0-root-item-1"
+              ],
+              "summary": "Fix any of the following:\n  ARIA role status is not allowed for given element"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/toggle-group",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "toggle-group",
+        "framework": "react",
+        "message": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"toggle-group\"]').first().getByRole('radio', { name: /Align right/i })\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tooltip",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "reason": "tooltip-visible-before-hover"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/tabs",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "",
+      "bodyLength": 70,
+      "componentCount": 0,
+      "consoleErrorCount": 1
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/timer",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Timer",
+      "bodyLength": 2465,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 3,
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "value": 1,
+          "start": 1,
+          "pause": 1,
+          "reset": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "timer-status-feedback-adapter-contract",
+        "behaviorFamily": "status-feedback",
+        "rootVisible": true,
+        "expectedPartCount": 6,
+        "partCount": 6,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "accessibleName": "Start",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 514.578125,
+          "width": 316,
+          "height": 151.484375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 2554,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 3,
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": false,
+        "rootCount": 1,
+        "compositionMarkerCount": 0,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "viewport": 1,
+          "root": 1,
+          "title": 1,
+          "description": 1,
+          "action": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "feedback-visible-before-trigger"
+      },
+      "accessibility": {
+        "ok": false,
+        "violations": [
+          {
+            "id": "aria-allowed-role",
+            "impact": "minor",
+            "help": "ARIA role should be appropriate for the element",
+            "nodes": [
+              {
+                "target": [
+                  "#toast-viewport-toast-r-0-viewport"
+                ],
+                "summary": "Fix any of the following:\n  ARIA role region is not allowed for given element"
+              },
+              {
+                "target": [
+                  "#toast-root-toast-r-0-root-item-1"
+                ],
+                "summary": "Fix any of the following:\n  ARIA role status is not allowed for given element"
+              }
+            ]
+          }
+        ]
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 512.734375,
+          "width": 316,
+          "height": 155.1875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toggle-group",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 2613,
+      "componentCount": 4,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 2
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "item": 3
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group",
+        "framework": "react",
+        "message": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"toggle-group\"]').first().getByRole('radio', { name: /Align right/i })\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 556.03125,
+          "width": 316,
+          "height": 68.59375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tooltip",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2551,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "reason": "tooltip-visible-before-hover"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 542.28125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-react-tail-smoke"
+}

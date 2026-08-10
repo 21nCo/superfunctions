@@ -1,0 +1,2035 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "firefox",
+  "baseUrl": "http://127.0.0.1:6325",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5743,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 3418,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 499.8500061035156,
+          "width": 290,
+          "height": 183
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 3301,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-modal-keyboard",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "title": "Delete this project?"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 124.89999389648438,
+          "y": 571.3499755859375,
+          "width": 140.18333435058594,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 2367,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 569,
+          "y": 396.4166564941406,
+          "width": 574,
+          "height": 322.8833312988281
+        },
+        "ratio": 1.7777319061068646,
+        "contentCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 509.7833251953125,
+          "width": 290,
+          "height": 163.13333129882812
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 2337,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 491.8166809082031,
+          "width": 76,
+          "height": 75.99996948242188
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 157,
+          "y": 553.3499755859375,
+          "width": 76,
+          "height": 76
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 2358,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 154.21665954589844,
+          "y": 576.3499755859375,
+          "width": 81.55000305175781,
+          "height": 30
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 3411,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 567.3499755859375,
+          "width": 290,
+          "height": 48
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2840,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour project settings were updated successfully.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 91.06666564941406,
+          "y": 571.3499755859375,
+          "width": 169.86666870117188,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 2768,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 35,
+          "y": 456.3500061035156,
+          "width": 320,
+          "height": 338
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 2739,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card-composition",
+        "heading": "Team workspace",
+        "statCount": 3,
+        "actionCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 456.3500061035156,
+          "width": 290,
+          "height": 311
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 3220,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 84.81666564941406,
+          "y": 552.7999877929688,
+          "width": 220.35000610351562,
+          "height": 20
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 3261,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 541.3499755859375,
+          "width": 290,
+          "height": 100
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 2896,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 490.95001220703125,
+          "width": 290,
+          "height": 144.6999969482422
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3369,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 3,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 25.283340454101562,
+          "y": 501.3500061035156,
+          "width": 339.4333190917969,
+          "height": 180
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 2873,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 505.566650390625,
+          "width": 290,
+          "height": 171.5500030517578
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 2723,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 75,
+          "y": 570.3499755859375,
+          "width": 240,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 3207,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 137.1999969482422,
+          "y": 571.3499755859375,
+          "width": 115.58334350585938,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 3349,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-keyboard-open-escape",
+        "itemCount": 3,
+        "portalled": true,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 143.89999389648438,
+          "y": 571.3499755859375,
+          "width": 102.20001220703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 3422,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50.16667175292969,
+          "y": 456.3500061035156,
+          "width": 289.6666564941406,
+          "height": 305
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 3096,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 142.26666259765625,
+          "y": 581.3499755859375,
+          "width": 105.44999694824219,
+          "height": 20
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 3225,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 73.16667175292969,
+          "y": 542.2999877929688,
+          "width": 243.66665649414062,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 3367,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 34.116668701171875,
+          "y": 540.8499755859375,
+          "width": 321.76666259765625,
+          "height": 101
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 2456,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 141.4166717529297,
+          "y": 583.3499755859375,
+          "width": 107.16665649414062,
+          "height": 17
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3418,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-keyboard-open-escape",
+        "itemCount": 3,
+        "portalled": true,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 104.91667175292969,
+          "y": 568.3499755859375,
+          "width": 180.14999389648438,
+          "height": 46
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 3456,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 38.21665954589844,
+          "y": 572.3499755859375,
+          "width": 313.5666809082031,
+          "height": 38
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 3212,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-keyboard-open-escape",
+        "portalled": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 120.05000305175781,
+          "y": 571.3499755859375,
+          "width": 149.89999389648438,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 2510,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199798536628986,
+        "trackBox": {
+          "x": 739.9666748046875,
+          "y": 578.8666381835938,
+          "width": 232.066650390625,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 739.9666748046875,
+          "y": 578.8666381835938,
+          "width": 167.08331298828125,
+          "height": 9
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 78.96665954589844,
+          "y": 582.3499755859375,
+          "width": 232.06668090820312,
+          "height": 5
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 3374,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 566.3499755859375,
+          "width": 290,
+          "height": 50
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 2688,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 456.3500061035156,
+          "width": 290,
+          "height": 280
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 4427,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1468,
+        "scrollTop": 1200
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 456.3500061035156,
+          "width": 290,
+          "height": 270
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 3697,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 9
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-keyboard-dismiss-and-pointer-select",
+        "portalled": true,
+        "optionFocused": true,
+        "focusReturned": true,
+        "triggerText": "Administrator⌄"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 59,
+          "y": 571.3499755859375,
+          "width": 272,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 2156,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 589,
+          "y": 557.3666381835938,
+          "width": 534,
+          "height": 1
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 590.8499755859375,
+          "width": 290,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 3202,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 6
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-modal-keyboard",
+        "portalled": true,
+        "edgeAligned": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "box": {
+          "x": 960,
+          "y": 0,
+          "width": 480,
+          "height": 1000
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 125.14999389648438,
+          "y": 571.3499755859375,
+          "width": 139.68333435058594,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 2901,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 160,
+          "y": 456.3500061035156,
+          "width": 70,
+          "height": 390
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 2248,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 150,
+          "y": 522.3499755859375,
+          "width": 90,
+          "height": 138
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 3336,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 99,
+          "y": 559.3499755859375,
+          "width": 192,
+          "height": 64
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 2348,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment completeProduction is now running the latest version.View×"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 107.68333435058594,
+          "y": 571.3499755859375,
+          "width": 174.63333129882812,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 3273,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 3
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 544.8499755859375,
+          "width": 290,
+          "height": 93
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 2704,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 7
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 29.416671752929688,
+          "y": 470.3500061035156,
+          "width": 331.183349609375,
+          "height": 242
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 3384,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 495.29998779296875,
+          "width": 290,
+          "height": 136
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 3150,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 73.16667175292969,
+          "y": 526.3499755859375,
+          "width": 243.66665649414062,
+          "height": 130
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 2564,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "anatomyParts": 5
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes savedYour project settings were updated successfully.Undo×"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 136.0833282470703,
+          "y": 571.3499755859375,
+          "width": 117.81666564941406,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 3058,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 15,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 174,
+          "y": 570.3499755859375,
+          "width": 42,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 3227,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 16,
+        "anatomyParts": 2
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 127,
+          "y": 565.3499755859375,
+          "width": 136,
+          "height": 52
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 3063,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "anatomyParts": 4
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "Add to library"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 185.31666564941406,
+          "y": 542.2999877929688,
+          "width": 19.350006103515625,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 2340,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "anatomyParts": 1
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love.",
+        "paragraphCount": 2,
+        "box": {
+          "x": 562.7833251953125,
+          "y": 485.29998779296875,
+          "width": 586.4166259765625,
+          "height": 145.11663818359375
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 50,
+          "y": 501.08331298828125,
+          "width": 290,
+          "height": 180.53334045410156
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 417,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 370,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 487,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 515,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-firefox-angular-final"
+}

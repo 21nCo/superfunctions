@@ -1,0 +1,294 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7593,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3154,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "dir",
+          "loop"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": true,
+        "activeAfterEscape": {
+          "tag": "DIV",
+          "component": "context-menu",
+          "part": "trigger",
+          "id": "context-menu-root-context-menu-c1-trigger"
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/date-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Input",
+      "bodyLength": 3175,
+      "componentCount": 7,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "locale",
+          "timeZone",
+          "min",
+          "max",
+          "name",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "segment": 3,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-input-date-color-adapter-contract",
+        "behaviorFamily": "date-color",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 7,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "SPAN",
+          "component": "date-input",
+          "part": "segment",
+          "id": "date-input-segment-date-input-c1-segment-day"
+        },
+        "accessibleName": "day",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "focused",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "22"
+          },
+          "after": {
+            "state": "focused",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "22"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 570.328125,
+          "width": 316,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 778,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [],
+  "blockingFindings": [],
+  "failures": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-svelte-focus-fixed"
+}
