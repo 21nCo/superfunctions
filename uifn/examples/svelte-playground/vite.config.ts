@@ -20,7 +20,7 @@ export default defineConfig({
       },
       {
         find: "@uifn/svelte",
-        replacement: path.resolve(__dirname, "../../svelte/src/index.ts"),
+        replacement: path.resolve(__dirname, "../../svelte/lib/index.ts"),
       },
       {
         find: "@uifn/examples-shared",

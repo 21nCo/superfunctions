@@ -7,9 +7,6 @@ export interface ExampleCapabilitySupport {
   note?: string;
 }
 
-export const vueVirtualizedListUnsupportedNote =
-  "VirtualizedList is not exported by @uifn/vue";
-
 export const capabilitySupport: ExampleCapabilitySupport[] = [
   { adapter: "react", capability: "dialog", status: "supported" },
   { adapter: "react", capability: "tabs", status: "supported" },
@@ -43,24 +40,29 @@ export const capabilitySupport: ExampleCapabilitySupport[] = [
   { adapter: "svelte", capability: "context-menu", status: "supported" },
   { adapter: "svelte", capability: "virtualized-list", status: "supported" },
 
-  { adapter: "vue", capability: "dialog", status: "supported" },
-  { adapter: "vue", capability: "tabs", status: "supported" },
-  { adapter: "vue", capability: "switch", status: "supported" },
-  { adapter: "vue", capability: "checkbox", status: "supported" },
-  { adapter: "vue", capability: "toast", status: "supported" },
-  { adapter: "vue", capability: "avatar", status: "supported" },
-  { adapter: "vue", capability: "badge", status: "supported" },
-  { adapter: "vue", capability: "dropdown-menu", status: "supported" },
-  { adapter: "vue", capability: "popover", status: "supported" },
-  { adapter: "vue", capability: "hover-card", status: "supported" },
-  { adapter: "vue", capability: "combobox", status: "supported" },
-  { adapter: "vue", capability: "select", status: "supported" },
-  { adapter: "vue", capability: "scroll-area", status: "supported" },
-  { adapter: "vue", capability: "context-menu", status: "supported" },
-  {
-    adapter: "vue",
-    capability: "virtualized-list",
-    status: "unsupported",
-    note: vueVirtualizedListUnsupportedNote,
-  },
+  { adapter: "solid", capability: "dialog", status: "supported" },
+  { adapter: "solid", capability: "tabs", status: "supported" },
+  { adapter: "solid", capability: "switch", status: "supported" },
+  { adapter: "solid", capability: "checkbox", status: "supported" },
+  { adapter: "solid", capability: "toast", status: "supported" },
+  { adapter: "solid", capability: "avatar", status: "supported" },
+  { adapter: "solid", capability: "badge", status: "supported" },
+  { adapter: "solid", capability: "dropdown-menu", status: "supported" },
+  { adapter: "solid", capability: "popover", status: "supported" },
+  { adapter: "solid", capability: "hover-card", status: "supported" },
+  { adapter: "solid", capability: "combobox", status: "supported" },
+  { adapter: "solid", capability: "select", status: "supported" },
+  { adapter: "solid", capability: "scroll-area", status: "supported" },
+  { adapter: "solid", capability: "context-menu", status: "supported" },
+  { adapter: "solid", capability: "virtualized-list", status: "supported" },
+
 ];
+
+export function getCapabilitySupport(adapter: ExampleAdapterId, capability: ExampleCapabilityId): ExampleCapabilitySupport {
+  return capabilitySupport.find((entry) => entry.adapter === adapter && entry.capability === capability) ?? {
+    adapter,
+    capability,
+    status: "unsupported",
+    note: "Capability is not declared in the Workbench capability matrix.",
+  };
+}
