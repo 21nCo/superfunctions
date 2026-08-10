@@ -16,7 +16,9 @@
     activateWorkbenchRoute,
     catalogComponentDetailsHtml,
     catalogDemoCodeHtml,
+    catalogDemoFixtureDescription,
     catalogDemoFixtureIds,
+    catalogDemoFixtureLabel,
     catalogComponentGalleryHtml,
     catalogDemoRootPropsForRoute,
     catalogFrameworkLabel,
@@ -235,13 +237,17 @@
           </div>
           <div id={`preview-${route.slug}`} role="tabpanel" data-catalog-demo-panel="preview">
             <h2 class="sr-only">{route.title} preview</h2>
-            <div class="fixture-grid">
+            <div
+              class="fixture-grid"
+              data-catalog-state-grid={route.path.endsWith("/states") ? "true" : undefined}
+            >
               {#each componentFixtureRoutes(route) as fixtureRoute}
                 <section class="fixture-card">
-                  <p class="eyebrow">{fixtureRoute.fixtureId ?? "default"}</p>
+                  <p class="eyebrow">{catalogDemoFixtureLabel(fixtureRoute.fixtureId)}</p>
                   <div
                     class="qa-edge-box"
                     data-case={fixtureRoute.fixtureId ?? "default"}
+                    data-catalog-preview-size={["card", "table", "command"].includes(route.slug) ? "large" : undefined}
                   >
                     {#if route.slug === "button"}
                     <div class="catalog-button-demo">
@@ -249,11 +255,15 @@
                         {...catalogDemoRootPropsForRoute(route.slug, fixtureRoute)}
                         onclick={() => buttonToastOpen = true}
                       >
-                        <ButtonIcon aria-hidden="true">+</ButtonIcon>
-                        <ButtonLabel>Save changes</ButtonLabel>
-                        <ButtonSpinner hidden aria-hidden="true">Saving</ButtonSpinner>
+                        <ButtonIcon aria-hidden="true">
+                          <svg viewBox="0 0 24 24" focusable="false"><path d="m5 12 4 4L19 6" /></svg>
+                        </ButtonIcon>
+                        {#if !fixtureRoute.fixtureId?.startsWith("icon-")}
+                          <ButtonLabel>Save changes</ButtonLabel>
+                        {/if}
+                        <ButtonSpinner aria-hidden="true">Saving</ButtonSpinner>
                       </Button>
-                      <span>Click the button to run the example action.</span>
+                      <span>{catalogDemoFixtureDescription("button", fixtureRoute.fixtureId)}</span>
                     </div>
                     {:else}
                       <CatalogComponentFixture

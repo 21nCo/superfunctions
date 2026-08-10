@@ -171,6 +171,14 @@ const interactionsByProfile: Record<UifnQaProfile, string[]> = {
   typography: ['resize-viewport'],
 };
 
+const interactionOverrides = new Map<ComponentSlug, string[]>([
+  ['table', ['inspect-semantic-structure', 'keyboard', 'scroll', 'resize-viewport']],
+]);
+
+function interactionsForComponent(slug: ComponentSlug, profiles: UifnQaProfile[]): string[] {
+  return interactionOverrides.get(slug) ?? unique(profiles.flatMap((profile) => interactionsByProfile[profile]));
+}
+
 const geometryByProfile: Record<UifnQaProfile, string[]> = {
   static: ['visible-box', 'no-clipping'],
   control: ['visible-box', 'focus-ring-visible'],
@@ -290,15 +298,22 @@ function profileFixtures(slug: ComponentSlug, profiles: UifnQaProfile[]): UifnQa
   }
 
   if (profiles.includes('data-rich')) {
+    const applicationOwnedTable = slug === 'table';
     fixtures.push({
       id: 'large-data',
       route: `/components/${slug}/qa/large-data`,
       profile: 'data-rich',
       args: { rowCount: 250, state: 'large-data' },
       expectedDom: { rootSelector: `[data-uifn-component="${slug}"]` },
-      expectedBehavior: { deterministicLargeData: true },
-      actions: ['exercise-data-rich-workflow'],
-      assertions: ['data-state-transition', 'keyboard-operation', 'responsive-state', 'no-blank-space'],
+      expectedBehavior: applicationOwnedTable
+        ? { deterministicLargeData: true, semanticStructure: true, applicationOwnsDataOperations: true }
+        : { deterministicLargeData: true },
+      actions: applicationOwnedTable
+        ? ['inspect-semantic-structure', 'scroll-data-region', 'resize-viewport']
+        : ['exercise-data-rich-workflow'],
+      assertions: applicationOwnedTable
+        ? ['semantic-table-structure', 'responsive-state', 'no-blank-space']
+        : ['data-state-transition', 'keyboard-operation', 'responsive-state', 'no-blank-space'],
     });
   }
 
@@ -346,7 +361,7 @@ function toDefinition(
     sizes: profiles.some((profile) => ['control', 'form', 'navigation'].includes(profile))
       ? ['sm', 'md', 'lg']
       : ['md'],
-    behaviors: unique(profiles.flatMap((profile) => interactionsByProfile[profile])),
+    behaviors: interactionsForComponent(slug, profiles),
   };
 }
 
@@ -358,7 +373,7 @@ export const workbenchComponentSlugs = workbenchComponents.map((component) => co
 export function createComponentQaContract(component: WorkbenchComponentDefinition): UifnQaContract {
   const primaryProfile = component.profiles[0];
   const states = unique(component.profiles.flatMap((profile) => defaultStatesByProfile[profile]).concat(component.states));
-  const interactions = unique(component.profiles.flatMap((profile) => interactionsByProfile[profile]))
+  const interactions = interactionsForComponent(component.slug, component.profiles)
     .filter((interaction) => interaction !== 'dismiss' || !['progress', 'skeleton'].includes(component.slug));
   const geometry = unique(component.profiles.flatMap((profile) => geometryByProfile[profile]));
 

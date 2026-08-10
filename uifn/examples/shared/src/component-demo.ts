@@ -26,6 +26,24 @@ export interface CatalogComponentDemo {
   readonly parts: readonly CatalogDemoPart[];
 }
 
+export interface CatalogDeploymentRow {
+  readonly id: string;
+  readonly environment: string;
+  readonly release: string;
+  readonly status: 'Healthy' | 'Building' | 'Degraded' | 'Failed';
+  readonly updated: string;
+  readonly region: string;
+}
+
+export const catalogDeploymentRows: readonly CatalogDeploymentRow[] = Object.freeze([
+  { id: 'production', environment: 'Production', release: 'main · 8f31c2a', status: 'Healthy', updated: '2 min ago', region: 'iad1' },
+  { id: 'preview', environment: 'Preview', release: 'feature/catalog', status: 'Building', updated: 'Just now', region: 'sfo1' },
+  { id: 'staging', environment: 'Staging', release: 'release/v2.9', status: 'Healthy', updated: '18 min ago', region: 'fra1' },
+  { id: 'development', environment: 'Development', release: 'dev · 70ac44e', status: 'Degraded', updated: '42 min ago', region: 'local' },
+  { id: 'docs', environment: 'Docs', release: 'docs-refresh', status: 'Healthy', updated: '1 hr ago', region: 'cdg1' },
+  { id: 'qa', environment: 'QA', release: 'e2e-flake', status: 'Failed', updated: '3 hr ago', region: 'iad1' },
+]);
+
 const demoBySlug = new Map(
   STYLED_COMPONENT_CATALOG.map((component) => [
     component.id,
@@ -35,8 +53,101 @@ const demoBySlug = new Map(
 
 const catalogCropperImage = '/components/crop-landscape.svg';
 
+const overlayQaFixtureIds = new Set([
+  'default-placement',
+  'edge-top-left',
+  'edge-top-right',
+  'edge-bottom-left',
+  'edge-bottom-right',
+  'mobile',
+  'scroll-container',
+  'overflow-clipping',
+  'transformed-parent',
+  'long-content',
+  'nested-overlay',
+  'rtl',
+  'focus-trap',
+]);
+
 export function catalogDemoFixtureIds(slug: ComponentSlug, fallback: readonly string[]): readonly string[] {
   return getStyledPilotDemo(slug) ?? fallback;
+}
+
+const fixtureLabels: Readonly<Record<string, string>> = Object.freeze({
+  default: 'Default',
+  open: 'Open',
+  closed: 'Closed',
+  active: 'Active',
+  selected: 'Selected',
+  checked: 'Checked',
+  unchecked: 'Unchecked',
+  mixed: 'Indeterminate',
+  loading: 'Loading',
+  disabled: 'Disabled',
+  invalid: 'Invalid',
+  elevated: 'Elevated',
+  striped: 'Striped rows',
+  rtl: 'Right to left',
+  'read-only': 'Read only',
+  'variant-secondary': 'Secondary',
+  'variant-outline': 'Outline',
+  'variant-ghost': 'Ghost',
+  'variant-danger': 'Danger',
+  'variant-danger-outline': 'Danger outline',
+  'variant-link': 'Link',
+  'size-sm': 'Small',
+  'size-lg': 'Large',
+  'icon-sm': 'Small icon',
+  'icon-md': 'Icon',
+  'icon-lg': 'Large icon',
+  'density-compact': 'Compact density',
+  'density-spacious': 'Spacious density',
+});
+
+export function catalogDemoFixtureLabel(fixtureId = 'default'): string {
+  return fixtureLabels[fixtureId] ?? fixtureId
+    .split('-')
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`)
+    .join(' ');
+}
+
+export function catalogDemoFixtureDescription(slug: ComponentSlug, fixtureId = 'default'): string {
+  const label = catalogDemoFixtureLabel(fixtureId);
+  const descriptions: Readonly<Record<string, string>> = {
+    default: `Canonical ${slug.replaceAll('-', ' ')} composition using the public styled package.`,
+    checked: 'Selected boolean state remains explicit in semantics, styling, and native form value.',
+    unchecked: 'Unselected boolean state preserves the full label and a clear interactive target.',
+    mixed: 'Indeterminate state exposes aria-checked="mixed" and uses a distinct dash treatment.',
+    loading: 'Busy state disables repeated activation and exposes progress to assistive technology.',
+    disabled: 'Unavailable state remains legible without presenting an active affordance.',
+    invalid: 'Validation state uses more than color and preserves the associated error message.',
+    open: 'Expanded state exposes the real popup or modal surface and its focus behavior.',
+    closed: 'Collapsed state keeps the trigger relationship intact without leaving hidden content interactive.',
+    selected: 'Selected state is conveyed through both semantic attributes and a persistent visual treatment.',
+    active: 'Active state exposes the component\'s current operation or focused item without relying on hover.',
+    elevated: 'Elevated surface uses stronger separation for content that must stand above the surrounding page.',
+    striped: 'Alternating row treatment improves horizontal tracking while retaining semantic table structure.',
+    rtl: 'Right-to-left direction mirrors directional layout and keyboard behavior without reversing semantic order.',
+    'read-only': 'Read-only state preserves the current value and focus semantics while blocking mutation.',
+    'variant-secondary': 'Secondary emphasis for supporting actions.',
+    'variant-outline': 'Outlined emphasis for neutral actions on an open surface.',
+    'variant-ghost': 'Low-chrome emphasis for actions inside dense toolbars and menus.',
+    'variant-danger': 'Destructive emphasis with explicit danger semantics.',
+    'variant-danger-outline': 'Destructive emphasis without a solid fill.',
+    'variant-link': 'Inline link emphasis for actions embedded in prose or compact metadata.',
+    'size-sm': 'Compact sizing for dense interfaces while retaining a usable target.',
+    'size-lg': 'Large sizing for prominent calls to action.',
+    'icon-sm': 'Compact icon-only action with an explicit accessible name.',
+    'icon-md': 'Default icon-only action with an explicit accessible name.',
+    'icon-lg': 'Large icon-only action with an explicit accessible name.',
+    'density-compact': 'Reduced spacing for information-dense product surfaces.',
+    'density-spacious': 'Expanded spacing for lower-density product surfaces.',
+    'long-content': 'Constrained overlay content scrolls inside the viewport while title and actions remain reachable.',
+    'nested-overlay': 'Nested overlay ownership preserves the active modal layer, Escape order, and focus restoration.',
+    'focus-trap': 'Tab and Shift+Tab cycle inside the active modal and return focus to the invoking control on close.',
+  };
+  return descriptions[fixtureId] ?? `${label} ${slug.replaceAll('-', ' ')} presentation using the public component package.`;
 }
 
 const partText: Readonly<Record<string, string>> = Object.freeze({
@@ -138,7 +249,7 @@ const componentPartText: Readonly<Record<string, Readonly<Record<string, Catalog
   }),
   checkbox: Object.freeze({
     label: 'Email notifications',
-    indicator: '✓',
+    indicator: '',
   }),
   'checkbox-group': Object.freeze({
     label: 'Notification channels',
@@ -516,9 +627,9 @@ const curatedSelectionItems: Readonly<Record<string, readonly Readonly<Record<st
       Object.freeze({ id: 'item-3', value: 'item-3', label: 'Archive project', textValue: 'Archive project', disabled: true }),
     ]),
     'navigation-menu': Object.freeze([
-      Object.freeze({ id: 'item-1', value: 'item-1', label: 'Products', textValue: 'Products' }),
-      Object.freeze({ id: 'item-2', value: 'item-2', label: 'Resources', textValue: 'Resources' }),
-      Object.freeze({ id: 'item-3', value: 'item-3', label: 'Company', textValue: 'Company', disabled: true }),
+      Object.freeze({ id: 'item-1', value: 'item-1', label: 'Products', textValue: 'Products', hasContent: true }),
+      Object.freeze({ id: 'item-2', value: 'item-2', label: 'Resources', textValue: 'Resources', hasContent: true }),
+      Object.freeze({ id: 'item-3', value: 'item-3', label: 'Company', textValue: 'Company', hasContent: true }),
     ]),
     'radio-group': Object.freeze([
       Object.freeze({ id: 'item-1', value: 'item-1', label: 'Starter', textValue: 'Starter' }),
@@ -734,6 +845,7 @@ export function catalogDemoRootPropsForRoute(
   const variant = fixture.startsWith('variant-') ? fixture.slice('variant-'.length) : undefined;
   const size = fixture.startsWith('size-') ? fixture.slice('size-'.length) : undefined;
   const density = fixture.startsWith('density-') ? fixture.slice('density-'.length) : undefined;
+  const iconSize = fixture.startsWith('icon-') ? fixture : undefined;
   return {
     ...demo.rootProps,
     environment: {
@@ -807,7 +919,7 @@ export function catalogDemoRootPropsForRoute(
       : {}),
     ...(slug === 'pagination'
       ? {
-          count: 36,
+          count: 120,
           pageSize: 12,
           defaultPage: 2,
         }
@@ -861,18 +973,20 @@ export function catalogDemoRootPropsForRoute(
           },
         }
       : {}),
-    ...(fixture === 'open' ? { defaultOpen: true } : {}),
+    ...(fixture === 'open' || overlayQaFixtureIds.has(fixture) ? { defaultOpen: true } : {}),
     ...(fixture === 'checked' ? { defaultChecked: true } : {}),
     ...(fixture === 'unchecked' ? { defaultChecked: false } : {}),
-    ...(fixture === 'mixed' ? { defaultChecked: 'mixed' } : {}),
+    ...(fixture === 'mixed' ? { defaultChecked: 'indeterminate' } : {}),
     ...(fixture === 'read-only' ? { readOnly: true } : {}),
     ...(fixture === 'elevated' ? { elevated: true } : {}),
     ...(fixture === 'striped' ? { striped: true } : {}),
+    ...(fixture === 'loading' ? { loading: true } : {}),
     ...(fixture === 'disabled' ? { disabled: true } : {}),
     ...(fixture === 'invalid' ? { invalid: true } : {}),
     ...(fixture === 'rtl' ? { dir: 'rtl' } : {}),
     ...(variant ? { variant } : {}),
     ...(size ? { size } : {}),
+    ...(iconSize ? { size: iconSize, 'aria-label': 'Save changes' } : {}),
     ...(density ? { density } : {}),
   };
 }

@@ -80,6 +80,13 @@ function ensureEditableControl(box: HTMLElement, root: HTMLElement, slug: string
   control.setAttribute('data-uifn-form-control', 'true');
   control.setAttribute('aria-label', `${slug} Workbench value`);
   control.setAttribute('form', formId);
+  // This fallback exists only so the QA harness can exercise native form
+  // submission for composites without an editable native control. Keep it in
+  // the form contract without presenting a second, misleading control beside
+  // the public component demo.
+  control.hidden = true;
+  control.tabIndex = -1;
+  control.setAttribute('aria-hidden', 'true');
   const rootCannotContainInteractiveControl = root.matches(
     'button, a[href], input, textarea, select, [role="button"], [role="checkbox"], [role="switch"], [role="radio"], [role="grid"], [role="listbox"], [role="menu"], [role="menubar"], [role="tree"], [role="table"], [role="row"]'
   );
@@ -110,7 +117,11 @@ function activateFormFixture(box: HTMLElement, root: HTMLElement, slug: string):
   control.setAttribute('form', formId);
   if (control instanceof HTMLInputElement && ['checkbox', 'radio'].includes(control.type)) {
     control.value = 'on';
-  } else if (!control.value) {
+  } else if (!control.value && !['autocomplete', 'combobox', 'command', 'tags-input'].includes(slug)) {
+    // Preserve the intentional empty query/placeholder state of editable
+    // selection composites. Imperatively seeding those inputs produced
+    // framework-dependent screenshots because controlled React inputs restore
+    // state while Svelte and Solid retain the raw DOM assignment.
     control.value = slug === 'input-otp' ? '' : 'uifn-demo-value';
   }
   root.setAttribute('data-uifn-form-name', name);
@@ -444,7 +455,12 @@ function activateDataRichFixture(box: HTMLElement, root: HTMLElement, slug: stri
   if (slug === 'sidebar') activateSidebar(box, root);
 }
 
-function activateOverlayFixture(box: HTMLElement, root: HTMLElement, fixtureId: string): void {
+function activateOverlayFixture(
+  box: HTMLElement,
+  root: HTMLElement,
+  fixtureId: string,
+  options: { readonly qaStressFixture: boolean },
+): void {
   box.setAttribute('data-uifn-collision-case', fixtureId);
   if (fixtureId === 'rtl') box.dir = 'rtl';
   const trigger = root.querySelector<HTMLElement>(OVERLAY_TRIGGER_SELECTOR);
@@ -466,12 +482,14 @@ function activateOverlayFixture(box: HTMLElement, root: HTMLElement, fixtureId: 
     trigger.setAttribute('aria-expanded', String(!content.hidden));
   }
   content.setAttribute('data-uifn-overlay-content', 'true');
-  content.style.maxWidth = 'min(320px, calc(100vw - 24px))';
-  content.style.width = fixtureId === 'long-content' ? 'min(320px, calc(100vw - 24px))' : '';
-  content.style.maxHeight = fixtureId === 'long-content' ? '160px' : 'min(320px, calc(100vh - 24px))';
-  content.style.overflow = 'auto';
+  if (options.qaStressFixture) {
+    content.style.maxWidth = 'min(320px, calc(100vw - 24px))';
+    content.style.width = fixtureId === 'long-content' ? 'min(320px, calc(100vw - 24px))' : '';
+    content.style.maxHeight = fixtureId === 'long-content' ? '160px' : 'min(320px, calc(100vh - 24px))';
+    content.style.overflow = 'auto';
+  }
 
-  if (fixtureId === 'long-content' && !content.querySelector('[data-uifn-long-content]')) {
+  if (options.qaStressFixture && fixtureId === 'long-content' && !content.querySelector('[data-uifn-long-content]')) {
     content.append(createElement(
       'p',
       {
@@ -481,14 +499,17 @@ function activateOverlayFixture(box: HTMLElement, root: HTMLElement, fixtureId: 
       Array.from({ length: 20 }, (_, index) => `Long overlay line ${index + 1}`).join(' · ')
     ));
   }
-  if (fixtureId === 'nested-overlay' && !content.querySelector('[data-uifn-nested-overlay]')) {
+  if (options.qaStressFixture && fixtureId === 'nested-overlay' && !content.querySelector('[data-uifn-nested-overlay]')) {
     const nested = createElement('section', { 'data-uifn-nested-overlay': 'true' });
     const nestedTrigger = createElement('button', { type: 'button', 'aria-expanded': 'true' }, 'Nested action');
     const nestedContent = createElement('div', { role: 'menu', tabindex: '-1' }, 'Nested overlay content');
     nested.append(nestedTrigger, nestedContent);
     content.append(nested);
   }
-  if (['focus-trap', 'dialog', 'alert-dialog', 'sheet'].includes(fixtureId) || ['dialog', 'alert-dialog', 'sheet'].includes(root.getAttribute('data-uifn-component') ?? '')) {
+  if (options.qaStressFixture && (
+    ['focus-trap', 'dialog', 'alert-dialog', 'sheet'].includes(fixtureId)
+    || ['dialog', 'alert-dialog', 'sheet'].includes(root.getAttribute('data-uifn-component') ?? '')
+  )) {
     if (!content.querySelector('[data-uifn-focus-first]')) {
       content.append(
         createElement('button', { type: 'button', 'data-uifn-focus-first': 'true' }, 'First action'),
@@ -549,11 +570,17 @@ function enhanceBox(box: HTMLElement, route: WorkbenchRoute): void {
     Boolean(route.slug) &&
     route.path === `/components/${route.slug}`;
   if (isUserFacingComponentShowcase) return;
-  if (profile === 'form') activateFormFixture(box, root, route.slug ?? root.dataset.uifnComponent ?? 'component');
-  if (profile === 'data-rich' || route.contract?.qaProfiles?.includes('data-rich')) {
+  const isQaRoute = route.path === `/components/${route.slug}/qa`
+    || route.path.startsWith(`/components/${route.slug}/qa/`);
+  if (profile === 'form' && isQaRoute) {
+    activateFormFixture(box, root, route.slug ?? root.dataset.uifnComponent ?? 'component');
+  }
+  if (isQaRoute && (profile === 'data-rich' || route.contract?.qaProfiles?.includes('data-rich'))) {
     activateDataRichFixture(box, root, route.slug ?? root.dataset.uifnComponent ?? 'component');
   }
-  if (profile === 'overlay') activateOverlayFixture(box, root, fixtureId);
+  if (profile === 'overlay') {
+    activateOverlayFixture(box, root, fixtureId, { qaStressFixture: isQaRoute });
+  }
 }
 
 function activateProductModels(scope: ParentNode): void {
