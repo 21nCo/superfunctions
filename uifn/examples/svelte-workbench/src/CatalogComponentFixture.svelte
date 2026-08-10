@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { Button, ButtonIcon, ButtonLabel } from "@uifn/components-svelte/button";
   import {
+    catalogDeploymentRows,
     catalogDemoChildren,
     catalogDemoPartInstances,
     catalogDemoPartProps,
@@ -26,6 +28,28 @@
   const rootProps = $derived(catalogDemoRootPropsForRoute(slug, route));
   const componentModule = $derived(svelteComponentLoaders[slug]());
   let tagsValue = $state(["item-1", "item-2"]);
+  let tableQuery = $state("");
+  let tablePage = $state(0);
+  let selectedDeployments = $state<string[]>([]);
+  const tablePageSize = 4;
+  const filteredDeployments = $derived(catalogDeploymentRows.filter((row) => (
+    `${row.environment} ${row.release} ${row.status} ${row.region}`.toLowerCase().includes(tableQuery.toLowerCase())
+  )));
+  const tablePageCount = $derived(Math.max(1, Math.ceil(filteredDeployments.length / tablePageSize)));
+  const safeTablePage = $derived(Math.min(tablePage, tablePageCount - 1));
+  const visibleDeployments = $derived(filteredDeployments.slice(safeTablePage * tablePageSize, (safeTablePage + 1) * tablePageSize));
+  const allVisibleDeploymentsSelected = $derived(visibleDeployments.length > 0 && visibleDeployments.every((row) => selectedDeployments.includes(row.id)));
+  function toggleDeployment(id: string, checked: boolean) {
+    selectedDeployments = checked
+      ? [...new Set([...selectedDeployments, id])]
+      : selectedDeployments.filter((candidate) => candidate !== id);
+  }
+  function toggleVisibleDeployments(checked: boolean) {
+    const visible = new Set(visibleDeployments.map((row) => row.id));
+    selectedDeployments = checked
+      ? [...new Set([...selectedDeployments, ...visible])]
+      : selectedDeployments.filter((candidate) => !visible.has(candidate));
+  }
   const july2026Rows = Array.from({ length: 6 }, (_, row) => (
     Array.from({ length: 7 }, (_, column) => {
       const value = new Date(Date.UTC(2026, 5, 28 + row * 7 + column));
@@ -100,7 +124,13 @@
 {:then componentMap}
   {@const Root = componentMap[demo.root.exportName]}
   {#if Root}
-    {#if slug === "breadcrumb"}
+    {#if slug === "skeleton"}
+      {@const SkeletonRoot = componentMap.SkeletonRoot}
+      <SkeletonRoot {...rootProps} class="catalog-production-skeleton">
+        <span class="catalog-production-skeleton-avatar"></span>
+        <span class="catalog-production-skeleton-copy"><i></i><i></i><i></i></span>
+      </SkeletonRoot>
+    {:else if slug === "breadcrumb"}
       {@const BreadcrumbRoot = componentMap.BreadcrumbRoot}
       {@const BreadcrumbList = componentMap.BreadcrumbList}
       {@const BreadcrumbItem = componentMap.BreadcrumbItem}
@@ -142,15 +172,42 @@
       {@const PaginationPageTrigger = componentMap.PaginationPageTrigger}
       {@const PaginationPrevious = componentMap.PaginationPrevious}
       {@const PaginationNext = componentMap.PaginationNext}
+      {@const PaginationEllipsis = componentMap.PaginationEllipsis}
       <PaginationRoot {...rootProps}>
         <PaginationList>
           <li><PaginationPrevious type="button">Previous</PaginationPrevious></li>
           <PaginationItem value={1}><PaginationPageTrigger type="button" value={1}>1</PaginationPageTrigger></PaginationItem>
           <PaginationItem value={2}><PaginationPageTrigger type="button" value={2}>2</PaginationPageTrigger></PaginationItem>
           <PaginationItem value={3}><PaginationPageTrigger type="button" value={3}>3</PaginationPageTrigger></PaginationItem>
+          <PaginationEllipsis value="start">…</PaginationEllipsis>
+          <PaginationItem value={10}><PaginationPageTrigger type="button" value={10}>10</PaginationPageTrigger></PaginationItem>
           <li><PaginationNext type="button">Next</PaginationNext></li>
         </PaginationList>
       </PaginationRoot>
+    {:else if slug === "card"}
+      {@const CardRoot = componentMap.CardRoot}
+      {@const CardHeader = componentMap.CardHeader}
+      {@const CardTitle = componentMap.CardTitle}
+      {@const CardDescription = componentMap.CardDescription}
+      {@const CardAction = componentMap.CardAction}
+      {@const CardContent = componentMap.CardContent}
+      {@const CardFooter = componentMap.CardFooter}
+      <CardRoot {...rootProps}>
+        <CardHeader>
+          <CardTitle><span class="catalog-card-icon" aria-hidden="true"><span></span></span><span>Release health</span></CardTitle>
+          <CardDescription>Production deployment status for Acme Cloud.</CardDescription>
+          <CardAction><Button variant="ghost" size="sm"><ButtonLabel>View releases</ButtonLabel><ButtonIcon aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></ButtonIcon></Button></CardAction>
+        </CardHeader>
+        <CardContent>
+          <div class="catalog-card-status"><i></i><div><strong>All systems operational</strong><span>12 checks passed across 3 regions</span></div></div>
+          <dl class="catalog-card-metrics">
+            <div><dt>Version</dt><dd>v2.9.0</dd></div>
+            <div><dt>Latency</dt><dd>84 ms</dd></div>
+            <div><dt>Errors</dt><dd>0.02%</dd></div>
+          </dl>
+        </CardContent>
+        <CardFooter><div class="catalog-avatar-stack" aria-label="Release owners"><span>AM</span><span>SK</span><span>TR</span></div><span>Deployed 8 minutes ago by Alex Morgan</span></CardFooter>
+      </CardRoot>
     {:else if slug === "table"}
       {@const TableRoot = componentMap.TableRoot}
       {@const TableTable = componentMap.TableTable}
@@ -161,35 +218,59 @@
       {@const TableRow = componentMap.TableRow}
       {@const TableHead = componentMap.TableHead}
       {@const TableCell = componentMap.TableCell}
-      <TableRoot {...rootProps}>
-        <TableTable>
-          <TableCaption>Production environments and their current release health.</TableCaption>
-          <TableHeader>
-            <TableRow value="header">
-              <TableHead value="environment">Environment</TableHead>
-              <TableHead value="release">Release</TableHead>
-              <TableHead value="status">Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow value="production">
-              <TableCell value="production-environment">Production</TableCell>
-              <TableCell value="production-release">v2.8.0</TableCell>
-              <TableCell value="production-status">Healthy</TableCell>
-            </TableRow>
-            <TableRow value="preview">
-              <TableCell value="preview-environment">Preview</TableCell>
-              <TableCell value="preview-release">PR #482</TableCell>
-              <TableCell value="preview-status">Building</TableCell>
-            </TableRow>
-          </TableBody>
-          <TableFooter>
-            <TableRow value="summary">
-              <TableCell value="summary" colspan="3">2 environments · last checked just now</TableCell>
-            </TableRow>
-          </TableFooter>
-        </TableTable>
-      </TableRoot>
+      <div class="catalog-data-table-demo">
+        <div class="catalog-data-table-heading">
+          <div><strong>Deployments</strong><span>Monitor release health across environments.</span></div>
+          <label class="catalog-table-search">
+            <span class="sr-only">Filter deployments</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+            <input value={tableQuery} oninput={(event) => { tableQuery = event.currentTarget.value; tablePage = 0; }} placeholder="Filter deployments…" />
+          </label>
+        </div>
+        <TableRoot {...rootProps}>
+          <TableTable>
+            <TableCaption>Deployment environments and their current release health.</TableCaption>
+            <TableHeader>
+              <TableRow value="header">
+                <TableHead value="select"><input type="checkbox" aria-label="Select visible deployments" checked={allVisibleDeploymentsSelected} onchange={(event) => toggleVisibleDeployments(event.currentTarget.checked)} /></TableHead>
+                <TableHead value="environment">Environment</TableHead>
+                <TableHead value="release">Release</TableHead>
+                <TableHead value="status">Status</TableHead>
+                <TableHead value="updated">Updated</TableHead>
+                <TableHead value="action"><span class="sr-only">Actions</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {#each visibleDeployments as deployment (deployment.id)}
+                <TableRow value={deployment.id}>
+                  <TableCell value={`${deployment.id}-select`}><input type="checkbox" aria-label={`Select ${deployment.environment}`} checked={selectedDeployments.includes(deployment.id)} onchange={(event) => toggleDeployment(deployment.id, event.currentTarget.checked)} /></TableCell>
+                  <TableCell value={`${deployment.id}-environment`}><strong>{deployment.environment}</strong><span class="catalog-table-region">{deployment.region}</span></TableCell>
+                  <TableCell value={`${deployment.id}-release`}><code>{deployment.release}</code></TableCell>
+                  <TableCell value={`${deployment.id}-status`}><span class="catalog-status-badge" data-status={deployment.status.toLowerCase()}><i></i>{deployment.status}</span></TableCell>
+                  <TableCell value={`${deployment.id}-updated`}>{deployment.updated}</TableCell>
+                  <TableCell value={`${deployment.id}-action`}><a class="catalog-table-action" href={`#deployment-${deployment.id}`}>Inspect</a></TableCell>
+                </TableRow>
+              {:else}
+                <TableRow value="empty"><TableCell value="empty" colspan="6"><div class="catalog-table-empty"><strong>No deployments found</strong><span>Try another environment, release, status, or region.</span></div></TableCell></TableRow>
+              {/each}
+            </TableBody>
+            <TableFooter>
+              <TableRow value="summary">
+                <TableCell value="summary" colspan="6">
+                  <div class="catalog-table-pagination">
+                    <span>{selectedDeployments.length} selected · {filteredDeployments.length} deployments</span>
+                    <div>
+                      <button type="button" disabled={safeTablePage === 0} onclick={() => tablePage = Math.max(0, tablePage - 1)}>Previous</button>
+                      <span>Page {safeTablePage + 1} of {tablePageCount}</span>
+                      <button type="button" disabled={safeTablePage >= tablePageCount - 1} onclick={() => tablePage = Math.min(tablePageCount - 1, tablePage + 1)}>Next</button>
+                    </div>
+                  </div>
+                </TableCell>
+              </TableRow>
+            </TableFooter>
+          </TableTable>
+        </TableRoot>
+      </div>
     {:else if slug === "form"}
       {@const FormRoot = componentMap.FormRoot}
       {@const FormErrorSummary = componentMap.FormErrorSummary}
@@ -373,9 +454,16 @@
         <DialogPortal>
           <DialogBackdrop />
           <DialogPositioner>
-            <DialogContent>
+            <DialogContent class={route.fixtureId === "long-content" ? "catalog-dialog-content catalog-dialog-content--long" : "catalog-dialog-content"}>
               <DialogTitle>Edit profile</DialogTitle>
               <DialogDescription>Update the details teammates see across your workspace.</DialogDescription>
+              {#if route.fixtureId === "long-content"}
+                <div class="catalog-dialog-long-copy">
+                  <section><h3>Profile visibility</h3><p>Your name and photo are visible to every member of this workspace and in shared activity.</p></section>
+                  <section><h3>Contact details</h3><p>Your work email is only shown to workspace owners and administrators who manage access.</p></section>
+                  <section><h3>Notifications</h3><p>Security and billing notices continue to use the verified account email even when this profile changes.</p></section>
+                </div>
+              {/if}
               <form class="catalog-dialog-form" onsubmit={(event) => event.preventDefault()}>
                 <label>Display name<input name="displayName" value="Alex Morgan" autocomplete="name" /></label>
                 <label>Work email<input name="email" type="email" value="alex@company.com" autocomplete="email" /></label>
@@ -384,7 +472,25 @@
                   <button type="submit" class="catalog-primary-action">Save changes</button>
                 </div>
               </form>
-              <DialogClose type="button" aria-label="Close dialog" class="catalog-overlay-close">×</DialogClose>
+              {#if route.fixtureId === "nested-overlay"}
+                <DialogRoot defaultOpen environment={{ scopeId: "uifn-catalog-dialog-nested", hydrationSeed: "dialog-nested" }}>
+                  <DialogTrigger type="button">Review sharing</DialogTrigger>
+                  <DialogPortal>
+                    <DialogBackdrop />
+                    <DialogPositioner>
+                      <DialogContent class="catalog-dialog-content catalog-dialog-content--nested">
+                        <DialogTitle>Share profile changes?</DialogTitle>
+                        <DialogDescription>These updates will be visible to everyone in Acme Cloud.</DialogDescription>
+                        <div class="catalog-dialog-actions">
+                          <DialogClose type="button" class="catalog-dialog-cancel catalog-dialog-inline-close">Keep editing</DialogClose>
+                          <button type="button" class="catalog-primary-action">Share changes</button>
+                        </div>
+                      </DialogContent>
+                    </DialogPositioner>
+                  </DialogPortal>
+                </DialogRoot>
+              {/if}
+              <DialogClose type="button" aria-label="Close dialog" class="catalog-overlay-close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg></DialogClose>
             </DialogContent>
           </DialogPositioner>
         </DialogPortal>
@@ -419,7 +525,7 @@
                 <label>Member<select value="any"><option value="any">Anyone</option><option>Alex Morgan</option><option>Sam Rivera</option></select></label>
                 <button type="submit" class="catalog-primary-action">Apply filters</button>
               </form>
-              <DrawerClose type="button" aria-label="Close filters" class="catalog-overlay-close">×</DrawerClose>
+              <DrawerClose type="button" aria-label="Close filters" class="catalog-overlay-close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg></DrawerClose>
             </DrawerContent>
           </DrawerPositioner>
         </DrawerPortal>
@@ -573,7 +679,7 @@
           {#each tagsValue as value (value)}
             <TagsItem {value}>
               <TagsItemText {value}>{value === "item-1" ? "Frontend" : value === "item-2" ? "Stable" : value}</TagsItemText>
-              <TagsItemDelete {value} aria-label={`Remove ${value}`}>×</TagsItemDelete>
+              <TagsItemDelete {value} aria-label={`Remove ${value}`}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg></TagsItemDelete>
             </TagsItem>
           {/each}
           <TagsInput aria-label="Add tag" placeholder="Add a tag" />

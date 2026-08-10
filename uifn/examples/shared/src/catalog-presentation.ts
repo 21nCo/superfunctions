@@ -15,6 +15,7 @@ import { CATALOG_ACCESSIBILITY } from './catalog-accessibility.generated.js';
 import {
   catalogDemoChildren,
   catalogDemoFixtureIds,
+  catalogDemoFixtureLabel,
   catalogDemoPartInstances,
   catalogDemoPartProps,
   catalogDemoPartText,
@@ -119,6 +120,97 @@ const catalogGuides = [
   { path: '/accessibility', label: 'Accessibility' },
   { path: '/registry', label: 'Registry' },
 ] as const;
+
+interface CatalogExampleDefinition {
+  readonly kicker: string;
+  readonly title: string;
+  readonly description: string;
+  readonly target: 'preview' | 'states' | 'qa' | `/${string}`;
+}
+
+const catalogNamedExamples = {
+  button: [
+    { kicker: 'Action hierarchy', title: 'Primary and supporting actions', description: 'Compare solid, secondary, outline, ghost, destructive, and link emphasis without duplicating the default action.', target: 'states' },
+    { kicker: 'Async action', title: 'Loading and unavailable states', description: 'Verify that progress prevents repeated activation while disabled actions remain readable.', target: 'states' },
+    { kicker: 'Compact controls', title: 'Accessible icon buttons', description: 'Inspect three icon-only sizes with explicit accessible names and usable hit targets.', target: 'states' },
+  ],
+  card: [
+    { kicker: 'Product composition', title: 'Release health summary', description: 'Header, status, metrics, owners, and a supporting action form one realistic operational surface.', target: 'preview' },
+    { kicker: 'Surface hierarchy', title: 'Default, elevated, and outline', description: 'Compare genuinely distinct elevation treatments rather than nominal variant labels.', target: 'states' },
+    { kicker: 'Content rhythm', title: 'Compact and spacious density', description: 'See how the same anatomy adapts to dashboards and lower-density overview pages.', target: 'states' },
+  ],
+  checkbox: [
+    { kicker: 'Selection', title: 'Unchecked, checked, and indeterminate', description: 'Compare all three semantic states, including the mixed-state dash and native form value.', target: 'states' },
+    { kicker: 'Constraints', title: 'Disabled and read-only', description: 'Confirm state remains perceivable when interaction is unavailable or application-owned.', target: 'states' },
+    { kicker: 'Behavior', title: 'Keyboard and form integration', description: 'Exercise Space activation, focus visibility, validation, and submission boundaries.', target: 'qa' },
+  ],
+  switch: [
+    { kicker: 'Boolean setting', title: 'Checked and unchecked', description: 'Inspect track and thumb movement with a persistent text label.', target: 'states' },
+    { kicker: 'Constraints', title: 'Disabled and read-only', description: 'Compare unavailable states without erasing the current value.', target: 'states' },
+    { kicker: 'Directionality', title: 'Keyboard, form, and RTL behavior', description: 'Verify native form value, Space activation, and mirrored thumb travel.', target: 'qa' },
+  ],
+  field: [
+    { kicker: 'Form composition', title: 'Label, control, and description', description: 'Review the complete associated field anatomy instead of an isolated input.', target: 'preview' },
+    { kicker: 'Validation', title: 'Invalid and required states', description: 'Inspect error relationships, required indicators, and non-color feedback.', target: 'states' },
+    { kicker: 'Constraints', title: 'Disabled and read-only fields', description: 'Compare product states that preserve labels, values, and descriptions.', target: 'states' },
+  ],
+  input: [
+    { kicker: 'Native control', title: 'Text entry with product copy', description: 'Use the real input contract with familiar browser editing and autocomplete behavior.', target: 'preview' },
+    { kicker: 'Validation', title: 'Invalid, disabled, and read-only', description: 'Compare intrinsic control states and their stable styling hooks.', target: 'states' },
+    { kicker: 'Integration', title: 'Form ownership and autofill', description: 'Exercise native events, validation, keyboard input, and application-owned submission.', target: 'qa' },
+  ],
+  'input-group': [
+    { kicker: 'Compound field', title: 'Prefix, input, and action', description: 'Compose addons and buttons into one coherent control surface.', target: 'preview' },
+    { kicker: 'Layouts', title: 'Leading and trailing addons', description: 'Compare control anatomy without sacrificing native input behavior.', target: 'states' },
+    { kicker: 'Validation', title: 'Disabled and invalid groups', description: 'Verify group-level focus, error, and unavailable styling.', target: 'qa' },
+  ],
+  select: [
+    { kicker: 'Selection', title: 'Role picker', description: 'Open a real listbox, choose an option, and inspect the hidden native form value.', target: 'preview' },
+    { kicker: 'Popup states', title: 'Open, selected, and disabled', description: 'Compare trigger, option, indicator, and unavailable presentation.', target: 'states' },
+    { kicker: 'Behavior', title: 'Keyboard, collision, and RTL', description: 'Exercise arrow-key selection, typeahead, focus restoration, and positioning.', target: 'qa' },
+  ],
+  combobox: [
+    { kicker: 'Editable selection', title: 'Search and choose a teammate', description: 'Filter real options while preserving active-item focus and native form submission.', target: 'preview' },
+    { kicker: 'Results', title: 'Open, selected, empty, and loading', description: 'Inspect the input and popup across meaningful data states.', target: 'states' },
+    { kicker: 'Behavior', title: 'Composition input and keyboard navigation', description: 'Exercise IME-safe filtering, arrow keys, Escape, and focus restoration.', target: 'qa' },
+  ],
+  dialog: [
+    { kicker: 'Product flow', title: 'Profile editor', description: 'Open a complete form dialog with title, description, actions, and focus restoration.', target: 'preview' },
+    { kicker: 'Content pressure', title: 'Long, scrollable content', description: 'Verify constrained viewport behavior without turning the public example into a stress box.', target: '/components/dialog/qa/long-content' },
+    { kicker: 'Layering', title: 'Nested confirmation dialog', description: 'Inspect nested modal ownership, Escape handling, and focus return.', target: '/components/dialog/qa/nested-overlay' },
+    { kicker: 'Accessibility', title: 'Focus trap and RTL', description: 'Run the explicit focus-containment and right-to-left regression fixtures.', target: '/components/dialog/qa/focus-trap' },
+  ],
+  menu: [
+    { kicker: 'Actions', title: 'Project action menu', description: 'Compose labels, groups, separators, submenus, shortcuts, and disabled items.', target: 'preview' },
+    { kicker: 'Behavior', title: 'Keyboard navigation and looping', description: 'Exercise arrow keys, typeahead, submenu ownership, Escape, and focus return.', target: 'qa' },
+    { kicker: 'Positioning', title: 'Edges, scrolling, and RTL', description: 'Inspect collision handling across viewport and transformed-container fixtures.', target: 'qa' },
+  ],
+  'navigation-menu': [
+    { kicker: 'Site navigation', title: 'Links and expandable sections', description: 'Combine direct links with delayed disclosure content and a shared viewport.', target: 'preview' },
+    { kicker: 'Keyboard', title: 'Enter, Space, arrows, and Escape', description: 'Verify disclosure toggling and focus movement without trapping normal link navigation.', target: 'qa' },
+    { kicker: 'Layout', title: 'Horizontal, vertical, and RTL', description: 'Inspect orientation and direction across the same semantic navigation anatomy.', target: 'states' },
+  ],
+  tabs: [
+    { kicker: 'Product navigation', title: 'Workspace overview tabs', description: 'Switch related panels through the real tablist, triggers, and panel anatomy.', target: 'preview' },
+    { kicker: 'Selection', title: 'Active, disabled, and focused tabs', description: 'Compare the selected treatment without relying on a stray indicator glyph.', target: 'states' },
+    { kicker: 'Behavior', title: 'Arrow keys, activation, and RTL', description: 'Exercise roving focus and direction-aware keyboard movement.', target: 'qa' },
+  ],
+  command: [
+    { kicker: 'Command palette', title: 'Search workspace actions', description: 'Use a visible search affordance, grouped results, shortcuts, and active-item focus.', target: 'preview' },
+    { kicker: 'Result states', title: 'Empty, loading, and selected', description: 'Inspect legible feedback while the collection filters or waits for data.', target: 'states' },
+    { kicker: 'Behavior', title: 'Composition-safe keyboard control', description: 'Exercise IME input, arrow navigation, Enter selection, and Escape.', target: 'qa' },
+  ],
+  table: [
+    { kicker: 'Application composition', title: 'Deployment dashboard', description: 'Filter, select, inspect, and paginate realistic deployment rows around the semantic table primitive.', target: 'preview' },
+    { kicker: 'Presentation', title: 'Compact, spacious, and striped', description: 'Compare density and row treatments while retaining header and cell semantics.', target: 'states' },
+    { kicker: 'Ownership boundary', title: 'Large data integration', description: 'Exercise application-owned filtering, selection, sorting, and pagination without hiding them inside core Table.', target: '/components/table/qa/large-data' },
+  ],
+  skeleton: [
+    { kicker: 'Loading layout', title: 'Card and list placeholders', description: 'Compose tokenized geometry that mirrors the content expected to replace it.', target: 'preview' },
+    { kicker: 'Geometry', title: 'Text, avatar, and media shapes', description: 'Compare reusable radii and dimensions without accidental accessible announcements.', target: 'states' },
+    { kicker: 'Motion', title: 'Reduced-motion behavior', description: 'Verify shimmer suppression when the user requests less animation.', target: 'qa' },
+  ],
+} as const satisfies Partial<Record<ComponentSlug, readonly CatalogExampleDefinition[]>>;
 
 const partCopy: Record<string, Partial<Record<string, string>>> = {
   accordion: {
@@ -887,6 +979,50 @@ export function catalogComponentCodeSnippet(
   return catalogCodeSnippet(slug, framework);
 }
 
+function catalogComponentExamplesHtml(
+  slug: ComponentSlug,
+  basePath: string,
+  statesHref: string,
+  qaHref: string,
+  demoStates: readonly string[],
+  behaviors: readonly string[],
+): string {
+  const namedExamples = catalogNamedExamples[slug as keyof typeof catalogNamedExamples] as
+    | readonly CatalogExampleDefinition[]
+    | undefined;
+  const examples: readonly CatalogExampleDefinition[] = namedExamples ?? [
+    {
+      kicker: 'Live example',
+      title: 'Default interaction',
+      description: 'Use the real component rendered above and inspect its visual and keyboard behavior.',
+      target: 'preview',
+    },
+    {
+      kicker: 'State matrix',
+      title: demoStates.map(catalogDemoFixtureLabel).join(', '),
+      description: 'Inspect supported visual and semantic states using the same framework package.',
+      target: 'states',
+    },
+    {
+      kicker: 'Behavior cases',
+      title: behaviors.map(humanize).join(', '),
+      description: 'Open focus, responsive, direction, form, and regression fixtures for this component.',
+      target: 'qa',
+    },
+  ];
+
+  return examples.map((example) => {
+    const href = example.target === 'preview'
+      ? '#preview'
+      : example.target === 'states'
+        ? statesHref
+        : example.target === 'qa'
+          ? qaHref
+          : withCatalogBasePath(basePath, example.target);
+    return `<a href="${href}"><span>${escapeHtml(example.kicker)}</span><strong>${escapeHtml(example.title)}</strong><p>${escapeHtml(example.description)}</p></a>`;
+  }).join('');
+}
+
 export function catalogComponentDetailsHtml(slug: string, framework: CatalogFramework, basePath: string): string {
   const component = getComponentBySlug(slug);
   if (!component) return '';
@@ -1052,9 +1188,7 @@ export function catalogComponentDetailsHtml(slug: string, framework: CatalogFram
       <section class="catalog-reference-section" id="examples" data-catalog-doc-examples>
         <div class="catalog-doc-heading"><div><p class="catalog-kicker">Explore</p><h2>Examples and states</h2></div></div>
         <div class="catalog-example-grid">
-          <a href="#preview"><span>Live example</span><strong>Default interaction</strong><p>Use the real component rendered above and inspect its visual and keyboard behavior.</p></a>
-          <a href="${statesHref}"><span>State matrix</span><strong>${escapeHtml(demoStates.join(', '))}</strong><p>Inspect supported visual and semantic states using the same framework package.</p></a>
-          <a href="${qaHref}"><span>Behavior cases</span><strong>${escapeHtml(behaviors.map(humanize).join(', '))}</strong><p>Open collision, focus, responsive, and regression fixtures for this component.</p></a>
+          ${catalogComponentExamplesHtml(component.slug, basePath, statesHref, qaHref, demoStates, behaviors)}
         </div>
       </section>
 
@@ -1698,7 +1832,15 @@ function setCatalogMeta(attribute: 'name' | 'property', key: string, content: st
 }
 
 function catalogCodeSnippet(slug: ComponentSlug, framework: CatalogFramework): string {
-  if (slug === 'breadcrumb' || slug === 'input-group' || slug === 'pagination' || slug === 'table') {
+  if (
+    slug === 'breadcrumb'
+    || slug === 'button'
+    || slug === 'card'
+    || slug === 'dialog'
+    || slug === 'input-group'
+    || slug === 'pagination'
+    || slug === 'table'
+  ) {
     return catalogStructuredComponentCodeSnippet(slug, framework);
   }
   if (slug === 'form') return catalogFormCodeSnippet(framework);
@@ -1731,7 +1873,7 @@ function catalogCodeSnippet(slug: ComponentSlug, framework: CatalogFramework): s
 }
 
 function catalogStructuredComponentCodeSnippet(
-  slug: 'breadcrumb' | 'input-group' | 'pagination' | 'table',
+  slug: 'breadcrumb' | 'button' | 'card' | 'dialog' | 'input-group' | 'pagination' | 'table',
   framework: CatalogFramework,
 ): string {
   const definitions = {
@@ -1763,6 +1905,69 @@ function catalogStructuredComponentCodeSnippet(
   </BreadcrumbList>
 </BreadcrumbRoot>`,
     },
+    button: {
+      exports: [
+        'ButtonRoot',
+        'ButtonIcon',
+        'ButtonLabel',
+        'ButtonSpinner',
+      ],
+      markup: `<ButtonRoot variant="primary">
+  <ButtonIcon aria-hidden="true">✓</ButtonIcon>
+  <ButtonLabel>Save changes</ButtonLabel>
+  <ButtonSpinner aria-hidden="true">Saving</ButtonSpinner>
+</ButtonRoot>`,
+    },
+    card: {
+      exports: [
+        'CardRoot',
+        'CardHeader',
+        'CardTitle',
+        'CardDescription',
+        'CardAction',
+        'CardContent',
+        'CardFooter',
+      ],
+      markup: `<CardRoot elevated>
+  <CardHeader>
+    <CardTitle>Release health</CardTitle>
+    <CardDescription>Production deployment status for Acme Cloud.</CardDescription>
+    <CardAction><button type="button">View releases</button></CardAction>
+  </CardHeader>
+  <CardContent>
+    <strong>All systems operational</strong>
+    <p>12 checks passed across 3 regions.</p>
+  </CardContent>
+  <CardFooter>Deployed 8 minutes ago by Alex Morgan</CardFooter>
+</CardRoot>`,
+    },
+    dialog: {
+      exports: [
+        'DialogRoot',
+        'DialogTrigger',
+        'DialogPortal',
+        'DialogBackdrop',
+        'DialogPositioner',
+        'DialogContent',
+        'DialogTitle',
+        'DialogDescription',
+        'DialogClose',
+      ],
+      markup: `<DialogRoot>
+  <DialogTrigger type="button">Edit profile</DialogTrigger>
+  <DialogPortal>
+    <DialogBackdrop />
+    <DialogPositioner>
+      <DialogContent>
+        <DialogTitle>Edit profile</DialogTitle>
+        <DialogDescription>Update the details teammates see across your workspace.</DialogDescription>
+        <label>Display name <input name="displayName" ${framework === 'react' ? 'defaultValue' : 'value'}="Alex Morgan" /></label>
+        <DialogClose type="button">Done</DialogClose>
+      </DialogContent>
+    </DialogPositioner>
+  </DialogPortal>
+</DialogRoot>`,
+    },
     'input-group': {
       exports: [
         'InputGroupRoot',
@@ -1770,6 +1975,7 @@ function catalogStructuredComponentCodeSnippet(
         'InputGroupText',
         'InputGroupControl',
         'InputGroupInput',
+        'InputGroupTextarea',
         'InputGroupButton',
       ],
       markup: `<InputGroupRoot>
@@ -1792,13 +1998,16 @@ function catalogStructuredComponentCodeSnippet(
         'PaginationPageTrigger',
         'PaginationPrevious',
         'PaginationNext',
+        'PaginationEllipsis',
       ],
-      markup: `<PaginationRoot count={36} pageSize={12} defaultPage={2} aria-label="Results pages">
+      markup: `<PaginationRoot count={120} pageSize={12} defaultPage={2} aria-label="Results pages">
   <PaginationList>
     <li><PaginationPrevious type="button">Previous</PaginationPrevious></li>
     <PaginationItem value={1}><PaginationPageTrigger type="button" value={1}>1</PaginationPageTrigger></PaginationItem>
     <PaginationItem value={2}><PaginationPageTrigger type="button" value={2}>2</PaginationPageTrigger></PaginationItem>
     <PaginationItem value={3}><PaginationPageTrigger type="button" value={3}>3</PaginationPageTrigger></PaginationItem>
+    <PaginationEllipsis value="start">…</PaginationEllipsis>
+    <PaginationItem value={10}><PaginationPageTrigger type="button" value={10}>10</PaginationPageTrigger></PaginationItem>
     <li><PaginationNext type="button">Next</PaginationNext></li>
   </PaginationList>
 </PaginationRoot>`,
@@ -2053,9 +2262,9 @@ function catalogNavigationMenuCodeSnippet(framework: CatalogFramework): string {
   NavigationMenuIndicator,
 } from '${packageName}'`;
   const markup = `<NavigationMenuRoot items={[
-  { id: 'products', textValue: 'Products' },
-  { id: 'resources', textValue: 'Resources' },
-  { id: 'company', textValue: 'Company' },
+  { id: 'products', textValue: 'Products', hasContent: true },
+  { id: 'resources', textValue: 'Resources', hasContent: true },
+  { id: 'company', textValue: 'Company', hasContent: true },
 ]}>
   <NavigationMenuList>
     <NavigationMenuItem value="products">

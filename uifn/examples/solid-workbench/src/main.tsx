@@ -11,13 +11,16 @@ import {
   activateCatalogUi,
   activateWorkbenchRoute,
   catalogDemoChildren,
+  catalogDemoFixtureDescription,
   catalogDemoFixtureIds,
+  catalogDemoFixtureLabel,
   catalogDemoPartInstances,
   catalogDemoPartProps,
   catalogDemoPartText,
   catalogDemoRootText,
   catalogDemoShouldAddFallbackText,
   catalogDemoRootPropsForRoute,
+  catalogDeploymentRows,
   catalogComponentDetailsHtml,
   catalogDemoCodeHtml,
   catalogComponentGalleryHtml,
@@ -147,11 +150,13 @@ function ComponentFixture(props: { slug: ComponentSlug | "combobox"; route: Work
               {...catalogDemoRootPropsForRoute(props.slug, props.route)}
               onClick={() => setToastOpen(true)}
             >
-              <Button.Icon aria-hidden="true">+</Button.Icon>
-              <Button.Label>Save changes</Button.Label>
-              <Button.Spinner hidden aria-hidden="true">Saving</Button.Spinner>
+              <Button.Icon aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><path d="m5 12 4 4L19 6" /></svg>
+              </Button.Icon>
+              <Show when={!fixtureCase.startsWith("icon-")}><Button.Label>Save changes</Button.Label></Show>
+              <Button.Spinner aria-hidden="true">Saving</Button.Spinner>
             </Button>
-            <span>Click the button to run the example action.</span>
+            <span>{catalogDemoFixtureDescription("button", fixtureCase)}</span>
           </div>
         </div>
         <Show when={toastOpen() && toastModule()}>
@@ -186,7 +191,11 @@ function ComponentFixture(props: { slug: ComponentSlug | "combobox"; route: Work
     );
   }
   return (
-    <div class="qa-edge-box" data-case={fixtureCase}>
+    <div
+      class="qa-edge-box"
+      data-case={fixtureCase}
+      data-catalog-preview-size={["card", "table", "command"].includes(props.slug) ? "large" : undefined}
+    >
       <Show when={props.slug === "tour"}>
         <button id="uifn-tour-target" type="button">Tour target</button>
       </Show>
@@ -230,6 +239,12 @@ function LoadedCanonicalComponentFixture(props: {
   }
   if (props.slug === "breadcrumb") {
     return <SolidBreadcrumbFixture route={props.route} componentMap={props.componentMap} />;
+  }
+  if (props.slug === "card") {
+    return <SolidCardFixture route={props.route} componentMap={props.componentMap} />;
+  }
+  if (props.slug === "skeleton") {
+    return <SolidSkeletonFixture route={props.route} componentMap={props.componentMap} />;
   }
   if (props.slug === "fieldset") {
     return <SolidFieldsetFixture route={props.route} componentMap={props.componentMap} />;
@@ -320,35 +335,83 @@ function SolidBreadcrumbFixture(props: { route: WorkbenchRoute; componentMap: Re
 
 function SolidTableFixture(props: { route: WorkbenchRoute; componentMap: Record<string, unknown> }) {
   const component = (name: string) => props.componentMap[name] as never;
+  const [query, setQuery] = createSignal("");
+  const [pageIndex, setPageIndex] = createSignal(0);
+  const [selected, setSelected] = createSignal<ReadonlySet<string>>(new Set());
+  const pageSize = 4;
+  const filteredRows = createMemo(() => catalogDeploymentRows.filter((row) => (
+    `${row.environment} ${row.release} ${row.status} ${row.region}`.toLowerCase().includes(query().toLowerCase())
+  )));
+  const pageCount = createMemo(() => Math.max(1, Math.ceil(filteredRows().length / pageSize)));
+  const safePage = createMemo(() => Math.min(pageIndex(), pageCount() - 1));
+  const rows = createMemo(() => filteredRows().slice(safePage() * pageSize, (safePage() + 1) * pageSize));
+  const allVisibleSelected = createMemo(() => rows().length > 0 && rows().every((row) => selected().has(row.id)));
+  const toggle = (id: string, checked: boolean) => setSelected((current) => {
+    const next = new Set(current);
+    checked ? next.add(id) : next.delete(id);
+    return next;
+  });
   return (
-    <Dynamic component={component("TableRoot")} {...catalogDemoRootPropsForRoute("table", props.route)}>
-      <Dynamic component={component("TableTable")}>
-        <Dynamic component={component("TableCaption")}>Production environments and their current release health.</Dynamic>
-        <Dynamic component={component("TableHeader")}>
-          <Dynamic component={component("TableRow")} value="header">
-            <Dynamic component={component("TableHead")} value="environment">Environment</Dynamic>
-            <Dynamic component={component("TableHead")} value="release">Release</Dynamic>
-            <Dynamic component={component("TableHead")} value="status">Status</Dynamic>
+    <div class="catalog-data-table-demo">
+      <div class="catalog-data-table-heading">
+        <div><strong>Deployments</strong><span>Monitor release health across environments.</span></div>
+        <label class="catalog-table-search">
+          <span class="sr-only">Filter deployments</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input value={query()} onInput={(event) => { setQuery(event.currentTarget.value); setPageIndex(0); }} placeholder="Filter deployments…" />
+        </label>
+      </div>
+      <Dynamic component={component("TableRoot")} {...catalogDemoRootPropsForRoute("table", props.route)}>
+        <Dynamic component={component("TableTable")}>
+          <Dynamic component={component("TableCaption")}>Deployment environments and their current release health.</Dynamic>
+          <Dynamic component={component("TableHeader")}>
+            <Dynamic component={component("TableRow")} value="header">
+              <Dynamic component={component("TableHead")} value="select"><input type="checkbox" aria-label="Select visible deployments" checked={allVisibleSelected()} onChange={(event) => {
+                const next = new Set(selected());
+                for (const row of rows()) event.currentTarget.checked ? next.add(row.id) : next.delete(row.id);
+                setSelected(next);
+              }} /></Dynamic>
+              <Dynamic component={component("TableHead")} value="environment">Environment</Dynamic>
+              <Dynamic component={component("TableHead")} value="release">Release</Dynamic>
+              <Dynamic component={component("TableHead")} value="status">Status</Dynamic>
+              <Dynamic component={component("TableHead")} value="updated">Updated</Dynamic>
+              <Dynamic component={component("TableHead")} value="action"><span class="sr-only">Actions</span></Dynamic>
+            </Dynamic>
           </Dynamic>
-        </Dynamic>
-        <Dynamic component={component("TableBody")}>
-          <Dynamic component={component("TableRow")} value="production">
-            <Dynamic component={component("TableCell")} value="production-environment">Production</Dynamic>
-            <Dynamic component={component("TableCell")} value="production-release">v2.8.0</Dynamic>
-            <Dynamic component={component("TableCell")} value="production-status">Healthy</Dynamic>
+          <Dynamic component={component("TableBody")}>
+            <For each={rows()} fallback={<Dynamic component={component("TableRow")} value="empty"><Dynamic component={component("TableCell")} value="empty" colSpan={6}><div class="catalog-table-empty"><strong>No deployments found</strong><span>Try another environment, release, status, or region.</span></div></Dynamic></Dynamic>}>
+              {(row) => <Dynamic component={component("TableRow")} value={row.id}>
+                <Dynamic component={component("TableCell")} value={`${row.id}-select`}><input type="checkbox" aria-label={`Select ${row.environment}`} checked={selected().has(row.id)} onChange={(event) => toggle(row.id, event.currentTarget.checked)} /></Dynamic>
+                <Dynamic component={component("TableCell")} value={`${row.id}-environment`}><strong>{row.environment}</strong><span class="catalog-table-region">{row.region}</span></Dynamic>
+                <Dynamic component={component("TableCell")} value={`${row.id}-release`}><code>{row.release}</code></Dynamic>
+                <Dynamic component={component("TableCell")} value={`${row.id}-status`}><span class="catalog-status-badge" data-status={row.status.toLowerCase()}><i />{row.status}</span></Dynamic>
+                <Dynamic component={component("TableCell")} value={`${row.id}-updated`}>{row.updated}</Dynamic>
+                <Dynamic component={component("TableCell")} value={`${row.id}-action`}><a class="catalog-table-action" href={`#deployment-${row.id}`}>Inspect</a></Dynamic>
+              </Dynamic>}
+            </For>
           </Dynamic>
-          <Dynamic component={component("TableRow")} value="preview">
-            <Dynamic component={component("TableCell")} value="preview-environment">Preview</Dynamic>
-            <Dynamic component={component("TableCell")} value="preview-release">PR #482</Dynamic>
-            <Dynamic component={component("TableCell")} value="preview-status">Building</Dynamic>
-          </Dynamic>
-        </Dynamic>
-        <Dynamic component={component("TableFooter")}>
-          <Dynamic component={component("TableRow")} value="summary">
-            <Dynamic component={component("TableCell")} value="summary" colSpan={3}>2 environments · last checked just now</Dynamic>
+          <Dynamic component={component("TableFooter")}>
+            <Dynamic component={component("TableRow")} value="summary">
+              <Dynamic component={component("TableCell")} value="summary" colSpan={6}><div class="catalog-table-pagination"><span>{selected().size} selected · {filteredRows().length} deployments</span><div><button type="button" disabled={safePage() === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))}>Previous</button><span>Page {safePage() + 1} of {pageCount()}</span><button type="button" disabled={safePage() >= pageCount() - 1} onClick={() => setPageIndex((value) => Math.min(pageCount() - 1, value + 1))}>Next</button></div></div></Dynamic>
+            </Dynamic>
           </Dynamic>
         </Dynamic>
       </Dynamic>
+    </div>
+  );
+}
+
+function SolidCardFixture(props: { route: WorkbenchRoute; componentMap: Record<string, unknown> }) {
+  const component = (name: string) => props.componentMap[name] as never;
+  return (
+    <Dynamic component={component("CardRoot")} {...catalogDemoRootPropsForRoute("card", props.route)}>
+      <Dynamic component={component("CardHeader")}>
+        <Dynamic component={component("CardTitle")}><span class="catalog-card-icon" aria-hidden="true"><span /></span><span>Release health</span></Dynamic>
+        <Dynamic component={component("CardDescription")}>Production deployment status for Acme Cloud.</Dynamic>
+        <Dynamic component={component("CardAction")}><Button variant="ghost" size="sm"><Button.Label>View releases</Button.Label><Button.Icon aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg></Button.Icon></Button></Dynamic>
+      </Dynamic>
+      <Dynamic component={component("CardContent")}><div class="catalog-card-status"><i /><div><strong>All systems operational</strong><span>12 checks passed across 3 regions</span></div></div><dl class="catalog-card-metrics"><div><dt>Version</dt><dd>v2.9.0</dd></div><div><dt>Latency</dt><dd>84 ms</dd></div><div><dt>Errors</dt><dd>0.02%</dd></div></dl></Dynamic>
+      <Dynamic component={component("CardFooter")}><div class="catalog-avatar-stack" aria-label="Release owners"><span>AM</span><span>SK</span><span>TR</span></div><span>Deployed 8 minutes ago by Alex Morgan</span></Dynamic>
     </Dynamic>
   );
 }
@@ -368,8 +431,22 @@ function SolidPaginationFixture(props: { route: WorkbenchRoute; componentMap: Re
         <Dynamic component={component("PaginationItem")} value={3}>
           <Dynamic component={component("PaginationPageTrigger")} type="button" value={3}>3</Dynamic>
         </Dynamic>
+        <Dynamic component={component("PaginationEllipsis")} value="start">…</Dynamic>
+        <Dynamic component={component("PaginationItem")} value={10}>
+          <Dynamic component={component("PaginationPageTrigger")} type="button" value={10}>10</Dynamic>
+        </Dynamic>
         <li><Dynamic component={component("PaginationNext")} type="button">Next</Dynamic></li>
       </Dynamic>
+    </Dynamic>
+  );
+}
+
+function SolidSkeletonFixture(props: { route: WorkbenchRoute; componentMap: Record<string, unknown> }) {
+  const component = props.componentMap.SkeletonRoot as never;
+  return (
+    <Dynamic component={component} {...catalogDemoRootPropsForRoute("skeleton", props.route)} class="catalog-production-skeleton">
+      <span class="catalog-production-skeleton-avatar" />
+      <span class="catalog-production-skeleton-copy"><i /><i /><i /></span>
     </Dynamic>
   );
 }
@@ -400,9 +477,16 @@ function SolidDialogFixture(props: { route: WorkbenchRoute; componentMap: Record
       <Dynamic component={component("DialogPortal")}>
         <Dynamic component={component("DialogBackdrop")} />
         <Dynamic component={component("DialogPositioner")}>
-          <Dynamic component={component("DialogContent")}>
+          <Dynamic component={component("DialogContent")} class={props.route.fixtureId === "long-content" ? "catalog-dialog-content catalog-dialog-content--long" : "catalog-dialog-content"}>
             <Dynamic component={component("DialogTitle")}>Edit profile</Dynamic>
             <Dynamic component={component("DialogDescription")}>Update the details teammates see across your workspace.</Dynamic>
+            <Show when={props.route.fixtureId === "long-content"}>
+              <div class="catalog-dialog-long-copy">
+                <section><h3>Profile visibility</h3><p>Your name and photo are visible to every member of this workspace and in shared activity.</p></section>
+                <section><h3>Contact details</h3><p>Your work email is only shown to workspace owners and administrators who manage access.</p></section>
+                <section><h3>Notifications</h3><p>Security and billing notices continue to use the verified account email even when this profile changes.</p></section>
+              </div>
+            </Show>
             <form class="catalog-dialog-form" onSubmit={(event) => event.preventDefault()}>
               <label>Display name<input name="displayName" value="Alex Morgan" autocomplete="name" /></label>
               <label>Work email<input name="email" type="email" value="alex@company.com" autocomplete="email" /></label>
@@ -411,7 +495,25 @@ function SolidDialogFixture(props: { route: WorkbenchRoute; componentMap: Record
                 <button type="submit" class="catalog-primary-action">Save changes</button>
               </div>
             </form>
-            <Dynamic component={component("DialogClose")} type="button" aria-label="Close dialog" class="catalog-overlay-close">×</Dynamic>
+            <Show when={props.route.fixtureId === "nested-overlay"}>
+              <Dynamic component={component("DialogRoot")} defaultOpen environment={{ scopeId: "uifn-catalog-dialog-nested", hydrationSeed: "dialog-nested" }}>
+                <Dynamic component={component("DialogTrigger")} type="button">Review sharing</Dynamic>
+                <Dynamic component={component("DialogPortal")}>
+                  <Dynamic component={component("DialogBackdrop")} />
+                  <Dynamic component={component("DialogPositioner")}>
+                    <Dynamic component={component("DialogContent")} class="catalog-dialog-content catalog-dialog-content--nested">
+                      <Dynamic component={component("DialogTitle")}>Share profile changes?</Dynamic>
+                      <Dynamic component={component("DialogDescription")}>These updates will be visible to everyone in Acme Cloud.</Dynamic>
+                      <div class="catalog-dialog-actions">
+                        <Dynamic component={component("DialogClose")} type="button" class="catalog-dialog-cancel catalog-dialog-inline-close">Keep editing</Dynamic>
+                        <button type="button" class="catalog-primary-action">Share changes</button>
+                      </div>
+                    </Dynamic>
+                  </Dynamic>
+                </Dynamic>
+              </Dynamic>
+            </Show>
+            <Dynamic component={component("DialogClose")} type="button" aria-label="Close dialog" class="catalog-overlay-close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></Dynamic>
           </Dynamic>
         </Dynamic>
       </Dynamic>
@@ -441,7 +543,7 @@ function SolidDrawerFixture(props: { route: WorkbenchRoute; componentMap: Record
               <label>Member<select value="any"><option value="any">Anyone</option><option>Alex Morgan</option><option>Sam Rivera</option></select></label>
               <button type="submit" class="catalog-primary-action">Apply filters</button>
             </form>
-            <Dynamic component={component("DrawerClose")} type="button" aria-label="Close filters" class="catalog-overlay-close">×</Dynamic>
+            <Dynamic component={component("DrawerClose")} type="button" aria-label="Close filters" class="catalog-overlay-close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></Dynamic>
           </Dynamic>
         </Dynamic>
       </Dynamic>
@@ -917,7 +1019,7 @@ function SolidTagsInputFixture(props: {
               <Dynamic component={props.componentMap.TagsInputItemText as never} value={value}>
                 {value === "item-1" ? "Frontend" : value === "item-2" ? "Stable" : value}
               </Dynamic>
-              <Dynamic component={props.componentMap.TagsInputItemDelete as never} value={value} aria-label={`Remove ${value}`}>×</Dynamic>
+              <Dynamic component={props.componentMap.TagsInputItemDelete as never} value={value} aria-label={`Remove ${value}`}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></Dynamic>
             </Dynamic>
           )}
         </For>
@@ -1129,10 +1231,13 @@ function RouteContent(props: { internalPath: string; route: WorkbenchRoute; base
           </div>
           <div id={`preview-${props.route.slug}`} role="tabpanel" data-catalog-demo-panel="preview">
             <h2 class="sr-only">{props.route.title} preview</h2>
-            <div class="fixture-grid">
+            <div
+              class="fixture-grid"
+              data-catalog-state-grid={routes.length > 1 ? "true" : undefined}
+            >
               <For each={routes}>{(fixtureRoute) => (
                 <section class="fixture-card">
-                  <p class="eyebrow">{fixtureRoute.fixtureId ?? "default"}</p>
+                  <p class="eyebrow">{catalogDemoFixtureLabel(fixtureRoute.fixtureId)}</p>
                   <ComponentFixture slug={(component?.slug ?? "combobox") as ComponentSlug | "combobox"} route={fixtureRoute} />
                 </section>
               )}</For>

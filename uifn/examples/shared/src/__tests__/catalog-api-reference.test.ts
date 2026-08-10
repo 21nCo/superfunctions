@@ -59,4 +59,21 @@ describe('catalog API reference completeness', () => {
       }
     }
   });
+
+  it('documents canonical non-false overlay defaults accurately', () => {
+    const expected = {
+      'alert-dialog.restoreFocus': 'undefined → true',
+      'dialog.modal': 'undefined → true',
+      'dialog.restoreFocus': 'undefined → true',
+      'drawer.modal': 'undefined → true',
+      'tour.modal': 'undefined → true',
+    } as const;
+
+    for (const [key, defaultValue] of Object.entries(expected)) {
+      const [componentId, propName] = key.split('.');
+      const component = STYLED_COMPONENT_CATALOG.find((candidate) => candidate.id === componentId);
+      const prop = component?.api.rootProps.find((candidate) => candidate.name === propName);
+      expect(prop?.defaultValue, key).toBe(defaultValue);
+    }
+  });
 });

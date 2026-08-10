@@ -10,13 +10,16 @@ import {
   activateCatalogUi,
   activateWorkbenchRoute,
   catalogDemoChildren,
+  catalogDemoFixtureDescription,
   catalogDemoFixtureIds,
+  catalogDemoFixtureLabel,
   catalogDemoPartInstances,
   catalogDemoPartProps,
   catalogDemoPartText,
   catalogDemoRootText,
   catalogDemoShouldAddFallbackText,
   catalogDemoRootPropsForRoute,
+  catalogDeploymentRows,
   catalogComponentDetailsHtml,
   catalogDemoCodeHtml,
   catalogComponentGalleryHtml,
@@ -137,7 +140,11 @@ function ComponentFixture({ slug, route }: { slug: ComponentSlug | "combobox"; r
     return <InteractiveButtonFixture props={catalogDemoRootPropsForRoute(slug, route)} fixtureCase={fixtureCase} />;
   }
   return (
-    <div className="qa-edge-box" data-case={fixtureCase}>
+    <div
+      className="qa-edge-box"
+      data-case={fixtureCase}
+      data-catalog-preview-size={["card", "table", "command"].includes(slug) ? "large" : undefined}
+    >
       {slug === "tour" ? (
         <button id="uifn-tour-target" type="button">Tour target</button>
       ) : null}
@@ -170,6 +177,12 @@ function CanonicalComponentFixture({ slug, route }: { slug: ComponentSlug; route
   }
   if (slug === "breadcrumb") {
     return <ReactBreadcrumbFixture route={route} componentMap={componentMap} />;
+  }
+  if (slug === "card") {
+    return <ReactCardFixture route={route} componentMap={componentMap} />;
+  }
+  if (slug === "skeleton") {
+    return <ReactSkeletonFixture route={route} componentMap={componentMap} />;
   }
   if (slug === "fieldset") {
     return <ReactFieldsetFixture route={route} componentMap={componentMap} />;
@@ -265,6 +278,17 @@ function ReactTableFixture({
   route: WorkbenchRoute;
   componentMap: ComponentMap;
 }) {
+  const [query, setQuery] = useState("");
+  const [pageIndex, setPageIndex] = useState(0);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const pageSize = 4;
+  const filteredRows = catalogDeploymentRows.filter((row) => (
+    `${row.environment} ${row.release} ${row.status} ${row.region}`.toLowerCase().includes(query.toLowerCase())
+  ));
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const safePage = Math.min(pageIndex, pageCount - 1);
+  const rows = filteredRows.slice(safePage * pageSize, (safePage + 1) * pageSize);
+  const allVisibleSelected = rows.length > 0 && rows.every((row) => selected.has(row.id));
   const Root = componentMap.TableRoot;
   const Table = componentMap.TableTable;
   const Caption = componentMap.TableCaption;
@@ -278,34 +302,101 @@ function ReactTableFixture({
     return <Unsupported family="component" slug="table" reason="Incomplete React Table exports" />;
   }
   return (
-    <Root {...catalogDemoRootPropsForRoute("table", route)}>
-      <Table>
-        <Caption>Production environments and their current release health.</Caption>
-        <Header>
-          <Row value="header">
-            <Head value="environment">Environment</Head>
-            <Head value="release">Release</Head>
-            <Head value="status">Status</Head>
-          </Row>
-        </Header>
-        <Body>
-          <Row value="production">
-            <Cell value="production-environment">Production</Cell>
-            <Cell value="production-release">v2.8.0</Cell>
-            <Cell value="production-status">Healthy</Cell>
-          </Row>
-          <Row value="preview">
-            <Cell value="preview-environment">Preview</Cell>
-            <Cell value="preview-release">PR #482</Cell>
-            <Cell value="preview-status">Building</Cell>
-          </Row>
-        </Body>
-        <Footer>
-          <Row value="summary">
-            <Cell value="summary" colSpan={3}>2 environments · last checked just now</Cell>
-          </Row>
-        </Footer>
-      </Table>
+    <div className="catalog-data-table-demo">
+      <div className="catalog-data-table-heading">
+        <div><strong>Deployments</strong><span>Monitor release health across environments.</span></div>
+        <label className="catalog-table-search">
+          <span className="sr-only">Filter deployments</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input
+            value={query}
+            onChange={(event) => { setQuery(event.currentTarget.value); setPageIndex(0); }}
+            placeholder="Filter deployments…"
+          />
+        </label>
+      </div>
+      <Root {...catalogDemoRootPropsForRoute("table", route)}>
+        <Table>
+          <Caption>Deployment environments and their current release health.</Caption>
+          <Header>
+            <Row value="header">
+              <Head value="select"><input type="checkbox" aria-label="Select visible deployments" checked={allVisibleSelected} onChange={(event) => {
+                const next = new Set(selected);
+                for (const row of rows) event.currentTarget.checked ? next.add(row.id) : next.delete(row.id);
+                setSelected(next);
+              }} /></Head>
+              <Head value="environment">Environment</Head>
+              <Head value="release">Release</Head>
+              <Head value="status">Status</Head>
+              <Head value="updated">Updated</Head>
+              <Head value="action"><span className="sr-only">Actions</span></Head>
+            </Row>
+          </Header>
+          <Body>
+            {rows.length ? rows.map((row) => (
+              <Row key={row.id} value={row.id}>
+                <Cell value={`${row.id}-select`}><input type="checkbox" aria-label={`Select ${row.environment}`} checked={selected.has(row.id)} onChange={(event) => {
+                  const next = new Set(selected);
+                  event.currentTarget.checked ? next.add(row.id) : next.delete(row.id);
+                  setSelected(next);
+                }} /></Cell>
+                <Cell value={`${row.id}-environment`}><strong>{row.environment}</strong><span className="catalog-table-region">{row.region}</span></Cell>
+                <Cell value={`${row.id}-release`}><code>{row.release}</code></Cell>
+                <Cell value={`${row.id}-status`}><span className="catalog-status-badge" data-status={row.status.toLowerCase()}><i />{row.status}</span></Cell>
+                <Cell value={`${row.id}-updated`}>{row.updated}</Cell>
+                <Cell value={`${row.id}-action`}><a className="catalog-table-action" href={`#deployment-${row.id}`}>Inspect</a></Cell>
+              </Row>
+            )) : (
+              <Row value="empty"><Cell value="empty" colSpan={6}><div className="catalog-table-empty"><strong>No deployments found</strong><span>Try another environment, release, status, or region.</span></div></Cell></Row>
+            )}
+          </Body>
+          <Footer>
+            <Row value="summary">
+              <Cell value="summary" colSpan={6}>
+                <div className="catalog-table-pagination">
+                  <span>{selected.size} selected · {filteredRows.length} deployments</span>
+                  <div>
+                    <button type="button" disabled={safePage === 0} onClick={() => setPageIndex((value) => Math.max(0, value - 1))}>Previous</button>
+                    <span>Page {safePage + 1} of {pageCount}</span>
+                    <button type="button" disabled={safePage >= pageCount - 1} onClick={() => setPageIndex((value) => Math.min(pageCount - 1, value + 1))}>Next</button>
+                  </div>
+                </div>
+              </Cell>
+            </Row>
+          </Footer>
+        </Table>
+      </Root>
+    </div>
+  );
+}
+
+function ReactCardFixture({ route, componentMap }: { route: WorkbenchRoute; componentMap: ComponentMap }) {
+  const Root = componentMap.CardRoot;
+  const Header = componentMap.CardHeader;
+  const Title = componentMap.CardTitle;
+  const Description = componentMap.CardDescription;
+  const Action = componentMap.CardAction;
+  const Content = componentMap.CardContent;
+  const Footer = componentMap.CardFooter;
+  if (!Root || !Header || !Title || !Description || !Action || !Content || !Footer) {
+    return <Unsupported family="component" slug="card" reason="Incomplete React Card exports" />;
+  }
+  return (
+    <Root {...catalogDemoRootPropsForRoute("card", route)}>
+      <Header>
+        <Title><span className="catalog-card-icon" aria-hidden="true"><span /></span><span>Release health</span></Title>
+        <Description>Production deployment status for Acme Cloud.</Description>
+        <Action><Button variant="ghost" size="sm"><Button.Label>View releases</Button.Label><Button.Icon aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg></Button.Icon></Button></Action>
+      </Header>
+      <Content>
+        <div className="catalog-card-status"><i /><div><strong>All systems operational</strong><span>12 checks passed across 3 regions</span></div></div>
+        <dl className="catalog-card-metrics">
+          <div><dt>Version</dt><dd>v2.9.0</dd></div>
+          <div><dt>Latency</dt><dd>84 ms</dd></div>
+          <div><dt>Errors</dt><dd>0.02%</dd></div>
+        </dl>
+      </Content>
+      <Footer><div className="catalog-avatar-stack" aria-label="Release owners"><span>AM</span><span>SK</span><span>TR</span></div><span>Deployed 8 minutes ago by Alex Morgan</span></Footer>
     </Root>
   );
 }
@@ -323,7 +414,8 @@ function ReactPaginationFixture({
   const PageTrigger = componentMap.PaginationPageTrigger;
   const Previous = componentMap.PaginationPrevious;
   const Next = componentMap.PaginationNext;
-  if (!Root || !List || !Item || !PageTrigger || !Previous || !Next) {
+  const Ellipsis = componentMap.PaginationEllipsis;
+  if (!Root || !List || !Item || !PageTrigger || !Previous || !Next || !Ellipsis) {
     return <Unsupported family="component" slug="pagination" reason="Incomplete React Pagination exports" />;
   }
   return (
@@ -333,8 +425,27 @@ function ReactPaginationFixture({
         <Item value={1}><PageTrigger type="button" value={1}>1</PageTrigger></Item>
         <Item value={2}><PageTrigger type="button" value={2}>2</PageTrigger></Item>
         <Item value={3}><PageTrigger type="button" value={3}>3</PageTrigger></Item>
+        <Ellipsis value="start">…</Ellipsis>
+        <Item value={10}><PageTrigger type="button" value={10}>10</PageTrigger></Item>
         <li><Next type="button">Next</Next></li>
       </List>
+    </Root>
+  );
+}
+
+function ReactSkeletonFixture({
+  route,
+  componentMap,
+}: {
+  route: WorkbenchRoute;
+  componentMap: ComponentMap;
+}) {
+  const Root = componentMap.SkeletonRoot;
+  if (!Root) return <Unsupported family="component" slug="skeleton" reason="Missing React Skeleton export" />;
+  return (
+    <Root {...catalogDemoRootPropsForRoute("skeleton", route)} className="catalog-production-skeleton">
+      <span className="catalog-production-skeleton-avatar" />
+      <span className="catalog-production-skeleton-copy"><i /><i /><i /></span>
     </Root>
   );
 }
@@ -375,6 +486,7 @@ function ReactDialogFixture({
   route: WorkbenchRoute;
   componentMap: ComponentMap;
 }) {
+  const longContent = route.fixtureId === "long-content";
   const Root = componentMap.DialogRoot;
   const Trigger = componentMap.DialogTrigger;
   const Portal = componentMap.DialogPortal;
@@ -393,9 +505,16 @@ function ReactDialogFixture({
       <Portal>
         <Backdrop />
         <Positioner>
-          <Content>
+          <Content className={longContent ? "catalog-dialog-content catalog-dialog-content--long" : "catalog-dialog-content"}>
             <Title>Edit profile</Title>
             <Description>Update the details teammates see across your workspace.</Description>
+            {longContent ? (
+              <div className="catalog-dialog-long-copy">
+                <section><h3>Profile visibility</h3><p>Your name and photo are visible to every member of this workspace and in shared activity.</p></section>
+                <section><h3>Contact details</h3><p>Your work email is only shown to workspace owners and administrators who manage access.</p></section>
+                <section><h3>Notifications</h3><p>Security and billing notices continue to use the verified account email even when this profile changes.</p></section>
+              </div>
+            ) : null}
             <form className="catalog-dialog-form" onSubmit={(event) => event.preventDefault()}>
               <label>
                 Display name
@@ -410,7 +529,28 @@ function ReactDialogFixture({
                 <button type="submit" className="catalog-primary-action">Save changes</button>
               </div>
             </form>
-            <Close type="button" aria-label="Close dialog" className="catalog-overlay-close">×</Close>
+            {route.fixtureId === "nested-overlay" ? (
+              <Root
+                defaultOpen
+                environment={{ scopeId: "uifn-catalog-dialog-nested", hydrationSeed: "dialog-nested" }}
+              >
+                <Trigger type="button">Review sharing</Trigger>
+                <Portal>
+                  <Backdrop />
+                  <Positioner>
+                    <Content className="catalog-dialog-content catalog-dialog-content--nested">
+                      <Title>Share profile changes?</Title>
+                      <Description>These updates will be visible to everyone in Acme Cloud.</Description>
+                      <div className="catalog-dialog-actions">
+                        <Close type="button" className="catalog-dialog-cancel catalog-dialog-inline-close">Keep editing</Close>
+                        <button type="button" className="catalog-primary-action">Share changes</button>
+                      </div>
+                    </Content>
+                  </Positioner>
+                </Portal>
+              </Root>
+            ) : null}
+            <Close type="button" aria-label="Close dialog" className="catalog-overlay-close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></Close>
           </Content>
         </Positioner>
       </Portal>
@@ -461,7 +601,7 @@ function ReactDrawerFixture({
               </label>
               <button type="submit" className="catalog-primary-action">Apply filters</button>
             </form>
-            <Close type="button" aria-label="Close filters" className="catalog-overlay-close">×</Close>
+            <Close type="button" aria-label="Close filters" className="catalog-overlay-close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></Close>
           </Content>
         </Positioner>
       </Portal>
@@ -933,7 +1073,7 @@ function ReactTagsInputFixture({
         {values.map((value) => (
           <Item key={value} value={value}>
             <ItemText value={value}>{value === "item-1" ? "Frontend" : value === "item-2" ? "Stable" : value}</ItemText>
-            <ItemDelete value={value} aria-label={`Remove ${value}`}>×</ItemDelete>
+            <ItemDelete value={value} aria-label={`Remove ${value}`}><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg></ItemDelete>
           </Item>
         ))}
         <Input aria-label="Add tag" placeholder="Add a tag" />
@@ -1007,6 +1147,7 @@ function renderCatalogDemoPart(
 }
 
 function InteractiveButtonFixture({ props, fixtureCase }: { props: Record<string, unknown>; fixtureCase: string }) {
+  const iconOnly = fixtureCase.startsWith("icon-");
   const [toastOpen, setToastOpen] = useState(false);
   const [toastComponents, setToastComponents] = useState<ComponentMap | null>(null);
   useEffect(() => {
@@ -1036,11 +1177,13 @@ function InteractiveButtonFixture({ props, fixtureCase }: { props: Record<string
       <div className="qa-edge-box" data-case={fixtureCase}>
         <div className="catalog-button-demo">
           <Button {...props} onClick={() => setToastOpen(true)}>
-            <Button.Icon aria-hidden="true">+</Button.Icon>
-            <Button.Label>Save changes</Button.Label>
-            <Button.Spinner hidden aria-hidden="true">Saving</Button.Spinner>
+            <Button.Icon aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false"><path d="m5 12 4 4L19 6" /></svg>
+            </Button.Icon>
+            {!iconOnly ? <Button.Label>Save changes</Button.Label> : null}
+            <Button.Spinner aria-hidden="true">Saving</Button.Spinner>
           </Button>
-          <span>Click the button to run the example action.</span>
+          <span>{catalogDemoFixtureDescription("button", fixtureCase)}</span>
         </div>
       </div>
       {toastOpen && toastReady ? (
@@ -1234,10 +1377,13 @@ function RouteContent({ internalPath, route, basePath, navigate }: { internalPat
           </div>
           <div id={`preview-${route.slug}`} role="tabpanel" data-catalog-demo-panel="preview">
             <h2 className="sr-only">{route.title} preview</h2>
-            <div className="fixture-grid">
+            <div
+              className="fixture-grid"
+              data-catalog-state-grid={routes.length > 1 ? "true" : undefined}
+            >
               {routes.map((fixtureRoute) => (
                 <section key={`${route.slug}-${fixtureRoute.fixtureId ?? "default"}`} className="fixture-card">
-                  <p className="eyebrow">{fixtureRoute.fixtureId ?? "default"}</p>
+                  <p className="eyebrow">{catalogDemoFixtureLabel(fixtureRoute.fixtureId)}</p>
                   <ComponentFixture slug={(component?.slug ?? "combobox") as ComponentSlug | "combobox"} route={fixtureRoute} />
                 </section>
               ))}

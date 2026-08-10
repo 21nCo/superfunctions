@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { STYLED_COMPONENT_CATALOG } from '@uifn/components';
 import {
+  catalogDemoFixtureDescription,
+  catalogDemoFixtureIds,
+  catalogDemoFixtureLabel,
   catalogDemoPartInstances,
   catalogDemoPartProps,
   catalogDemoPartText,
@@ -129,6 +132,10 @@ describe('catalog component demos', () => {
       checkbox.parts.find((part) => part.id === 'label')!,
     )).toBe('Email notifications');
     expect(catalogDemoPartText(
+      'checkbox',
+      checkbox.parts.find((part) => part.id === 'indicator')!,
+    )).toBe('');
+    expect(catalogDemoPartText(
       'color-picker',
       colorPicker.parts.find((part) => part.id === 'content')!,
     )).toBe('');
@@ -139,6 +146,49 @@ describe('catalog component demos', () => {
     expect(catalogDemoSnippetRootProps('image-cropper')).toEqual(
       Object.fromEntries(Object.entries(cropperProps).filter(([key]) => key !== 'environment')),
     );
+  });
+
+  it('maps styled pilot states to real props and readable documentation labels', () => {
+    const loadingRoute: WorkbenchRoute = {
+      ...defaultRoute,
+      path: '/components/button/states',
+      slug: 'button',
+      fixtureId: 'loading',
+    };
+    const secondaryRoute: WorkbenchRoute = {
+      ...loadingRoute,
+      fixtureId: 'variant-secondary',
+    };
+    const iconRoute: WorkbenchRoute = {
+      ...loadingRoute,
+      fixtureId: 'icon-lg',
+    };
+    const dialogLongContentRoute: WorkbenchRoute = {
+      ...loadingRoute,
+      slug: 'dialog',
+      fixtureId: 'long-content',
+    };
+    const mixedCheckboxRoute: WorkbenchRoute = {
+      ...loadingRoute,
+      slug: 'checkbox',
+      fixtureId: 'mixed',
+    };
+
+    expect(catalogDemoRootPropsForRoute('button', loadingRoute)).toMatchObject({ loading: true });
+    expect(catalogDemoRootPropsForRoute('button', secondaryRoute)).toMatchObject({ variant: 'secondary' });
+    expect(catalogDemoRootPropsForRoute('button', defaultRoute)).not.toHaveProperty('aria-label');
+    expect(catalogDemoRootPropsForRoute('button', iconRoute)).toMatchObject({
+      size: 'icon-lg',
+      'aria-label': 'Save changes',
+    });
+    expect(catalogDemoRootPropsForRoute('dialog', dialogLongContentRoute)).toMatchObject({ defaultOpen: true });
+    expect(catalogDemoRootPropsForRoute('checkbox', mixedCheckboxRoute)).toMatchObject({ defaultChecked: 'indeterminate' });
+    expect(catalogDemoFixtureLabel('variant-secondary')).toBe('Secondary');
+    expect(catalogDemoFixtureLabel('density-spacious')).toBe('Spacious density');
+    expect(catalogDemoFixtureDescription('button', 'loading')).toContain('disables repeated activation');
+    expect(catalogDemoFixtureDescription('checkbox', 'mixed')).toContain('aria-checked="mixed"');
+    expect(catalogDemoFixtureDescription('dialog', 'nested-overlay')).toContain('focus restoration');
+    expect(catalogDemoFixtureIds('button', [])).not.toContain('variant-primary');
   });
 
   it('keeps published snippets free of generator placeholder copy', () => {
