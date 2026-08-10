@@ -1118,12 +1118,12 @@ async function verifyVisualQuality(page, routeId, openStateScreenshotPath) {
           trackBox.width >= 180 &&
           trackBox.height >= 180 &&
           Math.abs(trackBox.width - trackBox.height) <= 2 &&
-          valueStyle?.color === "rgba(0, 0, 0, 0)" &&
+          Number.parseFloat(valueStyle?.fontSize ?? "1") === 0 &&
           pseudoStyle?.content &&
           pseudoStyle.content !== "none"
         ),
         trackBox: trackBox ? { width: trackBox.width, height: trackBox.height } : null,
-        sourceTextColor: valueStyle?.color ?? null,
+        sourceTextFontSize: valueStyle?.fontSize ?? null,
         renderedValue: pseudoStyle?.content ?? null,
       };
     });
@@ -1161,6 +1161,7 @@ async function verifyVisualQuality(page, routeId, openStateScreenshotPath) {
       const controlBox = control?.getBoundingClientRect();
       const indicatorBox = indicator?.getBoundingClientRect();
       const indicatorStyle = indicator ? getComputedStyle(indicator) : null;
+      const indicatorMarkStyle = indicator ? getComputedStyle(indicator, "::before") : null;
       const labelBox = label?.getBoundingClientRect();
       const overlap = controlBox && labelBox
         ? Math.max(0, Math.min(controlBox.right, labelBox.right) - Math.max(controlBox.left, labelBox.left)) *
@@ -1176,7 +1177,18 @@ async function verifyVisualQuality(page, routeId, openStateScreenshotPath) {
           indicatorBox.width > 0 &&
           indicatorBox.height > 0 &&
           indicatorStyle?.display !== "none" &&
-          (indicator?.textContent ?? "").trim().length > 0 &&
+          (
+            (indicator?.textContent ?? "").trim().length > 0 ||
+            (
+              indicatorMarkStyle?.content === '""' &&
+              Number.parseFloat(indicatorMarkStyle.width) >= 6 &&
+              Number.parseFloat(indicatorMarkStyle.height) >= 2 &&
+              (
+                indicatorMarkStyle.borderInlineEndStyle === "solid" ||
+                indicatorMarkStyle.backgroundColor !== "rgba(0, 0, 0, 0)"
+              )
+            )
+          ) &&
           labelBox.width >= 80 &&
           overlap === 0
         ),
@@ -1188,6 +1200,15 @@ async function verifyVisualQuality(page, routeId, openStateScreenshotPath) {
               display: indicatorStyle?.display ?? null,
               color: indicatorStyle?.color ?? null,
               text: (indicator?.textContent ?? "").trim(),
+              mark: indicatorMarkStyle
+                ? {
+                    content: indicatorMarkStyle.content,
+                    width: indicatorMarkStyle.width,
+                    height: indicatorMarkStyle.height,
+                    borderInlineEndStyle: indicatorMarkStyle.borderInlineEndStyle,
+                    backgroundColor: indicatorMarkStyle.backgroundColor,
+                  }
+                : null,
             }
           : null,
         labelBox: labelBox ? { x: labelBox.x, y: labelBox.y, width: labelBox.width, height: labelBox.height } : null,
@@ -1972,11 +1993,12 @@ async function verifyInteractiveBehavior(page, framework, routeId) {
 
     if (routeId === "badge") {
       const root = page.locator('[data-uifn-component="badge"]').first();
-      const label = (await root.locator('[data-uifn-part="label"]').textContent())?.trim() ?? "";
-      const dotCount = await root.locator(".uifn-production-badge-dot").count();
+      const label = (await root.textContent())?.trim() ?? "";
+      const box = await root.boundingBox();
+      const borderRadius = await root.evaluate((node) => getComputedStyle(node).borderRadius);
       return {
-        ok: label.length > 0 && dotCount === 1,
-        evidence: { action: "badge-render", label, dotCount },
+        ok: label.length > 0 && Boolean(box && box.width >= 64 && box.height >= 22) && borderRadius !== "0px",
+        evidence: { action: "badge-render", label, box, borderRadius },
       };
     }
 
@@ -2031,8 +2053,8 @@ async function verifyInteractiveBehavior(page, framework, routeId) {
 
     if (routeId === "skeleton") {
       const root = page.locator('[data-uifn-component="skeleton"]').first();
-      const lineCount = await root.locator(".uifn-production-skeleton-copy i").count();
-      const avatarCount = await root.locator(".uifn-production-skeleton-avatar").count();
+      const lineCount = await root.locator(".catalog-production-skeleton-copy i").count();
+      const avatarCount = await root.locator(".catalog-production-skeleton-avatar").count();
       const ariaHidden = await root.getAttribute("aria-hidden");
       return {
         ok: lineCount === 3 && avatarCount === 1 && ariaHidden === "true",
@@ -2048,7 +2070,7 @@ async function verifyInteractiveBehavior(page, framework, routeId) {
       const cellCount = await root.locator("tbody td").count();
       const footerCount = await root.locator("tfoot").count();
       return {
-        ok: caption.length > 0 && headerCount === 3 && rowCount >= 2 && cellCount >= 6 && footerCount === 1,
+        ok: caption.length > 0 && headerCount >= 3 && rowCount >= 2 && cellCount >= rowCount * headerCount && footerCount === 1,
         evidence: { action: "table-render", caption, headerCount, rowCount, cellCount, footerCount },
       };
     }
@@ -2280,7 +2302,7 @@ async function verifyInteractiveBehavior(page, framework, routeId) {
       const after = (await root.locator('[aria-current="page"]').textContent())?.trim() ?? "";
       const current = await thirdPage.getAttribute("aria-current");
       return {
-        ok: triggerCount === 3 && before === "2" && after === "3" && current === "page",
+        ok: triggerCount === 4 && before === "2" && after === "3" && current === "page",
         evidence: { action: "pagination-change", triggerCount, before, after, current },
       };
     }
@@ -2655,16 +2677,34 @@ async function verifyInteractiveBehavior(page, framework, routeId) {
       };
     }
 
+    if (routeId === "input-group") {
+      const root = page.locator('[data-uifn-component="input-group"]').first();
+      const input = root.locator('[data-uifn-part="input"]');
+      const button = root.locator('[data-uifn-part="button"]');
+      await input.fill("design-system");
+      await button.focus();
+      const value = await input.inputValue();
+      const buttonFocused = await button.evaluate((node) => document.activeElement === node);
+      const textareaHidden = await root.locator('[data-uifn-part="textarea"]').getAttribute("hidden");
+      return {
+        ok: value === "design-system" && buttonFocused && textareaHidden !== null,
+        evidence: { action: "input-group-entry-and-action-focus", value, buttonFocused, textareaHidden: textareaHidden !== null },
+      };
+    }
+
     if (routeId === "command") {
       const input = page.locator('[data-uifn-component="command"] [role="combobox"]').first();
-      await input.fill("deploy");
-      const options = page.locator('[data-uifn-component="command"] [role="option"]');
+      await input.fill("search projects");
+      const options = page.locator('[data-uifn-component="command"] [role="option"]:visible');
       const optionCount = await options.count();
-      await options.first().click();
-      const output = (await page.locator('[data-uifn-component="command"] output').textContent())?.trim() ?? "";
+      const option = options.first();
+      const optionText = (await option.textContent())?.trim() ?? "";
+      await option.click();
+      const selected = await option.getAttribute("aria-selected");
+      const hiddenValue = await page.locator('[data-uifn-component="command"] [data-uifn-part="hiddenInput"]').inputValue();
       return {
-        ok: optionCount === 1 && /deploy/i.test(output) && /selected/i.test(output),
-        evidence: { action: "command-filter-select", optionCount, output },
+        ok: optionCount === 1 && /search projects/i.test(optionText) && selected === "true" && hiddenValue === "item-1",
+        evidence: { action: "command-filter-select", optionCount, optionText, selected, hiddenValue },
       };
     }
 

@@ -17,15 +17,15 @@
       "evidence": {
         "htmlBytes": 8643,
         "jsCssRequests": 13,
-        "decodedJsCssBytes": 1496152,
-        "brotliJsCssBytes": 271454,
-        "largestBrotliAssetBytes": 58411,
+        "decodedJsCssBytes": 1475683,
+        "brotliJsCssBytes": 274284,
+        "largestBrotliAssetBytes": 73409,
         "missingAssets": [],
         "consoleErrors": [],
         "metrics": {
-          "domContentLoadedMs": 42,
-          "loadMs": 105,
-          "firstContentfulPaintMs": 52
+          "domContentLoadedMs": 89,
+          "loadMs": 156,
+          "firstContentfulPaintMs": 96
         },
         "assets": [
           {
@@ -34,14 +34,14 @@
             "brotliBytes": 1255
           },
           {
-            "path": "components/react/_next/static/chunks/3dlv_974fd4q9.css",
-            "decodedBytes": 68735,
-            "brotliBytes": 7977
+            "path": "components/react/_next/static/chunks/3fmn0cmx3yt2a.css",
+            "decodedBytes": 73762,
+            "brotliBytes": 8575
           },
           {
-            "path": "components/react/_next/static/chunks/3k21aa09h772a.css",
-            "decodedBytes": 50190,
-            "brotliBytes": 7956
+            "path": "components/react/_next/static/chunks/25jsubijn5jtg.css",
+            "decodedBytes": 58645,
+            "brotliBytes": 9128
           },
           {
             "path": "components/react/_next/static/chunks/3kkpr3o1m5qw5.js",
@@ -74,24 +74,24 @@
             "brotliBytes": 54741
           },
           {
-            "path": "components/react/_next/static/chunks/35ei1a9nhpxaz.js",
-            "decodedBytes": 335698,
-            "brotliBytes": 53089
-          },
-          {
-            "path": "components/react/_next/static/chunks/359tm7v3anzwh.js",
+            "path": "components/react/_next/static/chunks/3riez39dqmeqz.js",
             "decodedBytes": 6960,
-            "brotliBytes": 1273
+            "brotliBytes": 1274
           },
           {
-            "path": "components/react/_next/static/chunks/1qpddgf88ltyd.js",
-            "decodedBytes": 450147,
-            "brotliBytes": 58411
+            "path": "components/react/_next/static/chunks/2se17gjogwv-b.js",
+            "decodedBytes": 159824,
+            "brotliBytes": 39085
           },
           {
-            "path": "components/react/_next/static/chunks/3mqo1b2jj8vae.js",
-            "decodedBytes": 65396,
-            "brotliBytes": 16619
+            "path": "components/react/_next/static/chunks/281dls_xxztv0.js",
+            "decodedBytes": 591917,
+            "brotliBytes": 73409
+          },
+          {
+            "path": "components/react/_next/static/chunks/2l556aotlxlvs.js",
+            "decodedBytes": 65549,
+            "brotliBytes": 16684
           }
         ]
       }
@@ -102,38 +102,28 @@
       "status": "passed",
       "problems": [],
       "evidence": {
-        "htmlBytes": 3406,
-        "jsCssRequests": 17,
-        "decodedJsCssBytes": 1103408,
-        "brotliJsCssBytes": 179993,
-        "largestBrotliAssetBytes": 119604,
+        "htmlBytes": 3585,
+        "jsCssRequests": 19,
+        "decodedJsCssBytes": 1086779,
+        "brotliJsCssBytes": 188578,
+        "largestBrotliAssetBytes": 72250,
         "missingAssets": [],
         "consoleErrors": [],
         "metrics": {
-          "domContentLoadedMs": 5,
-          "loadMs": 5,
-          "firstContentfulPaintMs": 116
+          "domContentLoadedMs": 6,
+          "loadMs": 6,
+          "firstContentfulPaintMs": 112
         },
         "assets": [
           {
-            "path": "components/svelte/_app/immutable/entry/start.Bb2vS-5Y.js",
+            "path": "components/svelte/_app/immutable/entry/start.DiSEecb2.js",
             "decodedBytes": 83,
             "brotliBytes": 87
           },
           {
-            "path": "components/svelte/_app/immutable/chunks/B8cKfX10.js",
-            "decodedBytes": 27129,
-            "brotliBytes": 9553
-          },
-          {
-            "path": "components/svelte/_app/immutable/chunks/-qruY114.js",
-            "decodedBytes": 21688,
-            "brotliBytes": 7718
-          },
-          {
-            "path": "components/svelte/_app/immutable/chunks/NhMxZ3Ta.js",
-            "decodedBytes": 1528,
-            "brotliBytes": 592
+            "path": "components/svelte/_app/immutable/chunks/nCBBl8xW.js",
+            "decodedBytes": 27133,
+            "brotliBytes": 9542
           },
           {
             "path": "components/svelte/_app/immutable/chunks/C3ehGCV8.js",
@@ -141,24 +131,14 @@
             "brotliBytes": 476
           },
           {
-            "path": "components/svelte/_app/immutable/chunks/BN-Y5p4m.js",
-            "decodedBytes": 1495,
-            "brotliBytes": 690
+            "path": "components/svelte/_app/immutable/chunks/-qruY114.js",
+            "decodedBytes": 21688,
+            "brotliBytes": 7718
           },
           {
-            "path": "components/svelte/_app/immutable/nodes/0.C0Q-zh6U.js",
-            "decodedBytes": 354,
-            "brotliBytes": 225
-          },
-          {
-            "path": "components/svelte/_app/immutable/chunks/DFgazpd3.js",
-            "decodedBytes": 7054,
-            "brotliBytes": 2813
-          },
-          {
-            "path": "components/svelte/_app/immutable/entry/app.DHCbV3zF.js",
-            "decodedBytes": 4770,
-            "brotliBytes": 1779
+            "path": "components/svelte/_app/immutable/entry/app.B9n32Df-.js",
+            "decodedBytes": 4892,
+            "brotliBytes": 1804
           },
           {
             "path": "components/svelte/_app/immutable/chunks/CO8euXg2.js",
@@ -166,39 +146,69 @@
             "brotliBytes": 1990
           },
           {
+            "path": "components/svelte/_app/immutable/chunks/NhMxZ3Ta.js",
+            "decodedBytes": 1528,
+            "brotliBytes": 592
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/BN-Y5p4m.js",
+            "decodedBytes": 1495,
+            "brotliBytes": 690
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/DFgazpd3.js",
+            "decodedBytes": 7054,
+            "brotliBytes": 2813
+          },
+          {
+            "path": "components/svelte/_app/immutable/nodes/0.BgEmp7LE.js",
+            "decodedBytes": 354,
+            "brotliBytes": 225
+          },
+          {
             "path": "components/svelte/_app/immutable/chunks/Bt8Geaor.js",
             "decodedBytes": 186,
             "brotliBytes": 180
           },
           {
-            "path": "components/svelte/_app/immutable/nodes/2.CJWUZ_94.js",
+            "path": "components/svelte/_app/immutable/nodes/2.BoncPIlQ.js",
             "decodedBytes": 425,
-            "brotliBytes": 230
+            "brotliBytes": 233
           },
           {
-            "path": "components/svelte/_app/immutable/chunks/CoxTgIoV.js",
-            "decodedBytes": 834095,
-            "brotliBytes": 119604
+            "path": "components/svelte/_app/immutable/chunks/CXFMMiZP.js",
+            "decodedBytes": 309045,
+            "brotliBytes": 72250
           },
           {
-            "path": "components/svelte/_app/immutable/assets/0.UlzLVwex.css",
-            "decodedBytes": 124555,
-            "brotliBytes": 16035
+            "path": "components/svelte/_app/immutable/chunks/BvHI1ipV.js",
+            "decodedBytes": 233527,
+            "brotliBytes": 16374
           },
           {
-            "path": "components/svelte/_app/immutable/nodes/1.BAWWipuS.js",
+            "path": "components/svelte/_app/immutable/chunks/F48hdYIc.js",
+            "decodedBytes": 260951,
+            "brotliBytes": 37899
+          },
+          {
+            "path": "components/svelte/_app/immutable/assets/0.DplhlZUf.css",
+            "decodedBytes": 138138,
+            "brotliBytes": 17659
+          },
+          {
+            "path": "components/svelte/_app/immutable/nodes/1.DyqQdD31.js",
             "decodedBytes": 510,
             "brotliBytes": 283
           },
           {
-            "path": "components/svelte/_app/immutable/nodes/3.AmGpmPXb.js",
+            "path": "components/svelte/_app/immutable/nodes/3.Ym32pjpT.js",
             "decodedBytes": 562,
             "brotliBytes": 308
           },
           {
-            "path": "components/svelte/_app/immutable/chunks/DZWKH_Tz.js",
-            "decodedBytes": 73346,
-            "brotliBytes": 17430
+            "path": "components/svelte/_app/immutable/chunks/CKIvN6H6.js",
+            "decodedBytes": 73580,
+            "brotliBytes": 17455
           }
         ]
       }
@@ -209,38 +219,48 @@
       "status": "passed",
       "problems": [],
       "evidence": {
-        "htmlBytes": 2651,
-        "jsCssRequests": 4,
-        "decodedJsCssBytes": 1045935,
-        "brotliJsCssBytes": 152758,
-        "largestBrotliAssetBytes": 119526,
+        "htmlBytes": 3260,
+        "jsCssRequests": 6,
+        "decodedJsCssBytes": 1030722,
+        "brotliJsCssBytes": 160946,
+        "largestBrotliAssetBytes": 71908,
         "missingAssets": [],
         "consoleErrors": [],
         "metrics": {
-          "domContentLoadedMs": 28,
-          "loadMs": 30,
-          "firstContentfulPaintMs": 84
+          "domContentLoadedMs": 35,
+          "loadMs": 78,
+          "firstContentfulPaintMs": 100
         },
         "assets": [
           {
-            "path": "components/solid/_build/assets/client-BPRQG5Ja.css",
-            "decodedBytes": 124269,
-            "brotliBytes": 16006
+            "path": "components/solid/_build/assets/client-DphjH25G.css",
+            "decodedBytes": 137854,
+            "brotliBytes": 17619
           },
           {
-            "path": "components/solid/_build/assets/client-CvkqBDEn.js",
-            "decodedBytes": 854477,
-            "brotliBytes": 119526
+            "path": "components/solid/_build/assets/uifn-component-catalog-uT0hG-4I.js",
+            "decodedBytes": 232760,
+            "brotliBytes": 16122
           },
           {
-            "path": "components/solid/_build/assets/client-D1f9A1PP.js",
-            "decodedBytes": 63,
-            "brotliBytes": 67
+            "path": "components/solid/_build/assets/client-BollNzKG.js",
+            "decodedBytes": 156,
+            "brotliBytes": 105
           },
           {
-            "path": "components/solid/_build/assets/dialog-Qtjsf0Tb.js",
-            "decodedBytes": 67126,
-            "brotliBytes": 17159
+            "path": "components/solid/_build/assets/uifn-catalog-presentation-58XLN13V.js",
+            "decodedBytes": 260940,
+            "brotliBytes": 37961
+          },
+          {
+            "path": "components/solid/_build/assets/client-CrCt-ryF.js",
+            "decodedBytes": 331776,
+            "brotliBytes": 71908
+          },
+          {
+            "path": "components/solid/_build/assets/dialog-WKcfCQYv.js",
+            "decodedBytes": 67236,
+            "brotliBytes": 17231
           }
         ]
       }

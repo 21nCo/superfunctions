@@ -3,7 +3,8 @@
   "issue": "SFO-45",
   "reviewStatus": "accepted",
   "reviewer": "Codex implementation review",
-  "reviewedAt": "2026-08-10T18:05:27Z",
+  "reviewedAt": "2026-08-10T22:16:57Z",
+  "asideSession": "/Users/serro/.aside/u/0/sessions/2026-08-11_GxTR4JAFlnKu64Sc",
   "requiredThemes": ["light", "dark"],
   "requiredFrameworks": ["react", "svelte", "solid"],
   "requiredPilots": ["button", "field", "input", "checkbox", "switch", "select", "combobox", "dialog", "menu", "tabs", "card", "table"],
@@ -25,8 +26,11 @@
     { "kind": "contact-sheet", "path": "uifn/.conduct/issues/SFO-45/visual/solid-dark-pilots-2.png", "status": "accepted" }
   ],
   "notes": [
-    "Reviewed all twelve contact sheets covering React, Svelte, and Solid in light and dark themes.",
-    "The 72-page browser matrix passed catalog-versus-clean-consumer computed-style parity and cross-framework recipe parity with no failures.",
-    "This accepted review establishes the initial SFO-45 visual baseline; later baseline changes must include regenerated evidence and a new accepted review."
+    "Reviewed all twelve regenerated contact sheets covering React, Svelte, and Solid in light and dark themes.",
+    "The manual pass caught a missing Svelte checkbox mark and dropped React and Solid native input placeholders; both implementation defects were fixed before the accepted recapture.",
+    "The final 72-page browser matrix passed catalog-versus-clean-consumer computed-style parity, cross-framework recipe parity, and presentation-integrity probes with no failures.",
+    "Public state routes contain no QA harness controls; button, card, checkbox, switch, tabs, command, input, overlay, and table presentation checks are part of the accepted baseline.",
+    "The final Aside pass caught React production CSS retaining only a prefixed backdrop filter because the fallback declarations were ordered incorrectly; the source order, regression test, production build, and real rendered dialog were corrected and rechecked.",
+    "This review accepts the Tier 0 internal visual baseline. It does not claim independent external equivalence to another library or uniform hand-curation of every component in the 69-component catalog."
   ]
 }

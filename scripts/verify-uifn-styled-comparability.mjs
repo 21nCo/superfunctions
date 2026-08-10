@@ -63,6 +63,14 @@ requireText(`${issueRoot}/COMPARABILITY_RUBRIC.md`, [
   'Documentation | Coss UI',
   'A dimension passes only when the public package or installed source owns it.',
 ], 'UIFN_COMPARABILITY_RUBRIC_INCOMPLETE');
+requireText(`${issueRoot}/PARITY_INVENTORY.md`, [
+  'All 69 public components are in scope',
+  'Button',
+  'Card',
+  'Dialog',
+  'Table',
+  'core Table explicitly does not own them',
+], 'UIFN_COMPARABILITY_INVENTORY_INCOMPLETE');
 requireText(`${issueRoot}/PROVENANCE.md`, [
   'No shadcn/ui or Coss UI source, CSS, prose, examples, screenshots, or assets were copied',
   'original uifn work',
@@ -83,8 +91,11 @@ for (const wrapperRoot of wrapperRoots) {
   const files = walk(wrapperRoot).filter((file) => /\.(?:ts|svelte)$/.test(file) && !file.endsWith('/index.ts'));
   for (const file of files) {
     const source = read(file);
-    if (!source.includes('createStyledPartRecipe')) {
+    if (!source.includes('openComponentPartRecipe')) {
       failures.push({ code: 'UIFN_PUBLIC_RECIPE_NOT_CONSUMED', path: file });
+    }
+    if (!source.includes("from '@uifn/recipes/component'")) {
+      failures.push({ code: 'UIFN_LIGHTWEIGHT_RECIPE_ENTRY_NOT_CONSUMED', path: file });
     }
   }
 }
@@ -95,6 +106,9 @@ requireText('uifn/components/src/contracts.ts', [
 requireText('uifn/recipes/src/component.ts', [
   "'data-uifn-variant'", "'data-uifn-size'", "'data-uifn-density'", "'data-uifn-unstyled'",
 ], 'UIFN_STYLED_PUBLIC_RECIPE_INCOMPLETE');
+requireText('uifn/recipes/package.json', [
+  '"./component"', '"./dist/component.mjs"', '"./dist/component.d.ts"',
+], 'UIFN_LIGHTWEIGHT_RECIPE_EXPORT_MISSING');
 
 const catalogCssFiles = walk('uifn/examples').filter((file) => /-workbench\/src\/.*\.css$/.test(file));
 const forbiddenSelector = /(?:\.uifn-|\[data-uifn-(?:component|part|overlay-content|nested-overlay)(?:[=\]\s])|\[data-catalog-preview(?:[=\]\s]))/g;
@@ -115,6 +129,13 @@ requireText('uifn/catalogs/svelte/src/routes/+layout.ts', [
 ], 'UIFN_PUBLIC_STYLESHEET_IMPORT_MISSING');
 requireText('uifn/components/src/styles.css', [
   'border-inline-end: .125rem solid currentColor;',
+  'backdrop-filter: blur(4px);',
+  'z-index: 50;',
+  '@keyframes uifn-button-spin',
+  '[data-state="indeterminate"]:not(:has(svg, img))',
+  'transform: translateX(-1.25rem)',
+  '[data-uifn-component="tabs"][data-uifn-part="indicator"]',
+  '[data-uifn-component="command"][data-uifn-part="root"])::before',
 ], 'UIFN_STYLED_CSS_ENCODING_UNSAFE');
 requireText('uifn/examples/shared/src/catalog-theme.ts', ['themeToVars', 'getTheme', 'uifn-light', 'uifn-dark'], 'UIFN_CATALOG_PUBLIC_THEME_MISSING');
 
@@ -122,14 +143,28 @@ const pilotSource = read('uifn/components/src/pilots.ts');
 for (const pilot of ['button', 'field', 'input', 'checkbox', 'switch', 'select', 'combobox', 'dialog', 'menu', 'tabs', 'card', 'table']) {
   if (!new RegExp(`\\b${pilot}: \\[`).test(pilotSource)) failures.push({ code: 'UIFN_STYLED_PILOT_MISSING', pilot });
 }
-for (const fixture of ['variant-primary', 'variant-secondary', 'variant-outline', 'variant-ghost', 'variant-danger', 'size-sm', 'size-lg', 'density-compact', 'open', 'checked', 'invalid', 'disabled']) {
+for (const fixture of ['variant-secondary', 'variant-outline', 'variant-ghost', 'variant-danger', 'size-sm', 'size-lg', 'density-compact', 'open', 'checked', 'invalid', 'disabled']) {
   if (!pilotSource.includes(`'${fixture}'`)) failures.push({ code: 'UIFN_STYLED_PILOT_STATE_MISSING', fixture });
 }
 
 const registrySource = read('uifn/registry/src/generated/catalog.ts');
-if (!registrySource.includes('createStyledPartRecipe') || !registrySource.includes('StyledComponentProps')) {
+if (!registrySource.includes('openComponentPartRecipe') || !registrySource.includes("@uifn/recipes/component") || !registrySource.includes('StyledComponentProps')) {
   failures.push({ code: 'UIFN_PACKAGE_SOURCE_RECIPE_PARITY_MISSING' });
 }
+requireText('uifn/examples/shared/src/catalog-presentation.ts', [
+  '<ButtonSpinner aria-hidden="true">Saving</ButtonSpinner>',
+  '<CardTitle>Release health</CardTitle>',
+  '<DialogTitle>Edit profile</DialogTitle>',
+  '<TableCaption>Production environments and their current release health.</TableCaption>',
+  "title: 'Deployment dashboard'",
+  "title: 'Nested confirmation dialog'",
+  "title: 'Composition-safe keyboard control'",
+], 'UIFN_FLAGSHIP_DOCUMENTATION_INCOMPLETE');
+requireText('uifn/examples/shared/src/component-inventory.ts', [
+  "['table', ['inspect-semantic-structure', 'keyboard', 'scroll', 'resize-viewport']]",
+  'applicationOwnsDataOperations: true',
+  'semantic-table-structure',
+], 'UIFN_TABLE_OWNERSHIP_CONTRACT_INCOMPLETE');
 
 const review = json(`${issueRoot}/VISUAL_REVIEW.json`);
 if (!allowPendingReview && (review.reviewStatus !== 'accepted' || !review.reviewer || !review.reviewedAt || review.artifacts.length === 0)) {
@@ -143,6 +178,7 @@ if (
   browserReview.status !== 'passed'
   || browserReview.catalogBlankParity !== true
   || browserReview.crossFrameworkRecipeParity !== true
+  || browserReview.presentationIntegrity !== true
   || browserReview.results?.length !== 72
   || browserReview.artifacts?.length !== 12
   || browserReview.failures?.length !== 0
@@ -150,6 +186,7 @@ if (
   failures.push({
     code: 'UIFN_BROWSER_VISUAL_MATRIX_INCOMPLETE',
     status: browserReview.status,
+    presentationIntegrity: browserReview.presentationIntegrity,
     resultCount: browserReview.results?.length ?? 0,
     artifactCount: browserReview.artifacts?.length ?? 0,
     failureCount: browserReview.failures?.length ?? 0,
@@ -197,6 +234,7 @@ const result = {
   catalogCssFiles,
   browserReview: {
     status: browserReview.status,
+    presentationIntegrity: browserReview.presentationIntegrity,
     resultCount: browserReview.results?.length ?? 0,
     artifactCount: browserReview.artifacts?.length ?? 0,
   },
