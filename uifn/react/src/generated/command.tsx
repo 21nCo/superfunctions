@@ -19,6 +19,7 @@ const CommandDefinition: ReactPrimitiveDefinition<CommandProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","inputValue","defaultInputValue","items","multiple","loop","name","disabled","readOnly","required","placeholder"],
   context: CommandContext,
   createController: createCommandController as never,
 };

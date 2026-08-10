@@ -19,6 +19,7 @@ const SeparatorDefinition: ReactPrimitiveDefinition<SeparatorProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["orientation","decorative"],
   context: SeparatorContext,
   contract: SeparatorContract as never,
 };

@@ -19,6 +19,7 @@ const MenubarDefinition: ReactPrimitiveDefinition<MenubarProps> = {
   family: 'menu-navigation',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","loop","dir"],
   context: MenubarContext,
   createController: createMenubarController as never,
 };

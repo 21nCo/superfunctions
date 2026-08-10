@@ -19,6 +19,7 @@ const FieldDefinition: ReactPrimitiveDefinition<FieldProps> = {
   family: 'forms-input',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["name","disabled","readOnly","required","invalid"],
   context: FieldContext,
   contract: FieldContract as never,
 };

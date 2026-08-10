@@ -19,6 +19,7 @@ const RadioGroupDefinition: ReactPrimitiveDefinition<RadioGroupProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","name","orientation","loop","disabled","readOnly","required"],
   context: RadioGroupContext,
   createController: createRadioGroupController as never,
 };

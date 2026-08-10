@@ -2,6 +2,7 @@ import { createUIFnController, type UIFnController } from '../controller';
 import { createUIFnEnvironment, type UIFnEnvironment } from '../environment';
 import { createControlledValue } from '../internal/runtime/controlled';
 import { createStateChannel } from '../internal/runtime/state-channel';
+import { focusUIFnPart } from '../internal/runtime/focus';
 import { mergePartProps, type UIFnPartProps } from '../parts';
 import type { ChangeMeta } from './shared';
 import {
@@ -123,7 +124,7 @@ export function createNavigationMenuController(
       const command = resolveUIFnPrimitiveKey({ primitive: 'NavigationMenu', orientation: state.orientation, direction: state.dir, region: 'root' }, key);
       if (command === 'activate' && current) {
         const item = state.items.find((entry) => entry.id === current);
-        if (item?.hasContent) actions.setValue(state.value === current ? '' : current);
+        if (item && item.hasContent !== false) actions.setValue(state.value === current ? '' : current);
         return current;
       }
       if (command === 'close') { actions.setValue(''); return state.focusedItem; }
@@ -159,10 +160,28 @@ export function createNavigationMenuController(
     trigger: valuePart('trigger', (state, item) => {
       const open = state.value === item; const disabled = state.items.find((entry) => entry.id === item)?.disabled ?? false;
       return { id: ids.id('trigger', item), tabIndex: state.focusedItem === item ? 0 : -1, aria: { expanded: open, controls: ids.id('content', item), disabled }, data: { state: open ? 'open' : 'closed' }, disabled,
-        on: { focus: () => actions.focusItem(item), pointerenter: () => actions.requestOpen(item), pointerleave: () => actions.requestClose(item), click: () => actions.setValue(open ? '' : item), keydown: (event) => actions.handleKeyDown(event?.key ?? '', item) } };
+        on: {
+          focus: () => actions.focusItem(item),
+          pointerenter: () => actions.requestOpen(item),
+          pointerleave: () => actions.requestClose(item),
+          click: () => actions.setValue(open ? '' : item),
+          keydown: (event) => {
+            const key = event?.key ?? '';
+            const next = actions.handleKeyDown(key, item);
+            if (key === 'Enter' || key === ' ') event?.preventDefault?.();
+            if (next && next !== item) focusUIFnPart(event, ids.id('trigger', next));
+          },
+        } };
     }),
-    content: valuePart('content', (state, item) => ({ id: ids.id('content', item), aria: { labelledby: ids.id('trigger', item) }, data: { state: state.value === item ? 'open' : 'closed' }, hidden: state.value !== item, on: { pointerenter: () => actions.cancelIntent(), pointerleave: () => actions.requestClose(item), keydown: (event) => actions.handleKeyDown(event?.key ?? '', item) } })),
-    link: valuePart('link', (state, item) => ({ id: ids.id('link', item), tabIndex: state.focusedItem === item ? 0 : -1, attributes: { href: state.items.find((entry) => entry.id === item)?.href }, data: { active: state.value === item }, on: { focus: () => actions.focusItem(item), keydown: (event) => actions.handleKeyDown(event?.key ?? '', item) } })),
+    content: valuePart('content', (state, item) => ({ id: ids.id('content', item), aria: { labelledby: ids.id('trigger', item) }, data: { state: state.value === item ? 'open' : 'closed' }, hidden: state.value !== item, on: { pointerenter: () => actions.cancelIntent(), pointerleave: () => actions.requestClose(item), keydown: (event) => {
+      const key = event?.key ?? '';
+      const next = actions.handleKeyDown(key, item);
+      if (key === 'Escape' && next) focusUIFnPart(event, ids.id('trigger', next));
+    } } })),
+    link: valuePart('link', (state, item) => ({ id: ids.id('link', item), tabIndex: state.focusedItem === item ? 0 : -1, attributes: { href: state.items.find((entry) => entry.id === item)?.href }, data: { active: state.value === item }, on: { focus: () => actions.focusItem(item), keydown: (event) => {
+      const next = actions.handleKeyDown(event?.key ?? '', item);
+      if (next && next !== item) focusUIFnPart(event, ids.id('trigger', next));
+    } } })),
     viewport: { name: 'viewport', getProps(userProps) { const state = store.getState(); return mergePartProps({ id: ids.id('viewport'), data: { state: state.value ? 'open' : 'closed' }, hidden: !state.value }, userProps, { component: 'NavigationMenu', part: 'viewport', required: { id: true, data: ['state'] } }); } },
     indicator: { name: 'indicator', getProps(userProps) { const state = store.getState(); return mergePartProps({ id: ids.id('indicator'), aria: { hidden: true }, data: { state: state.value ? 'visible' : 'hidden', value: state.value }, hidden: !state.value }, userProps, { component: 'NavigationMenu', part: 'indicator', required: { id: true } }); } },
   };

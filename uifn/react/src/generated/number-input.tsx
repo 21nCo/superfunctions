@@ -19,6 +19,7 @@ const NumberInputDefinition: ReactPrimitiveDefinition<NumberInputProps> = {
   family: 'forms-input',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","min","max","step","locale","name","disabled","readOnly","required"],
   context: NumberInputContext,
   createController: createNumberInputController as never,
 };

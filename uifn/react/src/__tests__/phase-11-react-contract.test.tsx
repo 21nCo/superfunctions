@@ -152,6 +152,21 @@ describe('PHASE_11 public React contract', () => {
     expect(changes).toEqual([]);
   });
 
+  it('separates declared component inputs from intrinsic root props', () => {
+    render(
+      <>
+        <UIFnReact.Input aria-label="Work email" placeholder="you@company.com" />
+        <UIFnReact.Command placeholder="Type a command or search…">
+          <UIFnReact.Command.Label>Commands</UIFnReact.Command.Label>
+          <UIFnReact.Command.Input />
+          <UIFnReact.Command.List />
+        </UIFnReact.Command>
+      </>,
+    );
+    expect(screen.getByRole('textbox', { name: 'Work email' })).toHaveAttribute('placeholder', 'you@company.com');
+    expect(screen.getByRole('combobox', { name: 'Commands' })).toHaveAttribute('placeholder', 'Type a command or search…');
+  });
+
   it('preserves intrinsic semantics, refs, accessible names, and disabled behavior for asChild and render', () => {
     const asChildRef = React.createRef<HTMLAnchorElement>();
     const renderRef = React.createRef<HTMLAnchorElement>();

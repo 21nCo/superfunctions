@@ -8,6 +8,7 @@ import {
   type UIFnEnvironment,
 } from '../environment';
 import { createStateChannel } from '../internal/runtime/state-channel';
+import { focusUIFnPart } from '../internal/runtime/focus';
 import { mergePartProps, type UIFnPartEvent, type UIFnPartProps } from '../parts';
 
 export interface UIFnCaret {
@@ -419,7 +420,19 @@ export function createUIFnTextInputController<TParts extends object = Readonly<R
     const common: UIFnPartProps = { id, data: { state: state.invalid ? 'invalid' : state.editing ? 'editing' : 'idle', disabled: state.disabled, readonly: state.readOnly, composing: state.composing } };
     if (part === 'root') return common;
     if (part === 'label') return common;
-    if (part === 'preview') return { ...common, role: 'button', tabIndex: state.disabled ? -1 : 0, hidden: state.editing, attributes: { type: 'button' }, on: { click: () => actions.startEditing() } };
+    if (part === 'preview') return {
+      ...common,
+      role: 'button',
+      tabIndex: state.disabled ? -1 : 0,
+      hidden: state.editing,
+      attributes: { type: 'button' },
+      on: {
+        click: (event) => {
+          actions.startEditing();
+          focusUIFnPart(event, state.ids.input, { deferred: true });
+        },
+      },
+    };
     if (part === 'input') {
       const pinIndex = index ?? 0;
       const chars = Array.from(rawValue);
@@ -473,7 +486,21 @@ export function createUIFnTextInputController<TParts extends object = Readonly<R
           : part === 'increment' ? () => actions.stepBy(1)
             : part === 'decrement' ? () => actions.stepBy(-1)
               : () => actions.toggleVisibility();
-      return { ...common, role: 'button', disabled: state.disabled, attributes: { type: 'button' }, aria: { label: part }, on: { click: operation } };
+      return {
+        ...common,
+        role: 'button',
+        disabled: state.disabled,
+        attributes: { type: 'button' },
+        aria: { label: part },
+        on: {
+          click: (event) => {
+            operation();
+            if (config.kind === 'editable' && (part === 'submit' || part === 'cancel')) {
+              focusUIFnPart(event, state.ids.preview, { deferred: true });
+            }
+          },
+        },
+      };
     }
     if (part === 'control') return common;
     if (part === 'hiddenInput') return { ...common, hidden: true, disabled: state.disabled, attributes: { type: 'hidden', name: state.name, value: rawValue, form: state.form } };

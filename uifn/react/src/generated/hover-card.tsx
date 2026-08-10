@@ -19,6 +19,7 @@ const HoverCardDefinition: ReactPrimitiveDefinition<CreateHoverCardProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","openDelay","closeDelay","placement"],
   context: HoverCardContext,
   createController: createHoverCardController as never,
 };

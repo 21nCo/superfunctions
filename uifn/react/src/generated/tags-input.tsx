@@ -19,6 +19,7 @@ const TagsInputDefinition: ReactPrimitiveDefinition<TagsInputProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","allowDuplicates","max","delimiter","name","disabled","readOnly","required"],
   context: TagsInputContext,
   createController: createTagsInputController as never,
 };

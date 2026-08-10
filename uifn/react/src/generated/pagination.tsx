@@ -19,6 +19,7 @@ const PaginationDefinition: ReactPrimitiveDefinition<PaginationProps> = {
   family: 'menu-navigation',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["page","defaultPage","count","pageSize","siblingCount","disabled"],
   context: PaginationContext,
   createController: createPaginationController as never,
 };

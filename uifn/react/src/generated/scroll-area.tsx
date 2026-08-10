@@ -19,6 +19,7 @@ const ScrollAreaDefinition: ReactPrimitiveDefinition<ScrollAreaProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["type","scrollHideDelay","orientation","dir"],
   context: ScrollAreaContext,
   createController: createScrollAreaController as never,
 };

@@ -19,6 +19,7 @@ const ClipboardDefinition: ReactPrimitiveDefinition<ClipboardProps> = {
   family: 'status-feedback',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","timeout","disabled"],
   context: ClipboardContext,
   createController: createClipboardController as never,
 };

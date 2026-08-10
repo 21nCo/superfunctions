@@ -6,6 +6,7 @@ import {
   type UIFnEnvironment,
 } from '../environment';
 import { mergePartProps, type UIFnPartProps, type UIFnRequiredPartProps } from '../parts';
+import { focusUIFnPart } from '../internal/runtime/focus';
 import {
   createAccordionRuntime,
   type AccordionActions,
@@ -229,7 +230,12 @@ export function createAccordionController(
             disabled: state.disabled,
             on: {
               click: () => machine.actions.toggleItem(value),
-              keydown: (event) => machine.actions.handleKeyDown(keyFromEvent(event?.key), value),
+              keydown: (event) => {
+                const next = machine.actions.handleKeyDown(keyFromEvent(event?.key), value);
+                if (next && next !== value) {
+                  focusUIFnPart(event, [itemId(ids.root, 'button', next), itemId(ids.root, 'link', next)]);
+                }
+              },
             },
           },
           userProps,
@@ -681,7 +687,12 @@ export function createToolbarController(
             disabled,
             on: {
               focus: () => machine.actions.focusItem(value),
-              keydown: (event) => machine.actions.handleKeyDown(keyFromEvent(event?.key), value),
+              keydown: (event) => {
+                const next = machine.actions.handleKeyDown(keyFromEvent(event?.key), value);
+                if (next && next !== value) {
+                  focusUIFnPart(event, [itemId(ids.root, 'button', next), itemId(ids.root, 'link', next)]);
+                }
+              },
             },
           },
           userProps,

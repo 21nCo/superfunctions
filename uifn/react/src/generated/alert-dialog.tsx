@@ -19,6 +19,7 @@ const AlertDialogDefinition: ReactPrimitiveDefinition<AlertDialogProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","initialFocus","restoreFocus"],
   context: AlertDialogContext,
   createController: createAlertDialogController as never,
 };

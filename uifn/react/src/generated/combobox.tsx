@@ -19,6 +19,7 @@ const ComboboxDefinition: ReactPrimitiveDefinition<ComboboxProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","inputValue","items","multiple","name","disabled","readOnly","required"],
   context: ComboboxContext,
   createController: createComboboxController as never,
 };

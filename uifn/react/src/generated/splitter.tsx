@@ -19,6 +19,7 @@ const SplitterDefinition: ReactPrimitiveDefinition<SplitterProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["sizes","defaultSizes","minSizes","maxSizes","orientation","dir","disabled"],
   context: SplitterContext,
   createController: createSplitterController as never,
 };

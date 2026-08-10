@@ -19,6 +19,7 @@ const InputGroupDefinition: ReactPrimitiveDefinition<InputGroupProps> = {
   family: 'forms-input',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["disabled","invalid"],
   context: InputGroupContext,
   contract: InputGroupContract as never,
 };

@@ -19,6 +19,7 @@ const FormDefinition: ReactPrimitiveDefinition<FormProps> = {
   family: 'forms-input',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["noValidate","disabled"],
   context: FormContext,
   contract: FormContract as never,
 };

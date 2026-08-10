@@ -19,6 +19,7 @@ const ToastDefinition: ReactPrimitiveDefinition<ToastProps> = {
   family: 'status-feedback',
   kind: 'interactive-controller',
   rootPart: 'viewport',
+  inputNames: ["toasts","limit","duration","placement","pauseOnHover","pauseOnFocus","duplicatePolicy","messages","onDismiss","onRemove","onAnnounce"],
   context: ToastContext,
   createController: createToastController as never,
 };

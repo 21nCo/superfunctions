@@ -19,6 +19,7 @@ const MeterDefinition: ReactPrimitiveDefinition<MeterProps> = {
   family: 'status-feedback',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["value","min","max","low","high","optimum","formatValue"],
   context: MeterContext,
   contract: MeterContract as never,
 };

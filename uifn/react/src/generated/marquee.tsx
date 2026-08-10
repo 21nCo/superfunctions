@@ -19,6 +19,7 @@ const MarqueeDefinition: ReactPrimitiveDefinition<MarqueeProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["direction","speed","pauseOnHover","pauseOnFocus","reducedMotionBehavior"],
   context: MarqueeContext,
   contract: MarqueeContract as never,
 };

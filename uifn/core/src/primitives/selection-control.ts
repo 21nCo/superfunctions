@@ -69,6 +69,7 @@ export interface UIFnSelectionInputs<TItem = UIFnSelectionItemInput> {
   readonly defaultOpen?: boolean;
   readonly inputValue?: string;
   readonly defaultInputValue?: string;
+  readonly placeholder?: string;
   readonly descriptionId?: string;
   readonly errorId?: string;
   readonly validityMessage?: string;
@@ -114,6 +115,7 @@ export interface UIFnSelectionState {
   readonly highlightedItem: string | null;
   readonly open: boolean;
   readonly inputValue: string;
+  readonly placeholder?: string;
   readonly draftValue: string;
   readonly composing: boolean;
   readonly disabled: boolean;
@@ -401,6 +403,7 @@ export function createUIFnSelectionPrimitiveController<TItem = UIFnSelectionItem
     highlightedItem: initialKeys[0] ?? null,
     open: openControlled ? inputs.open! : inputs.defaultOpen ?? false,
     inputValue: initialInputValue,
+    placeholder: inputs.placeholder,
     draftValue: initialInputValue,
     composing: false,
     disabled: inputs.disabled ?? false,
@@ -831,7 +834,12 @@ export function createUIFnSelectionPrimitiveController<TItem = UIFnSelectionItem
         invalid: state.invalid,
         required: state.required,
       },
-      attributes: { value: state.composing ? state.draftValue : state.inputValue, autocomplete: 'off', readonly: state.readOnly },
+      attributes: {
+        value: state.composing ? state.draftValue : state.inputValue,
+        placeholder: state.placeholder,
+        autocomplete: 'off',
+        readonly: state.readOnly,
+      },
       on: {
         input: (event) => actions.setInputValue(eventValue(event)),
         keydown: (event) => {
@@ -914,10 +922,14 @@ export function createUIFnSelectionPrimitiveController<TItem = UIFnSelectionItem
     };
     if (part === 'group') return { ...common, role: 'group' };
     if (part === 'groupHeading') return { ...common, role: 'presentation' };
-    if (part === 'separator') return { ...common, role: 'separator' };
+    if (part === 'separator') return {
+      ...common,
+      role: config.primitive === 'Command' ? 'presentation' : 'separator',
+      aria: config.primitive === 'Command' ? { hidden: true } : undefined,
+    };
     if (part === 'empty' || part === 'loading') return {
       ...common,
-      role: 'status',
+      role: config.primitive === 'Command' ? undefined : 'status',
       aria: { live: 'polite' },
       hidden: part === 'empty' ? !state.emptyStateShown : undefined,
     };
@@ -1030,6 +1042,7 @@ export function createUIFnSelectionPrimitiveController<TItem = UIFnSelectionItem
         ...(next.locale !== undefined ? { locale: next.locale } : {}),
         ...(next.name !== undefined ? { name: next.name } : {}),
         ...(next.form !== undefined ? { form: next.form } : {}),
+        ...(next.placeholder !== undefined ? { placeholder: next.placeholder } : {}),
       };
       if (Object.keys(patchable).length > 0) patch(patchable);
     },

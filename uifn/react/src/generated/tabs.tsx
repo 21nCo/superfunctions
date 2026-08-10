@@ -19,6 +19,7 @@ const TabsDefinition: ReactPrimitiveDefinition<TabsProps> = {
   family: 'menu-navigation',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","activationMode","orientation","loop","dir"],
   context: TabsContext,
   createController: createTabsController as never,
 };

@@ -19,6 +19,7 @@ const TextareaDefinition: ReactPrimitiveDefinition<TextareaProps> = {
   family: 'forms-input',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","name","placeholder","rows","disabled","readOnly","required","invalid","resize"],
   context: TextareaContext,
   contract: TextareaContract as never,
 };

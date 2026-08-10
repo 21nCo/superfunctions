@@ -19,6 +19,7 @@ const TourDefinition: ReactPrimitiveDefinition<TourProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","step","defaultStep","steps","modal"],
   context: TourContext,
   createController: createTourController as never,
 };

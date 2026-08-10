@@ -1,32 +1,37 @@
-export type ComponentRecipeVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
-export type ComponentRecipeSize = 'sm' | 'md' | 'lg';
+export type ComponentRecipeVariant = 'default' | 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'danger-outline' | 'destructive' | 'success' | 'link';
+export type ComponentRecipeSize = 'sm' | 'md' | 'lg' | 'icon-sm' | 'icon-md' | 'icon-lg' | number;
 export type ComponentRecipeDensity = 'compact' | 'comfortable' | 'spacious';
 export type ComponentRecipeStyle = Record<string, string | number | undefined>;
 export type ComponentRecipeClasses = Readonly<Record<string, string | undefined>>;
 export type ComponentRecipeStyles = Readonly<Record<string, ComponentRecipeStyle | undefined>>;
 
-export interface OpenComponentRecipeOptions {
+/** Styling props consumed by generated framework wrappers without catalog metadata. */
+export interface ComponentRecipeProps {
   variant?: ComponentRecipeVariant;
   size?: ComponentRecipeSize;
   density?: ComponentRecipeDensity;
   unstyled?: boolean;
-  className?: string;
   classes?: ComponentRecipeClasses;
-  style?: ComponentRecipeStyle;
   styles?: ComponentRecipeStyles;
+  style?: ComponentRecipeStyle;
+}
+
+export interface OpenComponentRecipeOptions extends ComponentRecipeProps {
+  className?: string;
   vars?: Record<`--uifn-${string}`, string>;
   state?: string;
 }
 
 /** Framework-neutral recipe used by package wrappers and registry-installed source. */
 export function openComponentPartRecipe(component: string, part: string, options: OpenComponentRecipeOptions = {}) {
+  const namedSize = typeof options.size === 'string' ? options.size : undefined;
   const publicClasses = options.unstyled
     ? []
     : [
         `uifn-${component}`,
         `uifn-${component}__${part}`,
         part === 'root' && options.variant ? `uifn-${component}--${options.variant}` : undefined,
-        part === 'root' && options.size ? `uifn-${component}--${options.size}` : undefined,
+        part === 'root' && namedSize ? `uifn-${component}--${namedSize}` : undefined,
         part === 'root' && options.density ? `uifn-${component}--density-${options.density}` : undefined,
       ];
   const className = [...publicClasses, options.classes?.[part], options.className].filter(Boolean).join(' ');

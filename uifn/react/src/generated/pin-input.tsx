@@ -19,6 +19,7 @@ const PinInputDefinition: ReactPrimitiveDefinition<PinInputProps> = {
   family: 'forms-input',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","length","mask","otp","name","disabled","readOnly","required"],
   context: PinInputContext,
   createController: createPinInputController as never,
 };

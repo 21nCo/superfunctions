@@ -19,6 +19,7 @@ const InputDefinition: ReactPrimitiveDefinition<InputProps> = {
   family: 'forms-input',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["type","value","defaultValue","name","disabled","readOnly","required","invalid"],
   context: InputContext,
   contract: InputContract as never,
 };

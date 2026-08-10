@@ -19,6 +19,7 @@ const NavigationMenuDefinition: ReactPrimitiveDefinition<NavigationMenuProps> = 
   family: 'menu-navigation',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","orientation","delayDuration","skipDelayDuration","dir"],
   context: NavigationMenuContext,
   createController: createNavigationMenuController as never,
 };

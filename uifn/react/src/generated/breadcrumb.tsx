@@ -19,6 +19,7 @@ const BreadcrumbDefinition: ReactPrimitiveDefinition<BreadcrumbProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["label"],
   context: BreadcrumbContext,
   contract: BreadcrumbContract as never,
 };

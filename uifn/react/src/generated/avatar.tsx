@@ -19,6 +19,7 @@ const AvatarDefinition: ReactPrimitiveDefinition<AvatarProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["src","alt","fallbackDelay"],
   context: AvatarContext,
   contract: AvatarContract as never,
 };

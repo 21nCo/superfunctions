@@ -19,6 +19,7 @@ const FloatingPanelDefinition: ReactPrimitiveDefinition<FloatingPanelProps> = {
   family: 'modal-overlay',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["open","defaultOpen","modal","placement","draggable","resizable"],
   context: FloatingPanelContext,
   createController: createFloatingPanelController as never,
 };

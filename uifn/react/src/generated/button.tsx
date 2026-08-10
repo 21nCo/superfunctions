@@ -19,6 +19,7 @@ const ButtonDefinition: ReactPrimitiveDefinition<ButtonProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["type","disabled","loading","pressed"],
   context: ButtonContext,
   contract: ButtonContract as never,
 };

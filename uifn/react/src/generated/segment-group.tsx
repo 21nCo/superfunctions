@@ -19,6 +19,7 @@ const SegmentGroupDefinition: ReactPrimitiveDefinition<SegmentGroupProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","name","orientation","disabled","readOnly","required"],
   context: SegmentGroupContext,
   createController: createSegmentGroupController as never,
 };

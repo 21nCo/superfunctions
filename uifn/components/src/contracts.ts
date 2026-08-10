@@ -7,7 +7,7 @@ import {
   type ComponentRecipeStyle,
   type ComponentRecipeStyles,
   type ComponentRecipeVariant,
-} from '@uifn/recipes';
+} from '@uifn/recipes/component';
 
 export type StyledComponentState = 'open' | 'closed' | 'checked' | 'unchecked' | 'mixed' | 'selected' | 'highlighted' | 'invalid' | 'disabled' | 'read-only' | 'loading' | 'dragging' | 'swiping' | 'focus-visible';
 export type StyledDensity = ComponentRecipeDensity;

@@ -19,6 +19,7 @@ const CardDefinition: ReactPrimitiveDefinition<CardProps> = {
   family: 'static-foundation',
   kind: 'typed-static-contract',
   rootPart: 'root',
+  inputNames: ["elevated"],
   context: CardContext,
   contract: CardContract as never,
 };

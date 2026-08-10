@@ -19,6 +19,7 @@ const CheckboxDefinition: ReactPrimitiveDefinition<CheckboxProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["checked","defaultChecked","name","value","disabled","readOnly","required"],
   context: CheckboxContext,
   createController: createCheckboxController as never,
 };

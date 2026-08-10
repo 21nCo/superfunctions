@@ -19,6 +19,7 @@ const PasswordInputDefinition: ReactPrimitiveDefinition<PasswordInputProps> = {
   family: 'forms-input',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","visible","name","autocomplete","disabled","readOnly","required"],
   context: PasswordInputContext,
   createController: createPasswordInputController as never,
 };

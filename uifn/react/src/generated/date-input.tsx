@@ -19,6 +19,7 @@ const DateInputDefinition: ReactPrimitiveDefinition<DateInputProps> = {
   family: 'date-color',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","locale","timeZone","min","max","name","disabled","readOnly"],
   context: DateInputContext,
   createController: createDateInputController as never,
 };

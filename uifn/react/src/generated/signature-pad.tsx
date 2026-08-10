@@ -19,6 +19,7 @@ const SignaturePadDefinition: ReactPrimitiveDefinition<SignaturePadProps> = {
   family: 'range-gesture',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   context: SignaturePadContext,
   createController: createSignaturePadController as never,
 };

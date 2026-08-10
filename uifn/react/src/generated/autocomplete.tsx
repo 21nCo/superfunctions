@@ -19,6 +19,7 @@ const AutocompleteDefinition: ReactPrimitiveDefinition<AutocompleteProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","items","filter","disabled","readOnly"],
   context: AutocompleteContext,
   createController: createAutocompleteController as never,
 };

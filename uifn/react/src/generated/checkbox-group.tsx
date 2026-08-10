@@ -19,6 +19,7 @@ const CheckboxGroupDefinition: ReactPrimitiveDefinition<CheckboxGroupProps> = {
   family: 'selection-collection',
   kind: 'interactive-controller',
   rootPart: 'root',
+  inputNames: ["value","defaultValue","name","disabled","readOnly","required"],
   context: CheckboxGroupContext,
   createController: createCheckboxGroupController as never,
 };
