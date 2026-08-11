@@ -12,11 +12,8 @@
   --docsfn-color-primary: hsl(154, 33%, 24%);
   --docsfn-color-primary-hover: hsl(154, 33%, 20%);
   --docsfn-color-accent-soft: hsl(154 33% 24% / 0.12);
-  /*
-   * TopBar is outside DocsLayout but uses position:sticky in theme.css.
-   * Set this to roughly the rendered top bar height so the docs sidebar/TOC stick below it.
-   */
-  /* --docsfn-sticky-top-offset: 2.7rem; */
+  /* Keep the sticky sidebar and table of contents below the shared top bar. */
+  --docsfn-sticky-top-offset: 3.5rem;
 
   /* Whole docs chrome (left sidebar + article + right TOC) max width; centers as a group */
   --docsfn-docs-shell-max-width: min(100rem, 100%);
@@ -56,17 +53,63 @@ body {
   box-sizing: border-box;
 }
 
-/*
- * Docs routes: TopBar inner width matches the docs shell so nav lines up with the article column.
- * Same max-width as --docsfn-docs-shell-max-width + asymmetric padding = sidebar + main padding.
- */
-@media (min-width: 1024px) {
-  .docsfn-site-root.docsfn-docs-chrome .docsfn-topbar-container {
-    max-width: var(--docsfn-docs-shell-max-width, none);
-    margin-inline: auto;
+.docsfn-route-view {
+  width: 100%;
+  min-width: 0;
+  min-height: calc(100vh - var(--docsfn-sticky-top-offset));
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.docsfn-navigation-progress {
+  position: fixed;
+  top: 3.5rem;
+  left: 0;
+  z-index: 80;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease;
+}
+
+.docsfn-navigation-progress--embedded {
+  top: 0;
+}
+
+.docsfn-navigation-progress span {
+  display: block;
+  width: 32%;
+  height: 100%;
+  transform: translateX(-110%);
+  background: var(--docsfn-color-primary);
+}
+
+.docsfn-navigation-progress--active {
+  opacity: 1;
+}
+
+.docsfn-navigation-progress--active span {
+  animation: docsfn-navigation-progress 700ms cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes docsfn-navigation-progress {
+  to {
+    transform: translateX(325%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docsfn-navigation-progress,
+  .docsfn-navigation-progress span {
+    transition: none;
+    animation: none;
+  }
+
+  .docsfn-navigation-progress--active span {
     width: 100%;
-    padding-left: calc(var(--docsfn-sidebar-width) + var(--docsfn-main-padding-inline));
-    padding-right: var(--docsfn-main-padding-inline);
-    box-sizing: border-box;
+    transform: none;
   }
 }

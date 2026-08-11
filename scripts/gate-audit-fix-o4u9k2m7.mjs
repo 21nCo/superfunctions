@@ -111,12 +111,12 @@ const checklist = [
     package: "plugfn",
     requirement: "Adopt shared oauth-flow + persistent state store wiring",
     command:
-      'rg -n "@superfunctions/oauth-flow|DEPRECATED_PATH|removal in plugfn@0.2.0" plugfn/typescript/src/core/connection-manager.ts plugfn/typescript/src/auth/oauth-flow.ts',
+      'rg -n "@superfunctions/oauth-flow|DEPRECATED_PATH|removal in plugfn@0.2.0" plugfn/core/src/core/connection-manager.ts plugfn/core/src/auth/oauth-flow.ts',
     kind: "pattern",
     pattern: /@superfunctions\/oauth-flow|DEPRECATED_PATH|removal in plugfn@0\.2\.0/,
     paths: [
-      "plugfn/typescript/src/core/connection-manager.ts",
-      "plugfn/typescript/src/auth/oauth-flow.ts",
+      "plugfn/core/src/core/connection-manager.ts",
+      "plugfn/core/src/auth/oauth-flow.ts",
     ],
   },
   {
@@ -200,7 +200,7 @@ const changelogTargets = [
 const missingChangelogs = changelogTargets.filter((targetPath) => !existsSync(join(repoRoot, targetPath)));
 
 const deprecationNoticeOk = fileContains(
-  join(repoRoot, "plugfn/typescript/src/auth/oauth-flow.ts"),
+  join(repoRoot, "plugfn/core/src/auth/oauth-flow.ts"),
   "DEPRECATED_PATH"
 );
 

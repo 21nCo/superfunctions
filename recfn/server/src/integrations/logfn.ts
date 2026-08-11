@@ -84,3 +84,43 @@ export function createNoopLogger(): Logger {
     error() {},
   };
 }
+
+export function createConsoleLogger(): Logger {
+  function write(
+    level: LogEntry['level'],
+    event: string,
+    data: Record<string, unknown> = {},
+  ): void {
+    const payload = {
+      level,
+      event,
+      data: sanitizeLogData(data),
+      timestamp: new Date().toISOString(),
+    };
+    const line = JSON.stringify(payload);
+
+    if (level === 'error') {
+      console.error(line);
+      return;
+    }
+
+    if (level === 'warn') {
+      console.warn(line);
+      return;
+    }
+
+    console.log(line);
+  }
+
+  return {
+    info(event, data) {
+      write('info', event, data);
+    },
+    warn(event, data) {
+      write('warn', event, data);
+    },
+    error(event, data) {
+      write('error', event, data);
+    },
+  };
+}

@@ -15,7 +15,7 @@ PlugFn is a self-hosted integration platform designed to be:
 
 ```
 plugfn/
-├── typescript/          # TypeScript SDK
+├── core/                # TypeScript runtime package
 │   ├── src/
 │   │   ├── core/       # Core managers
 │   │   ├── auth/       # Authentication
@@ -142,11 +142,21 @@ Abstracts data persistence.
 - Action logs
 
 **Canonical model names:**
-- `connections`
-- `oauth_states`
-- `oauth_tokens`
-- `workflows`
-- `workflow_executions`
+- `plugfn_connections`
+- `plugfn_oauth_states`
+- `plugfn_oauth_tokens`
+- `plugfn_workflows`
+- `plugfn_workflow_executions`
+- `plugfn_webhooks`
+- `plugfn_action_logs`
+- `plugfn_provider_installations`
+- `plugfn_connection_grants`
+- `plugfn_webhook_receipts`
+- `plugfn_webhook_deliveries`
+- `plugfn_sync_jobs`
+- `plugfn_sync_checkpoints`
+- `plugfn_provider_events`
+- `plugfn_secret_refs`
 
 **TypeScript ownership after Phase 01:**
 - `src/storage/adapters/database.ts` owns the PlugFn model mapping and shared-db adapter layer.
@@ -359,7 +369,7 @@ Supported databases:
 
 ```bash
 BASE_URL=https://myapp.com
-ENCRYPTION_KEY=your-32-character-key
+ENCRYPTION_KEY=<32-byte-hex-key-or-strong-passphrase>
 DATABASE_URL=postgresql://...
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...

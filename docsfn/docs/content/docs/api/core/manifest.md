@@ -30,6 +30,7 @@ description: buildManifest and DocsManifest in @docsfn/core.
 | `sidebars` | Map sidebar id → **`Sidebar`**. |
 | `routes` | Map **route path** → **source id**. |
 | `blog` | Optional **`BlogManifestSurface`**. |
+| `collections` | Map dated collection id → **`DatedCollectionManifestSurface`** for sections like changelog. |
 | `embedded` | Optional embedded route catalog for iframe-style hosts. |
 
 See **[Types](./types)** for nested interfaces.

@@ -18,7 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@docsfn/core": "0.0.3",
+    "@docsfn/core": "*",
     "fast-glob": "^3.0.0",
     "gray-matter": "^4.0.0"
   },

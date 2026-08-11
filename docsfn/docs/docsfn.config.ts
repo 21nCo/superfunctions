@@ -27,6 +27,7 @@ const config: DocsConfig = {
       { label: "Docs", href: "/docs" },
       { label: "API Reference", href: "/docs/api" },
       { label: "Blog", href: "/blog" },
+      { label: "Changelog", href: "/changelog" },
       {
         label: "GitHub",
         href: "https://github.com/21nCo/super-functions/tree/dev/docsfn",
@@ -38,9 +39,18 @@ const config: DocsConfig = {
       api: { title: "API Reference", root: true, include: ["docs/api/**"] },
     },
   },
+  collections: {
+    changelog: {
+      dir: "content/changelog",
+      routeBase: "/changelog",
+      feedPath: "/changelog/rss.xml",
+      label: "Changelog",
+      scope: "changelog",
+    },
+  },
   search: {
     enabled: true,
-    scopes: ["docs", "api", "blog"],
+    scopes: ["docs", "api", "blog", "changelog"],
     bodyIndexing: "summary",
     routeScopeOverrides: [
       { pattern: "/docs/api", scope: "api" },

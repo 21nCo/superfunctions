@@ -84,7 +84,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.400.0",
-    "@superfunctions/db": "0.1.3",
+    "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.2",
     "apns2": "^11.0.0",
     "firebase-admin": "^12.0.0",

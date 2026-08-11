@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import * as sendfnCore from '../src';
 import { sendfn } from '../src';
+import { apnsAdapter } from '../src/push/apns';
+import { fcmAdapter } from '../src/push/fcm';
 import { metaWhatsAppAdapter } from '../src/whatsapp/meta-cloud-adapter';
 
 describe('TypeScript package baseline', () => {
@@ -12,6 +14,8 @@ describe('TypeScript package baseline', () => {
 
   it('keeps adapter factories out of the core export surface', () => {
     expect(typeof metaWhatsAppAdapter).toBe('function');
+    expect(typeof apnsAdapter).toBe('function');
+    expect(typeof fcmAdapter).toBe('function');
     expect('metaWhatsAppAdapter' in sendfnCore).toBe(false);
     expect('apnsAdapter' in sendfnCore).toBe(false);
     expect('fcmAdapter' in sendfnCore).toBe(false);
@@ -56,6 +60,7 @@ describe('TypeScript package baseline', () => {
 
     expect(readme).toContain('npm install sendfn @superfunctions/db @superfunctions/http');
     expect(readme).toContain("import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';");
+    expect(readme).toContain("import { apnsAdapter } from 'sendfn/adapters/apns';");
     expect(readme).toContain("import { metaWhatsAppAdapter } from 'sendfn/adapters/meta-whatsapp';");
     expect(readme).toContain('WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required');
     expect(readme).not.toContain('@sendfn/core');

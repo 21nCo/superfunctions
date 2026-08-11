@@ -49,6 +49,10 @@ interface DocsSiteServerState {
 
 let serverStatePromise: Promise<DocsSiteServerState> | null = null;
 
+function shouldCacheServerState(): boolean {
+  return process.env.NODE_ENV !== "development";
+}
+
 function createCompiledCacheKey(input: {
   kind: "page" | "post";
   id: string;
@@ -172,43 +176,49 @@ function getCompiledArtifactOrThrow(input: {
   return compiled;
 }
 
-async function loadDocsSiteServerState(): Promise<DocsSiteServerState> {
-  if (!serverStatePromise) {
-    serverStatePromise = (async () => {
-      const siteRoot = path.resolve(process.cwd());
-      const config = await loadDocsConfig({ cwd: siteRoot });
-      const provider = new FsContentProvider({
-        root: siteRoot,
-        docsDir: config.content.docsDir,
-        pagesDir: config.content.pagesDir,
-        blogDir: config.content.blogDir,
-        apiDir: config.content.apiDir,
-        assetsDir: config.content.assetsDir,
-      });
-      const manifest = await buildManifest(provider, config);
-      const searchArtifact = await buildSearchIndex(manifest, {
-        search: config.search,
-        auth: config.auth,
-      });
-      const compatPreset = config.compat?.preset ?? "none";
-      const compiledCache = createCompiledCache({
-        manifest,
-        compatPreset,
-      });
+async function createDocsSiteServerState(): Promise<DocsSiteServerState> {
+  const siteRoot = path.resolve(process.cwd());
+  const config = await loadDocsConfig({ cwd: siteRoot });
+  const provider = new FsContentProvider({
+    root: siteRoot,
+    docsDir: config.content.docsDir,
+    pagesDir: config.content.pagesDir,
+    blogDir: config.content.blogDir,
+    apiDir: config.content.apiDir,
+    assetsDir: config.content.assetsDir,
+  });
+  const manifest = await buildManifest(provider, config);
+  const searchArtifact = await buildSearchIndex(manifest, {
+    search: config.search,
+    auth: config.auth,
+  });
+  const compatPreset = config.compat?.preset ?? "none";
+  const compiledCache = createCompiledCache({
+    manifest,
+    compatPreset,
+  });
 
-      return {
-        source: {
-          siteRoot,
-          manifest,
-          searchArtifact,
-          siteTitle: config.site.title,
-          canonicalUrl: config.site.canonicalUrl,
-          compatPreset,
-          config,
-        },
-        compiledCache,
-      };
-    })();
+  return {
+    source: {
+      siteRoot,
+      manifest,
+      searchArtifact,
+      siteTitle: config.site.title,
+      canonicalUrl: config.site.canonicalUrl,
+      compatPreset,
+      config,
+    },
+    compiledCache,
+  };
+}
+
+async function loadDocsSiteServerState(): Promise<DocsSiteServerState> {
+  if (!shouldCacheServerState()) {
+    return createDocsSiteServerState();
+  }
+
+  if (!serverStatePromise) {
+    serverStatePromise = createDocsSiteServerState();
   }
 
   return serverStatePromise;

@@ -38,11 +38,18 @@ function titleFromKey(key: string): string {
 }
 
 function mergeRuleLabel(rule: MetaPageRule | undefined, fallback: string): string {
-  const base = rule?.label ?? fallback;
-  if (rule?.icon) {
-    return `${rule.icon} ${base}`;
-  }
-  return base;
+  return rule?.label ?? fallback;
+}
+
+function rulePresentation(
+  rule: MetaPageRule | undefined,
+  fallbackDescription?: string
+): Pick<SidebarItem, "icon" | "badge" | "description"> {
+  return {
+    icon: rule?.icon,
+    badge: rule?.badge,
+    description: rule?.description ?? fallbackDescription,
+  };
 }
 
 function ensureDirectory(root: DirectoryNode, segments: string[]): DirectoryNode {
@@ -200,6 +207,7 @@ function renderDirectory(input: {
         type: "link",
         text: mergeRuleLabel(rule, input.node.indexPage.title),
         link: input.node.indexPage.path,
+        ...rulePresentation(rule, input.node.indexPage.description),
       });
       continue;
     }
@@ -210,6 +218,7 @@ function renderDirectory(input: {
         type: "link",
         text: mergeRuleLabel(rule, filePage.title),
         link: filePage.path,
+        ...rulePresentation(rule, filePage.description),
       });
       continue;
     }
@@ -237,6 +246,10 @@ function renderDirectory(input: {
           type: "link",
           text: childLabel,
           link: childDirectory.indexPage.path,
+          ...rulePresentation(
+            rule,
+            rule?.description ?? childMeta?.description ?? childDirectory.indexPage.description
+          ),
         });
       }
       items.push(...childItems);
@@ -247,7 +260,8 @@ function renderDirectory(input: {
       type: "group",
       text: childLabel,
       items: childItems,
-      expanded: false,
+      expanded: rule?.expanded ?? false,
+      ...rulePresentation(rule, childMeta?.description),
     });
   }
 

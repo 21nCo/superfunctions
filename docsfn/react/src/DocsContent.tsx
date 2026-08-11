@@ -2,6 +2,16 @@
 
 import React from "react";
 import {
+  Check,
+  CircleAlert,
+  CircleCheck,
+  Copy,
+  Info,
+  Lightbulb,
+  TriangleAlert,
+  type LucideIcon,
+} from "lucide-react";
+import {
   assertCompiledContentTrusted,
   compileReactContent,
   createDiagnostic,
@@ -10,12 +20,17 @@ import {
   type CompiledContentBlock,
   type DocsCompatPreset,
 } from "@docsfn/core/browser";
+import { YouTubeEmbed } from "./YouTubeEmbed";
 
 type DocsContentComponentProps = Record<string, unknown> & {
   children?: React.ReactNode;
 };
 
 type MermaidBlock = Extract<CompiledContentBlock, { type: "mermaid" }>;
+
+const builtinComponents: Record<string, React.ComponentType<DocsContentComponentProps>> = {
+  YouTube: YouTubeEmbed,
+};
 
 export interface DocsContentProps {
   compiled?: CompiledContentArtifact;
@@ -29,11 +44,51 @@ export interface DocsContentProps {
   pageActionsSlot?: React.ReactNode;
 }
 
-function renderCodeBlock(block: Extract<CompiledContentBlock, { type: "code" }>) {
+function CodeBlock({ block }: { block: Extract<CompiledContentBlock, { type: "code" }> }) {
+  const [copied, setCopied] = React.useState(false);
+
+  const copyCode = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(block.code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
+
   return (
-    <pre data-docsfn-code="true">
-      <code data-lang={block.lang}>{block.code}</code>
-    </pre>
+    <div className="docsfn-code-block">
+      <div className="docsfn-code-header">
+        <span>{block.lang ?? "Code"}</span>
+        <button type="button" onClick={copyCode} aria-label={copied ? "Code copied" : "Copy code"}>
+          {copied ? <Check size={14} strokeWidth={1.8} /> : <Copy size={14} strokeWidth={1.8} />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre data-docsfn-code="true">
+        <code data-lang={block.lang}>{block.code}</code>
+      </pre>
+    </div>
+  );
+}
+
+const calloutIcons: Record<string, LucideIcon> = {
+  note: CircleAlert,
+  tip: Lightbulb,
+  warning: TriangleAlert,
+  info: Info,
+  caution: CircleCheck,
+};
+
+function Callout({ block }: { block: Extract<CompiledContentBlock, { type: "callout" }> }) {
+  const Icon = calloutIcons[block.kind] ?? CircleAlert;
+  const label = `${block.kind.slice(0, 1).toUpperCase()}${block.kind.slice(1)}`;
+  return (
+    <aside data-docsfn-callout={block.kind}>
+      <div className="docsfn-callout-title">
+        <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+      <div className="docsfn-callout-content" dangerouslySetInnerHTML={{ __html: block.html }} />
+    </aside>
   );
 }
 
@@ -111,11 +166,11 @@ function renderBlock(input: {
   }
 
   if (block.type === "table") {
-    return <div dangerouslySetInnerHTML={{ __html: block.html }} />;
+    return <div className="docsfn-table-wrap" dangerouslySetInnerHTML={{ __html: block.html }} />;
   }
 
   if (block.type === "code") {
-    return renderCodeBlock(block);
+    return <CodeBlock block={block} />;
   }
 
   if (block.type === "mermaid") {
@@ -123,12 +178,7 @@ function renderBlock(input: {
   }
 
   if (block.type === "callout") {
-    return (
-      <aside
-        data-docsfn-callout={block.kind}
-        dangerouslySetInnerHTML={{ __html: block.html }}
-      />
-    );
+    return <Callout block={block} />;
   }
 
   if (block.type === "tabs") {
@@ -188,7 +238,7 @@ function renderBlock(input: {
     );
   }
 
-  const Component = input.components?.[block.name];
+  const Component = input.components?.[block.name] ?? builtinComponents[block.name];
   if (!Component) {
     throw createMissingComponentError(block.name);
   }

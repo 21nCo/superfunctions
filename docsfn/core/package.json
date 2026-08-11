@@ -22,6 +22,11 @@
       "import": "./dist/search.js",
       "require": "./dist/search.cjs"
     },
+    "./search-adapter": {
+      "types": "./dist/search-adapter.d.ts",
+      "import": "./dist/search-adapter.js",
+      "require": "./dist/search-adapter.cjs"
+    },
     "./analytics": {
       "types": "./dist/analytics.d.ts",
       "import": "./dist/analytics.js",

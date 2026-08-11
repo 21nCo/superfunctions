@@ -9,16 +9,24 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_COMPONENTS = [
   "ApiReferenceRenderer",
   "Breadcrumbs",
+  "ChangelogEntry",
+  "ChangelogList",
+  "DatedCollectionEntry",
+  "DatedCollectionList",
   "DocsContent",
+  "DocsFooter",
   "DocsLayout",
   "DocsSearch",
   "DocsSidebar",
+  "DocsSiteShell",
   "DocsToc",
   "EmbeddedPage",
   "Pagination",
+  "PageActions",
   "SidebarGroup",
   "TopBar",
   "VersionSwitcher",
+  "YouTubeEmbed",
 ];
 
 export default defineConfig({
@@ -27,7 +35,14 @@ export default defineConfig({
   dts: false,
   clean: true,
   sourcemap: true,
-  external: [/^@docsfn\/core(\/.*)?$/, "svelte", "@uifn/svelte", "searchfn", "marked"],
+  external: [
+    /^@docsfn\/core(\/.*)?$/,
+    /^@lucide\/svelte(\/.*)?$/,
+    "svelte",
+    "@uifn/svelte",
+    "searchfn",
+    "marked",
+  ],
   esbuildPlugins: [esbuildSvelte()],
   onSuccess: async () => {
     const { copyFile } = await import("node:fs/promises");

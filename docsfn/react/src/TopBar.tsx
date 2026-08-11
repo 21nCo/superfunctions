@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import type { DocsTopNavItem } from "@docsfn/core";
+import { BookOpen, ChevronDown, ExternalLink, Menu, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,8 +24,10 @@ export type TopBarItem = TopBarLink | TopBarDropdown;
 
 export interface TopBarProps {
   surface?: DocsPageSurface;
+  brand?: string;
+  brandHref?: string;
   logo?: React.ReactNode;
-  items?: TopBarItem[];
+  items?: Array<TopBarItem | DocsTopNavItem>;
   searchTrigger?: React.ReactNode;
   versionSelector?: React.ReactNode;
   mobileMenuTrigger?: React.ReactNode;
@@ -65,12 +68,24 @@ function renderLink(item: TopBarLink, className: string) {
       rel={item.external ? "noreferrer noopener" : undefined}
     >
       {item.label}
+      {item.external ? <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" /> : null}
     </a>
   );
 }
 
+function normalizeTopBarItems(input: Array<TopBarItem | DocsTopNavItem>): TopBarItem[] {
+  return input.map((item) => {
+    if ("children" in item) {
+      return mapTopNavItems([item])[0];
+    }
+    return item;
+  });
+}
+
 export function TopBar({
   surface,
+  brand,
+  brandHref = "/",
   logo,
   items,
   searchTrigger,
@@ -78,12 +93,24 @@ export function TopBar({
   mobileMenuTrigger,
   className,
 }: TopBarProps) {
-  const resolvedItems = items ?? mapTopNavItems(surface?.topNav ?? []);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const resolvedItems = normalizeTopBarItems(items ?? surface?.topNav ?? []);
 
   return (
     <header className={`docsfn-topbar ${className || ""}`}>
       <div className="docsfn-topbar-container">
-        {logo ? <div className="docsfn-topbar-logo">{logo}</div> : null}
+        {logo || brand ? (
+          <a className="docsfn-topbar-brand" href={brandHref} aria-label={brand ?? "Documentation home"}>
+            {logo ? (
+              <span className="docsfn-topbar-logo">{logo}</span>
+            ) : (
+              <span className="docsfn-topbar-brand-mark" aria-hidden="true">
+                <BookOpen size={17} strokeWidth={2} />
+              </span>
+            )}
+            {brand ? <span className="docsfn-topbar-brand-name">{brand}</span> : null}
+          </a>
+        ) : null}
 
         <nav className="docsfn-topbar-nav" aria-label="Main navigation">
           {resolvedItems.map((item, index) => {
@@ -92,15 +119,7 @@ export function TopBar({
                 <DropdownMenu key={`${item.label}:${index}`}>
                   <DropdownMenuTrigger className="docsfn-topbar-dropdown-trigger">
                     {item.label}
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                      <path
-                        d="M3 5L6 8L9 5"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
+                    <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="docsfn-topbar-dropdown-content">
                     {item.items.map((subItem, subIndex) => (
@@ -124,9 +143,58 @@ export function TopBar({
         <div className="docsfn-topbar-actions">
           {searchTrigger}
           {versionSelector}
-          {mobileMenuTrigger}
+          {mobileMenuTrigger ?? (resolvedItems.length > 0 ? (
+            <button
+              type="button"
+              className="docsfn-topbar-mobile-trigger"
+              aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+              aria-expanded={mobileNavOpen}
+              aria-controls="docsfn-topbar-mobile-nav"
+              onClick={() => setMobileNavOpen((open) => !open)}
+            >
+              {mobileNavOpen ? <X size={19} strokeWidth={1.8} /> : <Menu size={19} strokeWidth={1.8} />}
+            </button>
+          ) : null)}
         </div>
       </div>
+
+      {mobileNavOpen ? (
+        <nav id="docsfn-topbar-mobile-nav" className="docsfn-topbar-mobile-nav" aria-label="Mobile navigation">
+          {resolvedItems.map((item, index) => {
+            if (isDropdown(item)) {
+              return (
+                <div className="docsfn-topbar-mobile-group" key={`mobile:${item.label}:${index}`}>
+                  <span>{item.label}</span>
+                  {item.items.map((subItem) => (
+                    <a
+                      key={`mobile:${subItem.label}:${subItem.href}`}
+                      href={subItem.href}
+                      target={subItem.external ? "_blank" : undefined}
+                      rel={subItem.external ? "noreferrer noopener" : undefined}
+                      onClick={() => setMobileNavOpen(false)}
+                    >
+                      {subItem.label}
+                      {subItem.external ? <ExternalLink size={13} strokeWidth={1.8} /> : null}
+                    </a>
+                  ))}
+                </div>
+              );
+            }
+            return (
+              <a
+                key={`mobile:${item.label}:${index}`}
+                href={item.href}
+                target={item.external ? "_blank" : undefined}
+                rel={item.external ? "noreferrer noopener" : undefined}
+                onClick={() => setMobileNavOpen(false)}
+              >
+                {item.label}
+                {item.external ? <ExternalLink size={13} strokeWidth={1.8} /> : null}
+              </a>
+            );
+          })}
+        </nav>
+      ) : null}
     </header>
   );
 }

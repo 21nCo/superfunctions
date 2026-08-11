@@ -6,6 +6,7 @@
   export let surface: DocsPageSurface | undefined = undefined;
   export let sidebar: Sidebar | undefined = undefined;
   export let activePath: string | undefined = undefined;
+  export let preservedSearchParams: Record<string, string> = {};
 
   $: resolvedSidebar = sidebar ?? surface?.sidebar;
   $: resolvedActivePath = activePath ?? surface?.route;
@@ -14,11 +15,12 @@
 {#if resolvedSidebar}
   <div class="docsfn-sidebar">
     <div class="docsfn-sidebar-viewport">
-      <nav class="docsfn-sidebar-nav">
+      <nav class="docsfn-sidebar-nav" aria-label="Documentation navigation">
         {#each resolvedSidebar.items as item, i (`${item.type}:${i}`)}
           <SidebarGroup
             {item}
             activePath={resolvedActivePath}
+            {preservedSearchParams}
           />
         {/each}
       </nav>

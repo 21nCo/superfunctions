@@ -1,4 +1,5 @@
 import {
+  buildDatedCollectionJsonFeed,
   buildDocsStaticParams,
   createDiagnostic,
   createDocsError,
@@ -8,6 +9,7 @@ import {
   resolveSidebarForRoute,
   type ApiReference,
   type BlogPost,
+  type BuildDatedCollectionJsonFeedOptions,
   type DocPage,
   type DocsManifest,
   type DocsSearchArtifact,
@@ -94,6 +96,39 @@ export interface SearchArtifactResponseInput {
   cacheControl?: string;
 }
 
+export interface DatedCollectionJsonFeedResponseInput
+  extends BuildDatedCollectionJsonFeedOptions {
+  manifest?: DocsManifest;
+  loadManifest?: () => Promise<DocsManifest>;
+  cacheControl?: string;
+}
+
+export interface CollectionPostOptions {
+  includeDrafts?: boolean;
+}
+
+export interface EmbedModeOptions {
+  param?: string;
+}
+
+export interface EmbedSidebarModeOptions {
+  param?: string;
+  aliases?: string[];
+}
+
+type EmbedSearchParamsRecord = Record<
+  string,
+  string | string[] | readonly string[] | null | undefined
+>;
+
+type EmbedModeInput =
+  | URL
+  | URLSearchParams
+  | EmbedSearchParamsRecord
+  | { searchParams: URLSearchParams | EmbedSearchParamsRecord }
+  | null
+  | undefined;
+
 function compareStrings(left: string, right: string): number {
   return left.localeCompare(right, "en", {
     sensitivity: "variant",
@@ -117,6 +152,111 @@ function normalizeSlugSegments(slug: SlugParam): string[] {
   return [];
 }
 
+function normalizeCollectionId(collectionId: string): string {
+  const trimmed = collectionId.trim();
+  const withoutPrefix = trimmed.startsWith("collection:")
+    ? trimmed.slice("collection:".length)
+    : trimmed;
+  return withoutPrefix
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((segment) => segment.length > 0 && segment !== ".")
+    .join("/")
+    .replaceAll("/", "-")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizePostSlug(slug: string): string {
+  return slug.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function normalizeEmbedParamName(param: string | undefined): string {
+  const normalized = typeof param === "string" ? param.trim() : "";
+  return normalized.length > 0 ? normalized : "embed";
+}
+
+function normalizeEmbedSidebarParamNames(options: EmbedSidebarModeOptions): string[] {
+  const params = [
+    typeof options.param === "string" && options.param.trim().length > 0
+      ? options.param.trim()
+      : "showSidebar",
+    ...(options.aliases ?? ["showsidebar", "sidebar"]),
+  ];
+  return [...new Set(params.map((param) => param.trim()).filter(Boolean))];
+}
+
+function isEmbedSearchParamsRecord(input: unknown): input is EmbedSearchParamsRecord {
+  return typeof input === "object" && input !== null && !(input instanceof URLSearchParams);
+}
+
+function getEmbedSearchParamValue(
+  input: EmbedModeInput,
+  param: string
+): string | string[] | readonly string[] | null | undefined {
+  if (!input) {
+    return undefined;
+  }
+  if (input instanceof URL) {
+    return input.searchParams.get(param);
+  }
+  if (input instanceof URLSearchParams) {
+    return input.get(param);
+  }
+  if ("searchParams" in input) {
+    const searchParams = input.searchParams;
+    if (searchParams instanceof URLSearchParams) {
+      return searchParams.get(param);
+    }
+    if (isEmbedSearchParamsRecord(searchParams)) {
+      return searchParams[param];
+    }
+    return undefined;
+  }
+  if (isEmbedSearchParamsRecord(input)) {
+    return input[param];
+  }
+  return undefined;
+}
+
+export function isEmbedModeValue(
+  value: string | string[] | readonly string[] | null | undefined
+): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value !== "string") {
+    return value.some((entry) => isEmbedModeValue(entry));
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return true;
+  }
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+export function resolveEmbedMode(
+  input: EmbedModeInput,
+  options: EmbedModeOptions = {}
+): boolean {
+  const param = normalizeEmbedParamName(options.param);
+  return isEmbedModeValue(getEmbedSearchParamValue(input, param));
+}
+
+export function resolveEmbedSidebarMode(
+  input: EmbedModeInput,
+  options: EmbedSidebarModeOptions = {}
+): boolean {
+  for (const param of normalizeEmbedSidebarParamNames(options)) {
+    const value = getEmbedSearchParamValue(input, param);
+    if (value !== null && value !== undefined) {
+      return isEmbedModeValue(value);
+    }
+  }
+  return false;
+}
+
 function buildDocsPath(slug: SlugParam, basePath?: string): string {
   const resolvedBasePath = normalizeBasePath(basePath);
   const segments = normalizeSlugSegments(slug);
@@ -124,6 +264,54 @@ function buildDocsPath(slug: SlugParam, basePath?: string): string {
     return resolvedBasePath;
   }
   return `${resolvedBasePath}/${segments.join("/")}`.replace(/\/{2,}/g, "/");
+}
+
+type DatedCollectionSurface = NonNullable<DocsManifest["collections"]>[string];
+
+function getPostCollectionId(post: BlogPost): string {
+  return normalizeCollectionId(post.collectionId ?? "blog") || "blog";
+}
+
+function getDatedCollectionSurface(
+  collectionId: string,
+  manifest: DocsManifest
+): DatedCollectionSurface | null {
+  const normalizedCollectionId = normalizeCollectionId(collectionId);
+  if (!normalizedCollectionId) {
+    return null;
+  }
+
+  const collection = manifest.collections?.[normalizedCollectionId];
+  if (collection) {
+    return collection;
+  }
+
+  if (normalizedCollectionId === "blog" && manifest.blog) {
+    return {
+      id: "blog",
+      label: "Blog",
+      scope: "blog",
+      listRoute: manifest.blog.listRoute,
+      feedPath: manifest.blog.feedPath,
+      postOrder: manifest.blog.postOrder,
+      tags: manifest.blog.tags,
+      archives: manifest.blog.archives,
+    };
+  }
+
+  return null;
+}
+
+function resolveCollectionPostRoute(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest
+): string {
+  const normalizedCollectionId = normalizeCollectionId(collectionId) || collectionId;
+  const collection = getDatedCollectionSurface(normalizedCollectionId, manifest);
+  const listRoute =
+    collection?.listRoute ?? (normalizedCollectionId === "blog" ? "/blog" : `/${normalizedCollectionId}`);
+  return `${listRoute}/${normalizePostSlug(slug)}`.replace(/\/{2,}/g, "/");
 }
 
 function resolveRouteEntry(routePath: string, manifest: DocsManifest): DocsRouteEntry | null {
@@ -463,19 +651,92 @@ export function getVersionedPageDataOrThrow(
   throw createRouteNotFoundError(`docs route ${routePath} was not generated`, routePath);
 }
 
-export function getPostData(slug: string, manifest: DocsManifest): BlogPost | null {
-  const normalizedSlug = slug.replace(/^\/+/, "");
+export function getCollectionPosts(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost[] {
+  const normalizedCollectionId = normalizeCollectionId(collectionId);
+  if (!normalizedCollectionId) {
+    return [];
+  }
+
+  const includeDrafts = Boolean(options.includeDrafts);
+  const collection = getDatedCollectionSurface(normalizedCollectionId, manifest);
+  const postOrder = collection?.postOrder ?? [];
+  const orderedPosts = postOrder
+    .map((id) => manifest.posts[id])
+    .filter(
+      (post): post is BlogPost =>
+        Boolean(post) &&
+        getPostCollectionId(post) === normalizedCollectionId &&
+        (includeDrafts || !post.draft)
+    );
+
+  if (postOrder.length > 0) {
+    return orderedPosts;
+  }
+
+  return Object.values(manifest.posts)
+    .filter(
+      (post) =>
+        getPostCollectionId(post) === normalizedCollectionId &&
+        (includeDrafts || !post.draft)
+    )
+    .sort((left, right) => {
+      const dateCompare = right.date.localeCompare(left.date);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      return compareStrings(left.slug, right.slug);
+    });
+}
+
+export function getCollectionPostData(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost | null {
+  const normalizedSlug = normalizePostSlug(slug);
   return (
-    Object.values(manifest.posts).find((post) => post.slug === normalizedSlug) ?? null
+    getCollectionPosts(collectionId, manifest, options).find(
+      (post) => post.slug === normalizedSlug
+    ) ?? null
   );
 }
 
-export function getPostDataOrThrow(slug: string, manifest: DocsManifest): BlogPost {
-  const post = getPostData(slug, manifest);
+export function getCollectionPostDataOrThrow(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  const post = getCollectionPostData(collectionId, slug, manifest, options);
   if (post) {
     return post;
   }
-  throw createRouteNotFoundError(`blog route /blog/${slug} was not generated`, `/blog/${slug}`);
+  const route = resolveCollectionPostRoute(collectionId, slug, manifest);
+  throw createRouteNotFoundError(
+    `${normalizeCollectionId(collectionId) || "collection"} route ${route} was not generated`,
+    route
+  );
+}
+
+export function getPostData(
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost | null {
+  return getCollectionPostData("blog", slug, manifest, options);
+}
+
+export function getPostDataOrThrow(
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  return getCollectionPostDataOrThrow("blog", slug, manifest, options);
 }
 
 export function getApiData(
@@ -522,8 +783,21 @@ export function loadVersionedPageData(
   return getVersionedPageDataOrThrow(version, slug, manifest, options);
 }
 
-export function loadPostData(slug: string, manifest: DocsManifest): BlogPost {
-  return getPostDataOrThrow(slug, manifest);
+export function loadCollectionPostData(
+  collectionId: string,
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  return getCollectionPostDataOrThrow(collectionId, slug, manifest, options);
+}
+
+export function loadPostData(
+  slug: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+): BlogPost {
+  return getPostDataOrThrow(slug, manifest, options);
 }
 
 export function loadApiData(
@@ -534,12 +808,23 @@ export function loadApiData(
   return getApiDataOrThrow(slug, manifest, options);
 }
 
-export function generateBlogParams(manifest: DocsManifest) {
-  return Object.values(manifest.posts)
+export function generateCollectionParams(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return getCollectionPosts(collectionId, manifest, options)
     .sort((left, right) => compareStrings(left.slug, right.slug))
     .map((post) => ({
       slug: post.slug,
     }));
+}
+
+export function generateBlogParams(
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return generateCollectionParams("blog", manifest, options);
 }
 
 export function generateApiParams(manifest: DocsManifest) {
@@ -550,12 +835,23 @@ export function generateApiParams(manifest: DocsManifest) {
     }));
 }
 
-export function getBlogPaths(manifest: DocsManifest) {
-  return generateBlogParams(manifest).map((entry) => ({
+export function getCollectionPaths(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return generateCollectionParams(collectionId, manifest, options).map((entry) => ({
     params: {
       slug: entry.slug,
     },
   }));
+}
+
+export function getBlogPaths(
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return getCollectionPaths("blog", manifest, options);
 }
 
 export function getApiPaths(manifest: DocsManifest) {
@@ -711,11 +1007,36 @@ export function createVersionedPageLoad(
   };
 }
 
-export function createPostLoad(manifest: DocsManifest) {
+export function createPostLoad(
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
   return ({ params }: LoadEvent<{ slug: string }>) => {
     try {
-      const post = getPostDataOrThrow(params.slug, manifest);
+      const post = getPostDataOrThrow(params.slug, manifest, options);
       return {
+        post,
+        manifest,
+      };
+    } catch (error) {
+      if (isDocsRouteNotFound(error)) {
+        throw svelteKitError(404, error.message);
+      }
+      throw error;
+    }
+  };
+}
+
+export function createCollectionPostLoad(
+  collectionId: string,
+  manifest: DocsManifest,
+  options: CollectionPostOptions = {}
+) {
+  return ({ params }: LoadEvent<{ slug: string }>) => {
+    try {
+      const post = getCollectionPostDataOrThrow(collectionId, params.slug, manifest, options);
+      return {
+        collection: getDatedCollectionSurface(collectionId, manifest),
         post,
         manifest,
       };
@@ -779,6 +1100,56 @@ export async function createSearchArtifactResponse(
         ? String((error as { code: unknown }).code)
         : "DOCS_ARTIFACT_INVALID";
     const message = error instanceof Error ? error.message : "failed to load search artifact";
+
+    return new Response(
+      JSON.stringify({
+        code,
+        message,
+      }),
+      {
+        status: 500,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      }
+    );
+  }
+}
+
+export async function createDatedCollectionJsonFeedResponse(
+  input: DatedCollectionJsonFeedResponseInput
+): Promise<Response> {
+  try {
+    const manifest = input.manifest ?? (input.loadManifest ? await input.loadManifest() : undefined);
+    if (!manifest) {
+      throw createDocsError({
+        code: "DOCS_ARTIFACT_INVALID",
+        message: "docs manifest is not available",
+        diagnostics: [
+          createDiagnostic({
+            code: "DOCS_ARTIFACT_INVALID",
+            message: "docs manifest is not available",
+          }),
+        ],
+      });
+    }
+
+    const feed = buildDatedCollectionJsonFeed(manifest, input);
+    return new Response(JSON.stringify(feed), {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": input.cacheControl ?? "public, max-age=0, must-revalidate",
+      },
+    });
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code: unknown }).code)
+        : "DOCS_ARTIFACT_INVALID";
+    const message =
+      error instanceof Error ? error.message : "failed to load dated collection JSON feed";
 
     return new Response(
       JSON.stringify({

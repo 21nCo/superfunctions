@@ -1,10 +1,12 @@
 <script lang="ts">
   import "../app.css";
-  import DocsSiteSearch from "$lib/components/DocsSiteSearch.svelte";
-  import TopBar from "@site/topbar";
-  import { page } from "$app/stores";
-  import type { Snippet } from "svelte";
   import { onMount } from "svelte";
+  import { navigating, page } from "$app/stores";
+  import type { Sidebar } from "@docsfn/core/browser";
+  import type { Snippet } from "svelte";
+  import DocsSiteSearch from "$lib/components/DocsSiteSearch.svelte";
+  import DocsLayout, { type DocsPageSurface } from "@site/docs-layout";
+  import DocsSiteShell from "@site/docs-site-shell";
   import type { LayoutData } from "./$types";
 
   interface Props {
@@ -14,75 +16,73 @@
 
   let { data, children }: Props = $props();
 
-  /** DocsSearch uses uifn Dialog with runes that cannot SSR; mount after hydrate. */
+  // DocsSearch uses a client-side dialog, so add it after hydration.
   let clientSearchReady = $state(false);
+
+  const isDocsRoute = $derived(
+    $page.url.pathname === "/docs" || $page.url.pathname.startsWith("/docs/")
+  );
+  const navigationPending = $derived($navigating !== null);
+  const docsRouteData = $derived(
+    $page.data as LayoutData & {
+      surface?: DocsPageSurface;
+      sidebar?: Sidebar;
+    }
+  );
+  const preservedSearchParams = $derived(
+    data.embed
+      ? {
+          embed: "1",
+          ...(data.embedSidebar ? { showSidebar: "1" } : {}),
+        }
+      : {}
+  );
+
   onMount(() => {
     clientSearchReady = true;
   });
 </script>
 
 <div
-  class="docsfn-site-root"
-  class:docsfn-docs-chrome={$page.url.pathname.startsWith("/docs")}
+  class="docsfn-navigation-progress"
+  class:docsfn-navigation-progress--active={navigationPending}
+  class:docsfn-navigation-progress--embedded={data.embed}
+  role={navigationPending ? "progressbar" : undefined}
+  aria-label={navigationPending ? "Loading page" : undefined}
 >
-  <!-- <TopBar
-    items={data.source.config.navigation?.topNav}
-    searchTrigger={clientSearchReady ? DocsSiteSearch : undefined}
-  /> -->
-  <div class="docsfn-site-main">
-    {@render children()}
-  </div>
-  {#if data.source.config.site.showFooter !== false}
-    <footer class="docsfn-site-footer">
-      <p>Built at <a href="https://21n.co" rel="noreferrer noopener">21n.co</a></p>
-    </footer>
-  {/if}
+  <span></span>
 </div>
 
-<style>
-  .docsfn-site-root {
-    min-height: 100vh;
-    width: 100%;
-    max-width: none;
-    display: flex;
-    flex-direction: column;
-  }
+{#snippet routeContent()}
+  <div
+    class="docsfn-route-view"
+    aria-busy={navigationPending}
+  >
+    {@render children()}
+  </div>
+{/snippet}
 
-  .docsfn-site-main {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .docsfn-site-footer {
-    flex-shrink: 0;
-    align-self: stretch;
-    width: 100%;
-    max-width: none;
-    box-sizing: border-box;
-    position: relative;
-    z-index: 2;
-    border-top: 1px solid var(--docsfn-color-border);
-    padding: 1rem 1.5rem;
-    text-align: center;
-    font-size: 0.875rem;
-    color: var(--docsfn-color-muted);
-    background: var(--docsfn-color-surface);
-    transition: var(--docsfn-transition-theme);
-  }
-
-  .docsfn-site-footer p {
-    margin: 0;
-  }
-
-  .docsfn-site-footer a {
-    color: var(--docsfn-color-primary);
-    text-decoration: none;
-    font-weight: 500;
-  }
-
-  .docsfn-site-footer a:hover {
-    text-decoration: underline;
-  }
-</style>
+<DocsSiteShell
+  embedded={data.embed}
+  brand={data.source.siteTitle}
+  brandHref="/"
+  items={data.source.config.navigation?.topNav ?? []}
+  searchTrigger={clientSearchReady ? DocsSiteSearch : undefined}
+  showFooter={data.source.config.site.showFooter !== false}
+  footerNote="Built at 21n.co"
+  footerLinks={[{ label: "21n.co", href: "https://21n.co", external: true }]}
+>
+  {#if isDocsRoute && docsRouteData.surface}
+    <DocsLayout
+      surface={docsRouteData.surface}
+      sidebar={docsRouteData.sidebar}
+      embedded={data.embed}
+      showSidebar={data.embed ? data.embedSidebar : undefined}
+      {preservedSearchParams}
+    >
+      {@render routeContent()}
+    </DocsLayout>
+  {:else}
+    {@render routeContent()}
+  {/if}
+</DocsSiteShell>

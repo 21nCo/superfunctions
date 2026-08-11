@@ -38,7 +38,9 @@ import { SuppressionManager } from './suppression/manager';
 import { AwsSesWebhookHandler } from './events/webhook-handler';
 import { welcomeEmailTemplate, passwordResetTemplate, notificationTemplate } from './templates/defaults';
 import { createRouter } from '@superfunctions/http';
+import { wrapWithSchema, type Adapter } from '@superfunctions/db';
 import { randomUUID } from 'node:crypto';
+import { getSchema } from './schema';
 import {
   DatabaseError,
   EmailProviderError,
@@ -56,6 +58,12 @@ type SendfnErrorConstructor = new (message: string, options?: { cause?: unknown 
 interface CanonicalMeta {
   requestId: string;
   version: 'v0';
+}
+
+const SUPPORTED_PUSH_PLATFORMS = ['ios', 'android', 'web'] as const;
+
+function isPlatform(value: string): value is Platform {
+  return (SUPPORTED_PUSH_PLATFORMS as readonly string[]).includes(value);
 }
 
 function createRequestId(request: Request): string {
@@ -112,6 +120,7 @@ export class Sendfn implements SendfnClient {
   private deviceManager: DeviceTokenManager;
   private awsSesWebhookHandler: AwsSesWebhookHandler;
   private db: SendfnDb;
+  private databaseAdapter: Adapter;
   private emailProvider?: EmailProvider;
   private smsProvider?: SmsProvider;
   private whatsappProvider?: WhatsAppProvider;
@@ -121,8 +130,19 @@ export class Sendfn implements SendfnClient {
   public router: any;
 
   constructor(private config: SendfnConfig) {
+    const configuredPushProviders = config.pushProviders ?? {};
+    const unsupportedPushPlatforms = Object.keys(configuredPushProviders).filter(
+      (platform) => !isPlatform(platform)
+    );
+    if (unsupportedPushPlatforms.length > 0) {
+      throw new ValidationError(
+        `Unsupported push provider platform${unsupportedPushPlatforms.length === 1 ? '' : 's'}: ${unsupportedPushPlatforms.join(', ')}`
+      );
+    }
+
     // Initialize Database Wrapper
-    this.db = new SendfnDb(config.database);
+    this.databaseAdapter = config.database;
+    this.db = new SendfnDb(wrapWithSchema(config.database, getSchema()));
     
     // Dependencies
     const templateEngine = new TemplateEngine();
@@ -197,7 +217,8 @@ export class Sendfn implements SendfnClient {
     // Initialize Push Providers
     const pushProvidersToInitialize = new Map<Platform, PushProvider>();
 
-    for (const [platform, provider] of Object.entries(config.pushProviders ?? {}) as Array<[Platform, PushProvider | undefined]>) {
+    for (const platform of SUPPORTED_PUSH_PLATFORMS) {
+        const provider = configuredPushProviders[platform];
         if (provider) {
             pushProvidersToInitialize.set(platform, provider);
         }
@@ -373,6 +394,89 @@ export class Sendfn implements SendfnClient {
                       async () => this.push(await ctx.json()),
                       { successStatus: 201, validationMessage: 'Request body failed validation' }
                     )
+              },
+              // POST /devices
+              {
+                  method: 'POST',
+                  path: '/devices',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(
+                      req,
+                      async () => this.registerDevice(await ctx.json()),
+                      { successStatus: 201, validationMessage: 'Request body failed validation' }
+                    )
+              },
+              // GET /devices?userId=...&platform=...
+              {
+                  method: 'GET',
+                  path: '/devices',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(req, async () => {
+                      const userId = ctx.query.get('userId');
+                      const platform = ctx.query.get('platform');
+
+                      if (!userId?.trim()) {
+                        throw new ValidationError('`userId` query parameter is required');
+                      }
+
+                      if (platform !== null && !isPlatform(platform)) {
+                        throw new ValidationError('`platform` must be ios, android, or web');
+                      }
+
+                      return {
+                        devices: await this.getDevices(userId.trim(), platform ?? undefined),
+                      };
+                    }, { validationMessage: 'Request query failed validation' })
+              },
+              // POST /devices/refresh
+              {
+                  method: 'POST',
+                  path: '/devices/refresh',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(
+                      req,
+                      async () => {
+                        let body: unknown;
+                        try {
+                          body = await ctx.json();
+                        } catch {
+                          throw new ValidationError('Request body must be valid JSON');
+                        }
+
+                        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+                          throw new ValidationError('Request body must be a JSON object');
+                        }
+
+                        const refresh = body as Record<string, unknown>;
+                        return this.refreshDeviceToken(
+                          refresh.oldToken as string,
+                          refresh.newToken as string,
+                          refresh.userId as string,
+                          refresh.platform as Platform
+                        );
+                      },
+                      { validationMessage: 'Request body failed validation' }
+                    )
+              },
+              // DELETE /devices?token=...
+              {
+                  method: 'DELETE',
+                  path: '/devices',
+                  middleware: adminRouteMiddleware,
+                  handler: async (req: Request, ctx: any) =>
+                    withEnvelope(req, async () => {
+                      const token = ctx.query.get('token');
+
+                      if (!token) {
+                        throw new ValidationError('`token` query parameter is required');
+                      }
+
+                      await this.deactivateDevice(token);
+                      return { deactivated: true };
+                    }, { validationMessage: 'Request query failed validation' })
               },
               // GET /events
               {
@@ -612,7 +716,7 @@ export class Sendfn implements SendfnClient {
     for (const provider of this.pushProviders.values()) {
       resources.add(provider);
     }
-    resources.add(this.db);
+    resources.add(this.databaseAdapter);
 
     for (const resource of resources) {
       if (typeof resource.close === 'function') {

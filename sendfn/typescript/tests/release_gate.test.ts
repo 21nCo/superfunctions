@@ -50,6 +50,7 @@ describe('release gate metadata', () => {
     expect(readme).toContain('npm run release:verify');
     expect(readme).not.toContain('npm run release:verify --workspace sendfn/typescript');
     expect(readme).toContain("import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';");
+    expect(readme).toContain("import { apnsAdapter } from 'sendfn/adapters/apns';");
     expect(readme).toContain("app.post('/webhooks/aws-ses'");
     expect(readme).not.toContain('@sendfn/core');
     expect(readme).not.toContain('Twilio');

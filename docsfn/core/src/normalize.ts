@@ -7,6 +7,11 @@ import {
   slugToSegments,
   stripSourceExtension,
 } from "./routing";
+import {
+  getNamedCollectionId,
+  isNamedCollection,
+  normalizeDatedCollectionId,
+} from "./provider";
 import type {
   DocsCollection,
   DocsConfig,
@@ -18,6 +23,9 @@ export interface MetaPageRule {
   key: string;
   label?: string;
   icon?: string;
+  badge?: string;
+  description?: string;
+  expanded?: boolean;
   hidden?: boolean;
 }
 
@@ -47,6 +55,9 @@ export interface NormalizedPageRecord {
 
 export interface NormalizedPostRecord {
   id: string;
+  collectionId?: string;
+  collectionLabel?: string;
+  searchScope?: string;
   slug: string;
   path: string;
   title: string;
@@ -84,7 +95,40 @@ function shouldTreatAsContent(
   if (entryType !== "content") {
     return false;
   }
-  return collection === "docs" || collection === "pages" || collection === "blog" || collection === "api";
+  return (
+    collection === "docs" ||
+    collection === "pages" ||
+    collection === "blog" ||
+    isNamedCollection(collection) ||
+    collection === "api"
+  );
+}
+
+function isDatedContentCollection(collection: DocsCollection): boolean {
+  return collection === "blog" || isNamedCollection(collection);
+}
+
+function resolveDatedCollectionMetadata(
+  collection: DocsCollection,
+  config: DocsConfig
+): { collectionId: string; collectionLabel?: string; searchScope?: string } {
+  if (collection === "blog") {
+    return {
+      collectionId: "blog",
+      collectionLabel: "Blog",
+      searchScope: "blog",
+    };
+  }
+
+  const collectionId = getNamedCollectionId(collection) ?? "collection";
+  const collectionConfig = Object.entries(config.collections ?? {}).find(
+    ([key]) => normalizeDatedCollectionId(key) === collectionId
+  )?.[1];
+  return {
+    collectionId,
+    collectionLabel: collectionConfig?.label,
+    searchScope: collectionConfig?.scope ?? collectionId,
+  };
 }
 
 function deriveTitleFromSourcePath(sourcePath: string): string {
@@ -129,6 +173,11 @@ function parseMetaPageRule(value: unknown): MetaPageRule {
             ? record.title
             : undefined,
       icon: typeof record.icon === "string" ? record.icon : undefined,
+      badge: typeof record.badge === "string" ? record.badge : undefined,
+      description:
+        typeof record.description === "string" ? record.description : undefined,
+      expanded:
+        typeof record.expanded === "boolean" ? record.expanded : undefined,
       hidden: Boolean(record.hidden),
     };
   }
@@ -227,7 +276,9 @@ export function normalizeSourceEntries(
     const frontmatter = entry.frontmatter ?? {};
 
     if (
-      (entry.collection === "docs" || entry.collection === "pages" || entry.collection === "blog") &&
+      (entry.collection === "docs" ||
+        entry.collection === "pages" ||
+        isDatedContentCollection(entry.collection)) &&
       ![".md", ".mdx"].includes(extension)
     ) {
       continue;
@@ -269,15 +320,19 @@ export function normalizeSourceEntries(
       continue;
     }
 
-    if (entry.collection === "blog") {
+    if (isDatedContentCollection(entry.collection)) {
       const route = buildRoute({
         collection: "blog",
         sourcePath,
         frontmatter,
         config: input.config,
       });
+      const collectionMetadata = resolveDatedCollectionMetadata(entry.collection, input.config);
       posts.push({
         id: entry.id,
+        collectionId: collectionMetadata.collectionId,
+        collectionLabel: collectionMetadata.collectionLabel,
+        searchScope: collectionMetadata.searchScope,
         slug: route.slug,
         path: route.path,
         title:

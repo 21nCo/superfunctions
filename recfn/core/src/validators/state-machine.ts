@@ -4,7 +4,7 @@ import { createError, ErrorCode } from '../errors.js';
 const VALID_TRANSITIONS: Record<BotStatus, BotStatus[]> = {
   creating: ['joining', 'error'],
   joining: ['joined', 'error'],
-  joined: ['recording', 'error'],
+  joined: ['recording', 'leaving', 'error'],
   recording: ['leaving', 'error'],
   leaving: ['finalizing', 'left', 'error'],
   finalizing: ['done', 'error'],

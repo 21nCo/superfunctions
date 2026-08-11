@@ -22,36 +22,96 @@ const absolutePathPattern =
   /(^|[\s("'`])(?:\/Users\/[^\s"'`)\]]+|\/home\/[^\s"'`)\]]+|[A-Za-z]:\\Users\\[^\s"'`)\]]+)/m;
 const staleGatePattern = /\bfuture repo-root\b|planned for a later implementation phase|future release gating/i;
 const legacyPackagePatterns = [/@superfunctions\/plugfn\b/, /@superfunctions\/plugfn-cli\b/];
-const requiredCoreProviders = ['github', 'linear', 'clickup', 'gmail'];
+const requiredCoreProviders = ['github', 'linear', 'clickup', 'gmail', 'notion'];
 
 const steps = [
   {
+    name: 'typescriptClean',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/core', 'run', 'clean'],
+  },
+  {
     name: 'typescriptBuild',
     command: 'npm',
-    args: ['--prefix', 'plugfn/typescript', 'run', 'build'],
+    args: ['--prefix', 'plugfn/core', 'run', 'build'],
   },
   {
     name: 'typescriptTypecheck',
     command: 'npm',
-    args: ['--prefix', 'plugfn/typescript', 'run', 'type-check'],
+    args: ['--prefix', 'plugfn/core', 'run', 'type-check'],
   },
   {
     name: 'typescriptTests',
     command: 'npm',
-    args: ['--prefix', 'plugfn/typescript', 'test', '--', '--run'],
+    args: ['--prefix', 'plugfn/core', 'test', '--', '--run'],
   },
   {
     name: 'typescriptE2E',
     command: 'npm',
     args: [
       '--prefix',
-      'plugfn/typescript',
+      'plugfn/core',
       'test',
       '--',
       '--run',
       'tests/e2e/oauth-callback.test.ts',
       'tests/e2e/webhook-verification.test.ts',
     ],
+  },
+  {
+    name: 'clientBuild',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/client', 'run', 'build'],
+  },
+  {
+    name: 'clientTypecheck',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/client', 'run', 'typecheck'],
+  },
+  {
+    name: 'clientTests',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/client', 'test', '--', '--run'],
+  },
+  {
+    name: 'providersClean',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/providers', 'run', 'clean'],
+  },
+  {
+    name: 'providersBuild',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/providers', 'run', 'build'],
+  },
+  {
+    name: 'providersTypecheck',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/providers', 'run', 'typecheck'],
+  },
+  {
+    name: 'providersTests',
+    command: 'npm',
+    args: ['--prefix', 'plugfn/providers', 'test', '--', '--run'],
+  },
+  {
+    name: 'providerGateGithub',
+    command: 'node',
+    args: ['plugfn/scripts/gate-plugfn-provider.mjs', 'github'],
+  },
+  {
+    name: 'providerGateLinear',
+    command: 'node',
+    args: ['plugfn/scripts/gate-plugfn-provider.mjs', 'linear'],
+  },
+  {
+    name: 'providerGateGmail',
+    command: 'node',
+    args: ['plugfn/scripts/gate-plugfn-provider.mjs', 'gmail'],
+  },
+  {
+    name: 'providerGateNotion',
+    command: 'node',
+    args: ['plugfn/scripts/gate-plugfn-provider.mjs', 'notion'],
   },
   {
     name: 'cliBuild',

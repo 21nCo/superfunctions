@@ -14,7 +14,7 @@ export interface SendfnConfig {
   emailProvider?: EmailProvider; // New adapter pattern
   smsProvider?: SmsProvider; // New adapter pattern
   whatsappProvider?: WhatsAppProvider;
-  pushProviders?: Partial<Record<Platform, PushProvider>>;
+  pushProviders?: Partial<Record<Platform, PushProvider>>; // Adapter pattern for APNS, FCM, web push, etc.
   push?: PushConfig;
   templates?: TemplateConfig;
   options?: SendfnOptions;
@@ -58,6 +58,7 @@ export interface FcmConfig {
 }
 
 export interface ApnsConfig {
+  bundleId: string;
   keyId: string;
   teamId: string;
   key: string;

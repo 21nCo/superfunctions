@@ -87,6 +87,29 @@ export function createSourceEntryId(
   return `${collection}:${normalizeProviderPath(relativePath)}`;
 }
 
+export function normalizeDatedCollectionId(value: string): string {
+  return normalizeProviderPath(value)
+    .replaceAll("/", "-")
+    .trim()
+    .toLowerCase();
+}
+
+export function createNamedCollection(collectionId: string): DocsCollection {
+  return `collection:${normalizeDatedCollectionId(collectionId)}`;
+}
+
+export function isNamedCollection(collection: DocsCollection): collection is `collection:${string}` {
+  return collection.startsWith("collection:");
+}
+
+export function getNamedCollectionId(collection: DocsCollection): string | undefined {
+  if (!isNamedCollection(collection)) {
+    return undefined;
+  }
+  const id = collection.slice("collection:".length);
+  return id.length > 0 ? id : undefined;
+}
+
 export function stableSortSourceEntries(entries: DocsSourceEntry[]): DocsSourceEntry[] {
   return [...entries].sort((left, right) => {
     const leftKey = `${left.collection}:${normalizeProviderPath(left.relativePath)}`;
@@ -247,7 +270,7 @@ export function toLegacyRawEntries(entries: DocsSourceEntry[]): RawContentEntry[
       const kind =
         entry.collection === "api"
           ? "api"
-          : entry.collection === "blog"
+          : entry.collection === "blog" || isNamedCollection(entry.collection)
             ? "post"
             : entry.collection === "assets"
               ? "asset"

@@ -5,7 +5,9 @@ description: Configure docsfn search scopes, body indexing, artifacts, and the D
 
 # Search
 
-docsfn builds a **search artifact** (`DocsSearchArtifact`) at compile time and serves it as JSON. The browser loads that artifact (or fetches it lazily) and hydrates a **searchfn** memory client from the artifact documents.
+docsfn builds a **search artifact** (`DocsSearchArtifact`) at compile time and serves it as JSON. Search is local/static by default: the browser loads that artifact (or fetches it lazily) and queries it in-process.
+
+The default engine is **searchfn**. Internally, docsfn now talks to search through a small adapter boundary, so searchfn remains the built-in starting point while other engines can be added later without rewriting the docs UI or manifest pipeline.
 
 See also: [Configuration](./configuration), [CLI](./cli), [Content providers](./content-providers).
 
@@ -16,7 +18,7 @@ In **`docsfn.config.ts`**:
 ```ts
 search: {
   enabled: true,
-  scopes: ["docs", "api", "blog"],
+  scopes: ["docs", "api", "blog", "changelog"],
   bodyIndexing: "summary",
   maxArtifactBytes: 1_500_000,
 },
@@ -24,15 +26,16 @@ search: {
 
 - **`enabled`**: When `false`, the pipeline skips emitting `search.json` in CLI artifact writes (and you should avoid exposing an empty endpoint).
 
-## Scopes: `docs`, `api`, `blog`
+## Scopes
 
 Each indexed document carries a **`scope`** (`DocsSearchScope`). The runtime can filter results:
 
 - **`docs`** — documentation pages.
 - **`api`** — API reference entries, including OpenAPI routes and any `/docs/api...` markdown routes that you classify with `search.routeScopeOverrides`.
 - **`blog`** — blog posts.
+- **custom scopes** — named dated collections can define scopes such as **`changelog`**.
 
-`DocsSearch` defaults to scope filters **`["all", "docs", "api", "blog"]`**. Pass a narrower `scopes` prop if your site disables some collections.
+`DocsSearch` can filter by any scopes present in the artifact. Pass a narrower `scopes` prop if your UI should show only selected sections.
 
 ### Route-based scope overrides
 
@@ -41,7 +44,7 @@ Use `search.routeScopeOverrides` when a route should search like API content eve
 ```ts
 search: {
   enabled: true,
-  scopes: ["docs", "api", "blog"],
+  scopes: ["docs", "api", "blog", "changelog"],
   routeScopeOverrides: [
     { pattern: "/docs/api", scope: "api" },
     { pattern: "/docs/api/**", scope: "api" },
@@ -101,10 +104,10 @@ From **`@docsfn/svelte`**:
 
 ### Scope filtering
 
-The dialog UI lets users restrict queries to **All**, **docs**, **api**, or **blog**; the runtime passes the selected scope into **`createDocsSearchRuntime`’s `query()`**.
+The dialog UI lets users restrict queries to **All**, **Docs**, **API**, **Blog**, or **Changelog**; the runtime passes the selected scope into **`createDocsSearchRuntime`’s `query()`**.
 
 ## How scoring works (brief)
 
-The build captures canonical search documents and engine metadata in the artifact. At query time, `createDocsSearchRuntime()` initializes a memory-backed **searchfn** client, indexes those documents by scope, and returns results sorted by **score**, **title**, and **path** for stable ordering.
+The build captures canonical search documents and engine metadata in the artifact. At query time, `createDocsSearchRuntime()` reads the artifact engine, resolves the matching docsfn search adapter, and returns results sorted by **score**, **title**, and **path** for stable ordering.
 
 You do not configure BM25 weights in `docsfn.config.ts`; tuning is achieved by **scope**, **body indexing mode**, and content structure.

@@ -85,6 +85,10 @@
   padding: 1rem 0.75rem;
 }
 
+.docsfn-mobile-backdrop {
+  display: none;
+}
+
 @media (max-width: 1279px) {
   .docsfn-container:has(.docsfn-sidebar-col):has(.docsfn-toc-col) {
     grid-template-columns: var(--docsfn-sidebar-width) minmax(0, 1fr);
@@ -103,6 +107,10 @@
 
   .docsfn-sidebar-col {
     display: none;
+  }
+
+  .docsfn-mobile-backdrop {
+    display: block;
   }
 }
 

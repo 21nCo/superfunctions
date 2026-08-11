@@ -16,7 +16,7 @@ Example usage:
     >>> issue = await plug.github.issues.create(user_id="user-123", params={...})
 """
 
-__version__ = "0.1.0"
+__version__ = "0.0.1"
 __author__ = "SuperFunctions"
 __license__ = "Apache-2.0"
 
@@ -45,4 +45,3 @@ __all__ = [
     "DatabaseAdapter",
     "AuthProvider",
 ]
-

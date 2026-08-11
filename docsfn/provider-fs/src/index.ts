@@ -9,10 +9,14 @@ import {
   createDiagnostic,
   createDocsError,
   createSourceEntryId,
+  getNamedCollectionId,
+  isNamedCollection,
+  normalizeDatedCollectionId,
   normalizeProviderPath,
   toLegacyRawEntries,
   type DocsCollection,
   type DocsConfig,
+  type DocsContentDirectory,
   type DocsContentProvider,
   type DocsProviderListEntriesInput,
   type DocsProviderLoadAssetResult,
@@ -36,7 +40,7 @@ const DEFAULT_COLLECTIONS: DocsCollection[] = [
 
 export interface FsProviderOptions {
   root: string;
-  docsDir?: string;
+  docsDir?: DocsContentDirectory;
   pagesDir?: string;
   blogDir?: string;
   apiDir?: string;
@@ -51,7 +55,7 @@ interface CollectionDirectoryResolution {
 export class FsContentProvider implements DocsContentProvider {
   readonly providerId = "fs";
   private options: FsProviderOptions;
-  private lastCollectionDirectories: Partial<Record<DocsCollection, string>> = {};
+  private lastCollectionDirectories: Partial<Record<DocsCollection, string[]>> = {};
   private lastEntries: DocsSourceEntry[] = [];
 
   constructor(options: FsProviderOptions) {
@@ -67,20 +71,27 @@ export class FsContentProvider implements DocsContentProvider {
       collections: input.collections,
       root,
     });
-    this.lastCollectionDirectories = Object.fromEntries(
-      resolutions.map((resolution) => [resolution.collection, resolution.absolutePath])
-    );
+    this.lastCollectionDirectories = resolutions.reduce<
+      Partial<Record<DocsCollection, string[]>>
+    >((collectionDirectories, resolution) => {
+      const directories = collectionDirectories[resolution.collection] ?? [];
+      directories.push(resolution.absolutePath);
+      collectionDirectories[resolution.collection] = directories;
+      return collectionDirectories;
+    }, {});
 
-    const allEntries: DocsSourceEntry[] = [];
+    const entriesByPath = new Map<string, DocsSourceEntry>();
     for (const resolution of resolutions) {
       const entries = await this.collectCollectionEntries(
         resolution.collection,
         resolution.absolutePath
       );
-      allEntries.push(...entries);
+      for (const entry of entries) {
+        entriesByPath.set(`${entry.collection}:${entry.relativePath}`, entry);
+      }
     }
 
-    this.lastEntries = assertValidSourceEntries(allEntries);
+    this.lastEntries = assertValidSourceEntries([...entriesByPath.values()]);
     return this.lastEntries;
   }
 
@@ -93,12 +104,14 @@ export class FsContentProvider implements DocsContentProvider {
     relativePath: string;
   }): Promise<DocsProviderLoadAssetResult> {
     const root = resolve(input.config.content.root || this.options.root);
-    const resolution = await this.resolveSingleCollectionDirectory({
-      collection: "assets",
-      root,
-      config: input.config,
-      required: true,
-    });
+    const resolution = (
+      await this.resolveCollectionDirectoryCandidates({
+        collection: "assets",
+        root,
+        config: input.config,
+        required: true,
+      })
+    )[0];
     if (!resolution) {
       throw this.createEntryInvalidError(
         "configured assets directory is missing",
@@ -155,51 +168,52 @@ export class FsContentProvider implements DocsContentProvider {
   }): Promise<CollectionDirectoryResolution[]> {
     const resolutions: CollectionDirectoryResolution[] = [];
     for (const collection of input.collections) {
-      const resolution = await this.resolveSingleCollectionDirectory({
+      const collectionResolutions = await this.resolveCollectionDirectoryCandidates({
         collection,
         root: input.root,
         config: input.config,
         required: collection === "docs",
       });
-      if (resolution) {
-        resolutions.push(resolution);
-      }
+      resolutions.push(...collectionResolutions);
     }
     return resolutions;
   }
 
-  private async resolveSingleCollectionDirectory(input: {
+  private async resolveCollectionDirectoryCandidates(input: {
     collection: DocsCollection;
     root: string;
     config: DocsConfig;
     required: boolean;
-  }): Promise<CollectionDirectoryResolution | null> {
-    const explicitDir = this.getExplicitCollectionDirectory(
+  }): Promise<CollectionDirectoryResolution[]> {
+    const explicitDirs = this.getExplicitCollectionDirectories(
       input.collection,
       input.config
     );
-    if (explicitDir) {
-      const absolutePath = resolve(input.root, explicitDir);
-      const strict =
-        input.collection === "docs" ||
-        !this.getDefaultCollectionCandidates(input.collection).includes(explicitDir);
-      const exists = await this.ensureDirectoryExists(
-        absolutePath,
-        `${input.collection}Dir`,
-        explicitDir,
-        strict
-      );
-      if (!exists) {
-        return null;
+    if (explicitDirs.length > 0) {
+      const resolutions: CollectionDirectoryResolution[] = [];
+      for (const explicitDir of explicitDirs) {
+        const absolutePath = resolve(input.root, explicitDir);
+        const strict =
+          input.collection === "docs" ||
+          !this.getDefaultCollectionCandidates(input.collection).includes(explicitDir);
+        const exists = await this.ensureDirectoryExists(
+          absolutePath,
+          `${input.collection}Dir`,
+          explicitDir,
+          strict
+        );
+        if (exists) {
+          resolutions.push({ collection: input.collection, absolutePath });
+        }
       }
-      return { collection: input.collection, absolutePath };
+      return resolutions;
     }
 
     const candidates = this.getDefaultCollectionCandidates(input.collection);
     for (const candidate of candidates) {
       const absolutePath = resolve(input.root, candidate);
       if (await this.directoryExists(absolutePath)) {
-        return { collection: input.collection, absolutePath };
+        return [{ collection: input.collection, absolutePath }];
       }
     }
 
@@ -212,26 +226,56 @@ export class FsContentProvider implements DocsContentProvider {
       );
     }
 
-    return null;
+    return [];
   }
 
-  private getExplicitCollectionDirectory(
+  private getExplicitCollectionDirectories(
     collection: DocsCollection,
     config: DocsConfig
-  ): string | undefined {
+  ): string[] {
     if (collection === "docs") {
-      return config.content.docsDir ?? this.options.docsDir;
+      return this.normalizeConfiguredDirectories(
+        config.content.docsDir ?? this.options.docsDir
+      );
     }
     if (collection === "pages") {
-      return config.content.pagesDir ?? this.options.pagesDir;
+      return this.normalizeConfiguredDirectories(
+        config.content.pagesDir ?? this.options.pagesDir
+      );
     }
     if (collection === "blog") {
-      return config.content.blogDir ?? this.options.blogDir;
+      return this.normalizeConfiguredDirectories(
+        config.content.blogDir ?? this.options.blogDir
+      );
+    }
+    if (isNamedCollection(collection)) {
+      const collectionId = getNamedCollectionId(collection);
+      if (!collectionId) {
+        return [];
+      }
+      return this.normalizeConfiguredDirectories(
+        Object.entries(config.collections ?? {}).find(
+          ([key]) => normalizeDatedCollectionId(key) === collectionId
+        )?.[1].dir
+      );
     }
     if (collection === "api") {
-      return config.content.apiDir ?? this.options.apiDir;
+      return this.normalizeConfiguredDirectories(
+        config.content.apiDir ?? this.options.apiDir
+      );
     }
-    return config.content.assetsDir ?? this.options.assetsDir;
+    return this.normalizeConfiguredDirectories(
+      config.content.assetsDir ?? this.options.assetsDir
+    );
+  }
+
+  private normalizeConfiguredDirectories(
+    value: DocsContentDirectory | undefined
+  ): string[] {
+    if (!value) {
+      return [];
+    }
+    return Array.isArray(value) ? value : [value];
   }
 
   private getDefaultCollectionCandidates(collection: DocsCollection): string[] {
@@ -243,6 +287,9 @@ export class FsContentProvider implements DocsContentProvider {
     }
     if (collection === "blog") {
       return ["blog"];
+    }
+    if (isNamedCollection(collection)) {
+      return [];
     }
     if (collection === "api") {
       return ["api"];
@@ -324,7 +371,10 @@ export class FsContentProvider implements DocsContentProvider {
       }
 
       if (
-        (collection === "docs" || collection === "pages" || collection === "blog") &&
+        (collection === "docs" ||
+          collection === "pages" ||
+          collection === "blog" ||
+          isNamedCollection(collection)) &&
         MARKDOWN_EXTENSIONS.has(extension)
       ) {
         entries.push(
@@ -342,7 +392,7 @@ export class FsContentProvider implements DocsContentProvider {
   }
 
   private async createMarkdownEntry(
-    collection: Extract<DocsCollection, "docs" | "pages" | "blog">,
+    collection: DocsCollection,
     relativePath: string,
     absolutePath: string
   ): Promise<DocsSourceEntry> {

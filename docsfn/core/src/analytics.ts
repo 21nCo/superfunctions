@@ -41,7 +41,7 @@ const SENSITIVE_QUERY_KEY_PATTERN =
   /(token|secret|key|authorization|cookie|session|password|sig)/i;
 
 function isDocsSearchScope(value: unknown): value is DocsSearchScope {
-  return value === "docs" || value === "api" || value === "blog";
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function resolveDoNotTrackValue(input?: string | null): string | null {

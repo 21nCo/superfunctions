@@ -28,9 +28,9 @@
     "access": "public"
   },
   "dependencies": {
+    "@clifn/core": "0.1.0",
     "commander": "^11.1.0",
     "chalk": "^5.3.0",
-    "jiti": "^2.4.2",
     "ora": "^8.0.1",
     "inquirer": "^9.2.12"
   },
