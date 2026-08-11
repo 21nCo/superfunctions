@@ -48,6 +48,9 @@ export function createOAuthAuthorizationRequestUrl(
   const pkce = options.pkce ?? createPkcePair();
   const state = options.state ?? `mcpfn_state_${randomUUID()}`;
   const url = new URL(options.authorizationEndpoint);
+  for (const [name, value] of Object.entries(options.extraParameters ?? {})) {
+    url.searchParams.set(name, value);
+  }
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", options.clientId);
   url.searchParams.set("redirect_uri", options.redirectUri);
@@ -56,9 +59,6 @@ export function createOAuthAuthorizationRequestUrl(
   url.searchParams.set("state", state);
   if (options.scopes?.length) url.searchParams.set("scope", options.scopes.join(" "));
   if (options.resource) url.searchParams.set("resource", options.resource);
-  for (const [name, value] of Object.entries(options.extraParameters ?? {})) {
-    url.searchParams.set(name, value);
-  }
   return { url: url.toString(), pkce, state };
 }
 

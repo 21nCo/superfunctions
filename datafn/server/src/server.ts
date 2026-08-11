@@ -840,7 +840,6 @@ export async function createDatafnServer<TContext = any>(
     }
 
     const enrichedCtx = createEnrichedContext(ctx as TContext);
-    enrichedCtx.parsedBody = payload;
     inFlightCount++;
     try {
       if (rateLimitMiddleware) {
@@ -858,6 +857,8 @@ export async function createDatafnServer<TContext = any>(
           );
         }
       }
+
+      enrichedCtx.parsedBody = payload;
 
       if (limits.maxPayloadBytes) {
         let payloadBytes: number;
@@ -896,9 +897,13 @@ export async function createDatafnServer<TContext = any>(
         }
       }
 
+      const signal = action === "search" && payload && typeof payload === "object" &&
+        (payload as { signal?: unknown }).signal instanceof AbortSignal
+        ? (payload as { signal: AbortSignal }).signal
+        : undefined;
       const internalRequest = new Request(
         `http://datafn.internal/datafn/${action}`,
-        { method: "POST" },
+        { method: "POST", signal },
       );
       const response = await handler(internalRequest, enrichedCtx);
       const envelope = await response.json() as {

@@ -266,11 +266,6 @@ let runDocs = false;
 const changedJsDirs = new Set();
 const changedPythonNames = new Set();
 const runMcpfn = changedPaths.some((changedPath) => matchesAny(MCPFN_PATTERNS, changedPath));
-const mcpfnOnly =
-  runMcpfn &&
-  changedPaths.every((changedPath) =>
-    matchesAny(MCPFN_PATTERNS, changedPath) ||
-    matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));
 
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {
@@ -309,6 +304,13 @@ for (const entry of changedEntries) {
     }
   }
 }
+
+const mcpfnOnly =
+  runMcpfn &&
+  !fullJs &&
+  changedPaths.every((changedPath) =>
+    matchesAny(MCPFN_PATTERNS, changedPath) ||
+    matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));
 
 const selectedJsPackages = fullJs
   ? jsPackages

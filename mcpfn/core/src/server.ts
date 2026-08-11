@@ -197,6 +197,7 @@ export class McpFnServer<TContext = undefined> {
             extra,
           );
         } catch (error) {
+          if (isTaskRequest) throw error;
           return errorResult(error, {
             includeStructuredContent: !this.registry.hasOutputSchema(request.params.name),
           });

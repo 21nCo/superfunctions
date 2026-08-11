@@ -71,7 +71,7 @@ export class McpFnTestClient<TContext = undefined> {
   async createToolTask(
     name: string,
     args: Record<string, unknown> = {},
-    options: { ttl?: number; pollInterval?: number } = {},
+    options: { ttl?: number } = {},
   ): Promise<CreateTaskResult> {
     return this.client.request(
       {

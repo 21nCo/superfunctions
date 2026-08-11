@@ -14,6 +14,7 @@ describe("DatafnExecutor", () => {
     const db = memoryAdapter();
     const authorizedActions: string[] = [];
     const hookCalls: string[] = [];
+    const rateLimitBodies: unknown[] = [];
     let searchSignal: AbortSignal | undefined;
     const server = await createDatafnServer<{
       workspaceId: string;
@@ -42,6 +43,16 @@ describe("DatafnExecutor", () => {
       authorize: (context, action) => {
         authorizedActions.push(action);
         return context.allowed;
+      },
+      rateLimit: {
+        enabled: true,
+        maxRequests: 100,
+        keyExtractor: async (rateLimitContext) => {
+          rateLimitBodies.push(
+            (rateLimitContext as typeof rateLimitContext & { parsedBody?: unknown }).parsedBody,
+          );
+          return rateLimitContext.workspaceId;
+        },
       },
       searchProvider: {
         name: "executor-test",
@@ -84,11 +95,18 @@ describe("DatafnExecutor", () => {
       filters: { id: "task-1" },
       limit: 1,
     }, context);
-    const search = await server.executor.search({ query: "One", resources: ["tasks"] }, context);
+    const searchController = new AbortController();
+    const search = await server.executor.search({
+      query: "One",
+      resources: ["tasks"],
+      signal: searchController.signal,
+    }, context);
 
     expect(result.data).toEqual([expect.objectContaining({ id: "task-1", title: "One" })]);
     expect(search).toEqual({ results: [] });
-    expect(searchSignal).toBeInstanceOf(AbortSignal);
+    searchController.abort();
+    expect(searchSignal?.aborted).toBe(true);
+    expect(rateLimitBodies).toEqual([undefined, undefined, undefined]);
     expect(authorizedActions).toEqual(["mutation", "query", "search"]);
     expect(hookCalls).toEqual(["mutation", "query"]);
     await expect(server.executor.query({ resource: "tasks", version: "1" }, {

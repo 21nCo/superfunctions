@@ -1,5 +1,22 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
+function jsonSafe(value: unknown): unknown {
+  const seen = new WeakSet<object>();
+  try {
+    const serialized = JSON.stringify(value, (_key, entry: unknown) => {
+      if (typeof entry === "bigint") return entry.toString();
+      if (entry && typeof entry === "object") {
+        if (seen.has(entry)) return "[Circular]";
+        seen.add(entry);
+      }
+      return entry;
+    });
+    return serialized === undefined ? String(value) : JSON.parse(serialized) as unknown;
+  } catch {
+    return "[Unserializable]";
+  }
+}
+
 export class McpFnError extends Error {
   readonly code: string;
   readonly details?: unknown;
@@ -61,12 +78,12 @@ export function errorResult(
           code: "MCPFN_TOOL_ERROR",
           message: error instanceof Error ? error.message : String(error),
         };
-  const structuredContent = {
+  const structuredContent = jsonSafe({
     ok: false,
     error: Object.fromEntries(
       Object.entries(normalized).filter(([, value]) => value !== undefined),
     ),
-  };
+  }) as { ok: false; error: Record<string, unknown> };
   return {
     content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
     ...(options.includeStructuredContent === false ? {} : { structuredContent }),

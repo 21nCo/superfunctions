@@ -114,7 +114,16 @@ export function createManifest<TContext>(
       ? { transports: [...new Set(options.transports)].sort() as Array<"stdio" | "streamable-http"> }
       : {}),
     capabilities: options.capabilities ?? registry.capabilities(),
-    ...(options.clientRequirements ? { clientRequirements: options.clientRequirements } : {}),
+    ...(options.clientRequirements
+      ? {
+          clientRequirements: {
+            ...options.clientRequirements,
+            ...(options.clientRequirements.elicitation
+              ? { elicitation: [...new Set(options.clientRequirements.elicitation)].sort() }
+              : {}),
+          },
+        }
+      : {}),
     ...(options.extensions ? { extensions: options.extensions } : {}),
     tools,
     resources,
@@ -181,13 +190,19 @@ export function validateManifest(value: unknown): McpFnManifest {
       (!Array.isArray(manifest.clientRequirements.elicitation) ||
         manifest.clientRequirements.elicitation.some((mode) => mode !== "form" && mode !== "url"))
     ) throw new McpFnValidationError("Manifest elicitation requirements are invalid");
+    if (manifest.clientRequirements.elicitation) {
+      assertSortedUnique(
+        "Manifest elicitation requirements",
+        manifest.clientRequirements.elicitation,
+      );
+    }
   }
   assertMetadata("Manifest extensions", manifest.extensions);
 
   const ajv = new Ajv({ allErrors: true, strict: false, allowUnionTypes: true });
   addFormats(ajv as never);
   for (const tool of manifest.tools) {
-    if (!tool) throw new McpFnValidationError("Every manifest tool requires a name");
+    assertObject("Every manifest tool", tool);
     assertName("Every manifest tool", tool.name);
     if (typeof tool.description !== "string" || !tool.description.trim()) {
       throw new McpFnValidationError(`Manifest tool ${tool.name} requires a description`);
@@ -216,6 +231,7 @@ export function validateManifest(value: unknown): McpFnManifest {
   assertSortedBy("Manifest tool names", manifest.tools, (tool) => tool.name);
 
   for (const resource of manifest.resources ?? []) {
+    assertObject("Every manifest resource", resource);
     assertName("Every manifest resource", resource.name);
     try { new URL(resource.uri); } catch {
       throw new McpFnValidationError(`Manifest resource ${resource.name} has an invalid URI`);
@@ -225,10 +241,17 @@ export function validateManifest(value: unknown): McpFnManifest {
   assertSortedBy("Manifest resource URIs", manifest.resources ?? [], (resource) => resource.uri);
 
   for (const resource of manifest.resourceTemplates ?? []) {
+    assertObject("Every manifest resource template", resource);
     assertName("Every manifest resource template", resource.name);
-    try { new UriTemplate(resource.uriTemplate); } catch {
+    let template: UriTemplate;
+    try { template = new UriTemplate(resource.uriTemplate); } catch {
       throw new McpFnValidationError(
         `Manifest resource template ${resource.name} has an invalid URI template`,
+      );
+    }
+    if (!template.variableNames.length) {
+      throw new McpFnValidationError(
+        `Manifest resource template ${resource.name} must contain at least one variable`,
       );
     }
     assertMetadata(`Manifest resource template ${resource.name} metadata`, resource.metadata);
@@ -240,8 +263,31 @@ export function validateManifest(value: unknown): McpFnManifest {
   );
 
   for (const prompt of manifest.prompts ?? []) {
+    assertObject("Every manifest prompt", prompt);
     assertName("Every manifest prompt", prompt.name);
     assertMetadata(`Manifest prompt ${prompt.name} metadata`, prompt.metadata);
+    if (prompt.arguments !== undefined && !Array.isArray(prompt.arguments)) {
+      throw new McpFnValidationError(`Manifest prompt ${prompt.name} arguments must be an array`);
+    }
+    const argumentNames: string[] = [];
+    for (const argument of prompt.arguments ?? []) {
+      assertObject(`Manifest prompt ${prompt.name} argument`, argument);
+      assertName(`Manifest prompt ${prompt.name} argument`, argument.name);
+      if (argument.description !== undefined && typeof argument.description !== "string") {
+        throw new McpFnValidationError(
+          `Manifest prompt ${prompt.name} argument ${argument.name} description must be a string`,
+        );
+      }
+      if (argument.required !== undefined && typeof argument.required !== "boolean") {
+        throw new McpFnValidationError(
+          `Manifest prompt ${prompt.name} argument ${argument.name} required must be a boolean`,
+        );
+      }
+      argumentNames.push(argument.name);
+    }
+    if (new Set(argumentNames).size !== argumentNames.length) {
+      throw new McpFnValidationError(`Manifest prompt ${prompt.name} has duplicate arguments`);
+    }
     if (prompt.argumentsSchema) {
       try { ajv.compile(prompt.argumentsSchema); } catch {
         throw new McpFnValidationError(

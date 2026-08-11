@@ -53,7 +53,7 @@ function run(name, command, args, options = {}) {
 }
 
 function npmStep(name, args, options) {
-  return run(name, "npm", args, options);
+  return run(name, process.platform === "win32" ? "npm.cmd" : "npm", args, options);
 }
 
 function verifyDocumentation() {
@@ -185,9 +185,14 @@ try {
   npmStep("langfn:typecheck", ["--prefix", "langfn/typescript", "run", "typecheck"]);
   npmStep("langfn:test", ["--prefix", "langfn/typescript", "run", "test", "--", "--run"]);
   npmStep("langfn:build", ["--prefix", "langfn/typescript", "run", "build"]);
+  npmStep("memoryfn:install", [
+    "--prefix", "memoryfn/typescript", "ci", "--ignore-scripts",
+  ]);
   npmStep("memoryfn:mcp-test", [
     "--prefix", "memoryfn/typescript", "run", "test", "--", "--run", "tests/mcp.test.ts",
   ]);
+  npmStep("memoryfn:typecheck", ["--prefix", "memoryfn/typescript", "run", "lint"]);
+  npmStep("memoryfn:build", ["--prefix", "memoryfn/typescript", "run", "build"]);
   npmStep("probefn:typecheck", ["run", "typecheck", "--workspace", "@probefn/mcp-server"]);
   npmStep("probefn:mcp-test", [
     "run", "test", "--workspace", "@probefn/mcp-server", "--", "--run", "test/mcp-server.test.ts",

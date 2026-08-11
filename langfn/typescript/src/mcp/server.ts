@@ -28,7 +28,7 @@ export class MCPServer {
         name: tool.name,
         description: tool.description,
         inputSchema: normalizeObjectSchema(definition.parameters),
-        annotations: { openWorldHint: false },
+        annotations: tool.annotations ?? { openWorldHint: true },
         metadata: { "mcpfn/source": "langfn" },
         handler: async (args) => {
           const context: ToolContext = {

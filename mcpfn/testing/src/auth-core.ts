@@ -104,10 +104,14 @@ export function parseBearerChallenge(
   header: string | null,
 ): McpFnBearerChallenge | undefined {
   if (!header) return undefined;
-  const match = /^\s*([^\s]+)\s*(.*)$/.exec(header);
-  if (!match) return undefined;
+  const matches = [...header.matchAll(/(?:^|,)\s*([A-Za-z][A-Za-z0-9_-]*)\s+/g)];
+  const selectedIndex = matches.findIndex((entry) => entry[1].toLowerCase() === "bearer");
+  if (selectedIndex < 0) return undefined;
+  const match = matches[selectedIndex];
+  const start = (match.index ?? 0) + match[0].length;
+  const end = matches[selectedIndex + 1]?.index ?? header.length;
   const parameters: Record<string, string> = {};
-  const source = match[2] ?? "";
+  const source = header.slice(start, end);
   const pattern = /([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))/g;
   for (const entry of source.matchAll(pattern)) {
     const quoted = entry[2]?.replace(/\\(["\\])/g, "$1");
@@ -128,6 +132,14 @@ export function assertBearerResourceChallenge(
   if (!metadataUrl) {
     throw new McpFnAuthAssertionError(
       "Bearer challenge is missing the resource_metadata parameter",
+    );
+  }
+  try {
+    const parsed = new URL(metadataUrl);
+    if (!parsed.protocol || !parsed.host) throw new Error("not absolute");
+  } catch {
+    throw new McpFnAuthAssertionError(
+      `Bearer challenge has an invalid resource_metadata URL: ${metadataUrl}`,
     );
   }
   if (expectedMetadataUrl && metadataUrl !== expectedMetadataUrl) {

@@ -7,6 +7,7 @@ import {
   apiKeyCredential,
   assertAuthRegressionSuite,
   assertAuthorizationCodeClientMetadata,
+  assertBearerResourceChallenge,
   bearerCredential,
   createOAuthClientMetadataVariants,
   type McpFnAuthCredential,
@@ -130,5 +131,20 @@ describe("McpFn authentication regression suite", () => {
     expect(variants.deviceCodeExtension.grant_types).toContain(
       "urn:ietf:params:oauth:grant-type:device_code",
     );
+  });
+
+  it("selects Bearer from multiple challenges and rejects malformed metadata URLs", () => {
+    const response = new Response(null, {
+      status: 401,
+      headers: {
+        "www-authenticate": 'Basic realm="legacy", Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"',
+      },
+    });
+    expect(assertBearerResourceChallenge(response).parameters.resource_metadata)
+      .toBe("https://mcp.example.com/.well-known/oauth-protected-resource");
+    expect(() => assertBearerResourceChallenge(new Response(null, {
+      status: 401,
+      headers: { "www-authenticate": 'Bearer resource_metadata="not-a-url"' },
+    }))).toThrow(/invalid resource_metadata URL/);
   });
 });

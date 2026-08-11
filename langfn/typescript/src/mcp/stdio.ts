@@ -37,6 +37,15 @@ export class StdioMCPTransport implements Transport {
     if (this.started) throw new MCPTransportError("MCP stdio transport is already started");
     this.started = true;
 
+    const endpoint = this.options.streams;
+    if (endpoint) {
+      endpoint.input.on("data", this.handleData);
+      endpoint.input.on("error", this.handleError);
+      endpoint.input.on("end", this.handleClose);
+      endpoint.input.on("close", this.handleClose);
+      return;
+    }
+
     if (this.options.command) {
       this.delegate = new StdioClientTransport({
         command: this.options.command,
@@ -51,23 +60,19 @@ export class StdioMCPTransport implements Transport {
       return;
     }
 
-    const endpoint = this.options.streams;
-    if (!endpoint) {
-      throw new MCPTransportError("StdioMCPTransport requires command or streams");
-    }
-    endpoint.input.on("data", this.handleData);
-    endpoint.input.on("error", this.handleError);
-    endpoint.input.on("end", this.handleClose);
-    endpoint.input.on("close", this.handleClose);
+    throw new MCPTransportError("StdioMCPTransport requires command or streams");
   }
 
   async send(message: JSONRPCMessage, _options?: TransportSendOptions): Promise<void> {
+    if (!this.started || this.closed) {
+      throw new MCPTransportError("MCP stdio transport is not started or is closed");
+    }
     if (this.delegate) {
       await this.delegate.send(message);
       return;
     }
     const endpoint = this.options.streams;
-    if (!this.started || !endpoint) {
+    if (!endpoint) {
       throw new MCPTransportError("MCP stdio transport is not started");
     }
     await new Promise<void>((resolve, reject) => {
@@ -81,8 +86,15 @@ export class StdioMCPTransport implements Transport {
   async close(): Promise<void> {
     if (this.closed) return;
     if (this.delegate) {
-      await this.delegate.close();
-      this.notifyClosed();
+      try {
+        await withTimeout(
+          this.delegate.close(),
+          this.options.closeTimeoutMs ?? 250,
+          "MCP stdio process shutdown timed out"
+        );
+      } finally {
+        this.notifyClosed();
+      }
       return;
     }
 

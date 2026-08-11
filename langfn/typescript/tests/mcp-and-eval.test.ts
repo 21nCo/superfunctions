@@ -64,6 +64,61 @@ describe("mcp and evaluation parity", () => {
     await server.close();
   });
 
+  it("paginates tool discovery and shares a concurrent first connection", async () => {
+    const registry = new McpFnRegistry()
+      .register({
+        name: "one",
+        description: "One.",
+        inputSchema: { type: "object" },
+        handler: async () => ({
+          content: [{ type: "text", text: JSON.stringify({ result: "one" }) }],
+          structuredContent: { result: "one" },
+        }),
+      })
+      .register({
+        name: "two",
+        description: "Two.",
+        inputSchema: { type: "object" },
+        handler: async () => ({ content: [{ type: "text", text: "two" }] }),
+      });
+    const server = createMcpFnServer({
+      info: { name: "paged", version: "1.0.0" },
+      registry,
+      pageSize: 1,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new MCPClient(clientTransport);
+    try {
+      const [tools, result] = await Promise.all([
+        client.listTools(),
+        client.callTool("one"),
+      ]);
+      expect(tools.map((tool) => tool.name)).toEqual(["one", "two"]);
+      expect(result).toBe("one");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("preserves tool annotations and defaults unknown tools to open-world", () => {
+    const annotated = new Tool({
+      name: "annotated",
+      description: "Annotated.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      schema: { parse: () => ({}) },
+      execute: async () => null,
+    });
+    expect(new MCPServer([addTool, annotated]).manifest().tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "add", annotations: { openWorldHint: true } }),
+      expect.objectContaining({
+        name: "annotated",
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      }),
+    ]));
+  });
+
   it("normalizes unknown tools and shutdown hangs to canonical MCP errors", async () => {
     const clientToServer = new PassThrough();
     const serverToClient = new PassThrough();
@@ -96,6 +151,25 @@ describe("mcp and evaluation parity", () => {
       }
     });
     await expect(hangingTransport.close()).rejects.toBeInstanceOf(MCPTransportError);
+
+    const delegatedTransport = new StdioMCPTransport({ command: "unused", closeTimeoutMs: 10 });
+    (delegatedTransport as unknown as {
+      delegate: { close(): Promise<void> };
+    }).delegate = { close: async () => { await new Promise(() => {}); } };
+    await expect(delegatedTransport.close()).rejects.toBeInstanceOf(MCPTransportError);
+  });
+
+  it("prefers supplied streams and rejects sends after closure", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const transport = new StdioMCPTransport({
+      command: "this-command-must-not-run",
+      streams: { input, output },
+    });
+    await transport.start();
+    await transport.close();
+    await expect(transport.send({ jsonrpc: "2.0", method: "notifications/cancelled" }))
+      .rejects.toBeInstanceOf(MCPTransportError);
   });
 
   it("preserves successful text-only tool results", async () => {

@@ -8,6 +8,7 @@ import {
 } from "@mcpfn/core";
 import {
   McpFnTestClient,
+  McpFnAssertionError,
   assertManifestContract,
   runOfficialConformance,
   runScenarios,
@@ -157,6 +158,7 @@ export async function runCli(
     await cli.runMatchedCommand();
   } catch (error) {
     stderr(`${error instanceof Error ? error.message : String(error)}\n`);
+    if (error instanceof McpFnAssertionError) return 1;
     return 2;
   }
   return exitCode;

@@ -181,6 +181,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
   options: CreateDatafnMcpRegistryOptions<TMcpContext, TDatafnContext>,
 ): McpFnRegistry<TMcpContext> {
   const registry = options.registry ?? new McpFnRegistry<TMcpContext>();
+  const schema = options.executor.schema;
   const prefix = safeSegment(options.toolPrefix ?? "datafn");
   if (typeof options.clientId === "string" && !options.clientId.trim()) {
     throw new McpFnValidationError("DataFn clientId must be a non-empty string");
@@ -188,13 +189,13 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
 
   for (const resourceName of Object.keys(options.expose).sort()) {
     const exposure = options.expose[resourceName]!;
-    const resource = options.schema.resources.find((candidate) => candidate.name === resourceName);
+    const resource = schema.resources.find((candidate) => candidate.name === resourceName);
     if (!resource) {
       throw new McpFnValidationError(`Unknown DataFn resource: ${resourceName}`);
     }
     validateFieldList(`DataFn resource ${resourceName} projection`, exposure.fields);
-    validateReadFields(options.schema, resource, exposure.fields);
-    const maps = fieldMaps(options.schema, resource);
+    validateReadFields(schema, resource, exposure.fields);
+    const maps = fieldMaps(schema, resource);
 
     const list = operationOptions<DatafnListToolOptions>(exposure.list, true);
     if (list) {
@@ -202,7 +203,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
       const sortFields = list.sortFields ?? ["id"];
       validateFieldList(`DataFn resource ${resourceName} filterFields`, filterFields);
       validateFieldList(`DataFn resource ${resourceName} sortFields`, sortFields);
-      validateReadFields(options.schema, resource, [...filterFields, ...sortFields]);
+      validateReadFields(schema, resource, [...filterFields, ...sortFields]);
       const filterProperties = Object.fromEntries(
         filterFields.map((field) => [
           field,
@@ -313,7 +314,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
         `DataFn resource ${resourceName} ${operation} fields`,
         config.fields,
       );
-      validateWriteFields(options.schema, resource, config.fields);
+      validateWriteFields(schema, resource, config.fields);
       const requiredCreateFields = [...maps.schemaFields.values()]
         .filter((field) =>
           field.name !== "id" &&

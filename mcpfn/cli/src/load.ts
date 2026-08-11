@@ -61,7 +61,7 @@ export async function loadManifestSource(
     if (!info) {
       throw new Error("A registry source requires --name and --version");
     }
-    return { manifest: createManifest(info, value) };
+    return { manifest: validateManifest(createManifest(info, value)) };
   }
   return { manifest: validateManifest(value) };
 }

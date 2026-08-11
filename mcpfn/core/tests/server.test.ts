@@ -207,6 +207,38 @@ describe("McpFnServer", () => {
     });
   });
 
+  it("serializes circular and bigint error details safely", async () => {
+    const details: Record<string, unknown> = { count: 2n };
+    details.self = details;
+    const registry = new McpFnRegistry().register({
+      name: "complex_error",
+      description: "Throw complex details.",
+      inputSchema: { type: "object" },
+      handler: async () => {
+        throw { code: "COMPLEX", message: "Complex", details };
+      },
+    });
+    const server = createMcpFnServer({
+      info: { name: "test", version: "1.0.0" },
+      registry,
+    });
+    const client = new Client(
+      { name: "test-client", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+
+    await expect(client.callTool({ name: "complex_error" })).resolves.toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { details: { count: "2", self: "[Circular]" } },
+      },
+    });
+  });
+
   it("passes validated HTTP authInfo into trusted context", async () => {
     const registry = new McpFnRegistry<{ clientId: string }>().register({
       name: "whoami",

@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   McpFnRegistry,
@@ -71,5 +72,62 @@ describe("mcpfn CLI", () => {
       manifest: { server: { name: "foreign" } },
       server: expect.any(Object),
     });
+
+    await writeFile(
+      path.join(root, "registry.mjs"),
+      `const tools = ["z", "a"].map((name) => ({
+         name, description: name, inputSchema: { type: "object" }, handler: async () => ({ content: [] })
+       }));
+       export default {
+         definitions() { return tools; },
+         resourceDefinitions() { return []; },
+         resourceTemplateDefinitions() { return []; },
+         promptDefinitions() { return []; },
+         capabilities() { return { tools: {} }; },
+         listTools() { return tools; },
+         async callTool() { return { content: [] }; }
+       };`,
+    );
+    await expect(loadManifestSource("registry.mjs", root, {
+      name: "foreign",
+      version: "1.0.0",
+    })).rejects.toThrow(/sorted and unique/);
+  });
+
+  it("returns test-failure exit code 1 for a manifest contract mismatch", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "mcpfn-cli-mismatch-"));
+    roots.push(root);
+    const coreUrl = pathToFileURL(
+      path.resolve(import.meta.dirname, "../../core/src/index.ts"),
+    ).href;
+    const stale = createManifest(
+      { name: "mismatch", version: "1.0.0" },
+      new McpFnRegistry(),
+    );
+    await writeFile(
+      path.join(root, "server.mjs"),
+      `import { McpFnRegistry, createMcpFnServer, structuredResult } from ${JSON.stringify(coreUrl)};
+       const actualRegistry = new McpFnRegistry().register({
+         name: "actual", description: "Actual tool.", inputSchema: { type: "object" },
+         handler: async () => structuredResult({ ok: true })
+       });
+       const actual = createMcpFnServer({
+         info: { name: "mismatch", version: "1.0.0" }, registry: actualRegistry
+       });
+       const stale = ${JSON.stringify(stale)};
+       export default {
+         manifest() { return stale; },
+         connect(transport) { return actual.connect(transport); },
+         close() { return actual.close(); }
+       };`,
+    );
+    await writeFile(path.join(root, "scenarios.mjs"), "export default [];\n");
+    let errors = "";
+    const exitCode = await runCli(["test", "server.mjs", "scenarios.mjs"], {
+      cwd: root,
+      stderr: (value) => { errors += value; },
+    });
+    expect(errors).toContain("Tool inventory mismatch");
+    expect(exitCode).toBe(1);
   });
 });

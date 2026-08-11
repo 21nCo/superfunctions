@@ -10,13 +10,20 @@ export class MCPClient {
     { capabilities: {} }
   );
   private connected = false;
+  private connectionPromise?: Promise<void>;
 
   constructor(readonly transport: MCPTransport) {}
 
   async listTools(): Promise<MCPTool[]> {
     await this.ensureConnected();
-    const result = await this.client.listTools();
-    return result.tools.map((tool) => ({
+    const tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
+    let cursor: string | undefined;
+    do {
+      const result = await this.client.listTools(cursor ? { cursor } : undefined);
+      tools.push(...result.tools);
+      cursor = result.nextCursor;
+    } while (cursor);
+    return tools.map((tool) => ({
       name: tool.name,
       description: tool.description ?? "",
       input_schema: tool.inputSchema as Record<string, unknown>
@@ -58,6 +65,7 @@ export class MCPClient {
   }
 
   async close(): Promise<void> {
+    await this.connectionPromise?.catch(() => undefined);
     if (!this.connected) return;
     await this.client.close();
     this.connected = false;
@@ -65,7 +73,14 @@ export class MCPClient {
 
   private async ensureConnected(): Promise<void> {
     if (this.connected) return;
-    await this.client.connect(this.transport);
-    this.connected = true;
+    if (!this.connectionPromise) {
+      this.connectionPromise = this.client.connect(this.transport)
+        .then(() => { this.connected = true; })
+        .catch((error: unknown) => {
+          this.connectionPromise = undefined;
+          throw error;
+        });
+    }
+    await this.connectionPromise;
   }
 }

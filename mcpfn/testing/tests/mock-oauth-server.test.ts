@@ -69,11 +69,12 @@ describe("McpFn mock OAuth authorization server", () => {
       refresh_token: string;
       resource: string;
     };
-    await expect(oauth.verifyAccessToken(tokens.access_token)).resolves.toMatchObject({
+    const verified = await oauth.verifyAccessToken(tokens.access_token);
+    expect(verified).toMatchObject({
       clientId,
       scopes: ["mcp:read"],
-      resource: new URL("https://mcp.example.com/mcp"),
     });
+    expect(verified.resource?.href).toBe("https://mcp.example.com/mcp");
     expect((await exchange()).status).toBe(400);
 
     const refresh = () => fetch(oauth.tokenEndpoint, {

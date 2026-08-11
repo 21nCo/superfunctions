@@ -83,6 +83,11 @@ describe("McpFn OAuth resource server", () => {
       scopes: ["mcp:read"],
     });
     expect(downstream).toHaveBeenCalledTimes(1);
+    expect((await handler(new Request(resource, {
+      method: "POST",
+      headers: { authorization: "Bearer   scoped" },
+      body: "{}",
+    }))).status).toBe(200);
   });
 
   it("adds stable enterprise-managed authorization discovery and client metadata", () => {

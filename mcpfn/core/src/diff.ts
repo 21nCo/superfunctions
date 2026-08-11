@@ -8,7 +8,7 @@ import type {
   McpFnManifestResourceTemplate,
   McpFnManifestTool,
 } from "./types.js";
-import { canonicalJson } from "./canonical.js";
+import { canonicalJson, compareCodeUnits } from "./canonical.js";
 
 type Direction = "input" | "output";
 
@@ -21,7 +21,7 @@ function push(
 
 function valueSet(value: unknown): Set<string> | undefined {
   return Array.isArray(value)
-    ? new Set(value.map((entry) => JSON.stringify(entry)))
+    ? new Set(value.map((entry) => canonicalJson(entry)))
     : undefined;
 }
 
@@ -29,13 +29,11 @@ function equal(left: unknown, right: unknown): boolean {
   return canonicalJson(left) === canonicalJson(right);
 }
 
-function schemaType(schema: McpFnJsonSchema | undefined): string | undefined {
-  if (!schema) return undefined;
-  return Array.isArray(schema.type)
-    ? [...schema.type].sort().join("|")
-    : typeof schema.type === "string"
-      ? schema.type
-      : undefined;
+function schemaTypes(schema: McpFnJsonSchema): Set<string> | undefined {
+  if (Array.isArray(schema.type)) {
+    return new Set(schema.type.filter((value): value is string => typeof value === "string"));
+  }
+  return typeof schema.type === "string" ? new Set([schema.type]) : undefined;
 }
 
 function diffSchema(
@@ -47,7 +45,7 @@ function diffSchema(
 ): void {
   if (!before && after) {
     push(changes, {
-      severity: direction === "input" ? "additive" : "additive",
+      severity: direction === "input" ? "breaking" : "additive",
       code: "schema-added",
       path,
       message: `Schema added at ${path}`,
@@ -57,7 +55,7 @@ function diffSchema(
   }
   if (before && !after) {
     push(changes, {
-      severity: "breaking",
+      severity: direction === "input" ? "additive" : "breaking",
       code: "schema-removed",
       path,
       message: `Schema removed at ${path}`,
@@ -67,14 +65,25 @@ function diffSchema(
   }
   if (!before || !after) return;
 
-  const beforeType = schemaType(before);
-  const afterType = schemaType(after);
-  if (beforeType !== afterType) {
+  const beforeTypes = schemaTypes(before);
+  const afterTypes = schemaTypes(after);
+  if (!equal(before.type, after.type)) {
+    const removed = beforeTypes
+      ? [...beforeTypes].filter((value) => !afterTypes?.has(value))
+      : [];
+    const added = afterTypes
+      ? [...afterTypes].filter((value) => !beforeTypes?.has(value))
+      : [];
+    const tightened = beforeTypes === undefined
+      ? afterTypes !== undefined
+      : afterTypes !== undefined && removed.length > 0;
+    const relaxed = afterTypes === undefined || added.length > 0;
+    const breaking = direction === "input" ? tightened : relaxed;
     push(changes, {
-      severity: "breaking",
+      severity: breaking ? "breaking" : "additive",
       code: "schema-type-changed",
       path,
-      message: `Type changed from ${beforeType ?? "unspecified"} to ${afterType ?? "unspecified"}`,
+      message: `Type changed from ${canonicalJson(before.type ?? "unspecified")} to ${canonicalJson(after.type ?? "unspecified")}`,
       before: before.type,
       after: after.type,
     });
@@ -168,6 +177,25 @@ function diffSchema(
       code: tightened ? "constraint-tightened" : "constraint-relaxed",
       path: `${path}.${keyword}`,
       message: `${keyword} changed from ${oldValue ?? "unspecified"} to ${newValue ?? "unspecified"}`,
+      before: oldValue,
+      after: newValue,
+    });
+  }
+
+  for (const keyword of ["pattern", "format", "const", "uniqueItems"] as const) {
+    const oldValue = before[keyword];
+    const newValue = after[keyword];
+    if (equal(oldValue, newValue)) continue;
+    const tightened = oldValue === undefined && newValue !== undefined;
+    const relaxed = oldValue !== undefined && newValue === undefined;
+    push(changes, {
+      severity:
+        tightened || relaxed
+          ? (direction === "input" ? tightened : relaxed) ? "breaking" : "additive"
+          : "breaking",
+      code: tightened ? "constraint-tightened" : relaxed ? "constraint-relaxed" : "schema-keyword-changed",
+      path: `${path}.${keyword}`,
+      message: `${keyword} changed at ${path}`,
       before: oldValue,
       after: newValue,
     });
@@ -276,6 +304,7 @@ function diffSchema(
 
   const handledKeywords = new Set([
     "type", "enum", "properties", "required", "items", "additionalProperties",
+    "pattern", "format", "const", "uniqueItems",
     ...tightening.map(([keyword]) => keyword),
   ]);
   const behavioralKeywords = new Set([
@@ -479,6 +508,27 @@ function diffPrompt(
     "input",
     changes,
   );
+  if (!equal(before.arguments ?? [], after.arguments ?? [])) {
+    push(changes, {
+      severity: "behavioral",
+      code: "prompt-arguments-changed",
+      path: `${root}.argumentsMetadata`,
+      message: `Prompt argument metadata changed for ${before.name}`,
+      before: before.arguments,
+      after: after.arguments,
+    });
+  }
+}
+
+function requirementValues(value: unknown): Set<string> {
+  if (value === true) return new Set(["true"]);
+  if (Array.isArray(value)) return new Set(value.map((entry) => canonicalJson(entry)));
+  return new Set();
+}
+
+function extensionRequired(value: unknown): boolean {
+  return Boolean(value && typeof value === "object" &&
+    !Array.isArray(value) && (value as { required?: unknown }).required === true);
 }
 
 function diffCollection<T>(
@@ -604,25 +654,24 @@ export function diffManifests(
       const removed = oldRecord[name] !== undefined && newRecord[name] === undefined;
       const added = oldRecord[name] === undefined && newRecord[name] !== undefined;
       const requirementChanged = key === "clientRequirements";
-      const newRequiredValues = Array.isArray(newRecord[name])
-        ? new Set(newRecord[name] as unknown[])
-        : undefined;
-      const oldRequiredValues = Array.isArray(oldRecord[name])
-        ? new Set(oldRecord[name] as unknown[])
-        : undefined;
-      const requirementTightened = requirementChanged && (
-        added ||
-        newRecord[name] === true && oldRecord[name] !== true ||
-        Boolean(
-          newRequiredValues &&
-          [...newRequiredValues].some((value) => !oldRequiredValues?.has(value)),
-        )
-      );
+      const oldRequiredValues = requirementValues(oldRecord[name]);
+      const newRequiredValues = requirementValues(newRecord[name]);
+      const requirementAdded = [...newRequiredValues]
+        .some((value) => !oldRequiredValues.has(value));
+      const requirementRemoved = [...oldRequiredValues]
+        .some((value) => !newRequiredValues.has(value));
+      if (requirementChanged && !requirementAdded && !requirementRemoved) continue;
+      const extensionWasRequired = key === "extensions" && extensionRequired(oldRecord[name]);
+      const extensionIsRequired = key === "extensions" && extensionRequired(newRecord[name]);
       push(changes, {
-        severity: requirementTightened
+        severity: requirementChanged && requirementAdded
           ? "breaking"
-          : requirementChanged && removed
+          : requirementChanged && requirementRemoved
             ? "additive"
+            : key === "extensions" && !extensionWasRequired && extensionIsRequired
+              ? "breaking"
+              : key === "extensions" && extensionWasRequired && !extensionIsRequired
+                ? "additive"
             : removed
               ? "breaking"
               : added
@@ -665,7 +714,7 @@ export function diffManifests(
   }
 
   changes.sort((left, right) =>
-    left.path.localeCompare(right.path) || left.code.localeCompare(right.code),
+    compareCodeUnits(left.path, right.path) || compareCodeUnits(left.code, right.code),
   );
   const summary = {
     breaking: changes.filter((change) => change.severity === "breaking").length,

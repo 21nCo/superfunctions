@@ -90,6 +90,30 @@ describe("DataFn McpFn adapter", () => {
     })).toThrow(/not readable/);
   });
 
+  it("uses the executor's normalized schema as the authoritative contract", async () => {
+    const executorSchema = {
+      resources: [{
+        name: "tasks",
+        version: 1,
+        fields: [{ name: "title", type: "string" as const, required: true }],
+        permissions: { read: { fields: ["title"] }, write: { fields: ["title"] } },
+      }],
+    };
+    const datafn = await createDatafnServer({ schema: executorSchema, db: memoryAdapter() });
+    closeables.push(datafn);
+    const registry = createDatafnMcpRegistry({
+      schema: { resources: [] },
+      executor: datafn.executor,
+      context: () => undefined,
+      clientId: "test",
+      expose: { tasks: { fields: ["id", "title"] } },
+    });
+    expect(registry.listTools().map((tool) => tool.name)).toEqual([
+      "datafn_tasks_get",
+      "datafn_tasks_list",
+    ]);
+  });
+
   it("mirrors DataFn JSON, date, nullable, and default semantics in create schemas", async () => {
     const schema = {
       resources: [{

@@ -1,6 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-import { McpFnAssertionError, assertStructuredTextParity } from "./assertions.js";
+import { McpFnAssertionError, assertStructuredTextParity, stableJson } from "./assertions.js";
 import type { McpFnTestClient } from "./client.js";
 
 export interface McpFnScenario {
@@ -23,17 +23,6 @@ export interface McpFnScenarioResult {
   error?: string;
 }
 
-function stable(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stable(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
 export async function runScenarios(
   client: McpFnTestClient<unknown>,
   scenarios: McpFnScenario[],
@@ -54,11 +43,11 @@ export async function runScenarios(
       if (
         scenario.expect &&
         Object.prototype.hasOwnProperty.call(scenario.expect, "structuredContent") &&
-        stable(result.structuredContent) !==
-          stable(scenario.expect.structuredContent)
+        stableJson(result.structuredContent) !==
+          stableJson(scenario.expect.structuredContent)
       ) {
         throw new McpFnAssertionError(
-          `Structured result mismatch\nexpected: ${stable(scenario.expect.structuredContent)}\nactual:   ${stable(result.structuredContent)}`,
+          `Structured result mismatch\nexpected: ${stableJson(scenario.expect.structuredContent)}\nactual:   ${stableJson(result.structuredContent)}`,
         );
       }
       if (scenario.expect?.structuredTextParity) {

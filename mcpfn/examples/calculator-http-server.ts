@@ -37,7 +37,17 @@ const httpServer = createServer(async (request, response) => {
       webResponse.status,
       Object.fromEntries(webResponse.headers.entries()),
     );
-    response.end(Buffer.from(await webResponse.arrayBuffer()));
+    if (!webResponse.body) {
+      response.end();
+      return;
+    }
+    const reader = webResponse.body.getReader();
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      response.write(Buffer.from(chunk.value));
+    }
+    response.end();
   } catch (error) {
     response.writeHead(500, { "content-type": "text/plain" });
     response.end(error instanceof Error ? error.message : String(error));

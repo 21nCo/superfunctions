@@ -3,6 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
 import {
   CallToolResultSchema,
+  CreateTaskResultSchema,
   CreateMessageRequestSchema,
   ElicitRequestSchema,
   ListRootsRequestSchema,
@@ -163,14 +164,59 @@ describe("McpFn protocol primitives", () => {
     });
   });
 
-  it("validates MCP App resources and tool linkage", () => {
+  it("returns protocol errors for task creation failures and validates stored task output", async () => {
+    const taskStore = new InMemoryTaskStore();
+    const registry = new McpFnRegistry().register({
+      name: "validated_task",
+      description: "Store validated task output.",
+      inputSchema: {
+        type: "object",
+        properties: { value: { type: "string" } },
+        required: ["value"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: { value: { type: "string" } },
+        required: ["value"],
+        additionalProperties: false,
+      },
+      execution: { taskSupport: "required" },
+      handler: async ({ value }) => structuredResult({ value }),
+      taskHandler: {
+        createTask: async (_args, _context, extra) => {
+          const task = await extra.taskStore.createTask({ pollInterval: 1 });
+          await extra.taskStore.storeTaskResult(
+            task.taskId,
+            "completed",
+            structuredResult({ value: 42 }),
+          );
+          return { task };
+        },
+      },
+    });
+    const { client } = await connect(registry, { taskStore });
+    await expect(client.request({
+      method: "tools/call",
+      params: { name: "validated_task", arguments: {}, task: {} },
+    }, CreateTaskResultSchema)).rejects.toThrow(/Invalid arguments/);
+    await expect(client.request({
+      method: "tools/call",
+      params: { name: "validated_task", arguments: { value: "ok" }, task: {} },
+    }, CreateTaskResultSchema)).rejects.toThrow(/Invalid output/);
+  });
+
+  it("validates MCP App resources, subscriptions, and tool linkage", async () => {
     const appUri = "ui://weather/main" as const;
+    const subscriptions: string[] = [];
     const registry = new McpFnRegistry()
       .registerResource(createMcpAppResource({
         uri: appUri,
         name: "weather-ui",
         html: "<!doctype html><html><body>Weather</body></html>",
         ui: { prefersBorder: true, csp: { connectDomains: ["https://api.example.com"] } },
+        subscribe: async () => { subscriptions.push("subscribe"); },
+        unsubscribe: async () => { subscriptions.push("unsubscribe"); },
       }))
       .register({
         name: "show_weather",
@@ -188,6 +234,10 @@ describe("McpFn protocol primitives", () => {
     const manifest = server.manifest();
     expect(manifest.resources?.[0]).toMatchObject({ mimeType: MCP_APP_MIME_TYPE });
     expect(manifest.tools[0].metadata).toMatchObject({ ui: { resourceUri: appUri } });
+    const { client } = await connect(registry);
+    await client.subscribeResource({ uri: appUri });
+    await client.unsubscribeResource({ uri: appUri });
+    expect(subscriptions).toEqual(["subscribe", "unsubscribe"]);
 
     expect(() => createMcpFnServer({
       info: { name: "bad-app", version: "1.0.0" },

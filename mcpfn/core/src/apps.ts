@@ -98,6 +98,8 @@ export function createMcpAppResource<TContext = undefined>(
     mimeType: MCP_APP_MIME_TYPE,
     ...(options.annotations ? { annotations: options.annotations } : {}),
     ...(options.icons ? { icons: options.icons } : {}),
+    ...(options.subscribe ? { subscribe: options.subscribe } : {}),
+    ...(options.unsubscribe ? { unsubscribe: options.unsubscribe } : {}),
     metadata: { ...options.metadata, ui },
     read: async (_uri, context) => {
       const html = typeof options.html === "function" ? await options.html(context) : options.html;

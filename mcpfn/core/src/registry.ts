@@ -412,7 +412,28 @@ export class McpFnRegistry<TContext = undefined> {
     if (!registered.definition.taskHandler) {
       throw new McpFnValidationError(`Tool ${name} does not support task execution`);
     }
-    return registered.definition.taskHandler.createTask(normalized.args, context, extra);
+    const taskStore = new Proxy(extra.taskStore, {
+      get: (target, property, receiver) => {
+        if (property === "storeTaskResult") {
+          return async (
+            taskId: string,
+            status: "completed" | "failed",
+            result: CallToolResult,
+          ) => target.storeTaskResult(
+            taskId,
+            status,
+            this.finalizeResult(registered, result),
+          );
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return registered.definition.taskHandler.createTask(
+      normalized.args,
+      context,
+      { ...extra, taskStore },
+    );
   }
 
   private matchResource(uri: string): ResourceMatch<TContext> | undefined {

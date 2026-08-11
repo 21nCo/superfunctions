@@ -73,7 +73,7 @@ export async function runOfficialConformance(
       stderr += chunk.toString();
     });
     child.once("error", reject);
-    child.once("exit", (code) => {
+    child.once("close", (code) => {
       resolve({ exitCode: code ?? 1, stdout, stderr });
     });
   });

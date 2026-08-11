@@ -57,6 +57,51 @@ describe("McpFn testing", () => {
     }
   });
 
+  it("rejects stale resource and prompt inventories and ignores undefined scenario fields", async () => {
+    const registry = new McpFnRegistry()
+      .register({
+        name: "echo",
+        description: "Echo.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ value: "ok" }),
+      })
+      .registerResource({
+        uri: "docs://one",
+        name: "one",
+        read: async () => ({ contents: [{ uri: "docs://one", text: "One" }] }),
+      })
+      .registerResource({
+        uri: "docs://two",
+        name: "two",
+        read: async () => ({ contents: [{ uri: "docs://two", text: "Two" }] }),
+      })
+      .registerPrompt({ name: "one", get: async () => ({ messages: [] }) })
+      .registerPrompt({ name: "two", get: async () => ({ messages: [] }) });
+    const server = createMcpFnServer({
+      info: { name: "inventory", version: "1.0.0" },
+      registry,
+    });
+    const client = await McpFnTestClient.connect(server);
+    try {
+      const manifest = server.manifest();
+      await expect(assertManifestContract(client, {
+        ...manifest,
+        resources: manifest.resources?.slice(1),
+      })).rejects.toThrow(/Resource inventory mismatch/);
+      await expect(assertManifestContract(client, {
+        ...manifest,
+        prompts: manifest.prompts?.slice(1),
+      })).rejects.toThrow(/Prompt inventory mismatch/);
+      await expect(runScenarios(client, [{
+        name: "undefined parity",
+        tool: "echo",
+        expect: { structuredContent: { value: "ok", omitted: undefined } },
+      }])).resolves.toMatchObject([{ status: "passed" }]);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("pins the official conformance runner and its supported server flags", () => {
     expect(buildOfficialConformanceArgs({
       url: "http://127.0.0.1:3000/mcp",

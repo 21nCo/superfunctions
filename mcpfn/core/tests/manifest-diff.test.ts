@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   McpFnRegistry,
+  canonicalJson,
   createManifest,
   diffManifests,
   structuredResult,
@@ -109,7 +110,7 @@ describe("McpFn manifests", () => {
     expect(diffManifests(before, after).changes).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "enum-narrowed", severity: "breaking" }),
       expect.objectContaining({ code: "enum-widened", severity: "breaking" }),
-      expect.objectContaining({ code: "schema-keyword-changed", severity: "breaking" }),
+      expect.objectContaining({ code: "constraint-relaxed", severity: "breaking" }),
       expect.objectContaining({ code: "tool-metadata-changed", severity: "behavioral" }),
     ]));
   });
@@ -204,5 +205,119 @@ describe("McpFn manifests", () => {
         }),
       ]),
     });
+  });
+
+  it("applies variance to array items, type sets, and directional constraints", () => {
+    const schema = (value: Record<string, unknown>) => createManifest(
+      { name: "example", version: "1.0.0" },
+      new McpFnRegistry().register({
+        name: "variance",
+        description: "Exercise schema variance.",
+        inputSchema: { type: "object", properties: { value }, additionalProperties: false },
+        outputSchema: { type: "object", properties: { value }, additionalProperties: false },
+        handler: async () => structuredResult({ value: null }),
+      }),
+    );
+    const before = schema({ type: ["string", "number"], pattern: "^a", items: { type: "string" } });
+    const after = schema({ type: ["string"], pattern: undefined });
+    const changes = diffManifests(before, after).changes;
+    expect(changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "tools.variance.inputSchema.properties.value.items",
+        code: "schema-removed",
+        severity: "additive",
+      }),
+      expect.objectContaining({
+        path: "tools.variance.outputSchema.properties.value.items",
+        code: "schema-removed",
+        severity: "breaking",
+      }),
+      expect.objectContaining({
+        path: "tools.variance.inputSchema.properties.value",
+        code: "schema-type-changed",
+        severity: "breaking",
+      }),
+      expect.objectContaining({
+        path: "tools.variance.outputSchema.properties.value",
+        code: "schema-type-changed",
+        severity: "additive",
+      }),
+      expect.objectContaining({
+        path: "tools.variance.inputSchema.properties.value.pattern",
+        code: "constraint-relaxed",
+        severity: "additive",
+      }),
+      expect.objectContaining({
+        path: "tools.variance.outputSchema.properties.value.pattern",
+        code: "constraint-relaxed",
+        severity: "breaking",
+      }),
+    ]));
+  });
+
+  it("compares effective client and extension requirements", () => {
+    const base = createManifest({ name: "example", version: "1.0.0" }, registry());
+    const optional = createManifest(
+      { name: "example", version: "1.0.0" },
+      registry(),
+      {
+        clientRequirements: { sampling: false, roots: false, elicitation: [] },
+        extensions: { optional: { required: false } },
+      },
+    );
+    expect(diffManifests(base, optional).summary.breaking).toBe(0);
+    const required = createManifest(
+      { name: "example", version: "1.0.0" },
+      registry(),
+      { extensions: { optional: { required: true } } },
+    );
+    expect(diffManifests(optional, required).changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "extensions.optional", severity: "breaking" }),
+    ]));
+  });
+
+  it("tracks prompt argument metadata and canonicalizes object enum values", () => {
+    const promptManifest = (description: string, enumValues: unknown[]) => createManifest(
+      { name: "example", version: "1.0.0" },
+      new McpFnRegistry()
+        .register({
+          name: "choose",
+          description: "Choose.",
+          inputSchema: {
+            type: "object",
+            properties: { value: { enum: enumValues } },
+          },
+          handler: async () => structuredResult({ ok: true }),
+        })
+        .registerPrompt({
+          name: "hello",
+          arguments: [{ name: "name", description }],
+          argumentsSchema: { type: "object", properties: { name: { type: "string" } } },
+          get: async () => ({ messages: [] }),
+        }),
+    );
+    const before = promptManifest("Old", [{ a: 1, b: 2 }]);
+    const reordered = promptManifest("New", [{ b: 2, a: 1 }]);
+    expect(diffManifests(before, reordered).changes).toEqual([
+      expect.objectContaining({ code: "prompt-arguments-changed", severity: "behavioral" }),
+    ]);
+    expect(canonicalJson({ "ä": 1, z: 2 })).toBe('{"z":2,"ä":1}');
+  });
+
+  it("normalizes elicitation requirements and rejects malformed manifest entries", () => {
+    const normalized = createManifest(
+      { name: "example", version: "1.0.0" },
+      registry(),
+      { clientRequirements: { elicitation: ["url", "form", "url"] } },
+    );
+    expect(normalized.clientRequirements?.elicitation).toEqual(["form", "url"]);
+    expect(validateManifest(normalized)).toEqual(normalized);
+    expect(() => validateManifest({ ...normalized, resources: [null] })).toThrow(/must be an object/);
+    expect(() => validateManifest({ ...normalized, prompts: [{ name: "prompt", arguments: {} }] }))
+      .toThrow(/arguments must be an array/);
+    expect(() => validateManifest({
+      ...normalized,
+      resourceTemplates: [{ name: "static", uriTemplate: "docs://static" }],
+    })).toThrow(/at least one variable/);
   });
 });

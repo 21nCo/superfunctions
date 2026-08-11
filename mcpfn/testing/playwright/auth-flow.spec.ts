@@ -26,11 +26,12 @@ test("runs a browser PKCE flow for extensible client metadata", async ({
     code,
     codeVerifier: authorization.pkce.verifier,
   });
-  await expect(mcpfnOAuth.server.verifyAccessToken(tokens.access_token)).resolves.toMatchObject({
+  const verified = await mcpfnOAuth.server.verifyAccessToken(tokens.access_token);
+  expect(verified).toMatchObject({
     clientId,
     scopes: ["mcp:read"],
-    resource: new URL("https://mcp.example.com/mcp"),
   });
+  expect(verified.resource?.href).toBe("https://mcp.example.com/mcp");
 
   const refreshed = await refreshOAuthAccessToken({
     tokenEndpoint: mcpfnOAuth.server.tokenEndpoint,
