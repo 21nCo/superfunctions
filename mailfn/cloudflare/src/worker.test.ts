@@ -1,0 +1,109 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import type { Message, ParseJob } from '@mailfn/core';
+
+import type {
+  D1Database,
+  D1PreparedStatement,
+  D1Result,
+  ForwardableEmailMessage,
+  MailFnCloudflareEnv,
+  QueueMessage,
+  R2Bucket,
+} from './index.js';
+import { createMailFnCloudflareHandlers, deriveCloudflareDeliveryId } from './worker.js';
+
+class FakeStatement implements D1PreparedStatement {
+  public constructor(private readonly query: string, private readonly row: { data_json: string } | null) {}
+  bind(): D1PreparedStatement { return this; }
+  async first<T>(): Promise<T | null> {
+    return this.query.includes('mailfn_messages WHERE id') ? this.row as T | null : null;
+  }
+  async all<T>(): Promise<D1Result<T>> { return { success: true, results: [] }; }
+  async run<T>(): Promise<D1Result<T>> { return { success: true, results: [] }; }
+}
+
+class FakeDatabase implements D1Database {
+  public constructor(private readonly message?: Message) {}
+  prepare(query: string): D1PreparedStatement {
+    return new FakeStatement(query, this.message ? { data_json: JSON.stringify(this.message) } : null);
+  }
+  async batch<T>(): Promise<Array<D1Result<T>>> { return []; }
+  async exec(): Promise<{ count: number; duration: number }> { return { count: 0, duration: 0 }; }
+}
+
+function env(database: D1Database): MailFnCloudflareEnv {
+  return {
+    MAILFN_DB: database,
+    MAILFN_OBJECTS: {
+      async put() { return undefined; },
+      async get() { return null; },
+      async delete() { return undefined; },
+    } satisfies R2Bucket,
+    MAILFN_PARSE_QUEUE: { async send() { return undefined; } },
+    MAILFN_DOMAIN: 'inbound.example.com',
+    MAILFN_SECRET_KEY: '00'.repeat(32),
+  };
+}
+
+describe('MailFn Cloudflare handlers', () => {
+  it('permanently rejects unknown recipients without exposing the address', async () => {
+    const reject = vi.fn();
+    let rawAccessed = false;
+    const raw = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1])); controller.close(); } });
+    const message = {
+      from: 'sender@example.com',
+      to: 'unknown@inbound.example.com',
+      headers: new Headers({ 'message-id': '<delivery@example.com>' }),
+      get raw() { rawAccessed = true; return raw; },
+      rawSize: 21,
+      setReject: reject,
+    } satisfies ForwardableEmailMessage;
+    await createMailFnCloudflareHandlers({ migrate: false }).email(message, env(new FakeDatabase()), { waitUntil() {} });
+    expect(reject).toHaveBeenCalledWith('Recipient unavailable');
+    expect(reject.mock.calls[0]?.[0]).not.toContain(message.to);
+    expect(rawAccessed).toBe(false);
+  });
+
+  it('derives retry-stable delivery identity from envelope and raw evidence instead of Message-ID', async () => {
+    const first = new TextEncoder().encode('Message-ID: <shared@example.com>\r\nSubject: one\r\n\r\nfirst');
+    const second = new TextEncoder().encode('Message-ID: <shared@example.com>\r\nSubject: two\r\n\r\nsecond');
+    const firstId = await deriveCloudflareDeliveryId('SENDER@example.com', 'Inbox@example.com', first);
+    await expect(deriveCloudflareDeliveryId('sender@example.com', 'inbox@example.com', first)).resolves.toBe(firstId);
+    await expect(deriveCloudflareDeliveryId('sender@example.com', 'inbox@example.com', second)).resolves.not.toBe(firstId);
+    await expect(deriveCloudflareDeliveryId('other@example.com', 'inbox@example.com', first)).resolves.not.toBe(firstId);
+    expect(firstId).toMatch(/^cf_sha256_[a-f0-9]{64}$/);
+  });
+
+  it('retries transient Queue parse failures with bounded exponential delay', async () => {
+    const stored = {
+      id: 'msg_1', projectId: 'prj_1', inboxId: 'inb_1', providerDeliveryId: 'delivery_1',
+      envelopeFrom: 'sender@example.com', envelopeTo: 'target@inbound.example.com', from: [{ address: 'sender@example.com' }],
+      to: [{ address: 'target@inbound.example.com' }], cc: [], bcc: [], replyTo: [], subject: 'Subject',
+      receivedAt: '2026-08-10T00:00:00.000Z', headers: {}, rawObjectKey: 'missing',
+      rawRetentionExpiresAt: '2026-08-11T00:00:00.000Z', attachmentRetentionExpiresAt: '2026-08-11T00:00:00.000Z',
+      references: [], authenticationResults: {}, sizeBytes: 10, status: 'pending', labels: [],
+      retentionExpiresAt: '2026-08-11T00:00:00.000Z', createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z',
+    } satisfies Message;
+    const retry = vi.fn();
+    const ack = vi.fn();
+    const queued = {
+      id: 'queue_1', attempts: 3, ack, retry,
+      body: {
+        id: 'job_1', version: 1, type: 'mailfn.parse', projectId: stored.projectId, inboxId: stored.inboxId,
+        messageId: stored.id, rawObjectKey: stored.rawObjectKey, attempt: 1, createdAt: stored.createdAt,
+      } satisfies ParseJob,
+    } satisfies QueueMessage<ParseJob>;
+    await createMailFnCloudflareHandlers({ migrate: false }).queue({ messages: [queued] }, env(new FakeDatabase(stored)));
+    expect(retry).toHaveBeenCalledWith({ delaySeconds: 8 });
+    expect(ack).not.toHaveBeenCalled();
+  });
+
+  it('schedules retention plus parse and webhook reconciliation', async () => {
+    let work: Promise<unknown> | undefined;
+    await createMailFnCloudflareHandlers({ migrate: false }).scheduled({}, env(new FakeDatabase()), {
+      waitUntil(promise) { work = promise; },
+    });
+    await expect(work).resolves.toBeUndefined();
+  });
+});

@@ -1,0 +1,72 @@
+import { describe, expect, it, vi } from 'vitest';
+import { Sendfn } from 'sendfn';
+import { StrongMockAdapter } from '../../../sendfn/typescript/tests/mock-adapter.js';
+
+import { createSendFnAdapter } from './index.js';
+
+const request = {
+  idempotencyKey: 'mailfn:draft:d',
+  projectId: 'p', inboxId: 'i', from: 'agent@example.com', to: ['recipient@example.com'], cc: [], bcc: [],
+  subject: 'Re: Test', text: 'Reply', headers: { 'In-Reply-To': '<m@example.com>' }, attachmentIds: ['a'],
+  attachments: [{ id: 'a', filename: 'proof.txt', contentType: 'text/plain', content: new TextEncoder().encode('proof'), sha256: 'abc' }],
+  metadata: { draftId: 'd' },
+};
+
+describe('SendFn composition', () => {
+  it('uses the modern delivery contract without duplicating providers', async () => {
+    const sendEmail = vi.fn(async () => ({ providerMessageId: 'provider-1', status: 'sent' }));
+    await expect(createSendFnAdapter({ sendEmail }).send(request)).resolves.toEqual({ providerMessageId: 'provider-1', status: 'sent' });
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: request.idempotencyKey, from: request.from, headers: request.headers,
+      attachments: [expect.objectContaining({ filename: 'proof.txt', contentType: 'text/plain' })],
+    }));
+  });
+
+  it('preserves MailFn correlation and threading metadata on the legacy SendFn surface', async () => {
+    const email = vi.fn(async () => ({ id: 'tx-1', status: 'pending' }));
+    await expect(createSendFnAdapter({ email }).send(request)).resolves.toEqual({ providerMessageId: 'tx-1', status: 'queued' });
+    expect(email).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: request.idempotencyKey,
+      userId: 'p', from: request.from, replyTo: request.from, headers: request.headers,
+      attachments: [expect.objectContaining({ filename: 'proof.txt', contentType: 'text/plain' })],
+      metadata: expect.objectContaining({ mailfnInboxId: 'i', mailfnHeaders: request.headers, mailfnAttachmentIds: ['a'], mailfnIdempotencyKey: request.idempotencyKey }),
+    }));
+  });
+
+  it('composes against the checked-in SendFn service and reaches its provider contract intact', async () => {
+    const providerRequests: Array<Record<string, unknown>> = [];
+    const provider = {
+      name: 'mailfn-integration',
+      capabilities: {
+        supportsTemplates: true, supportsAttachments: true, supportsBulkSend: true, supportsScheduling: false,
+        maxRecipientsPerEmail: 50, maxAttachmentSize: 10 * 1024 * 1024,
+      },
+      async initialize() {},
+      async close() {},
+      async isHealthy() { return true; },
+      validateEmail() { return true; },
+      async sendBulkEmail() { return []; },
+      async sendEmail(input: Record<string, unknown>) {
+        providerRequests.push(input);
+        return { success: true, providerMessageId: 'actual-sendfn-provider', timestamp: new Date() };
+      },
+    };
+    const actualSendFn = new Sendfn({
+      database: new StrongMockAdapter() as never,
+      emailProvider: provider as never,
+      email: { fromEmail: 'fallback@example.com' },
+      options: { suppressionEnabled: false, retryAttempts: 1, retryDelay: 0 },
+    });
+    await expect(createSendFnAdapter(actualSendFn).send(request)).resolves.toEqual({
+      providerMessageId: 'actual-sendfn-provider', status: 'sent',
+    });
+    expect(providerRequests).toMatchObject([{
+      idempotencyKey: request.idempotencyKey,
+      from: request.from,
+      replyTo: request.from,
+      headers: request.headers,
+      attachments: [{ filename: 'proof.txt', contentType: 'text/plain' }],
+    }]);
+    await actualSendFn.close();
+  });
+});

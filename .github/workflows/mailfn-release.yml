@@ -1,0 +1,30 @@
+name: MailFn release gate
+
+on:
+  pull_request:
+    paths:
+      - 'mailfn/**'
+      - 'sendfn/typescript/**'
+      - 'packages/db/**'
+      - 'packages/http/**'
+      - 'scripts/gate-mailfn-release.mjs'
+      - 'release-packages.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/mailfn-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mailfn-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run gate:mailfn-release

@@ -721,6 +721,8 @@ export class Sendfn implements SendfnClient {
     for (const resource of resources) {
       if (typeof resource.close === 'function') {
         await resource.close();
+      } else if ('$disconnect' in resource && typeof resource.$disconnect === 'function') {
+        await resource.$disconnect();
       }
     }
 

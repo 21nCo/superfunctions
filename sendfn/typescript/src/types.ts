@@ -81,7 +81,11 @@ export interface SendfnOptions {
 // --- Email ---
 
 export interface SendEmailParams {
+  /** Stable caller key. Reusing it returns the original transaction without another provider send. */
+  idempotencyKey?: string;
   userId: string;
+  from?: string;
+  replyTo?: string;
   to: string | string[];
   cc?: string | string[];
   bcc?: string | string[];
@@ -91,6 +95,7 @@ export interface SendEmailParams {
   templateId?: string;
   templateData?: Record<string, any>;
   attachments?: Attachment[];
+  headers?: Record<string, string>;
   metadata?: Record<string, any>;
   tags?: string[];
 }

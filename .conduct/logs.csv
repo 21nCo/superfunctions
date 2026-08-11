@@ -40,3 +40,5 @@ timestamp,model,launcher,command,agent_name,phase(s),path
 2026-05-19T13:25:18Z,GPT-5 (Codex),Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-05-19-v9m2k7x4-completion.md
 2026-05-19T13:36:34Z,GPT-5 (Codex),Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-05-19-k9m4x2p7-full-audit.md
 2026-05-19T14:08:46Z,GPT-5 (Codex),Codex Desktop,execute-issue,unknown-agent,,.conduct/issue-completions/2026-05-19-c8p4m2x9-completion.md
+2026-08-10T17:22:45Z,GPT-5 (Codex),Codex Desktop,audit,audit-agent,,.conduct/audits/2026-08-10-4dea7d06-full-audit.md
+2026-08-10T19:49:56Z,GPT-5 Codex,Codex Desktop,audit,unknown-agent,,.conduct/audits/2026-08-11-9f087abf-full-audit.md

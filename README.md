@@ -31,6 +31,7 @@ The Swift package in `Package.swift` targets iOS 16 or later and macOS 13 or lat
 | --- | --- | --- | --- |
 | [authFn](https://authfn.com) | Drop-in authentication and user management. Social logins, magic links, session handling, AI agent authentication and more. | Clerk or Auth0 | [npm](https://www.npmjs.com/package/@authfn/client) · [PyPI](https://pypi.org/project/authfn/) |
 | [billFn](https://billfn.com) | Complete billing infrastructure. Subscriptions, one-time payments, usage-based billing, analytics, store integrations and invoicing. | Stripe Billing + Metronome + RevenueCat | [npm](https://www.npmjs.com/package/billfn) |
+| [mailFn](./mailfn) | Programmable real inboxes for products, agents, and deterministic email testing, with Cloudflare deployment and SendFn composition. | MailSlurp + Mailtrap Inbound + AgentMail | `mailfn` + `@mailfn/*` |
 
 ### License
 

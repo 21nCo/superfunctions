@@ -16,6 +16,7 @@ import {
 export class AwsSesAdapter implements EmailProvider {
   readonly name = 'aws-ses';
   readonly capabilities: EmailProviderCapabilities = {
+    supportsIdempotency: false,
     supportsTemplates: true,
     supportsAttachments: true,
     supportsBulkSend: true,
@@ -42,7 +43,7 @@ export class AwsSesAdapter implements EmailProvider {
 
   async sendEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
     try {
-      if (params.attachments && params.attachments.length > 0) {
+      if ((params.attachments && params.attachments.length > 0) || Object.keys(params.headers ?? {}).length > 0 || params.idempotencyKey) {
         return await this.sendRawEmail(params);
       } else {
         return await this.sendSimpleEmail(params);
@@ -63,7 +64,7 @@ export class AwsSesAdapter implements EmailProvider {
       Message: {
         Subject: { Data: params.subject },
         Body: {
-          Html: { Data: params.html },
+          Html: params.html ? { Data: params.html } : undefined,
           Text: params.text ? { Data: params.text } : undefined,
         },
       },
@@ -91,6 +92,11 @@ export class AwsSesAdapter implements EmailProvider {
     if (params.cc?.length) rawMessage += `Cc: ${params.cc.join(', ')}\n`;
     rawMessage += `Subject: ${params.subject}\n`;
     if (params.replyTo) rawMessage += `Reply-To: ${params.replyTo}\n`;
+    for (const [name, value] of Object.entries(params.headers ?? {})) {
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value)) throw new Error('Invalid custom email header');
+      rawMessage += `${name}: ${value}\n`;
+    }
+    if (params.idempotencyKey) rawMessage += `X-Sendfn-Idempotency-Key: ${params.idempotencyKey.replace(/[\r\n]/g, '')}\n`;
     rawMessage += `MIME-Version: 1.0\n`;
     rawMessage += `Content-Type: multipart/mixed; boundary="${boundary}"\n\n`;
     
@@ -107,9 +113,11 @@ export class AwsSesAdapter implements EmailProvider {
     }
     
     // HTML Part
-    rawMessage += `--${altBoundary}\n`;
-    rawMessage += `Content-Type: text/html; charset=UTF-8\n\n`;
-    rawMessage += `${params.html}\n\n`;
+    if (params.html) {
+      rawMessage += `--${altBoundary}\n`;
+      rawMessage += `Content-Type: text/html; charset=UTF-8\n\n`;
+      rawMessage += `${params.html}\n\n`;
+    }
     
     rawMessage += `--${altBoundary}--
 
