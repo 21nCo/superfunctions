@@ -65,6 +65,7 @@
     { "id": "verify:uifn-clean", "owner": "uifn-maintainer", "reviewCadenceDays": 14 },
     { "id": "verify:uifn-consumers", "owner": "uifn-maintainer", "reviewCadenceDays": 14 },
     { "id": "verify:uifn-stable", "owner": "uifn-maintainer", "reviewCadenceDays": 7 },
+    { "id": "verify:uifn-styled-comparability", "owner": "uifn-maintainer", "reviewCadenceDays": 14 },
     { "id": "verify:uifn-experimental", "owner": "uifn-maintainer", "reviewCadenceDays": 30 },
     { "id": "verify:uifn-lanes", "owner": "uifn-maintainer", "reviewCadenceDays": 14 },
     { "id": "verify:uifn-phase-01", "owner": "uifn-maintainer", "reviewCadenceDays": 14 },

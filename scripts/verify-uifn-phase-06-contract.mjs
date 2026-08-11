@@ -21,6 +21,30 @@ const NATIVE_ROOTS = Object.freeze({ ButtonContract: 'button', FieldsetContract:
 
 function issue(code, message, source) { return Object.freeze({ code, message, source }); }
 
+function resolveLocalModule(fromPath, specifier) {
+  if (!specifier.startsWith('.')) return null;
+  const base = path.resolve(path.dirname(fromPath), specifier);
+  const candidates = [`${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts'), path.join(base, 'index.tsx')];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function collectLocalDependencies(entryPath) {
+  const visited = new Set();
+  const pending = [entryPath];
+  while (pending.length) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    const source = readFileSync(current, 'utf8');
+    const imports = /\b(?:from\s+|import\s*)['"](\.[^'"]+)['"]/g;
+    for (const match of source.matchAll(imports)) {
+      const dependency = resolveLocalModule(current, match[1]);
+      if (dependency && !visited.has(dependency)) pending.push(dependency);
+    }
+  }
+  return visited;
+}
+
 export function classifyPhase06Mutations(mutations) {
   const codes = [];
   if (mutations.duplicateTypeahead || mutations.localCollectionAlgorithm || mutations.localRangeAlgorithm) codes.push('UIFN_SHARED_ALGORITHM_FORK');
@@ -49,14 +73,23 @@ export async function verifyPhase06Contract({ requireDist = false } = {}) {
     combobox: readFileSync(path.join(repoRoot, 'uifn/core/src/primitives/combobox.ts'), 'utf8'),
     slider: readFileSync(path.join(repoRoot, 'uifn/core/src/primitives/slider.ts'), 'utf8'),
   };
-  const requiredImports = {
-    accordion: ['algorithms/collection', 'algorithms/navigation'], toolbar: ['algorithms/collection', 'algorithms/navigation'],
-    select: ['algorithms/collection', 'algorithms/navigation', 'algorithms/typeahead'],
-    combobox: ['algorithms/collection', 'algorithms/locale', 'algorithms/navigation', 'algorithms/virtualization'],
-    slider: ['algorithms/range'],
+  const dependencyFiles = Object.fromEntries(Object.keys(applicable).map((primitive) => [
+    primitive,
+    collectLocalDependencies(path.join(repoRoot, `uifn/core/src/primitives/${primitive}.ts`)),
+  ]));
+  const requiredAlgorithms = {
+    accordion: ['collection', 'navigation'], toolbar: ['collection', 'navigation'],
+    select: ['collection', 'navigation', 'typeahead'],
+    combobox: ['collection', 'locale', 'navigation', 'virtualization'],
+    slider: ['range'],
   };
-  for (const [primitive, imports] of Object.entries(requiredImports)) {
-    for (const expected of imports) if (!applicable[primitive].includes(expected)) issues.push(issue('UIFN_SHARED_ALGORITHM_FORK', `${primitive} does not import ${expected}.`, `uifn/core/src/primitives/${primitive}.ts`));
+  for (const [primitive, algorithmsForPrimitive] of Object.entries(requiredAlgorithms)) {
+    for (const algorithm of algorithmsForPrimitive) {
+      const expectedPath = path.join(repoRoot, `uifn/core/src/algorithms/${algorithm}.ts`);
+      if (!dependencyFiles[primitive].has(expectedPath)) {
+        issues.push(issue('UIFN_SHARED_ALGORITHM_FORK', `${primitive} does not reach algorithms/${algorithm} through its local dependency graph.`, `uifn/core/src/primitives/${primitive}.ts`));
+      }
+    }
   }
   if (/function\s+(?:resolveTypeaheadMatch|dedupeOptions)\b|\.toLowerCase\(\)\.startsWith\(/.test(applicable.select)) {
     issues.push(issue('UIFN_SHARED_ALGORITHM_FORK', 'Select retains a local typeahead or collection fork.', 'uifn/core/src/primitives/select.ts'));

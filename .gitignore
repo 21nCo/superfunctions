@@ -45,6 +45,7 @@ lerna-debug.log*
 
 # Security
 *.pem
+!uifn/registry/trust/registry-ed25519-public.pem
 *.p12
 *.key
 *-key.pem

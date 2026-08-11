@@ -43,10 +43,11 @@ function frameworkFiles(delivery, primitive, framework) {
 }
 
 function dependencies(framework) {
+  const adapterVersion = JSON.parse(readFileSync(path.join(root, `uifn/${framework}/package.json`), 'utf8')).version;
   const values = [
     { name: '@uifn/components', version: '0.0.1', relationship: 'runtime' },
     { name: '@uifn/recipes', version: '0.0.1', relationship: 'runtime' },
-    { name: `@uifn/${framework}`, version: '0.0.1', relationship: 'runtime' },
+    { name: `@uifn/${framework}`, version: adapterVersion, relationship: 'runtime' },
   ];
   if (framework === 'react') values.push(
     { name: 'react', version: '>=18.2.0 <20', relationship: 'peer' },
