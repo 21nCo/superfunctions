@@ -3,15 +3,15 @@ name: MailFn release gate
 on:
   pull_request:
     paths:
-      - 'mailfn/**'
-      - 'sendfn/typescript/**'
-      - 'packages/db/**'
-      - 'packages/http/**'
-      - 'scripts/gate-mailfn-release.mjs'
-      - 'release-packages.json'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/mailfn-release.yml'
+      - "mailfn/**"
+      - "sendfn/typescript/**"
+      - "packages/db/**"
+      - "packages/http/**"
+      - "scripts/gate-mailfn-release.mjs"
+      - "release-packages.json"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/mailfn-release.yml"
   workflow_dispatch:
 
 permissions:
@@ -27,4 +27,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # npm can omit platform-specific optional packages from a lockfile written
+      # on another OS (npm/cli#4828). Restore the exact Rollup native binary
+      # selected by the installed Rollup package before tsup runs on Linux.
+      - name: Restore Rollup Linux native binary
+        run: |
+          ROLLUP_NATIVE_VERSION="$(node -p "require('./node_modules/rollup/package.json').version")"
+          npm install --ignore-scripts --no-save --package-lock=false "@rollup/rollup-linux-x64-gnu@${ROLLUP_NATIVE_VERSION}"
       - run: npm run gate:mailfn-release
