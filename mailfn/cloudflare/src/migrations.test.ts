@@ -16,5 +16,6 @@ describe('MailFn D1 schema', () => {
     expect(sql).toContain('retention_expires_at');
     expect(sql).toContain('token_hash TEXT NOT NULL');
     expect(sql).toContain('mailfn_messages_fts USING fts5');
+    expect(sql).toContain('mailfn_webhook_deliveries(webhook_id, created_at)');
   });
 });

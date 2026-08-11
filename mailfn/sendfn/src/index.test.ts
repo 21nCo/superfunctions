@@ -19,7 +19,16 @@ describe('SendFn composition', () => {
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
       idempotencyKey: request.idempotencyKey, from: request.from, headers: request.headers,
       attachments: [expect.objectContaining({ filename: 'proof.txt', contentType: 'text/plain' })],
+      metadata: expect.objectContaining({
+        draftId: 'd', mailfnInboxId: 'i', mailfnIdempotencyKey: request.idempotencyKey,
+        mailfnHeaders: JSON.stringify(request.headers), mailfnAttachmentIds: JSON.stringify(['a']),
+      }),
     }));
+  });
+
+  it('rejects failed SendFn transactions instead of presenting them as queued', async () => {
+    const sendEmail = vi.fn(async () => ({ id: 'tx-failed', status: 'failed' }));
+    await expect(createSendFnAdapter({ sendEmail }).send(request)).rejects.toThrow('SENDFN_DELIVERY_FAILED');
   });
 
   it('preserves MailFn correlation and threading metadata on the legacy SendFn surface', async () => {

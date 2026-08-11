@@ -124,6 +124,15 @@ export class D1MailFnStore implements MailFnStore {
       [value.id, value.projectId, value.inboxId ?? null, value.tokenHash, value.tokenPrefix, JSON.stringify(value.permissions), value.status, value.expiresAt ?? null, value.revokedAt ?? null, value.createdAt, json(value)],
     );
   }
+  async touchCredentialIfActive(id: string, lastUsedAt: string): Promise<boolean> {
+    const result = await this.database.prepare(
+      `UPDATE mailfn_credentials
+       SET data_json = json_set(data_json, '$.lastUsedAt', ?)
+       WHERE id = ? AND status = 'active'`,
+    ).bind(lastUsedAt, id).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(result.meta?.changes ?? 0) === 1;
+  }
 
   async getMessage(id: string): Promise<Message | null> {
     return this.one('SELECT data_json FROM mailfn_messages WHERE id = ?', [id]);
@@ -144,6 +153,70 @@ export class D1MailFnStore implements MailFnStore {
     );
     return messages.filter((message) => matchesMessage(message, filter));
   }
+  async listMessagesPage(
+    projectId: string,
+    inboxId: string,
+    filter: MessageFilter,
+    cursorId: string | undefined,
+    limit: number,
+  ): Promise<{ items: Message[]; hasMore: boolean; cursorFound: boolean }> {
+    const cursor = cursorId ? await this.getMessage(cursorId) : null;
+    if (cursorId && (!cursor || cursor.projectId !== projectId || cursor.inboxId !== inboxId || !matchesMessage(cursor, filter))) {
+      return { items: [], hasMore: false, cursorFound: false };
+    }
+    const clauses = ['project_id = ?', 'inbox_id = ?'];
+    const values: unknown[] = [projectId, inboxId];
+    if (filter.receivedAfter) { clauses.push('received_at > ?'); values.push(filter.receivedAfter); }
+    if (filter.receivedBefore) { clauses.push('received_at < ?'); values.push(filter.receivedBefore); }
+    if (filter.threadId) { clauses.push('thread_id = ?'); values.push(filter.threadId); }
+    if (filter.status) { clauses.push('status = ?'); values.push(filter.status); }
+    if (filter.recipient) { clauses.push('lower(envelope_to) = ?'); values.push(filter.recipient.toLowerCase()); }
+    if (filter.subject) { clauses.push('instr(lower(subject), ?) > 0'); values.push(filter.subject.toLowerCase()); }
+    if (filter.text) {
+      clauses.push(`instr(lower(coalesce(json_extract(data_json, '$.textBody'), '') || char(10) || coalesce(json_extract(data_json, '$.htmlBody'), '')), ?) > 0`);
+      values.push(filter.text.toLowerCase());
+    }
+    if (filter.unreadOnly) clauses.push(`json_type(data_json, '$.readAt') IS NULL`);
+    if (filter.sender) {
+      clauses.push(`(lower(envelope_from) = ? OR EXISTS (
+        SELECT 1 FROM json_each(mailfn_messages.data_json, '$.from') AS sender_entry
+        WHERE lower(json_extract(sender_entry.value, '$.address')) = ?
+      ))`);
+      values.push(filter.sender.toLowerCase(), filter.sender.toLowerCase());
+    }
+    if (filter.senderDomain) {
+      const suffix = `@${filter.senderDomain.toLowerCase()}`;
+      clauses.push(`EXISTS (
+        SELECT 1 FROM json_each(mailfn_messages.data_json, '$.from') AS sender_entry
+        WHERE substr(lower(json_extract(sender_entry.value, '$.address')), -length(?)) = ?
+      )`);
+      values.push(suffix, suffix);
+    }
+    for (const label of filter.labels ?? []) {
+      clauses.push(`EXISTS (
+        SELECT 1 FROM json_each(mailfn_messages.data_json, '$.labels') AS label_entry
+        WHERE label_entry.value = ?
+      )`);
+      values.push(label);
+    }
+    if (cursor) {
+      clauses.push('(received_at < ? OR (received_at = ? AND id < ?))');
+      values.push(cursor.receivedAt, cursor.receivedAt, cursor.id);
+    }
+    values.push(limit + 1);
+    const messages = await this.many<Message>(
+      `SELECT data_json FROM mailfn_messages
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY received_at DESC, id DESC
+       LIMIT ?`,
+      values,
+    );
+    return {
+      items: messages.slice(0, limit),
+      hasMore: messages.length > limit,
+      cursorFound: true,
+    };
+  }
   async searchMessages(
     projectId: string,
     inboxId: string,
@@ -160,6 +233,48 @@ export class D1MailFnStore implements MailFnStore {
        ORDER BY message.received_at DESC, message.id DESC`,
       values,
     );
+  }
+  async searchMessagesPage(
+    projectId: string,
+    inboxId: string,
+    input: Omit<SearchMessagesInput, 'projectId' | 'inboxId' | 'cursor' | 'limit'>,
+    cursorId: string | undefined,
+    limit: number,
+  ): Promise<{ items: Message[]; hasMore: boolean; cursorFound: boolean }> {
+    const clauses = ['mailfn_messages_fts.project_id = ?', 'mailfn_messages_fts.inbox_id = ?', 'mailfn_messages_fts MATCH ?'];
+    const values: unknown[] = [projectId, inboxId, ftsPhrase(input.query)];
+    if (input.receivedAfter) { clauses.push('message.received_at > ?'); values.push(input.receivedAfter); }
+    if (input.receivedBefore) { clauses.push('message.received_at < ?'); values.push(input.receivedBefore); }
+    const cursor = cursorId ? await this.getMessage(cursorId) : null;
+    if (cursorId) {
+      if (!cursor || cursor.projectId !== projectId || cursor.inboxId !== inboxId) {
+        return { items: [], hasMore: false, cursorFound: false };
+      }
+      const cursorMatch = await this.rawMany<{ id: string }>(
+        `SELECT message.id FROM mailfn_messages_fts
+         JOIN mailfn_messages AS message ON message.id = mailfn_messages_fts.message_id
+         WHERE ${clauses.join(' AND ')} AND message.status = 'ready' AND message.id = ?
+         LIMIT 1`,
+        [...values, cursorId],
+      );
+      if (!cursorMatch.length) return { items: [], hasMore: false, cursorFound: false };
+      clauses.push('(message.received_at < ? OR (message.received_at = ? AND message.id < ?))');
+      values.push(cursor.receivedAt, cursor.receivedAt, cursor.id);
+    }
+    values.push(limit + 1);
+    const messages = await this.many<Message>(
+      `SELECT message.data_json FROM mailfn_messages_fts
+       JOIN mailfn_messages AS message ON message.id = mailfn_messages_fts.message_id
+       WHERE ${clauses.join(' AND ')} AND message.status = 'ready'
+       ORDER BY message.received_at DESC, message.id DESC
+       LIMIT ?`,
+      values,
+    );
+    return {
+      items: messages.slice(0, limit),
+      hasMore: messages.length > limit,
+      cursorFound: true,
+    };
   }
   async saveMessage(value: Message): Promise<void> {
     const save = bind(
@@ -184,6 +299,34 @@ export class D1MailFnStore implements MailFnStore {
     ).bind(value.id, value.projectId, value.inboxId, value.subject, value.textBody ?? '', value.htmlBody ?? '');
     const results = await this.database.batch([save, removeSearch, saveSearch]);
     if (results.some((result) => !result.success)) throw new Error('MAILFN_D1_WRITE_FAILED');
+  }
+  async claimMessageForParsing(messageId: string, claimedAt: string, leaseExpiresAt: string): Promise<boolean> {
+    const result = await this.database.prepare(
+      `UPDATE mailfn_messages
+       SET updated_at = ?, data_json = json_set(data_json, '$.parseLeaseExpiresAt', ?, '$.updatedAt', ?)
+       WHERE id = ? AND status NOT IN ('ready', 'deleted')
+         AND (json_extract(data_json, '$.parseLeaseExpiresAt') IS NULL OR json_extract(data_json, '$.parseLeaseExpiresAt') <= ?)`,
+    ).bind(claimedAt, leaseExpiresAt, claimedAt, messageId, claimedAt).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(result.meta?.changes ?? 0) === 1;
+  }
+  async markMessageRead(messageId: string, readAt: string): Promise<Message | null> {
+    const result = await this.database.prepare(
+      `UPDATE mailfn_messages
+       SET updated_at = ?, data_json = json_set(data_json, '$.readAt', ?, '$.updatedAt', ?)
+       WHERE id = ? AND json_extract(data_json, '$.readAt') IS NULL`,
+    ).bind(readAt, readAt, readAt, messageId).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return this.getMessage(messageId);
+  }
+  async setMessageLabels(messageId: string, labels: string[], updatedAt: string): Promise<Message | null> {
+    const result = await this.database.prepare(
+      `UPDATE mailfn_messages
+       SET updated_at = ?, data_json = json_set(data_json, '$.labels', json(?), '$.updatedAt', ?)
+       WHERE id = ?`,
+    ).bind(updatedAt, JSON.stringify(labels), updatedAt, messageId).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return this.getMessage(messageId);
   }
   async deleteMessage(id: string): Promise<void> {
     const results = await this.database.batch([
@@ -226,6 +369,21 @@ export class D1MailFnStore implements MailFnStore {
        updated_at=excluded.updated_at, data_json=excluded.data_json`,
       [value.id, value.projectId, value.inboxId, value.normalizedSubject, value.lastMessageAt, value.createdAt, value.updatedAt, json(value)],
     );
+  }
+  async saveThreadIfUnchanged(value: Thread, expected: Thread | null): Promise<boolean> {
+    const statement = expected
+      ? bind(this.database.prepare(
+        `UPDATE mailfn_threads
+         SET normalized_subject = ?, last_message_at = ?, updated_at = ?, data_json = ?
+         WHERE id = ? AND data_json = ?`,
+      ), [value.normalizedSubject, value.lastMessageAt, value.updatedAt, json(value), value.id, json(expected)])
+      : bind(this.database.prepare(
+        `INSERT OR IGNORE INTO mailfn_threads(id, project_id, inbox_id, normalized_subject, last_message_at, created_at, updated_at, data_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ), [value.id, value.projectId, value.inboxId, value.normalizedSubject, value.lastMessageAt, value.createdAt, value.updatedAt, json(value)]);
+    const result = await statement.run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(result.meta?.changes ?? 0) === 1;
   }
 
   async getWebhook(id: string): Promise<Webhook | null> {
@@ -289,6 +447,14 @@ export class D1MailFnStore implements MailFnStore {
   }
   async listDomains(projectId: string): Promise<MailDomain[]> {
     return this.many('SELECT data_json FROM mailfn_domains WHERE project_id = ? ORDER BY created_at', [projectId]);
+  }
+  async createDomain(value: MailDomain): Promise<boolean> {
+    const result = await bind(this.database.prepare(
+      `INSERT OR IGNORE INTO mailfn_domains(id, project_id, domain, status, verification_token, verified_at, created_at, updated_at, data_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ), [value.id, value.projectId, value.domain, value.status, value.verificationToken, value.verifiedAt ?? null, value.createdAt, value.updatedAt, json(value)]).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(result.meta?.changes ?? 0) === 1;
   }
   async saveDomain(value: MailDomain): Promise<void> {
     await this.run(
@@ -531,7 +697,11 @@ function matchesMessage(message: Message, filter: MessageFilter): boolean {
   if (filter.recipient && message.envelopeTo.toLowerCase() !== filter.recipient.toLowerCase()) return false;
   if (filter.subject && !message.subject.toLowerCase().includes(filter.subject.toLowerCase())) return false;
   if (filter.text && !`${message.textBody ?? ''}\n${message.htmlBody ?? ''}`.toLowerCase().includes(filter.text.toLowerCase())) return false;
+  if (filter.receivedAfter && message.receivedAt <= filter.receivedAfter) return false;
+  if (filter.receivedBefore && message.receivedAt >= filter.receivedBefore) return false;
   if (filter.unreadOnly && message.readAt) return false;
+  if (filter.threadId && message.threadId !== filter.threadId) return false;
   if (filter.labels?.some((label) => !message.labels.includes(label))) return false;
+  if (filter.status && message.status !== filter.status) return false;
   return true;
 }

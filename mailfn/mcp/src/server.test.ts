@@ -25,6 +25,12 @@ describe('MailFn MCP server', () => {
     expect(JSON.stringify(result)).not.toContain('123456');
     expect(result).toMatchObject({ message: { id: 'm', receivedAt: message.receivedAt } });
     expect(JSON.stringify(result)).not.toContain('Secret');
+    const revealed = await server.callTool('mailfn_read_message', {
+      inbox_id: 'i', message_id: 'm', include_content: true,
+    });
+    expect(revealed).toMatchObject({ message: {
+      subject: 'Secret', textBody: 'Code is 123456', htmlBody: '<p>123456</p>',
+    } });
   });
 
   it('returns verification material only through the explicit extraction tool', async () => {
@@ -73,5 +79,26 @@ describe('MailFn MCP server', () => {
       id: null, error: { code: -32600 },
     });
     await expect(server.handleRequest([])).resolves.toMatchObject({ id: null, error: { code: -32600 } });
+  });
+
+  it('contains malformed tool calls and cancels active waits', async () => {
+    const waitForMessages = vi.fn((_inboxId, _input, options?: { signal?: AbortSignal }) => new Promise((_, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+    }));
+    const server = new MailFnMcpServer({ waitForMessages } as unknown as MailFnClient);
+    await server.handleRequest({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+    await server.handleRequest({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    await expect(server.handleRequest({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { arguments: {} } })).resolves.toMatchObject({
+      result: { isError: true },
+    });
+    const waiting = server.handleRequest({
+      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'mailfn_wait_for_message', arguments: { inbox_id: 'i', timeout_ms: 30_000 } },
+    });
+    await vi.waitFor(() => expect(waitForMessages).toHaveBeenCalled());
+    await server.handleRequest({
+      jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 3 },
+    });
+    await expect(waiting).resolves.toMatchObject({ result: { isError: true } });
   });
 });

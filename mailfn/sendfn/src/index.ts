@@ -55,7 +55,7 @@ export function createSendFnAdapter(sendfn: SendFnCompatible, options: SendFnAda
               content: Buffer.from(attachment.content),
               contentType: attachment.contentType,
             })),
-            metadata: request.metadata,
+            metadata: mailFnMetadata(request),
           });
       } else if (sendfn.email) {
         result = await sendfn.email({
@@ -87,6 +87,7 @@ export function createSendFnAdapter(sendfn: SendFnCompatible, options: SendFnAda
       } else {
         throw new Error('SENDFN_SEND_METHOD_UNAVAILABLE');
       }
+      if (result.status === 'failed') throw new Error('SENDFN_DELIVERY_FAILED');
       const providerMessageId = result.providerMessageId ?? result.id;
       if (!providerMessageId) throw new Error('SENDFN_PROVIDER_MESSAGE_ID_MISSING');
       return {
@@ -94,5 +95,16 @@ export function createSendFnAdapter(sendfn: SendFnCompatible, options: SendFnAda
         status: result.status === 'sent' || result.status === 'delivered' ? 'sent' : 'queued',
       };
     },
+  };
+}
+
+function mailFnMetadata(request: SendRequest): Record<string, string> {
+  return {
+    ...request.metadata,
+    mailfnInboxId: request.inboxId,
+    mailfnFrom: request.from,
+    mailfnHeaders: JSON.stringify(request.headers),
+    mailfnAttachmentIds: JSON.stringify(request.attachmentIds),
+    mailfnIdempotencyKey: request.idempotencyKey,
   };
 }

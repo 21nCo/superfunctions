@@ -20,7 +20,9 @@ class FakeStatement implements D1PreparedStatement {
     return this.query.includes('mailfn_messages WHERE id') ? this.row as T | null : null;
   }
   async all<T>(): Promise<D1Result<T>> { return { success: true, results: [] }; }
-  async run<T>(): Promise<D1Result<T>> { return { success: true, results: [] }; }
+  async run<T>(): Promise<D1Result<T>> {
+    return { success: true, results: [], meta: { changes: this.query.includes('UPDATE mailfn_messages') ? 1 : 0 } };
+  }
 }
 
 class FakeDatabase implements D1Database {

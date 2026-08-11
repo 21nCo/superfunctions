@@ -61,6 +61,7 @@ export const MAILFN_D1_MIGRATIONS = [
     id TEXT PRIMARY KEY, webhook_id TEXT NOT NULL, event_id TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL,
     next_attempt_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, data_json TEXT NOT NULL
   )`,
+  `CREATE INDEX IF NOT EXISTS mailfn_webhook_deliveries_webhook_created ON mailfn_webhook_deliveries(webhook_id, created_at)`,
   `CREATE TABLE IF NOT EXISTS mailfn_drafts (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, inbox_id TEXT NOT NULL, thread_id TEXT, status TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, data_json TEXT NOT NULL
@@ -135,7 +136,7 @@ export async function applyMailFnMigrations(database: D1Database): Promise<void>
   if (applied) return;
   for (const statement of MAILFN_D1_MIGRATIONS.slice(1)) await database.prepare(statement).run();
   await database
-    .prepare('INSERT INTO mailfn_schema_migrations(version, applied_at) VALUES (?, ?)')
+    .prepare('INSERT OR IGNORE INTO mailfn_schema_migrations(version, applied_at) VALUES (?, ?)')
     .bind(MAILFN_D1_SCHEMA_VERSION, new Date().toISOString())
     .run();
 }

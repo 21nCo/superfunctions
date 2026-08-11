@@ -14,7 +14,17 @@
 | Git commit | `9cf381238d1d8a11c899d6808ffb0bb73dfe839a` |
 | Git state before audit artifacts | Dirty: six modified root files and three untracked MailFn/release paths |
 | Audit mode | Thorough, read-only implementation audit; only this report and the required audit ledger row were written |
-| Verdict | **FAIL — SFN-17 is broadly implemented but all phases are not fully complete** |
+| Verdict | **Historical FAIL at the audited 2026-08-10 snapshot — not the current PR verdict; see the superseding status below** |
+
+## Superseding remediation status
+
+This report is retained as point-in-time audit evidence for the earlier dirty snapshot recorded above. It must not be read as the verdict for the current PR head. Later implementation and regression coverage resolved several blockers described here:
+
+- **H-01 resolved:** `mailfn/mcp/src/server.ts` now uses newline-delimited JSON-RPC stdio, negotiates supported protocol versions, contains malformed calls, and has process-transport coverage in `mailfn/mcp/src/server.test.ts`.
+- **H-04 resolved:** `reserveIngressQuota` and both store adapters enforce project, inbox, and sender hourly dimensions through durable reservations.
+- **H-06 resolved:** the Cloudflare domain adapter calls `ensureEmailRouting()` before routing-rule creation and verifies the configured zone/domain boundary.
+
+The later re-audit at `.conduct/audits/2026-08-11-9f087abf-full-audit.md` and subsequent PR-review remediation provide newer evidence. Unresolved historical findings below remain useful only where they still reproduce against the current tree.
 
 Commands used included repository inventory and diffs, targeted source searches, the MailFn release gate under Node 22, SQLite migration execution, dependency inspection, catalog validation, and focused behavioral probes for MCP stdio and project quota semantics. No deployment, DNS mutation, package publication, Linear mutation, or other external side effect was performed.
 

@@ -44,7 +44,9 @@ export function extractVerificationLink(message: Message): ExtractedVerification
   }
   candidates.sort((left, right) => right.score - left.score || left.value.localeCompare(right.value));
   const selected = candidates[0];
-  return selected ? source(message, 'verification_link', selected.value, selected.field) : null;
+  return selected && selected.score > 0
+    ? source(message, 'verification_link', selected.value, selected.field)
+    : null;
 }
 
 function verificationFields(message: Message): Array<['subject' | 'text' | 'html', string]> {

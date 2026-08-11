@@ -115,6 +115,12 @@ export class MemoryMailFnStore implements MailFnStore {
   async saveCredential(credential: Credential): Promise<void> {
     this.credentials.set(credential.id, copy(credential));
   }
+  async touchCredentialIfActive(id: string, lastUsedAt: string): Promise<boolean> {
+    const credential = this.credentials.get(id);
+    if (!credential || credential.status !== 'active') return false;
+    this.credentials.set(id, copy({ ...credential, lastUsedAt }));
+    return true;
+  }
 
   async getMessage(id: string): Promise<Message | null> {
     return this.messages.has(id) ? copy(this.messages.get(id)!) : null;
@@ -132,6 +138,23 @@ export class MemoryMailFnStore implements MailFnStore {
       .filter((message) => matchesMessage(message, filter))
       .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt) || right.id.localeCompare(left.id));
   }
+  async listMessagesPage(
+    projectId: string,
+    inboxId: string,
+    filter: MessageFilter,
+    cursorId: string | undefined,
+    limit: number,
+  ): Promise<{ items: Message[]; hasMore: boolean; cursorFound: boolean }> {
+    const messages = await this.listMessages(projectId, inboxId, filter);
+    const cursorIndex = cursorId ? messages.findIndex((message) => message.id === cursorId) : -1;
+    if (cursorId && cursorIndex < 0) return { items: [], hasMore: false, cursorFound: false };
+    const start = cursorIndex + 1;
+    return {
+      items: messages.slice(start, start + limit),
+      hasMore: start + limit < messages.length,
+      cursorFound: true,
+    };
+  }
   async searchMessages(
     projectId: string,
     inboxId: string,
@@ -146,6 +169,23 @@ export class MemoryMailFnStore implements MailFnStore {
       `${message.subject}\n${message.textBody ?? ''}\n${message.htmlBody ?? ''}`.toLowerCase().includes(query),
     );
   }
+  async searchMessagesPage(
+    projectId: string,
+    inboxId: string,
+    input: Omit<SearchMessagesInput, 'projectId' | 'inboxId' | 'cursor' | 'limit'>,
+    cursorId: string | undefined,
+    limit: number,
+  ): Promise<{ items: Message[]; hasMore: boolean; cursorFound: boolean }> {
+    const messages = await this.searchMessages(projectId, inboxId, input);
+    const cursorIndex = cursorId ? messages.findIndex((message) => message.id === cursorId) : -1;
+    if (cursorId && cursorIndex < 0) return { items: [], hasMore: false, cursorFound: false };
+    const start = cursorIndex + 1;
+    return {
+      items: messages.slice(start, start + limit),
+      hasMore: start + limit < messages.length,
+      cursorFound: true,
+    };
+  }
   async saveMessage(message: Message): Promise<void> {
     const duplicate = values(this.messages).find(
       (candidate) => candidate.id !== message.id && candidate.inboxId === message.inboxId &&
@@ -153,6 +193,28 @@ export class MemoryMailFnStore implements MailFnStore {
     );
     if (duplicate) throw new Error('MAILFN_UNIQUE_CONSTRAINT');
     this.messages.set(message.id, copy(message));
+  }
+  async claimMessageForParsing(messageId: string, claimedAt: string, leaseExpiresAt: string): Promise<boolean> {
+    const message = this.messages.get(messageId);
+    if (
+      !message || message.status === 'ready' || message.status === 'deleted' ||
+      (message.parseLeaseExpiresAt !== undefined && message.parseLeaseExpiresAt > claimedAt)
+    ) return false;
+    this.messages.set(messageId, copy({ ...message, parseLeaseExpiresAt: leaseExpiresAt, updatedAt: claimedAt }));
+    return true;
+  }
+  async markMessageRead(messageId: string, readAt: string): Promise<Message | null> {
+    const message = this.messages.get(messageId);
+    if (!message) return null;
+    if (!message.readAt) this.messages.set(messageId, copy({ ...message, readAt, updatedAt: readAt }));
+    return copy(this.messages.get(messageId)!);
+  }
+  async setMessageLabels(messageId: string, labels: string[], updatedAt: string): Promise<Message | null> {
+    const message = this.messages.get(messageId);
+    if (!message) return null;
+    const updated = { ...message, labels: [...labels], updatedAt };
+    this.messages.set(messageId, copy(updated));
+    return copy(updated);
   }
   async deleteMessage(id: string): Promise<void> {
     this.messages.delete(id);
@@ -181,6 +243,12 @@ export class MemoryMailFnStore implements MailFnStore {
   }
   async saveThread(thread: Thread): Promise<void> {
     this.threads.set(thread.id, copy(thread));
+  }
+  async saveThreadIfUnchanged(thread: Thread, expected: Thread | null): Promise<boolean> {
+    const current = this.threads.get(thread.id) ?? null;
+    if (JSON.stringify(current) !== JSON.stringify(expected)) return false;
+    this.threads.set(thread.id, copy(thread));
+    return true;
   }
 
   async getWebhook(id: string): Promise<Webhook | null> {
@@ -226,6 +294,13 @@ export class MemoryMailFnStore implements MailFnStore {
   }
   async listDomains(projectId: string): Promise<MailDomain[]> {
     return values(this.domains).filter((domain) => domain.projectId === projectId);
+  }
+  async createDomain(domain: MailDomain): Promise<boolean> {
+    if (values(this.domains).some((entry) => entry.projectId === domain.projectId && entry.domain === domain.domain)) {
+      return false;
+    }
+    this.domains.set(domain.id, copy(domain));
+    return true;
   }
   async saveDomain(domain: MailDomain): Promise<void> {
     this.domains.set(domain.id, copy(domain));

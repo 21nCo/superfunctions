@@ -145,6 +145,7 @@ export class AwsSesAdapter implements EmailProvider {
 
     const command = new SendRawEmailCommand({
       RawMessage: { Data: Buffer.from(rawMessage) },
+      Destinations: [...params.to, ...(params.cc ?? []), ...(params.bcc ?? [])],
       ConfigurationSetName: this.config.configurationSetName,
     });
 

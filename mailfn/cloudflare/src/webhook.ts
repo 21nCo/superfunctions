@@ -57,7 +57,7 @@ export class CloudflareWebhookDispatcher implements MailFnWebhookDispatcher {
         });
         status = response.status;
         if (response.ok) return { ok: true, status, retryable: false };
-        if (status !== 429 && status < 500) return { ok: false, status, retryable: false };
+        if (status !== 408 && status !== 429 && status < 500) return { ok: false, status, retryable: false };
       } catch {
         status = undefined;
       } finally {

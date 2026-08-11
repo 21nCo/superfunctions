@@ -62,6 +62,12 @@ describe('Cloudflare webhook delivery', () => {
     await expect(new CloudflareWebhookDispatcher({ fetch: transient, maxAttempts: 2, resolveHostname: resolvePublic }).deliver(input))
       .resolves.toMatchObject({ ok: true });
     expect(transient).toHaveBeenCalledTimes(2);
+    const timeout = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 408 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(new CloudflareWebhookDispatcher({ fetch: timeout, maxAttempts: 2, resolveHostname: resolvePublic }).deliver(input))
+      .resolves.toMatchObject({ ok: true });
+    expect(timeout).toHaveBeenCalledTimes(2);
     const permanent = vi.fn(async () => new Response(null, { status: 400 }));
     await expect(new CloudflareWebhookDispatcher({ fetch: permanent, resolveHostname: resolvePublic }).deliver(input))
       .resolves.toEqual({ ok: false, status: 400, retryable: false });

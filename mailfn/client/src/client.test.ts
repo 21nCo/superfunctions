@@ -52,6 +52,28 @@ describe('MailFnClient', () => {
     await expect(client.readRaw('i', 'm')).rejects.toMatchObject({ code: 'MAILFN_NOT_FOUND', status: 404 });
   });
 
+  it('does not start pre-cancelled requests and removes retry listeners after backoff', async () => {
+    const cancelledFetch = vi.fn();
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const client = new MailFnClient({ baseUrl: 'https://mailfn.test', token: 'scoped', fetch: cancelledFetch });
+    await expect(client.listInboxes({ signal: cancelled.signal })).rejects.toMatchObject({
+      code: 'MAILFN_NETWORK_ERROR', retryable: false,
+    });
+    expect(cancelledFetch).not.toHaveBeenCalled();
+
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, 'addEventListener');
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+    const retryFetch = vi.fn()
+      .mockResolvedValueOnce(envelope(null, 503, { code: 'MAILFN_STORAGE_FAILED', message: 'down', retryable: true }))
+      .mockResolvedValueOnce(envelope([]));
+    await new MailFnClient({
+      baseUrl: 'https://mailfn.test', token: 'scoped', fetch: retryFetch, retries: 1,
+    }).listInboxes({ signal: controller.signal });
+    expect(removed).toHaveBeenCalledTimes(added.mock.calls.length);
+  });
+
   it('discovers attachment metadata and returns it with downloaded bytes', async () => {
     const descriptor = {
       id: 'a', inboxId: 'i', messageId: 'm', filename: 'proof.txt', contentType: 'text/plain',

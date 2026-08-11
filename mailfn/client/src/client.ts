@@ -360,6 +360,9 @@ export class MailFnClient {
     const canRetry = method === 'GET' || options.idempotent === true;
     let lastError: unknown;
     for (let attempt = 0; attempt <= (canRetry ? this.retries : 0); attempt += 1) {
+      if (options.signal?.aborted) {
+        throw new MailFnClientError('MAILFN_NETWORK_ERROR', 'MailFn request was cancelled', 0, false);
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? this.timeoutMs);
       const abort = () => controller.abort();
@@ -429,12 +432,19 @@ function retryDelay(response: Response, attempt: number): number {
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
+    const cleanup = () => signal?.removeEventListener('abort', abort);
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    const abort = () => {
       clearTimeout(timer);
+      cleanup();
       reject(new DOMException('Aborted', 'AbortError'));
-    }, { once: true });
+    };
+    signal?.addEventListener('abort', abort, { once: true });
   });
 }
 

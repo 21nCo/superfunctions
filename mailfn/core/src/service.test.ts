@@ -42,6 +42,7 @@ class JsonMimeParser implements MailFnMimeParser {
       internetMessageId: input.internetMessageId,
       inReplyTo: input.inReplyTo,
       references: input.references ?? [],
+      authenticationResults: input.authenticationResults,
       attachments: (input.attachments ?? []).map((entry) => ({
         ...entry,
         content: typeof entry.content === 'string'
@@ -85,6 +86,37 @@ class FailingActiveDomainStore extends MemoryMailFnStore {
   }
 }
 
+class RetryableCancelStore extends MemoryMailFnStore {
+  public releaseAttempts = 0;
+  override async releaseStorage(reservationId: string): Promise<void> {
+    this.releaseAttempts += 1;
+    if (this.releaseAttempts === 1) throw new Error('transient release failure');
+    await super.releaseStorage(reservationId);
+  }
+}
+
+class ConcurrentRevokeStore extends MemoryMailFnStore {
+  public revokeOnTouch = false;
+  override async touchCredentialIfActive(id: string, lastUsedAt: string): Promise<boolean> {
+    if (this.revokeOnTouch) {
+      const credential = await this.getCredential(id);
+      if (credential) await this.saveCredential({ ...credential, status: 'revoked', revokedAt: lastUsedAt });
+    }
+    return super.touchCredentialIfActive(id, lastUsedAt);
+  }
+}
+
+class RecoveringAttachmentStore extends MemoryMailFnStore {
+  public failNextAttachment = true;
+  override async saveAttachment(attachment: Parameters<MemoryMailFnStore['saveAttachment']>[0]): Promise<void> {
+    if (this.failNextAttachment) {
+      this.failNextAttachment = false;
+      throw new Error('attachment metadata unavailable');
+    }
+    await super.saveAttachment(attachment);
+  }
+}
+
 async function setup(options: {
   clock?: MutableClock;
   queue?: MailFnQueue;
@@ -93,6 +125,7 @@ async function setup(options: {
   domainAdapter?: MailFnDomainAdapter;
   store?: MemoryMailFnStore;
   objects?: MemoryMailFnObjectStore;
+  mimeParser?: MailFnMimeParser;
   retentionPolicy?: Partial<RetentionPolicy>;
   quota?: Partial<ProjectQuota>;
   publicPlatform?: Partial<PublicPlatformPolicy>;
@@ -103,7 +136,7 @@ async function setup(options: {
     store,
     objects,
     defaultDomain: 'inbound.example.com',
-    mimeParser: new JsonMimeParser(),
+    mimeParser: options.mimeParser ?? new JsonMimeParser(),
     secretProtector: noOpSecretProtector,
     clock: options.clock,
     queue: options.queue,
@@ -238,7 +271,7 @@ describe('MailFn domain service', () => {
     expect(new TextDecoder().decode(attachment.data)).toBe('evidence');
 
     const replyRaw = raw({
-      internetMessageId: '<reply@example.com>', inReplyTo: '<first@example.com>', references: ['<first@example.com>'],
+      internetMessageId: '<reply@example.com>', inReplyTo: 'sender <missing@example.com> <first@example.com>', references: [],
       subject: 'Re: Verify your account', text: 'Follow up',
     });
     const reply = await context.mailfn.receiveInbound({
@@ -873,5 +906,158 @@ describe('MailFn domain service', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(context.mailfn.waitForMessages(actor, { inboxId: created.inbox.id, signal: controller.signal })).rejects.toBeInstanceOf(MailFnError);
+  });
+
+  it('keeps failed inbound reservation cleanup retryable', async () => {
+    const store = new RetryableCancelStore();
+    const context = await setup({ store });
+    const created = await createInbox(context, 'cancel-retry');
+    const preflight = await context.mailfn.preflightInbound({
+      envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address, rawSize: 10,
+    });
+    await expect(context.mailfn.cancelInbound(preflight)).rejects.toThrow('transient release failure');
+    await expect(context.mailfn.cancelInbound(preflight)).resolves.toBeUndefined();
+    await context.mailfn.cancelInbound(preflight);
+    expect(store.releaseAttempts).toBe(2);
+  });
+
+  it('does not resurrect a credential revoked during authentication', async () => {
+    const store = new ConcurrentRevokeStore();
+    const context = await setup({ store });
+    const issued = await context.mailfn.createCredential(context.admin, {
+      projectId: context.project.id, permissions: ['inbox:read'],
+    });
+    store.revokeOnTouch = true;
+    await expect(context.mailfn.authenticate(issued.token)).rejects.toMatchObject({ code: 'MAILFN_UNAUTHORIZED' });
+    await expect(store.getCredential(issued.credential.id)).resolves.toMatchObject({ status: 'revoked' });
+  });
+
+  it('claims concurrent parse deliveries and reuses deterministic attachment state on retry', async () => {
+    const jobs: ParseJob[] = [];
+    let parseCalls = 0;
+    let releaseParse!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseParse = resolve; });
+    const parser = new JsonMimeParser();
+    const blockingParser: MailFnMimeParser = {
+      async parse(value) {
+        parseCalls += 1;
+        await gate;
+        return parser.parse(value);
+      },
+    };
+    const context = await setup({ mimeParser: blockingParser, queue: { async enqueue(job) { jobs.push(job); } } });
+    const created = await createInbox(context, 'parse-claim');
+    const value = raw({ attachments: [{ filename: 'proof.txt', contentType: 'text/plain', content: 'proof' } as never] });
+    await context.mailfn.receiveInbound({
+      providerDeliveryId: 'parse-claim', envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address,
+      raw: value, rawSize: value.byteLength,
+    });
+    const first = context.mailfn.parseMessage(jobs[0]!);
+    await vi.waitFor(() => expect(parseCalls).toBe(1));
+    await expect(context.mailfn.parseMessage(jobs[0]!)).resolves.toMatchObject({ status: 'pending' });
+    releaseParse();
+    await expect(first).resolves.toMatchObject({ status: 'ready' });
+    expect(parseCalls).toBe(1);
+
+    const recoveringStore = new RecoveringAttachmentStore();
+    const recoveringObjects = new FailingDeleteObjectStore();
+    const retryJobs: ParseJob[] = [];
+    const retryContext = await setup({
+      store: recoveringStore,
+      objects: recoveringObjects,
+      queue: { async enqueue(job) { retryJobs.push(job); } },
+    });
+    const retryInbox = await createInbox(retryContext, 'parse-cleanup');
+    await retryContext.mailfn.receiveInbound({
+      providerDeliveryId: 'parse-cleanup', envelopeFrom: 'sender@example.com', envelopeTo: retryInbox.inbox.address,
+      raw: value, rawSize: value.byteLength,
+    });
+    await expect(retryContext.mailfn.parseMessage(retryJobs[0]!)).rejects.toMatchObject({ code: 'MAILFN_PARSE_FAILED' });
+    recoveringObjects.failDeletes = false;
+    await expect(retryContext.mailfn.parseMessage(retryJobs[0]!)).resolves.toMatchObject({ status: 'ready' });
+    const stored = await recoveringStore.listMessages(retryContext.project.id, retryInbox.inbox.id);
+    const attachments = await recoveringStore.listAttachments(stored[0]!.id);
+    expect(attachments).toHaveLength(1);
+    expect(recoveringObjects.size()).toBe(2);
+  });
+
+  it('preserves trusted authentication, Reply-To, lifecycle validation, and concurrent read labels', async () => {
+    const context = await setup();
+    const created = await createInbox(context, 'message-safety');
+    await expect(context.mailfn.updateInbox(context.admin, created.inbox.id, { status: 'deleted' } as never))
+      .rejects.toMatchObject({ code: 'MAILFN_VALIDATION_FAILED' });
+    const value = raw({
+      internetMessageId: '<safe@example.com>', replyTo: [{ address: 'reply@example.com' }],
+      authenticationResults: { spf: 'fail', dkim: 'pass' },
+    });
+    const message = await context.mailfn.receiveInbound({
+      providerDeliveryId: 'message-safety', envelopeFrom: 'bounce@example.com', envelopeTo: created.inbox.address,
+      authenticationResults: { spf: 'pass' }, raw: value, rawSize: value.byteLength,
+    });
+    expect(message.authenticationResults).toMatchObject({ spf: 'pass', dkim: 'pass' });
+    await expect(context.mailfn.createReplyDraft(context.admin, created.inbox.id, message.id, { text: 'reply' }))
+      .resolves.toMatchObject({ to: ['reply@example.com'] });
+    await Promise.all([
+      context.mailfn.getMessage(context.admin, created.inbox.id, message.id),
+      context.mailfn.labelMessage(context.admin, created.inbox.id, message.id, ['important']),
+    ]);
+    await expect(context.store.getMessage(message.id)).resolves.toMatchObject({
+      labels: ['important'], readAt: expect.any(String),
+    });
+    const footer = raw({ subject: 'Newsletter', text: 'Read https://example.com/privacy for details.' });
+    const footerMessage = await context.mailfn.receiveInbound({
+      providerDeliveryId: 'ordinary-link', envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address,
+      raw: footer, rawSize: footer.byteLength,
+    });
+    await expect(context.mailfn.extractVerification(
+      context.admin, created.inbox.id, footerMessage.id, 'verification_link',
+    )).rejects.toMatchObject({ code: 'MAILFN_NOT_FOUND' });
+  });
+
+  it('uses bounded store pagination, unique domain creation, and optimistic thread updates', async () => {
+    const domainAdapter: MailFnDomainAdapter = {
+      async getRequiredDnsRecords() { return []; },
+      async createRouting() { return { routingRuleId: 'route' }; },
+      async verifyDns() { return { verified: true, diagnostics: [] }; },
+      async disableRouting() {},
+    };
+    const context = await setup({ domainAdapter });
+    const created = await createInbox(context, 'paged');
+    for (const id of ['one', 'two', 'three']) {
+      const value = raw({ subject: `Paged common ${id}` });
+      await context.mailfn.receiveInbound({
+        providerDeliveryId: id, envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address,
+        raw: value, rawSize: value.byteLength,
+      });
+    }
+    const first = await context.mailfn.listMessages(context.admin, { inboxId: created.inbox.id, limit: 2 });
+    const second = await context.mailfn.listMessages(context.admin, {
+      inboxId: created.inbox.id, limit: 2, cursor: first.nextCursor,
+    });
+    expect(first.items).toHaveLength(2);
+    expect(second.items).toHaveLength(1);
+    expect(new Set([...first.items, ...second.items].map((message) => message.id)).size).toBe(3);
+    const searchFirst = await context.mailfn.searchMessages(context.admin, {
+      inboxId: created.inbox.id, query: 'common', limit: 2,
+    });
+    const searchSecond = await context.mailfn.searchMessages(context.admin, {
+      inboxId: created.inbox.id, query: 'common', limit: 2, cursor: searchFirst.nextCursor,
+    });
+    expect(searchFirst.items).toHaveLength(2);
+    expect(searchSecond.items).toHaveLength(1);
+
+    const domains = await Promise.allSettled([
+      context.mailfn.createDomain(context.admin, 'mail.example.com'),
+      context.mailfn.createDomain(context.admin, 'mail.example.com'),
+    ]);
+    expect(domains.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(domains.filter((result) => result.status === 'rejected')).toMatchObject([{ reason: { code: 'MAILFN_CONFLICT' } }]);
+
+    const thread = (await context.mailfn.listThreads(context.admin, created.inbox.id))[0]!;
+    const firstUpdate = { ...thread, messageIds: [...thread.messageIds, 'extra-1'] };
+    const staleUpdate = { ...thread, messageIds: [...thread.messageIds, 'extra-2'] };
+    await expect(context.store.saveThreadIfUnchanged(firstUpdate, thread)).resolves.toBe(true);
+    await expect(context.store.saveThreadIfUnchanged(staleUpdate, thread)).resolves.toBe(false);
+    await expect(context.store.getThread(thread.id)).resolves.toMatchObject({ messageIds: expect.arrayContaining(['extra-1']) });
   });
 });

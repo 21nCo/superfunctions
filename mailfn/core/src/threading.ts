@@ -14,7 +14,9 @@ export function resolveThread(
   ids: MailFnIdGenerator,
   now: string,
 ): Thread {
-  const referenceIds = new Set([message.inReplyTo, ...message.references].filter(Boolean));
+  const referenceIds = new Set(
+    [message.inReplyTo, ...message.references].flatMap((value) => extractMessageIds(value)),
+  );
   const parent = messages.find(
     (candidate) => candidate.internetMessageId && referenceIds.has(candidate.internetMessageId),
   );
@@ -50,4 +52,11 @@ export function resolveThread(
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function extractMessageIds(value: string | undefined): string[] {
+  if (!value) return [];
+  const bracketed = value.match(/<[^<>\s]+>/g);
+  if (bracketed?.length) return bracketed;
+  return value.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
 }

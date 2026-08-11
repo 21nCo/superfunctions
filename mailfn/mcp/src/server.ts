@@ -50,6 +50,7 @@ export const MAILFN_MCP_TOOLS: McpTool[] = [
 export class MailFnMcpServer {
   private initializeResponded = false;
   private initialized = false;
+  private readonly activeRequests = new Map<string | number, AbortController>();
 
   public constructor(private readonly client: MailFnClient) {}
 
@@ -70,6 +71,10 @@ export class MailFnMcpServer {
       return null;
     }
     if (request.method === 'notifications/cancelled') {
+      const requestId = request.params?.requestId;
+      if (typeof requestId === 'string' || (typeof requestId === 'number' && Number.isFinite(requestId))) {
+        this.activeRequests.get(requestId)?.abort();
+      }
       return notification ? null : failure(request, -32600, 'notifications/cancelled must not include an id');
     }
     if (request.method === 'initialize') {
@@ -89,10 +94,13 @@ export class MailFnMcpServer {
     if (!this.initialized) return finish(failure(request, -32002, 'MailFn MCP initialization is not complete'));
     if (request.method === 'tools/list') return finish(response(request, { tools: this.listTools() }));
     if (request.method !== 'tools/call') return finish(failure(request, -32601, `Method ${request.method} is not supported`));
-    const name = string(request.params?.name, 'name');
-    const args = object(request.params?.arguments);
+    const requestId = request.id === null ? undefined : request.id;
+    const controller = requestId === undefined ? undefined : new AbortController();
     try {
-      const value = await this.callTool(name, args);
+      const name = string(request.params?.name, 'name');
+      const args = object(request.params?.arguments);
+      if (requestId !== undefined && controller) this.activeRequests.set(requestId, controller);
+      const value = await this.callTool(name, args, controller?.signal);
       return finish(response(request, {
         content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
         structuredContent: value,
@@ -103,10 +111,12 @@ export class MailFnMcpServer {
       return finish(response(request, {
         content: [{ type: 'text', text: JSON.stringify(safe) }], structuredContent: safe, isError: true,
       }));
+    } finally {
+      if (requestId !== undefined) this.activeRequests.delete(requestId);
     }
   }
 
-  public async callTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  public async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
     switch (name) {
       case 'mailfn_create_inbox': {
         const kind = enumValue(args.kind, ['stable', 'expiring'] as const, 'kind');
@@ -127,7 +137,7 @@ export class MailFnMcpServer {
         const result = await this.client.waitForMessages(string(args.inbox_id, 'inbox_id'), {
           after: optionalString(args.after), sender: optionalString(args.sender), senderDomain: optionalString(args.sender_domain),
           subject: optionalString(args.subject), timeoutMs: optionalNumber(args.timeout_ms), expectedCount: optionalNumber(args.expected_count),
-        });
+        }, { signal });
         return { ok: true, ...result, messages: result.messages.map(metadata) };
       }
       case 'mailfn_list_messages': {
@@ -173,6 +183,15 @@ export async function serveMailFnMcpStdio(
   const server = new MailFnMcpServer(client);
   const lines = createInterface({ input: streams.input, crlfDelay: Infinity });
   const close = () => lines.close();
+  const pending = new Set<Promise<void>>();
+  let writes = Promise.resolve();
+  const emit = (value: JsonRpcResponse): Promise<void> => {
+    writes = writes.then(() => write(value, streams.output));
+    return writes;
+  };
+  const dispatch = (request: unknown): Promise<void> => server.handleRequest(request).then(async (result) => {
+    if (result) await emit(result);
+  });
   signal?.addEventListener('abort', close, { once: true });
   try {
     for await (const line of lines) {
@@ -181,12 +200,21 @@ export async function serveMailFnMcpStdio(
       try {
         request = JSON.parse(line) as unknown;
       } catch {
-        await write(failure({ jsonrpc: '2.0', id: null, method: '' }, -32700, 'Parse error'), streams.output);
+        await emit(failure({ jsonrpc: '2.0', id: null, method: '' }, -32700, 'Parse error'));
         continue;
       }
-      const result = await server.handleRequest(request);
-      if (result) await write(result, streams.output);
+      const method = request && typeof request === 'object' && !Array.isArray(request)
+        ? (request as Record<string, unknown>).method
+        : undefined;
+      if (method === 'tools/call' || method === 'notifications/cancelled') {
+        const task = dispatch(request).finally(() => pending.delete(task));
+        pending.add(task);
+      } else {
+        await dispatch(request);
+      }
     }
+    await Promise.all(pending);
+    await writes;
   } finally {
     signal?.removeEventListener('abort', close);
   }

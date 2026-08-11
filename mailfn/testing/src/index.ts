@@ -51,13 +51,20 @@ export async function createInboxFixture(
     idempotencyKey: `test:${options.testRunId}:${options.requestedLocalPart ?? 'generated'}`,
   });
   let disposed = false;
+  let disposing: Promise<void> | undefined;
   return {
     inbox: created.inbox,
     token: created.credential.token,
     async dispose() {
       if (disposed) return;
-      disposed = true;
-      await client.deleteInbox(created.inbox.id);
+      if (!disposing) {
+        disposing = client.deleteInbox(created.inbox.id).then(() => {
+          disposed = true;
+        }).finally(() => {
+          disposing = undefined;
+        });
+      }
+      await disposing;
     },
   };
 }

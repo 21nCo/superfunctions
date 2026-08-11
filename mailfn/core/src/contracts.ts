@@ -49,12 +49,30 @@ export interface MailFnStore {
   getCredential(id: string): Promise<Credential | null>;
   listCredentials(projectId: string, inboxId?: string): Promise<Credential[]>;
   saveCredential(credential: Credential): Promise<void>;
+  touchCredentialIfActive(id: string, lastUsedAt: string): Promise<boolean>;
 
   getMessage(id: string): Promise<Message | null>;
   getMessageByDelivery(inboxId: string, providerDeliveryId: string): Promise<Message | null>;
   listMessages(projectId: string, inboxId: string, filter?: MessageFilter): Promise<Message[]>;
+  listMessagesPage(
+    projectId: string,
+    inboxId: string,
+    filter: MessageFilter,
+    cursorId: string | undefined,
+    limit: number,
+  ): Promise<{ items: Message[]; hasMore: boolean; cursorFound: boolean }>;
   searchMessages(projectId: string, inboxId: string, input: Omit<SearchMessagesInput, 'projectId' | 'inboxId'>): Promise<Message[]>;
+  searchMessagesPage(
+    projectId: string,
+    inboxId: string,
+    input: Omit<SearchMessagesInput, 'projectId' | 'inboxId' | 'cursor' | 'limit'>,
+    cursorId: string | undefined,
+    limit: number,
+  ): Promise<{ items: Message[]; hasMore: boolean; cursorFound: boolean }>;
   saveMessage(message: Message): Promise<void>;
+  claimMessageForParsing(messageId: string, claimedAt: string, leaseExpiresAt: string): Promise<boolean>;
+  markMessageRead(messageId: string, readAt: string): Promise<Message | null>;
+  setMessageLabels(messageId: string, labels: string[], updatedAt: string): Promise<Message | null>;
   deleteMessage(id: string): Promise<void>;
 
   getAttachment(id: string): Promise<Attachment | null>;
@@ -65,6 +83,7 @@ export interface MailFnStore {
   getThread(id: string): Promise<Thread | null>;
   listThreads(projectId: string, inboxId: string): Promise<Thread[]>;
   saveThread(thread: Thread): Promise<void>;
+  saveThreadIfUnchanged(thread: Thread, expected: Thread | null): Promise<boolean>;
 
   getWebhook(id: string): Promise<Webhook | null>;
   listWebhooks(projectId: string, inboxId?: string): Promise<Webhook[]>;
@@ -80,6 +99,7 @@ export interface MailFnStore {
   getDomain(id: string): Promise<MailDomain | null>;
   getDomainByName(projectId: string, domain: string): Promise<MailDomain | null>;
   listDomains(projectId: string): Promise<MailDomain[]>;
+  createDomain(domain: MailDomain): Promise<boolean>;
   saveDomain(domain: MailDomain): Promise<void>;
 
   appendEvent(event: MailFnEvent): Promise<void>;

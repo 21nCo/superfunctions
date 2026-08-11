@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   Attachment,
+  AwsSesAdapter,
   EmailProviderError,
   SendEmailParams,
   SendfnDatabaseAdapter,
@@ -123,6 +124,38 @@ describe('EmailService', () => {
     expect(provider.sendCalls).toBe(0);
   });
 
+  it('rejects sender injection and reserved custom headers before provider invocation', async () => {
+    await expect(service.sendEmail({
+      userId: 'user-1', from: 'agent@example.com\r\nBcc: attacker@example.com',
+      to: 'user@example.com', subject: 'Hello', text: 'body',
+    })).rejects.toBeInstanceOf(ValidationError);
+    await expect(service.sendEmail({
+      userId: 'user-1', from: 'agent@example.com', to: 'user@example.com',
+      subject: 'Hello', text: 'body', headers: { To: 'attacker@example.com' },
+    })).rejects.toBeInstanceOf(ValidationError);
+    expect(provider.sendCalls).toBe(0);
+  });
+
+  it('uses unambiguous idempotency tuples and replays before mutable suppression checks', async () => {
+    const first = await service.sendEmail({
+      idempotencyKey: 'c', userId: 'a:b', to: 'user@example.com', subject: 'One', text: 'body',
+    });
+    const second = await service.sendEmail({
+      idempotencyKey: 'b:c', userId: 'a', to: 'user@example.com', subject: 'Two', text: 'body',
+    });
+    expect(first.id).not.toBe(second.id);
+    expect(provider.sendCalls).toBe(2);
+
+    await db.addToSuppressionList({
+      email: 'user@example.com', reason: 'manual', source: 'manual', bounceType: null,
+      metadata: {}, suppressedAt: new Date(),
+    });
+    await expect(service.sendEmail({
+      idempotencyKey: 'c', userId: 'a:b', to: 'user@example.com', subject: '', text: '',
+    })).resolves.toMatchObject({ id: first.id, status: 'sent' });
+    expect(provider.sendCalls).toBe(2);
+  });
+
   it('enforces provider limits before sending', async () => {
     const recipients = Array.from({ length: 51 }, (_, index) => `user${index}@example.com`);
     const oversized: Attachment = {
@@ -191,6 +224,23 @@ describe('EmailService', () => {
     expect(provider.sendCalls).toBe(1);
   });
 
+  it('preserves BCC as an SES raw-send envelope destination without exposing a Bcc header', async () => {
+    const adapter = new AwsSesAdapter({ accessKeyId: 'key', secretAccessKey: 'secret', region: 'us-east-1' });
+    const inputs: any[] = [];
+    (adapter as any).sesClient = {
+      async send(command: { input: unknown }) {
+        inputs.push(command.input);
+        return { MessageId: 'ses-raw' };
+      },
+    };
+    await expect(adapter.sendEmail({
+      idempotencyKey: 'mailfn:draft:1', from: 'agent@example.com', to: ['to@example.com'],
+      cc: ['cc@example.com'], bcc: ['hidden@example.com'], subject: 'Raw', text: 'body',
+    })).resolves.toMatchObject({ success: true, providerMessageId: 'ses-raw' });
+    expect(inputs[0].Destinations).toEqual(['to@example.com', 'cc@example.com', 'hidden@example.com']);
+    expect(Buffer.from(inputs[0].RawMessage.Data).toString('utf8')).not.toContain('\nBcc:');
+  });
+
   it('surfaces retry exhaustion with a stable code', async () => {
     provider.responses = [
       { success: false, timestamp: new Date(), error: { code: 'Throttling', message: 'slow down', retryable: true } },
@@ -244,7 +294,7 @@ describe('EmailService', () => {
 
   it('claims one stale pending transaction when the provider guarantees idempotency', async () => {
     const idempotencyKey = 'mailfn:draft:stale';
-    const transactionId = uuidv5(`project-1:${idempotencyKey}`, IDEMPOTENCY_NAMESPACE);
+    const transactionId = uuidv5(JSON.stringify(['project-1', idempotencyKey]), IDEMPOTENCY_NAMESPACE);
     await db.createEmailTransaction({
       userId: 'project-1', to: 'recipient@example.com', from: 'agent@example.com', subject: 'Recover',
       templateId: null, templateData: null, provider: provider.name, providerMessageId: null, status: 'pending',
@@ -266,7 +316,7 @@ describe('EmailService', () => {
   it('closes an ambiguous stale pending transaction without duplicating through a non-idempotent provider', async () => {
     provider.capabilities.supportsIdempotency = false;
     const idempotencyKey = 'mailfn:draft:ambiguous';
-    const transactionId = uuidv5(`project-1:${idempotencyKey}`, IDEMPOTENCY_NAMESPACE);
+    const transactionId = uuidv5(JSON.stringify(['project-1', idempotencyKey]), IDEMPOTENCY_NAMESPACE);
     await db.createEmailTransaction({
       userId: 'project-1', to: 'recipient@example.com', from: 'agent@example.com', subject: 'Ambiguous',
       templateId: null, templateData: null, provider: provider.name, providerMessageId: null, status: 'pending',

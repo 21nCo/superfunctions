@@ -5,6 +5,14 @@ import { runMailFnCli } from './index.js';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('MailFn CLI', () => {
+  it('prints help without requiring MailFn credentials', async () => {
+    const output: string[] = [];
+    await expect(runMailFnCli({
+      args: ['--help'], env: {}, stdout: (value) => output.push(value), stderr: () => undefined,
+    })).resolves.toBe(0);
+    expect(output.join('')).toContain('MailFn commands:');
+  });
+
   it('redacts message bodies by default and reveals only with an explicit flag', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
       ok: true,

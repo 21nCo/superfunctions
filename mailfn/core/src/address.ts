@@ -5,6 +5,9 @@ const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)
 
 export function normalizeAddress(value: string): string {
   const normalized = value.trim().toLowerCase();
+  if (normalized.length > 254) {
+    throw invalidAddress();
+  }
   const at = normalized.lastIndexOf('@');
   if (at <= 0 || at === normalized.length - 1) {
     throw invalidAddress();

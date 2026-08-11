@@ -139,6 +139,8 @@ CREATE TABLE IF NOT EXISTS mailfn_webhook_deliveries (
   updated_at TEXT NOT NULL,
   data_json TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS mailfn_webhook_deliveries_webhook_created
+  ON mailfn_webhook_deliveries(webhook_id, created_at);
 
 CREATE TABLE IF NOT EXISTS mailfn_drafts (
   id TEXT PRIMARY KEY,

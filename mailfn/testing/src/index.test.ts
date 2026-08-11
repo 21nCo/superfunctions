@@ -26,6 +26,20 @@ describe('@mailfn/testing', () => {
     expect(deleteInbox).toHaveBeenCalledTimes(1);
   });
 
+  it('allows fixture disposal to retry after a transient delete failure', async () => {
+    const createInbox = vi.fn(async () => ({
+      inbox: { id: 'i', address: 'test@example.com', kind: 'expiring' as const, status: 'active' as const, projectId: 'p', metadata: {}, labels: [], createdAt: '', updatedAt: '' },
+      credential: { credential: { id: 'c', projectId: 'p', inboxId: 'i', tokenHash: 'h', tokenPrefix: 'x', permissions: [], status: 'active' as const, createdAt: '' }, token: 'secret' },
+    }));
+    const deleteInbox = vi.fn().mockRejectedValueOnce(new Error('temporary')).mockResolvedValue(undefined);
+    const fixture = await createInboxFixture({
+      createInbox, deleteInbox, listMessages: vi.fn(), listAttachments: vi.fn(), waitForMessages: vi.fn(),
+    }, { testRunId: 'retry' });
+    await expect(fixture.dispose()).rejects.toThrow('temporary');
+    await expect(fixture.dispose()).resolves.toBeUndefined();
+    expect(deleteInbox).toHaveBeenCalledTimes(2);
+  });
+
   it('extracts source-attributed OTPs and provides focused assertions', async () => {
     const client = {
       createInbox: vi.fn(), deleteInbox: vi.fn(), listMessages: vi.fn(), listAttachments: vi.fn(),

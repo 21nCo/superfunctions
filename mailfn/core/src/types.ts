@@ -143,6 +143,8 @@ export interface Message {
   readAt?: string;
   retentionExpiresAt: string;
   parseErrorCode?: string;
+  /** Durable lease used to serialize at-least-once MIME parse deliveries. */
+  parseLeaseExpiresAt?: string;
   createdAt: string;
   updatedAt: string;
 }

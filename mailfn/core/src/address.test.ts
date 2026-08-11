@@ -12,4 +12,10 @@ describe('MailFn address normalization', () => {
   it.each(['missing-at', '@example.com', 'a@localhost', '../a@example.com', 'a+tag@example.com'])('rejects unsupported input %s', (value) => {
     expect(() => normalizeAddress(value)).toThrow('Invalid email address');
   });
+
+  it('rejects normalized mailboxes beyond the SMTP length limit', () => {
+    const local = 'a'.repeat(64);
+    const domain = `${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(58)}.com`;
+    expect(() => normalizeAddress(`${local}@${domain}`)).toThrow('Invalid email address');
+  });
 });

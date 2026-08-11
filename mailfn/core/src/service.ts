@@ -104,6 +104,8 @@ export interface CreatedWebhook {
   secret: string;
 }
 
+const PARSE_LEASE_MS = 15 * 60 * 1000;
+
 export class MailFn {
   private readonly store: MailFnStore;
   private readonly objects: MailFnObjectStore;
@@ -211,7 +213,7 @@ export class MailFn {
     }
     const hash = await this.tokens.hash(token);
     if (!this.tokens.equals(hash, credential.tokenHash)) throw unauthorized();
-    await this.store.saveCredential({ ...credential, lastUsedAt: now });
+    if (!(await this.store.touchCredentialIfActive(credential.id, now))) throw unauthorized();
     return {
       actorType: 'credential',
       actorId: credential.id,
@@ -388,6 +390,9 @@ export class MailFn {
   public async updateInbox(actor: Actor, inboxId: string, input: UpdateInboxInput): Promise<Inbox> {
     const inbox = await this.requireInbox(actor.projectId, inboxId);
     await this.authorize(actor, 'inbox:write', inbox.projectId, inbox.id);
+    assertMailFn(input.status === undefined || input.status === 'active' || input.status === 'disabled', {
+      code: 'MAILFN_VALIDATION_FAILED', message: 'Inbox status must be active or disabled', status: 400,
+    });
     const expiresAt = input.expiresAt === null ? undefined : input.expiresAt ?? inbox.expiresAt;
     if (expiresAt) requireFutureIso(expiresAt, this.now(), 'expiresAt');
     const updated: Inbox = {
@@ -538,9 +543,10 @@ export class MailFn {
   }
 
   public async cancelInbound(preflight: InboundPreflight): Promise<void> {
-    if (!this.consumeInboundPreflight(preflight)) return;
-    await this.store.releaseIngressQuota(preflight.reservationId).catch(() => undefined);
-    if (preflight.storageReserved) await this.store.releaseStorage(preflight.reservationId).catch(() => undefined);
+    if (!this.matchesInboundPreflight(preflight)) return;
+    await this.store.releaseIngressQuota(preflight.reservationId);
+    if (preflight.storageReserved) await this.store.releaseStorage(preflight.reservationId);
+    this.inboundPreflights.delete(preflight.reservationId);
   }
 
   public async receiveInbound(input: InboundEnvelope, preflight?: InboundPreflight): Promise<Message> {
@@ -691,6 +697,12 @@ export class MailFn {
   }
 
   private consumeInboundPreflight(preflight: InboundPreflight): boolean {
+    if (!this.matchesInboundPreflight(preflight)) return false;
+    this.inboundPreflights.delete(preflight.reservationId);
+    return true;
+  }
+
+  private matchesInboundPreflight(preflight: InboundPreflight): boolean {
     const stored = this.inboundPreflights.get(preflight.reservationId);
     if (!stored ||
       stored.projectId !== preflight.projectId || stored.inboxId !== preflight.inboxId ||
@@ -698,7 +710,6 @@ export class MailFn {
       stored.rawSize !== preflight.rawSize || stored.createdAt !== preflight.createdAt ||
       stored.storageReserved !== preflight.storageReserved
     ) return false;
-    this.inboundPreflights.delete(preflight.reservationId);
     return true;
   }
 
@@ -713,21 +724,27 @@ export class MailFn {
       message: 'No MIME parser is configured',
       status: 500,
     });
+    const observed = await this.requireMessage(job.projectId, job.inboxId, job.messageId);
+    if (observed.status === 'ready') return observed;
+    const claimedAt = this.now();
+    const leaseExpiresAt = new Date(Date.parse(claimedAt) + PARSE_LEASE_MS).toISOString();
+    if (!(await this.store.claimMessageForParsing(observed.id, claimedAt, leaseExpiresAt))) {
+      return (await this.store.getMessage(observed.id)) ?? observed;
+    }
     const message = await this.requireMessage(job.projectId, job.inboxId, job.messageId);
-    if (message.status === 'ready') return message;
-    const raw = await this.objects.get(message.rawObjectKey);
-    assertMailFn(raw, {
-      code: 'MAILFN_STORAGE_FAILED',
-      message: 'Raw MIME object is missing',
-      status: 503,
-      retryable: true,
-    });
-    const project = await this.requireProject(message.projectId);
     const written: Array<{ attachment: Attachment; key: string }> = [];
     const reservedAttachmentIds: string[] = [];
     try {
+      const raw = await this.objects.get(message.rawObjectKey);
+      assertMailFn(raw, {
+        code: 'MAILFN_STORAGE_FAILED',
+        message: 'Raw MIME object is missing',
+        status: 503,
+        retryable: true,
+      });
+      const project = await this.requireProject(message.projectId);
       const parsed = await this.mimeParser.parse(raw);
-      for (const parsedAttachment of parsed.attachments) {
+      for (const [attachmentIndex, parsedAttachment] of parsed.attachments.entries()) {
         if (parsedAttachment.content.byteLength > project.quota.maxAttachmentBytes) {
           throw new MailFnError({
             code: 'MAILFN_ATTACHMENT_TOO_LARGE',
@@ -735,7 +752,7 @@ export class MailFn {
             status: 413,
           });
         }
-        const attachmentId = this.ids.generate('att');
+        const attachmentId = await deterministicAttachmentId(message.id, attachmentIndex);
         const storageReservation = await this.store.reserveStorage({
           id: attachmentId,
           projectId: project.id,
@@ -743,7 +760,7 @@ export class MailFn {
           createdAt: this.now(),
         }, project.quota.maxStoredBytes);
         if (storageReservation === 'denied') throw quotaExceeded('stored bytes');
-        if (storageReservation === 'created') reservedAttachmentIds.push(attachmentId);
+        reservedAttachmentIds.push(attachmentId);
         const key = objectKey(project.id, message.inboxId, message.id, `attachments/${attachmentId}`);
         const attachment: Attachment = {
           id: attachmentId,
@@ -784,17 +801,34 @@ export class MailFn {
         headers: parsed.headers,
         inReplyTo: parsed.inReplyTo,
         references: parsed.references ?? [],
-        authenticationResults: parsed.authenticationResults ?? message.authenticationResults,
+        authenticationResults: {
+          ...(parsed.authenticationResults ?? {}),
+          ...message.authenticationResults,
+        },
         parsedAt: now,
         status: 'ready',
         parseErrorCode: undefined,
+        parseLeaseExpiresAt: undefined,
         updatedAt: now,
       };
-      const existingMessages = await this.store.listMessages(project.id, message.inboxId);
-      const threads = await this.store.listThreads(project.id, message.inboxId);
-      const thread = resolveThread(updated, threads, existingMessages, this.ids, now);
+      let thread: Thread | undefined;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const existingMessages = await this.store.listMessages(project.id, message.inboxId);
+        const threads = await this.store.listThreads(project.id, message.inboxId);
+        const candidate = resolveThread(updated, threads, existingMessages, this.ids, now);
+        const expected = threads.find((entry) => entry.id === candidate.id) ?? null;
+        if (await this.store.saveThreadIfUnchanged(candidate, expected)) {
+          thread = candidate;
+          break;
+        }
+      }
+      if (!thread) {
+        throw new MailFnError({
+          code: 'MAILFN_STORAGE_FAILED', message: 'Thread membership update conflicted repeatedly',
+          status: 503, retryable: true,
+        });
+      }
       updated.threadId = thread.id;
-      await this.store.saveThread(thread);
       await this.store.saveMessage(updated);
       await this.event('message.parsed', project.id, {
         inboxId: message.inboxId,
@@ -816,6 +850,7 @@ export class MailFn {
         ...message,
         status: 'parse_failed',
         parseErrorCode: error instanceof MailFnError ? error.code : 'MAILFN_PARSE_FAILED',
+        parseLeaseExpiresAt: undefined,
         updatedAt: this.now(),
       };
       await this.store.saveMessage(failed);
@@ -898,7 +933,6 @@ export class MailFn {
     await this.requireInbox(actor.projectId, input.inboxId);
     validateMessageFilter(input);
     const limit = boundedInteger(input.limit, 25, 1, 100, 'limit');
-    const messages = await this.store.listMessages(actor.projectId, input.inboxId, input);
     const cursorContext = {
       kind: 'list' as const,
       projectId: actor.projectId,
@@ -906,12 +940,16 @@ export class MailFn {
       scope: listCursorScope(input),
     };
     const cursorId = input.cursor ? decodeCursor(input.cursor, cursorContext) : undefined;
-    const start = cursorId ? cursorStart(messages, cursorId) : 0;
-    const items = messages.slice(start, start + limit);
+    const page = await this.store.listMessagesPage(actor.projectId, input.inboxId, input, cursorId, limit);
+    if (!page.cursorFound) {
+      throw new MailFnError({
+        code: 'MAILFN_VALIDATION_FAILED', message: 'Cursor no longer identifies this result set', status: 400,
+      });
+    }
     return {
-      items,
-      nextCursor: start + limit < messages.length && items.length
-        ? encodeCursor({ ...cursorContext, id: items.at(-1)!.id })
+      items: page.items,
+      nextCursor: page.hasMore && page.items.length
+        ? encodeCursor({ ...cursorContext, id: page.items.at(-1)!.id })
         : undefined,
     };
   }
@@ -920,8 +958,8 @@ export class MailFn {
     await this.authorize(actor, 'message:read', actor.projectId, inboxId);
     const message = await this.requireMessage(actor.projectId, inboxId, messageId);
     if (!markRead || message.readAt) return message;
-    const updated = { ...message, readAt: this.now(), updatedAt: this.now() };
-    await this.store.saveMessage(updated);
+    const updated = await this.store.markMessageRead(message.id, this.now());
+    if (!updated) throw notFound('Message');
     await this.audit(actor, 'message.read', 'message', message.id, { inboxId });
     return updated;
   }
@@ -993,7 +1031,6 @@ export class MailFn {
     validateIsoFilter(input.receivedAfter, 'receivedAfter');
     validateIsoFilter(input.receivedBefore, 'receivedBefore');
     const query = requireText(input.query, 'query').toLowerCase();
-    const messages = await this.store.searchMessages(actor.projectId, input.inboxId, { ...input, query });
     const limit = boundedInteger(input.limit, 25, 1, 100, 'limit');
     const cursorContext = {
       kind: 'search' as const,
@@ -1002,12 +1039,20 @@ export class MailFn {
       scope: JSON.stringify({ query, receivedAfter: input.receivedAfter ?? null, receivedBefore: input.receivedBefore ?? null }),
     };
     const cursorId = input.cursor ? decodeCursor(input.cursor, cursorContext) : undefined;
-    const start = cursorId ? cursorStart(messages, cursorId) : 0;
-    const items = messages.slice(start, start + limit);
+    const page = await this.store.searchMessagesPage(
+      actor.projectId, input.inboxId,
+      { query, receivedAfter: input.receivedAfter, receivedBefore: input.receivedBefore },
+      cursorId, limit,
+    );
+    if (!page.cursorFound) {
+      throw new MailFnError({
+        code: 'MAILFN_VALIDATION_FAILED', message: 'Cursor no longer identifies this result set', status: 400,
+      });
+    }
     return {
-      items,
-      nextCursor: start + limit < messages.length && items.length
-        ? encodeCursor({ ...cursorContext, id: items.at(-1)!.id })
+      items: page.items,
+      nextCursor: page.hasMore && page.items.length
+        ? encodeCursor({ ...cursorContext, id: page.items.at(-1)!.id })
         : undefined,
     };
   }
@@ -1034,9 +1079,9 @@ export class MailFn {
 
   public async labelMessage(actor: Actor, inboxId: string, messageId: string, labels: string[]): Promise<Message> {
     await this.authorize(actor, 'message:label', actor.projectId, inboxId);
-    const message = await this.requireMessage(actor.projectId, inboxId, messageId);
-    const updated = { ...message, labels: normalizeLabels(labels), updatedAt: this.now() };
-    await this.store.saveMessage(updated);
+    await this.requireMessage(actor.projectId, inboxId, messageId);
+    const updated = await this.store.setMessageLabels(messageId, normalizeLabels(labels), this.now());
+    if (!updated) throw notFound('Message');
     return updated;
   }
 
@@ -1144,7 +1189,9 @@ export class MailFn {
   public async createReplyDraft(actor: Actor, inboxId: string, messageId: string, input: { text?: string; html?: string; replyAll?: boolean }): Promise<Draft> {
     await this.authorize(actor, 'message:read', actor.projectId, inboxId);
     const message = await this.requireMessage(actor.projectId, inboxId, messageId);
-    const recipients = [message.envelopeFrom];
+    const recipients = message.replyTo.length
+      ? message.replyTo.map((entry) => entry.address)
+      : [message.envelopeFrom];
     if (input.replyAll) {
       recipients.push(...message.to.map((entry) => entry.address), ...message.cc.map((entry) => entry.address));
     }
@@ -1352,7 +1399,9 @@ export class MailFn {
       createdAt: now,
       updatedAt: now,
     };
-    await this.store.saveDomain(entry);
+    if (!(await this.store.createDomain(entry))) {
+      throw new MailFnError({ code: 'MAILFN_CONFLICT', message: 'Domain already exists', status: 409 });
+    }
     return entry;
   }
 
@@ -2094,7 +2143,7 @@ export class MailFn {
   private async usage(projectId: string, metric: UsageRecord['metric'], quantity: number, resourceId?: string): Promise<void> {
     const now = this.now();
     await this.store.appendUsage({
-      id: this.ids.generate('use'),
+      id: resourceId ? `use_${metric}_${resourceId}` : this.ids.generate('use'),
       projectId,
       metric,
       quantity,
@@ -2379,6 +2428,11 @@ async function sha256(value: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function deterministicAttachmentId(messageId: string, index: number): Promise<string> {
+  const digest = await sha256(new TextEncoder().encode(`${messageId}:${index}`));
+  return `att_${digest.slice(0, 32)}`;
+}
+
 interface CursorPayload {
   version: 1;
   kind: 'list' | 'search';
@@ -2409,14 +2463,6 @@ function decodeCursor(cursor: string, expected: Omit<CursorPayload, 'version' | 
   } catch (cause) {
     throw new MailFnError({ code: 'MAILFN_VALIDATION_FAILED', message: 'Invalid or out-of-scope cursor', status: 400, cause });
   }
-}
-
-function cursorStart(messages: Message[], cursorId: string): number {
-  const index = messages.findIndex((message) => message.id === cursorId);
-  if (index < 0) {
-    throw new MailFnError({ code: 'MAILFN_VALIDATION_FAILED', message: 'Cursor no longer identifies this result set', status: 400 });
-  }
-  return index + 1;
 }
 
 function listCursorScope(input: Omit<ListMessagesInput, 'projectId'>): string {

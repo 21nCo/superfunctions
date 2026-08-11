@@ -22,15 +22,17 @@ export const systemClock: MailFnClock = {
   sleep(ms, signal) {
     if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, Math.max(0, ms));
-      signal?.addEventListener(
-        'abort',
-        () => {
-          clearTimeout(timer);
-          reject(new DOMException('Aborted', 'AbortError'));
-        },
-        { once: true },
-      );
+      const cleanup = () => signal?.removeEventListener('abort', abort);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, Math.max(0, ms));
+      const abort = () => {
+        clearTimeout(timer);
+        cleanup();
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
     });
   },
 };

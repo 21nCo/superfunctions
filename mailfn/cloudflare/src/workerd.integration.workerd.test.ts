@@ -106,6 +106,13 @@ describe('MailFn in workerd', () => {
     const parsed = await store.getMessage(pending!.id);
     expect(parsed).toMatchObject({ status: 'ready', subject: 'Runtime verification 481516' });
     expect(await store.listAttachments(pending!.id)).toMatchObject([{ filename: 'proof.txt', sizeBytes: 8 }]);
+    await Promise.all([
+      store.markMessageRead(pending!.id, '2026-08-10T00:00:02.000Z'),
+      store.setMessageLabels(pending!.id, ['important'], '2026-08-10T00:00:02.000Z'),
+    ]);
+    expect(await store.getMessage(pending!.id)).toMatchObject({
+      readAt: '2026-08-10T00:00:02.000Z', labels: ['important'],
+    });
   });
 
   it('deduplicates Message-ID-less retries and preserves distinct mail that reuses Message-ID', async () => {
@@ -136,7 +143,14 @@ describe('MailFn in workerd', () => {
 
     await deliver('Message-ID: <shared@example.com>\r\nSubject: first\r\n\r\nfirst body', '<shared@example.com>');
     await deliver('Message-ID: <shared@example.com>\r\nSubject: second\r\n\r\nsecond body', '<shared@example.com>');
-    expect(await new D1MailFnStore(env.MAILFN_DB).listMessages(bootstrap.project.id, created.inbox.id)).toHaveLength(3);
+    const store = new D1MailFnStore(env.MAILFN_DB);
+    expect(await store.listMessages(bootstrap.project.id, created.inbox.id)).toHaveLength(3);
+    const firstPage = await store.listMessagesPage(bootstrap.project.id, created.inbox.id, {}, undefined, 2);
+    const secondPage = await store.listMessagesPage(
+      bootstrap.project.id, created.inbox.id, {}, firstPage.items.at(-1)!.id, 2,
+    );
+    expect(firstPage).toMatchObject({ hasMore: true, cursorFound: true, items: expect.any(Array) });
+    expect(secondPage).toMatchObject({ hasMore: false, cursorFound: true, items: [expect.any(Object)] });
   });
 
   it('uses D1 batch atomicity for concurrent idempotent inbox creation', async () => {

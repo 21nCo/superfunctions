@@ -14,6 +14,10 @@ export async function runMailFnCli(options: RunMailFnCliOptions = {}): Promise<n
   const parsed = parse(args);
   return runAction(
     async (_options, context) => {
+      if (parsed.command === 'help') {
+        context.output.info(help());
+        return { exitCode: 0 };
+      }
       const baseUrl = text(parsed.flags.url) ?? env.MAILFN_URL;
       const token = text(parsed.flags.token) ?? env.MAILFN_TOKEN;
       if (!baseUrl || !token) throw new Error('MAILFN_URL and MAILFN_TOKEN (or --url and --token) are required');

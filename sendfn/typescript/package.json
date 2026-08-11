@@ -1,6 +1,6 @@
 {
   "name": "sendfn",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Unified communications platform SDK for email and push notifications",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
