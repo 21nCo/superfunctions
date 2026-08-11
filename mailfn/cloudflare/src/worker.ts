@@ -122,7 +122,7 @@ export function createMailFnCloudflareHandlers(options: MailFnCloudflareFactoryO
           raw,
           rawSize: message.rawSize,
           headers: headersRecord(message.headers),
-          authenticationResults: parseAuthenticationResults(message.headers.get('authentication-results')),
+          authenticationResults: parseCloudflareAuthenticationResults(message.headers.get('authentication-results')),
         }, preflight);
       } catch (error) {
         if (preflight) await mailfn.cancelInbound(preflight);
@@ -196,9 +196,21 @@ function headersRecord(headers: Headers): Record<string, string[]> {
   return result;
 }
 
-function parseAuthenticationResults(value: string | null) {
+export function parseCloudflareAuthenticationResults(value: string | null) {
   if (!value) return undefined;
-  const find = (mechanism: string) => new RegExp(`(?:^|[;\\s])${mechanism}=([a-z_-]+)`, 'i').exec(value)?.[1]?.toLowerCase();
+  const find = (mechanism: string) => {
+    const clauses = value.split(';').map((clause) => clause.trim());
+    const matches = clauses.flatMap((clause) => {
+      const match = new RegExp(`^${mechanism}=([a-z_-]+)\\b`, 'i').exec(clause);
+      return match ? [{ clause, result: match[1]!.toLowerCase() }] : [];
+    });
+    if (mechanism === 'spf') {
+      return matches.find(({ clause }) => /\bsmtp\.mailfrom=/i.test(clause))?.result
+        ?? matches.find(({ clause }) => /\bsmtp\.helo=/i.test(clause))?.result
+        ?? matches[0]?.result;
+    }
+    return matches[0]?.result;
+  };
   return { raw: value, spf: find('spf'), dkim: find('dkim'), dmarc: find('dmarc'), arc: find('arc') };
 }
 

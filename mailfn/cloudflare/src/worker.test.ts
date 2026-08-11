@@ -11,7 +11,11 @@ import type {
   QueueMessage,
   R2Bucket,
 } from './index.js';
-import { createMailFnCloudflareHandlers, deriveCloudflareDeliveryId } from './worker.js';
+import {
+  createMailFnCloudflareHandlers,
+  deriveCloudflareDeliveryId,
+  parseCloudflareAuthenticationResults,
+} from './worker.js';
 
 class FakeStatement implements D1PreparedStatement {
   public constructor(private readonly query: string, private readonly row: { data_json: string } | null) {}
@@ -75,6 +79,14 @@ describe('MailFn Cloudflare handlers', () => {
     await expect(deriveCloudflareDeliveryId('sender@example.com', 'inbox@example.com', second)).resolves.not.toBe(firstId);
     await expect(deriveCloudflareDeliveryId('other@example.com', 'inbox@example.com', first)).resolves.not.toBe(firstId);
     expect(firstId).toMatch(/^cf_sha256_[a-f0-9]{64}$/);
+  });
+
+  it('prefers the MAIL FROM SPF result when Cloudflare also reports a HELO result', () => {
+    const parsed = parseCloudflareAuthenticationResults(
+      'mx.cloudflare.net; dkim=pass header.d=gmail.com; dmarc=pass header.from=gmail.com; '
+      + 'spf=none smtp.helo=mail.example.com; spf=pass smtp.mailfrom=sender@example.com; arc=pass',
+    );
+    expect(parsed).toMatchObject({ spf: 'pass', dkim: 'pass', dmarc: 'pass', arc: 'pass' });
   });
 
   it('retries transient Queue parse failures with bounded exponential delay', async () => {
