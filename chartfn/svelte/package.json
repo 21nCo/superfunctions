@@ -1,6 +1,6 @@
 {
   "name": "@chartfn/svelte",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Svelte bindings for chartfn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

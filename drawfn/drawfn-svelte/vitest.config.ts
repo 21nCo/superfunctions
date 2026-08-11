@@ -1,4 +1,3 @@
-import path from "path";
 import { svelte, vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vitest/config";
 
@@ -16,9 +15,6 @@ export default defineConfig({
     setupFiles: ["./src/__tests__/setup.ts"],
   },
   resolve: {
-    alias: {
-      drawfn: path.resolve(__dirname, "..", "core", "src", "index.ts"),
-    },
     conditions: ["browser"],
   },
   ssr: {
