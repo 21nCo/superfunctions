@@ -19,7 +19,7 @@
     "lint": "echo 'lint not configured'"
   },
   "dependencies": {
-    "chartfn": "0.0.2"
+    "chartfn": "0.0.3"
   },
   "peerDependencies": {
     "react": ">=16.8.0",
