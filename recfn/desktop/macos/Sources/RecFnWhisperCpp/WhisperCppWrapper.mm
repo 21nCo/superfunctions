@@ -5,7 +5,10 @@
 
 #import "WhisperCppWrapper.h"
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -135,26 +138,71 @@ struct whisper_full_params {
     }
 
     const uint8_t *bytes = (const uint8_t *)[audioData bytes];
-    if (bytes[0] != 'R' || bytes[1] != 'I' || bytes[2] != 'F' || bytes[3] != 'F') {
+    const size_t audioLength = (size_t)audioData.length;
+    if (std::memcmp(bytes, "RIFF", 4) != 0 || std::memcmp(bytes + 8, "WAVE", 4) != 0) {
         if (error) {
             *error = [NSError errorWithDomain:@"WhisperCppWrapper"
                                          code:4
-                                     userInfo:@{NSLocalizedDescriptionKey: @"Invalid WAV file: not RIFF format"}];
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Invalid WAV file: not RIFF/WAVE format"}];
         }
         return nil;
     }
 
-    int fmtPos = -1;
-    int fmtSize = 0;
-    for (int i = 12; i < audioData.length - 8; i++) {
-        if (bytes[i] == 'f' && bytes[i+1] == 'm' && bytes[i+2] == 't' && bytes[i+3] == ' ') {
-            fmtPos = i + 8;
-            fmtSize = bytes[i+4] | (bytes[i+5] << 8) | (bytes[i+6] << 16) | (bytes[i+7] << 24);
-            break;
+    const auto readLE16 = [bytes](size_t offset) -> uint16_t {
+        return (uint16_t)bytes[offset] | ((uint16_t)bytes[offset + 1] << 8);
+    };
+    const auto readLE32 = [bytes](size_t offset) -> uint32_t {
+        return (uint32_t)bytes[offset] |
+            ((uint32_t)bytes[offset + 1] << 8) |
+            ((uint32_t)bytes[offset + 2] << 16) |
+            ((uint32_t)bytes[offset + 3] << 24);
+    };
+
+    bool foundFormat = false;
+    uint16_t audioFormat = 0;
+    uint16_t numChannels = 0;
+    uint16_t blockAlign = 0;
+    uint16_t bitsPerSample = 0;
+    uint32_t sampleRateValue = 0;
+    size_t dataPos = 0;
+    size_t dataSize = 0;
+
+    for (size_t chunkPos = 12; chunkPos + 8 <= audioLength;) {
+        const uint32_t chunkSize = readLE32(chunkPos + 4);
+        const size_t chunkDataPos = chunkPos + 8;
+        if ((size_t)chunkSize > audioLength - chunkDataPos) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"WhisperCppWrapper"
+                                             code:5
+                                         userInfo:@{NSLocalizedDescriptionKey: @"Invalid WAV file: chunk exceeds file bounds"}];
+            }
+            return nil;
         }
+
+        if (std::memcmp(bytes + chunkPos, "fmt ", 4) == 0) {
+            if (chunkSize < 16) {
+                if (error) {
+                    *error = [NSError errorWithDomain:@"WhisperCppWrapper"
+                                                 code:5
+                                             userInfo:@{NSLocalizedDescriptionKey: @"Invalid WAV file: truncated fmt chunk"}];
+                }
+                return nil;
+            }
+            audioFormat = readLE16(chunkDataPos);
+            numChannels = readLE16(chunkDataPos + 2);
+            sampleRateValue = readLE32(chunkDataPos + 4);
+            blockAlign = readLE16(chunkDataPos + 12);
+            bitsPerSample = readLE16(chunkDataPos + 14);
+            foundFormat = true;
+        } else if (std::memcmp(bytes + chunkPos, "data", 4) == 0 && dataPos == 0) {
+            dataPos = chunkDataPos;
+            dataSize = (size_t)chunkSize;
+        }
+
+        chunkPos = chunkDataPos + (size_t)chunkSize + (chunkSize & 1U);
     }
 
-    if (fmtPos == -1) {
+    if (!foundFormat) {
         if (error) {
             *error = [NSError errorWithDomain:@"WhisperCppWrapper"
                                          code:5
@@ -163,21 +211,7 @@ struct whisper_full_params {
         return nil;
     }
 
-    const int numChannels = bytes[fmtPos + 2] | (bytes[fmtPos + 3] << 8);
-    const int sampleRate = bytes[fmtPos + 4] | (bytes[fmtPos + 5] << 8) | (bytes[fmtPos + 6] << 16) | (bytes[fmtPos + 7] << 24);
-    const int bitsPerSample = bytes[fmtPos + 14] | (bytes[fmtPos + 15] << 8);
-
-    int dataPos = -1;
-    int dataSize = 0;
-    for (int i = fmtPos + fmtSize; i < audioData.length - 8; i++) {
-        if (bytes[i] == 'd' && bytes[i+1] == 'a' && bytes[i+2] == 't' && bytes[i+3] == 'a') {
-            dataSize = bytes[i+4] | (bytes[i+5] << 8) | (bytes[i+6] << 16) | (bytes[i+7] << 24);
-            dataPos = i + 8;
-            break;
-        }
-    }
-
-    if (dataPos == -1) {
+    if (dataPos == 0) {
         if (error) {
             *error = [NSError errorWithDomain:@"WhisperCppWrapper"
                                          code:6
@@ -186,26 +220,44 @@ struct whisper_full_params {
         return nil;
     }
 
-    const int nSamples = dataSize / (bitsPerSample / 8) / numChannels;
-    std::vector<float> pcmf32;
-    pcmf32.resize(nSamples);
-
-    if (bitsPerSample == 16) {
-        const int16_t *samples = (const int16_t *)(bytes + dataPos);
-        for (int i = 0; i < nSamples; i++) {
-            float sum = 0.0f;
-            for (int channel = 0; channel < numChannels; channel++) {
-                sum += samples[i * numChannels + channel] / 32768.0f;
-            }
-            pcmf32[i] = sum / numChannels;
-        }
-    } else {
+    const size_t bytesPerSample = bitsPerSample / 8;
+    const size_t expectedBlockAlign = bytesPerSample * (size_t)numChannels;
+    if (audioFormat != 1 || numChannels == 0 || sampleRateValue == 0 ||
+        sampleRateValue > (uint32_t)std::numeric_limits<int>::max() ||
+        bitsPerSample != 16 || blockAlign == 0 || blockAlign != expectedBlockAlign ||
+        dataSize == 0 || dataSize % blockAlign != 0 || dataSize > audioLength - dataPos) {
         if (error) {
             *error = [NSError errorWithDomain:@"WhisperCppWrapper"
                                          code:7
-                                     userInfo:@{NSLocalizedDescriptionKey: @"Only 16-bit WAV is supported in this POC path"}];
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Invalid or unsupported WAV format"}];
         }
         return nil;
+    }
+
+    const size_t sampleFrameCount = dataSize / blockAlign;
+    if (sampleFrameCount > (size_t)std::numeric_limits<int>::max()) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"WhisperCppWrapper"
+                                         code:7
+                                     userInfo:@{NSLocalizedDescriptionKey: @"WAV file contains too many samples"}];
+        }
+        return nil;
+    }
+
+    const int nSamples = (int)sampleFrameCount;
+    const int sampleRate = (int)sampleRateValue;
+    std::vector<float> pcmf32;
+    pcmf32.resize(nSamples);
+
+    for (int i = 0; i < nSamples; i++) {
+        float sum = 0.0f;
+        for (uint16_t channel = 0; channel < numChannels; channel++) {
+            const size_t sampleOffset =
+                dataPos + ((size_t)i * numChannels + channel) * bytesPerSample;
+            const int16_t sample = (int16_t)readLE16(sampleOffset);
+            sum += sample / 32768.0f;
+        }
+        pcmf32[i] = sum / numChannels;
     }
 
     return [self transcribeAudioFromPCMData:pcmf32.data()
@@ -272,13 +324,32 @@ struct whisper_full_params {
         return nil;
     }
 
+    if (sampleRate <= 0) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"WhisperCppWrapper"
+                                         code:4
+                                     userInfo:@{NSLocalizedDescriptionKey: @"Sample rate must be greater than zero"}];
+        }
+        return nil;
+    }
+
     std::vector<float> pcmf32;
 
     if (sampleRate == 16000) {
         pcmf32.assign(pcmData, pcmData + sampleCount);
     } else {
         const double ratio = 16000.0 / sampleRate;
-        const int targetSamples = (int)(sampleCount * ratio);
+        const double targetSampleCount = sampleCount * ratio;
+        if (!std::isfinite(targetSampleCount) || targetSampleCount < 1.0 ||
+            targetSampleCount > std::numeric_limits<int>::max()) {
+            if (error) {
+                *error = [NSError errorWithDomain:@"WhisperCppWrapper"
+                                             code:4
+                                         userInfo:@{NSLocalizedDescriptionKey: @"Sample rate produces an invalid resampled buffer size"}];
+            }
+            return nil;
+        }
+        const int targetSamples = (int)targetSampleCount;
         pcmf32.resize(targetSamples);
 
         for (int i = 0; i < targetSamples; i++) {

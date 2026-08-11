@@ -58,7 +58,7 @@
     "recfn-deepgram": "0.1.0",
     "recfn-assemblyai": "0.1.0",
     "recfn-google-stt": "0.1.0",
-    "recfn-meet": "*",
+    "recfn-meet": "0.1.0",
     "@superfunctions/envelope": "0.0.1",
     "@superfunctions/errors": "0.0.1",
     "@superfunctions/queue": "0.0.1",

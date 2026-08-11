@@ -457,7 +457,10 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       ).length;
       // Refetch bot to get latest state
       const currentBot = await store.getBot(bot.id, bot.namespace);
-      if (currentBot && currentBot.status === 'recording') {
+      if (
+        currentBot &&
+        (currentBot.status === 'recording' || currentBot.status === 'joined')
+      ) {
         autoLeaveTimer.onParticipantLeave(currentBot, nonBotCount);
       }
     });

@@ -39,6 +39,7 @@ public final class RecFnMeetingBotController: ObservableObject {
 
     private var process: Process?
     private var setupLoginProcess: Process?
+    private var isStarting = false
 
     public init() {}
 
@@ -49,10 +50,35 @@ public final class RecFnMeetingBotController: ObservableObject {
         recordingDir: String,
         runtimeDirectory: String? = nil
     ) {
-        guard !isRunning else { return }
+        guard !isRunning, !isStarting else { return }
+        isStarting = true
+        Task { [weak self] in
+            await self?.startBot(
+                url: url,
+                displayName: displayName,
+                platform: platform,
+                recordingDir: recordingDir,
+                runtimeDirectory: runtimeDirectory
+            )
+        }
+    }
+
+    private func startBot(
+        url: String?,
+        displayName: String,
+        platform: String,
+        recordingDir: String,
+        runtimeDirectory: String?
+    ) async {
+        defer { isStarting = false }
 
         let explicitURL = url?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let meetingURL = explicitURL?.isEmpty == false ? explicitURL! : (detectActiveMeetingURL() ?? "")
+        let meetingURL: String
+        if let explicitURL, !explicitURL.isEmpty {
+            meetingURL = explicitURL
+        } else {
+            meetingURL = await detectActiveMeetingURL() ?? ""
+        }
         guard !meetingURL.isEmpty else {
             statusMessage = "Error: no active meeting found"
             appendLog("No active Google Meet or Zoom tab found. Join the meeting first, or paste a meeting URL.", isError: true)
@@ -61,9 +87,9 @@ public final class RecFnMeetingBotController: ObservableObject {
 
         detectedMeetingURL = meetingURL
         let resolvedPlatform = platform == "auto" ? detectPlatform(url: meetingURL) : platform
-        closeBotLoginProfileIfRunning()
+        await closeBotLoginProfileIfRunning()
 
-        guard let nodePath = findNodePath() else {
+        guard let nodePath = await findNodePath() else {
             appendLog("Node.js not found. Install it from https://nodejs.org or Homebrew.", isError: true)
             statusMessage = "Error: Node.js not found"
             return
@@ -233,18 +259,18 @@ public final class RecFnMeetingBotController: ObservableObject {
         }
     }
 
-    private func detectActiveMeetingURL() -> String? {
+    private func detectActiveMeetingURL() async -> String? {
         let browserNames = ["Google Chrome", "Chromium", "Brave Browser", "Microsoft Edge"]
         for browserName in browserNames {
             guard isApplicationRunning(browserName) else { continue }
-            if let url = browserMeetingURLs(for: browserName).first {
+            if let url = (await browserMeetingURLs(for: browserName)).first {
                 return url
             }
         }
-        return safariMeetingURL()
+        return await safariMeetingURL()
     }
 
-    private func browserMeetingURLs(for browserName: String) -> [String] {
+    private func browserMeetingURLs(for browserName: String) async -> [String] {
         let script = """
         tell application "\(browserName)"
             if not (exists front window) then return ""
@@ -262,7 +288,7 @@ public final class RecFnMeetingBotController: ObservableObject {
             return outputRows as text
         end tell
         """
-        guard let output = runAppleScript(script) else { return [] }
+        guard let output = await runAppleScript(script) else { return [] }
         let rowSeparator = String(UnicodeScalar(30)!)
         return output
             .components(separatedBy: rowSeparator)
@@ -270,7 +296,7 @@ public final class RecFnMeetingBotController: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
-    private func safariMeetingURL() -> String? {
+    private func safariMeetingURL() async -> String? {
         let script = """
         tell application "Safari"
             if not (exists front document) then return ""
@@ -281,23 +307,17 @@ public final class RecFnMeetingBotController: ObservableObject {
             return ""
         end tell
         """
-        return runAppleScript(script)
+        return await runAppleScript(script)
     }
 
-    private func runAppleScript(_ source: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
+    private func runAppleScript(_ source: String) async -> String? {
+        guard let result = await RecFnBotProcessRunner.run(
+            executablePath: "/usr/bin/osascript",
+            arguments: ["-e", source]
+        ) else {
             return nil
         }
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        let output = String(data: result.standardOutput, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return output?.isEmpty == false ? output : nil
     }
@@ -308,13 +328,13 @@ public final class RecFnMeetingBotController: ObservableObject {
         return "auto"
     }
 
-    private func findNodePath() -> String? {
+    private func findNodePath() async -> String? {
         let candidates = [
             "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
             "/usr/bin/node",
         ]
-        if let fromWhich = shellOutput("/usr/bin/which", ["node"]) {
+        if let fromWhich = await shellOutput("/usr/bin/which", ["node"]) {
             let path = fromWhich.trimmingCharacters(in: .whitespacesAndNewlines)
             if !path.isEmpty && FileManager.default.fileExists(atPath: path) {
                 return path
@@ -350,9 +370,6 @@ public final class RecFnMeetingBotController: ObservableObject {
         let candidates = [
             preferred,
             bundleResourcePath,
-            "/Volumes/T7/21n/poc/ios/MeetingRecordingPOC/BotRuntime",
-            NSHomeDirectory() + "/21n/poc/ios/MeetingRecordingPOC/BotRuntime",
-            NSHomeDirectory() + "/Developer/21n/poc/ios/MeetingRecordingPOC/BotRuntime",
         ].compactMap { $0 }
 
         return candidates.first {
@@ -372,20 +389,14 @@ public final class RecFnMeetingBotController: ObservableObject {
         return env
     }
 
-    private func shellOutput(_ executable: String, _ args: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
-        } catch {
+    private func shellOutput(_ executable: String, _ args: [String]) async -> String? {
+        guard let result = await RecFnBotProcessRunner.run(
+            executablePath: executable,
+            arguments: args
+        ) else {
             return nil
         }
+        return String(data: result.standardOutput, encoding: .utf8)
     }
 
     private func isApplicationRunning(_ appName: String) -> Bool {
@@ -395,30 +406,26 @@ public final class RecFnMeetingBotController: ObservableObject {
         }
     }
 
-    private func closeBotLoginProfileIfRunning() {
+    private func closeBotLoginProfileIfRunning() async {
+        var shouldPauseForShutdown = false
         if let process = setupLoginProcess, process.isRunning {
             appendLog("Closing bot login Chrome window before starting bot...")
             process.terminate()
-            process.waitUntilExit()
+            shouldPauseForShutdown = true
         }
         setupLoginProcess = nil
 
         let profileDir = botProfileDirectory()
-        let pkill = Process()
-        pkill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        pkill.arguments = ["-TERM", "-f", "user-data-dir=\(profileDir)"]
-        pkill.standardOutput = Pipe()
-        pkill.standardError = Pipe()
+        if let result = await RecFnBotProcessRunner.run(
+            executablePath: "/usr/bin/pkill",
+            arguments: ["-TERM", "-f", "user-data-dir=\(profileDir)"]
+        ), result.terminationStatus == 0 {
+            appendLog("Closed existing Chrome process using the bot profile.")
+            shouldPauseForShutdown = true
+        }
 
-        do {
-            try pkill.run()
-            pkill.waitUntilExit()
-            if pkill.terminationStatus == 0 {
-                appendLog("Closed existing Chrome process using the bot profile.")
-                Thread.sleep(forTimeInterval: 0.5)
-            }
-        } catch {
-            // Best-effort cleanup only.
+        if shouldPauseForShutdown {
+            try? await Task.sleep(nanoseconds: 500_000_000)
         }
     }
 }

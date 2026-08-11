@@ -38,13 +38,7 @@
     "probefn/packages/*",
     "packages/*",
     "filefn/examples/full-demo/*",
-<<<<<<< HEAD
-    "recfn/*",
-    "recfn/platforms/*",
-    "recfn/adapters/*"
-=======
     "filefn/examples/production/*"
->>>>>>> 19774e78fd3afd248c72444e7bd22ec91824c26f
   ],
   "scripts": {
     "build": "turbo run build",

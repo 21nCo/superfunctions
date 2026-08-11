@@ -46,7 +46,18 @@ async function requestBody(req: import('node:http').IncomingMessage): Promise<Bu
 
 async function main(): Promise<void> {
   const host = env('RECFN_HOST', '0.0.0.0');
-  const port = Number.parseInt(env('RECFN_PORT', '8787'), 10);
+  const portString = env('RECFN_PORT', '8787');
+  if (!/^\d+$/.test(portString)) {
+    throw new Error(
+      `RECFN_PORT must be an integer between 1 and 65535: ${portString}`,
+    );
+  }
+  const port = Number.parseInt(portString, 10);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(
+      `RECFN_PORT must be an integer between 1 and 65535: ${portString}`,
+    );
+  }
   const apiKey = env('RECFN_API_KEY', 'sk-local-dev');
   const namespace = env('RECFN_NAMESPACE', 'poc');
   const profileDir = env(

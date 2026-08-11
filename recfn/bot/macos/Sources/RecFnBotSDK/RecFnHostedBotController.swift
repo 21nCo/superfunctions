@@ -87,6 +87,7 @@ public final class RecFnHostedBotController: ObservableObject {
 
     private var pollTask: Task<Void, Never>?
     private let session: URLSession
+    private var isStarting = false
 
     public init(session: URLSession = .shared) {
         self.session = session
@@ -99,23 +100,32 @@ public final class RecFnHostedBotController: ObservableObject {
         recordingDir: String,
         hosted: RecFnHostedBotConfig
     ) {
-        guard !isRunning else { return }
+        guard !isRunning, !isStarting else { return }
 
+        isStarting = true
         let explicitURL = url?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let meetingURL = explicitURL?.isEmpty == false ? explicitURL! : (detectActiveMeetingURL() ?? "")
-        guard !meetingURL.isEmpty else {
-            statusMessage = "Error: no active meeting found"
-            appendLog("No active Google Meet or Zoom tab found. Join the meeting first, or paste a meeting URL.", isError: true)
-            return
-        }
+        Task { [weak self] in
+            guard let self else { return }
+            defer { isStarting = false }
 
-        detectedMeetingURL = meetingURL
-        transcriptLines.removeAll()
-        statusMessage = "Sending bot..."
-        appendLog("Detected meeting URL: \(meetingURL)")
-        appendLog("Calling hosted RecFn bot API: \(hosted.serverURL)")
+            let meetingURL: String
+            if let explicitURL, !explicitURL.isEmpty {
+                meetingURL = explicitURL
+            } else {
+                meetingURL = await detectActiveMeetingURL() ?? ""
+            }
+            guard !meetingURL.isEmpty else {
+                statusMessage = "Error: no active meeting found"
+                appendLog("No active Google Meet or Zoom tab found. Join the meeting first, or paste a meeting URL.", isError: true)
+                return
+            }
 
-        Task {
+            detectedMeetingURL = meetingURL
+            transcriptLines.removeAll()
+            statusMessage = "Sending bot..."
+            appendLog("Detected meeting URL: \(meetingURL)")
+            appendLog("Calling hosted RecFn bot API: \(hosted.serverURL)")
+
             do {
                 let bot = try await createHostedBot(
                     meetingURL: meetingURL,
@@ -369,9 +379,17 @@ public final class RecFnHostedBotController: ObservableObject {
         hosted: RecFnHostedBotConfig,
         body: T?
     ) async throws -> U {
-        let base = hosted.serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
-        guard let url = URL(string: base + normalizedPath) else {
+        guard var components = URLComponents(string: hosted.serverURL),
+              components.scheme != nil,
+              components.host != nil else {
+            throw NSError(domain: "RecFnHostedBot", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid hosted bot server URL"])
+        }
+        let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let requestPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = "/" + [basePath, requestPath]
+            .filter { !$0.isEmpty }
+            .joined(separator: "/")
+        guard let url = components.url else {
             throw NSError(domain: "RecFnHostedBot", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid hosted bot server URL"])
         }
         var request = URLRequest(url: url)
@@ -406,18 +424,18 @@ public final class RecFnHostedBotController: ObservableObject {
         }
     }
 
-    private func detectActiveMeetingURL() -> String? {
+    private func detectActiveMeetingURL() async -> String? {
         let browserNames = ["Google Chrome", "Chromium", "Brave Browser", "Microsoft Edge"]
         for browserName in browserNames {
             guard isApplicationRunning(browserName) else { continue }
-            if let url = browserMeetingURLs(for: browserName).first {
+            if let url = (await browserMeetingURLs(for: browserName)).first {
                 return url
             }
         }
         return nil
     }
 
-    private func browserMeetingURLs(for browserName: String) -> [String] {
+    private func browserMeetingURLs(for browserName: String) async -> [String] {
         let script = """
         tell application "\(browserName)"
             if not (exists front window) then return ""
@@ -435,7 +453,7 @@ public final class RecFnHostedBotController: ObservableObject {
             return outputRows as text
         end tell
         """
-        guard let output = runAppleScript(script) else { return [] }
+        guard let output = await runAppleScript(script) else { return [] }
         let rowSeparator = String(UnicodeScalar(30)!)
         return output
             .components(separatedBy: rowSeparator)
@@ -443,20 +461,14 @@ public final class RecFnHostedBotController: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
-    private func runAppleScript(_ source: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
+    private func runAppleScript(_ source: String) async -> String? {
+        guard let result = await RecFnBotProcessRunner.run(
+            executablePath: "/usr/bin/osascript",
+            arguments: ["-e", source]
+        ) else {
             return nil
         }
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        let output = String(data: result.standardOutput, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return output?.isEmpty == false ? output : nil
     }

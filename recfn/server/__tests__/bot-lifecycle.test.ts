@@ -11,6 +11,10 @@ import {
 } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
 
+interface MockPlatformAdapter extends PlatformAdapter {
+  emitParticipantLeave(participantId?: string): Promise<void>;
+}
+
 function createMockPlatformAdapter(
   opts: {
     joinDelay?: number;
@@ -18,9 +22,9 @@ function createMockPlatformAdapter(
     audioChunks?: AudioChunk[];
     leaveError?: string;
   } = {},
-): PlatformAdapter {
+): MockPlatformAdapter {
   const participantJoinCbs: ((p: Participant) => void)[] = [];
-  const participantLeaveCbs: ((id: string) => void)[] = [];
+  const participantLeaveCbs: ((id: string) => void | Promise<void>)[] = [];
   const participants: Participant[] = [];
   const audioChunks =
     opts.audioChunks ??
@@ -72,6 +76,9 @@ function createMockPlatformAdapter(
     },
     onParticipantLeave(cb) {
       participantLeaveCbs.push(cb);
+    },
+    async emitParticipantLeave(participantId = 'participant_1') {
+      await Promise.all(participantLeaveCbs.map((cb) => cb(participantId)));
     },
     async getChatMessages() {
       return [];
@@ -261,6 +268,61 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       expect(recordings).toHaveLength(0);
       expect(logger.findByEvent('bot.join_only.finalization.complete')).toHaveLength(1);
     } finally {
+      if (previousJoinOnly === undefined) {
+        delete process.env.RECFN_POC_JOIN_ONLY;
+      } else {
+        process.env.RECFN_POC_JOIN_ONLY = previousJoinOnly;
+      }
+    }
+  });
+
+  it('starts auto-leave when the last participant leaves a join-only bot', async () => {
+    vi.useFakeTimers();
+    const previousJoinOnly = process.env.RECFN_POC_JOIN_ONLY;
+    process.env.RECFN_POC_JOIN_ONLY = '1';
+
+    const bot = await store.createBot({
+      meetingUrl: 'https://zoom.us/j/123',
+      platform: 'zoom',
+      config: {
+        displayName: 'RecFn Bot',
+        joinTimeout: 30000,
+        autoLeaveOnEmpty: true,
+        autoLeaveEmptyTimeout: 25,
+        consentMessage: 'This meeting is being recorded',
+        enableRealTimeTranscript: false,
+        asrProvider: 'whisper',
+        recordingFormat: 'mp4',
+        language: 'en-US',
+      },
+      namespace: 'ns_test',
+    });
+
+    await queue.enqueue(QUEUE_NAMES.BOT_JOIN, {
+      type: 'bot.join',
+      data: { botId: bot.id, namespace: 'ns_test' },
+      createdAt: new Date().toISOString(),
+    });
+
+    const adapter = createMockPlatformAdapter();
+    const worker = createBotWorker({
+      store,
+      queue,
+      logger,
+      platformAdapters: new Map([['zoom', adapter]]),
+    });
+
+    try {
+      expect(await worker.processNext()).toBe(true);
+      expect((await store.getBot(bot.id, 'ns_test'))!.status).toBe('joined');
+
+      await adapter.emitParticipantLeave();
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect((await store.getBot(bot.id, 'ns_test'))!.status).toBe('leaving');
+    } finally {
+      worker.getAutoLeaveTimer().cancelAll();
+      vi.useRealTimers();
       if (previousJoinOnly === undefined) {
         delete process.env.RECFN_POC_JOIN_ONLY;
       } else {

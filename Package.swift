@@ -33,7 +33,7 @@ let package = Package(
     name: "SuperfunctionsSwift",
     platforms: [
         .iOS(.v16),
-        .macOS(.v14),
+        .macOS(.v13),
     ],
     products: [
         .library(name: "AuthFnClient", targets: ["AuthFnClient"]),

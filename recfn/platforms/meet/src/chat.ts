@@ -46,7 +46,20 @@ async function enableMeetCaptions(page: Page): Promise<void> {
   });
 
   if (!clickedCaptionControl) {
-    await page.keyboard.press('c').catch(() => {});
+    const canUseShortcut = await page.evaluate(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body) {
+        return true;
+      }
+      return !(
+        active instanceof HTMLElement &&
+        (active.isContentEditable ||
+          active.matches('input, textarea, select, [role="textbox"]'))
+      );
+    });
+    if (canUseShortcut) {
+      await page.keyboard.press('c').catch(() => {});
+    }
   }
 }
 

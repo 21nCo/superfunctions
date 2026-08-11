@@ -7,6 +7,46 @@ import RecFnWhisperCpp
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
+private struct DesktopProcessResult: Sendable {
+    let terminationStatus: Int32
+    let standardOutput: Data
+    let standardError: Data
+}
+
+private enum DesktopProcessRunner {
+    static func run(
+        executablePath: String,
+        arguments: [String]
+    ) async -> DesktopProcessResult? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: executablePath)
+                process.arguments = arguments
+
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    continuation.resume(
+                        returning: DesktopProcessResult(
+                            terminationStatus: process.terminationStatus,
+                            standardOutput: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+                            standardError: errorPipe.fileHandleForReading.readDataToEndOfFile()
+                        )
+                    )
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+}
+
 public enum DesktopMeetingPlatform: String {
     case googleMeet = "Google Meet"
     case zoom = "Zoom"
@@ -83,6 +123,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
     private var lastRecognizedText = ""
     private var missingDetectionHintLogged = false
     private var isStarting = false
+    private var isPollingMeeting = false
 
     public init() {}
 
@@ -190,10 +231,12 @@ public final class RecFnDesktopNotetaker: ObservableObject {
 
         detectionTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.pollMeeting()
+                await self?.pollMeeting()
             }
         }
-        pollMeeting()
+        Task { @MainActor [weak self] in
+            await self?.pollMeeting()
+        }
     }
 
     private func requestDesktopSDKPermissions() async -> Bool {
@@ -219,7 +262,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
             )
         }
 
-        requestBrowserAutomationPromptIfPossible()
+        await requestBrowserAutomationPromptIfPossible()
 
         return microphoneGranted
     }
@@ -250,14 +293,14 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         return CGRequestScreenCaptureAccess()
     }
 
-    private func requestBrowserAutomationPromptIfPossible() {
+    private func requestBrowserAutomationPromptIfPossible() async {
         guard let browser = browserScripts.first(where: { isApplicationRunning($0.appName) }) else {
             appendLog("Browser Automation permission will be requested when Chrome/Safari is open.")
             return
         }
 
         appendLog("Checking browser Automation permission for \(browser.appName)...")
-        if !browserTabs(for: browser).isEmpty {
+        if !(await browserTabs(for: browser)).isEmpty {
             appendLog("Browser Automation permission ready for \(browser.appName)")
         } else {
             appendLog(
@@ -267,10 +310,15 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         }
     }
 
-    private func pollMeeting() {
+    private func pollMeeting() async {
+        guard isRunning, !isPollingMeeting else { return }
+        isPollingMeeting = true
+        defer { isPollingMeeting = false }
+
+        let candidate = await detectMeetingCandidate()
         guard isRunning else { return }
 
-        if let candidate = detectMeetingCandidate() {
+        if let candidate {
             missedMeetingCount = 0
             let key = "\(candidate.platform.rawValue):\(candidate.appName):\(candidate.title):\(candidate.phase.rawValue):\(candidate.detail)"
             if stableCandidateKey == key {
@@ -451,8 +499,8 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         )
     }
 
-    private func detectMeetingCandidate() -> DesktopMeetingCandidate? {
-        if let browserCandidate = detectBrowserMeetingCandidate() {
+    private func detectMeetingCandidate() async -> DesktopMeetingCandidate? {
+        if let browserCandidate = await detectBrowserMeetingCandidate() {
             missingDetectionHintLogged = false
             return browserCandidate
         }
@@ -475,11 +523,11 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         return nil
     }
 
-    private func detectBrowserMeetingCandidate() -> DesktopMeetingCandidate? {
+    private func detectBrowserMeetingCandidate() async -> DesktopMeetingCandidate? {
         var candidates: [DesktopMeetingCandidate] = []
         for browser in browserScripts {
             guard isApplicationRunning(browser.appName) else { continue }
-            for tab in browserTabs(for: browser) {
+            for tab in await browserTabs(for: browser) {
                 let text = "\(tab.title) \(tab.url)"
                 if let candidate = classifyBrowserTab(
                     text: text,
@@ -623,7 +671,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         ]
     }
 
-    private func browserTabs(for browser: BrowserScript) -> [BrowserTabSnapshot] {
+    private func browserTabs(for browser: BrowserScript) async -> [BrowserTabSnapshot] {
         let script: String
         if browser.scriptName == "Safari" {
             script = """
@@ -654,7 +702,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
             """
         }
 
-        guard let output = runAppleScript(script) else { return [] }
+        guard let output = await runAppleScript(script) else { return [] }
 
         if browser.scriptName == "Safari" {
             let parts = output.components(separatedBy: .newlines)
@@ -674,7 +722,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
 
         let rowSeparator = String(UnicodeScalar(30)!)
         let columnSeparator = String(UnicodeScalar(31)!)
-        return output
+        let tabRows: [(Int?, Int?, String, String)] = output
             .components(separatedBy: rowSeparator)
             .compactMap { row in
                 let parts = row.components(separatedBy: columnSeparator)
@@ -685,15 +733,28 @@ public final class RecFnDesktopNotetaker: ObservableObject {
                 let url = parts.dropFirst(3).joined(separator: columnSeparator)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !title.isEmpty || !url.isEmpty else { return nil }
+                return (windowIndex, tabIndex, title, url)
+            }
 
-                return BrowserTabSnapshot(
+        var snapshots: [BrowserTabSnapshot] = []
+        for (windowIndex, tabIndex, title, url) in tabRows {
+            let meetingState = await inspectMeetingState(
+                for: browser,
+                url: url,
+                windowIndex: windowIndex,
+                tabIndex: tabIndex
+            )
+            snapshots.append(
+                BrowserTabSnapshot(
                     windowIndex: windowIndex,
                     tabIndex: tabIndex,
                     title: title,
                     url: url,
-                    meetingState: inspectMeetingState(for: browser, url: url, windowIndex: windowIndex, tabIndex: tabIndex)
+                    meetingState: meetingState
                 )
-            }
+            )
+        }
+        return snapshots
     }
 
     private func inspectMeetingState(
@@ -701,11 +762,11 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         url: String,
         windowIndex: Int?,
         tabIndex: Int?
-    ) -> BrowserMeetingState? {
+    ) async -> BrowserMeetingState? {
         guard browser.scriptName != "Safari" else { return nil }
 
         if url.lowercased().contains("meet.google.com") {
-            return executeMeetingInspectionScript(
+            return await executeMeetingInspectionScript(
                 googleMeetInspectionJavaScript,
                 for: browser,
                 windowIndex: windowIndex,
@@ -714,7 +775,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         }
 
         if url.lowercased().contains("zoom.us/") {
-            return executeMeetingInspectionScript(
+            return await executeMeetingInspectionScript(
                 zoomInspectionJavaScript,
                 for: browser,
                 windowIndex: windowIndex,
@@ -730,7 +791,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         for browser: BrowserScript,
         windowIndex: Int?,
         tabIndex: Int?
-    ) -> BrowserMeetingState? {
+    ) async -> BrowserMeetingState? {
         guard let windowIndex, let tabIndex else { return nil }
         let escapedJavaScript = javascript
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -743,7 +804,7 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         end tell
         """
 
-        guard let output = runAppleScript(script),
+        guard let output = await runAppleScript(script),
               let data = output.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
@@ -753,7 +814,8 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         let inCall = object["inCall"] as? Bool ?? false
         let microphoneState = object["mic"] as? String
         let reason = object["reason"] as? String
-        let detail = reason?.isEmpty == false ? reason! : (inCall ? "in-call controls visible" : "waiting for in-call controls")
+        let detail = (reason?.isEmpty == false ? reason : nil) ??
+            (inCall ? "in-call controls visible" : "waiting for in-call controls")
         return BrowserMeetingState(inCall: inCall, microphoneState: microphoneState, detail: detail)
     }
 
@@ -810,40 +872,31 @@ public final class RecFnDesktopNotetaker: ObservableObject {
         """
     }
 
-    private func runAppleScript(_ source: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
+    private func runAppleScript(_ source: String) async -> String? {
+        guard let result = await DesktopProcessRunner.run(
+            executablePath: "/usr/bin/osascript",
+            arguments: ["-e", source]
+        ) else {
             if !missingDetectionHintLogged {
-                appendLog("Browser tab lookup failed: \(error.localizedDescription)", isError: false)
+                appendLog("Browser tab lookup failed: could not launch osascript", isError: false)
             }
             return nil
         }
 
         let output = String(
-            data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+            data: result.standardOutput,
             encoding: .utf8
         )?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if process.terminationStatus != 0, !missingDetectionHintLogged {
+        if result.terminationStatus != 0, !missingDetectionHintLogged {
             let errorOutput = String(
-                data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                data: result.standardError,
                 encoding: .utf8
             )?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             appendLog(
-                "Browser tab lookup unavailable: \(errorOutput ?? "osascript exited \(process.terminationStatus)")",
+                "Browser tab lookup unavailable: \(errorOutput ?? "osascript exited \(result.terminationStatus)")",
                 isError: false
             )
         }
@@ -965,15 +1018,19 @@ final class DesktopAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @un
             }
             pendingAudioBuffers.removeAll()
             pendingMicrophoneBuffers.removeAll()
+            self.transcriber = transcriber
         }
 
-        self.transcriber = transcriber
         onStatus("Local whisper.cpp ready")
     }
 
     func stop() {
-        transcriber?.finish()
-        transcriber = nil
+        let activeTranscriber = audioQueue.sync {
+            let activeTranscriber = transcriber
+            transcriber = nil
+            return activeTranscriber
+        }
+        activeTranscriber?.finish()
         stopMicrophoneCapture()
 
         let currentStream = stream
@@ -1043,14 +1100,15 @@ final class DesktopAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @un
     }
 
     private func handleMicrophoneBuffer(_ buffer: AVAudioPCMBuffer) {
-        let isLikelySpeakerEcho = CFAbsoluteTimeGetCurrent() - lastSystemAudioTime < systemEchoGateSeconds
-        guard !isLikelySpeakerEcho else { return }
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            let isLikelySpeakerEcho =
+                CFAbsoluteTimeGetCurrent() - self.lastSystemAudioTime < self.systemEchoGateSeconds
+            guard !isLikelySpeakerEcho else { return }
 
-        if let transcriber {
-            transcriber.append(buffer, source: .microphone)
-        } else {
-            audioQueue.async { [weak self] in
-                guard let self, self.pendingMicrophoneBuffers.count < 50 else { return }
+            if let transcriber = self.transcriber {
+                transcriber.append(buffer, source: .microphone)
+            } else if self.pendingMicrophoneBuffers.count < 50 {
                 self.pendingMicrophoneBuffers.append(buffer)
             }
         }
@@ -1154,7 +1212,7 @@ private final class MeetingWhisperTranscriber: @unchecked Sendable {
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "whisper.cpp could not initialize. Run DictationPOC/scripts/setup-whispercpp.sh or link whisper.xcframework, then keep a ggml model in ~/Documents/WhisperModels."
+                        "whisper.cpp could not initialize. Link whisper.xcframework and place a ggml model in ~/Documents/WhisperModels or bundle it with the app."
                 ]
             )
         }
@@ -1335,7 +1393,7 @@ private final class MeetingWhisperTranscriber: @unchecked Sendable {
             code: 1,
             userInfo: [
                 NSLocalizedDescriptionKey:
-                    "No whisper model found. Put ggml-base.en.bin in ~/Documents/WhisperModels or run the DictationPOC model setup first."
+                    "No whisper model found. Place ggml-base.en.bin in ~/Documents/WhisperModels or bundle it with the app."
             ]
         )
     }

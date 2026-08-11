@@ -352,7 +352,7 @@ extern "C" {
 
     // Return the number of tokens in the provided text
     // Equivalent to: -whisper_tokenize(ctx, text, NULL, 0)
-    int whisper_token_count(struct whisper_context * ctx, const char * text);
+    WHISPER_API int whisper_token_count(struct whisper_context * ctx, const char * text);
 
     // Largest language id (i.e. number of available languages - 1)
     WHISPER_API int whisper_lang_max_id(void);
